@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-29T20:15:01.590Z",
+  "workload": {
+    "assertionVersions": 100000,
+    "entities": 10000,
+    "episodes": 10000,
+    "vectorDimensions": 64,
+    "textBytes": {
+      "minimum": 40,
+      "mean": 41.4853,
+      "maximum": 66
+    },
+    "generationMs": 1435.7491149999998,
+    "databaseBytes": 37150720,
+    "projectionCatchUpMs": null
+  },
+  "corpus": {
+    "cases": 70,
+    "development": 35,
+    "heldout": 35,
+    "relational": 20
+  },
+  "retrieval": {
+    "vector_only": {
+      "evidenceRecallAt10": 0.9857142857142858,
+      "relationalEvidenceRecallAt10": 1,
+      "mrrAt10": 0.8964285714285715,
+      "temporalAnswerAccuracy": 1,
+      "abstentionAccuracy": 1,
+      "provenanceCoverage": 0.9857142857142858,
+      "unsupportedClaimRate": 0,
+      "falseMerges": 0,
+      "meanEstimatedTokens": 95.21428571428571,
+      "latencyMs": {
+        "p50": 8.356852000000117,
+        "p95": 9.934531000000106,
+        "p99": 18.814606999999796,
+        "samples": 70
+      },
+      "coldLatencyMs": 9.934531000000106,
+      "warmLatencyMs": {
+        "p50": 8.318776999999955,
+        "p95": 9.41573799999992,
+        "p99": 18.814606999999796,
+        "samples": 69
+      }
+    },
+    "exact_lexical_vector": {
+      "evidenceRecallAt10": 0.8857142857142857,
+      "relationalEvidenceRecallAt10": 0.7333333333333333,
+      "mrrAt10": 0.8607709750566893,
+      "temporalAnswerAccuracy": 1,
+      "abstentionAccuracy": 1,
+      "provenanceCoverage": 0.8857142857142857,
+      "unsupportedClaimRate": 0,
+      "falseMerges": 0,
+      "meanEstimatedTokens": 112.62857142857143,
+      "latencyMs": {
+        "p50": 6.179466999999931,
+        "p95": 8.667504000000008,
+        "p99": 12.907474999999977,
+        "samples": 70
+      },
+      "coldLatencyMs": 8.898265000000265,
+      "warmLatencyMs": {
+        "p50": 6.160808000000088,
+        "p95": 8.655428000000029,
+        "p99": 12.907474999999977,
+        "samples": 69
+      }
+    },
+    "hybrid_graph": {
+      "evidenceRecallAt10": 0.8857142857142857,
+      "relationalEvidenceRecallAt10": 0.7333333333333333,
+      "mrrAt10": 0.8607709750566893,
+      "temporalAnswerAccuracy": 1,
+      "abstentionAccuracy": 1,
+      "provenanceCoverage": 0.8857142857142857,
+      "unsupportedClaimRate": 0,
+      "falseMerges": 0,
+      "meanEstimatedTokens": 112.62857142857143,
+      "latencyMs": {
+        "p50": 6.057227000000239,
+        "p95": 6.465781999999763,
+        "p99": 26.283375999999862,
+        "samples": 70
+      },
+      "coldLatencyMs": 6.2601049999998395,
+      "warmLatencyMs": {
+        "p50": 6.048917999999958,
+        "p95": 6.465781999999763,
+        "p99": 26.283375999999862,
+        "samples": 69
+      }
+    },
+    "hybrid_graph_ranker": {
+      "evidenceRecallAt10": 0.8857142857142857,
+      "relationalEvidenceRecallAt10": 0.7333333333333333,
+      "mrrAt10": 0.8714285714285714,
+      "temporalAnswerAccuracy": 1,
+      "abstentionAccuracy": 1,
+      "provenanceCoverage": 0.8857142857142857,
+      "unsupportedClaimRate": 0,
+      "falseMerges": 0,
+      "meanEstimatedTokens": 112.62857142857143,
+      "latencyMs": {
+        "p50": 6.055194999999912,
+        "p95": 6.306626999999935,
+        "p99": 6.466436000000158,
+        "samples": 70
+      },
+      "coldLatencyMs": 6.070368000000144,
+      "warmLatencyMs": {
+        "p50": 6.052861000000121,
+        "p95": 6.306626999999935,
+        "p99": 6.466436000000158,
+        "samples": 69
+      }
+    }
+  },
+  "correctionCommitMs": {
+    "p50": 0.010318999999981315,
+    "p95": 0.018286999999872933,
+    "p99": 0.02920300000005227,
+    "samples": 200
+  },
+  "process": {
+    "cpuModel": "13th Gen Intel(R) Core(TM) i7-13700HX",
+    "logicalCpus": 24,
+    "totalMemoryBytes": 33348431872,
+    "freeMemoryBytesAfter": 20693139456,
+    "peakRssBytes": 177135616,
+    "node": "v26.8.2",
+    "platform": "linux-x64",
+    "queueSizes": {
+      "indexing": 0,
+      "correction": 0
+    }
+  },
+  "gates": {
+    "relationalRecallTarget": false,
+    "improvementOverVectorFivePoints": false,
+    "correctionP95Under100Ms": true
+  },
+  "limitations": [
+    "Deterministic hash embeddings measure retrieval plumbing, not model semantic quality.",
+    "No GPU or VRAM sampler was available in this benchmark.",
+    "End-to-end warm retrieval with live Qdrant, Neo4j, and Ollama is reported separately from this canonical workload."
+  ]
+}

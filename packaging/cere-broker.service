@@ -1,0 +1,15 @@
+[Unit]
+Description=Cere session broker
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /usr/share/cere/broker/main.ts
+Restart=on-failure
+RestartSec=3
+UMask=0077
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin"
+
+[Install]
+WantedBy=graphical-session.target

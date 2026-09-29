@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+prefix="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+root="$prefix/share/cere"
+case "${1:-}" in
+  memory)
+    shift
+    exec node "$root/broker/memory-cli.ts" "$@"
+    ;;
+  terminal)
+    shift
+    exec node "$root/broker/terminal.ts" "$@"
+    ;;
+  toggle|show)
+    if node "$root/broker/cli.ts" "${1}"; then exit 0; fi
+    exec "$prefix/lib/cere/cere" --root "$root" --show
+    ;;
+  *) exec "$prefix/lib/cere/cere" --root "$root" "$@" ;;
+esac

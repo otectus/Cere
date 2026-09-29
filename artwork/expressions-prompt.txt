@@ -1,0 +1,18 @@
+Use case: identity-preserve. Asset type: companion 4-column by 2-row FULL BODY animation pose sheet for an existing desktop character.
+Input image is the exact character identity, rendering style, proportions and costume reference. Create EIGHT additional expressive poses of this SAME adult chibi character, Cere. Retain vivid cyan blue long wavy hair, black ROUND eyeglasses, blue eyes, black respirator face mask covering mouth (never remove, no visible mouth), pale skin, identical black gothic strappy buckled outfit, gloves, cargo trousers, big black boots. Match existing head/body size ratio and detailed smoothly inked anime shading. Do not redesign.
+Exactly 4 columns and 2 rows of equal cells, ordered left to right:
+1 skeptical: tilted HEAD (not whole body), one brow raised and one narrowed eye, arms folded, weight on one hip.
+2 smug: confidently lifted chin, half-lidded amused eyes, one gloved hand on hip, other hand with a cheeky small finger flourish.
+3 exaggerated disbelief: widened eyes and raised eyebrows, one palm at forehead, the other palm turned out, shoulders raised; feet planted.
+4 curious attentive: lean upper body forward slightly, head inclined toward viewer, focused open eyes, one hand near chin/mask and other arm behind back.
+5 affectionate cheeky wink: one eye deliberately winking, one hand at her heart, relaxed contrapposto, elbow out.
+6 tender reassuring: gentle soft eyes (open), lowered relaxed shoulders, slight head inclination, hands gently together at waist, leaning toward viewer.
+7 speaking/explaining: one open palm offered to viewer at chest level, other hand on hip, engaged eyes; calm conversational posture.
+8 quiet triumph: proud warm smiling EYES, one fist lifted at shoulder height, other hand on hip, planted confident boots, no jumping.
+All eight must look like the same Cere as reference, with distinct readable eyes through her glasses. Full head, hair, hands and boots entirely inside each cell, front facing / slight three-quarter only. Same scale every cell, feet on same baseline per row, about 8 percent transparent gutter on all sides. No exaggerated perspective.
+Genuinely transparent background. Clean solid silhouette and smooth antialiased contours, no blue static, speckles, floating hair debris, colored fringe, outer glows, shadows outside bodies, grid lines, labels, text, hearts, symbols, or props. Preserve transparency. The acting is in eyes, eyebrows, head, shoulders and hands.
+
+Mode: built-in image_gen, followed by background-extraction to an alpha PNG.
+Final asset: assets/cere-expressions.png. Original polished sheet preserved.
+Correction prompt: Remove the entire gradient background, preserve the exact eight characters and positions, transparent gaps between limbs, clean antialiased contours, no exterior shadows or fringes. Actual transparent PNG required.
+

@@ -1,0 +1,1366 @@
+{
+  "version": 3,
+  "texture": "cere-polished.png",
+  "textureWidth": 1280,
+  "textureHeight": 1344,
+  "frameWidth": 320,
+  "frameHeight": 336,
+  "frames": [
+    {
+      "x": 0,
+      "y": 0,
+      "width": 320,
+      "height": 336,
+      "blinkPose": 1
+    },
+    {
+      "x": 320,
+      "y": 0,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 640,
+      "y": 0,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 960,
+      "y": 0,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 0,
+      "y": 336,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 320,
+      "y": 336,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 640,
+      "y": 336,
+      "width": 320,
+      "height": 336,
+      "blinkPose": 7
+    },
+    {
+      "x": 960,
+      "y": 336,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 0,
+      "y": 672,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 320,
+      "y": 672,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 640,
+      "y": 672,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 960,
+      "y": 672,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 0,
+      "y": 1008,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 320,
+      "y": 1008,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 640,
+      "y": 1008,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "x": 960,
+      "y": 1008,
+      "width": 320,
+      "height": 336
+    },
+    {
+      "name": "skeptical",
+      "texture": "cere-expressions.png",
+      "textureWidth": 1536,
+      "textureHeight": 1024,
+      "x": 0,
+      "y": 0,
+      "width": 384,
+      "height": 512
+    },
+    {
+      "name": "smug",
+      "texture": "cere-expressions.png",
+      "textureWidth": 1536,
+      "textureHeight": 1024,
+      "x": 384,
+      "y": 0,
+      "width": 384,
+      "height": 512
+    },
+    {
+      "name": "disbelief",
+      "texture": "cere-expressions.png",
+      "textureWidth": 1536,
+      "textureHeight": 1024,
+      "x": 768,
+      "y": 0,
+      "width": 384,
+      "height": 512
+    },
+    {
+      "name": "curious",
+      "texture": "cere-expressions.png",
+      "textureWidth": 1536,
+      "textureHeight": 1024,
+      "x": 1152,
+      "y": 0,
+      "width": 384,
+      "height": 512
+    },
+    {
+      "name": "cheeky",
+      "texture": "cere-expressions.png",
+      "textureWidth": 1536,
+      "textureHeight": 1024,
+      "x": 0,
+      "y": 512,
+      "width": 400,
+      "height": 512
+    },
+    {
+      "name": "tender",
+      "texture": "cere-expressions.png",
+      "textureWidth": 1536,
+      "textureHeight": 1024,
+      "x": 400,
+      "y": 512,
+      "width": 368,
+      "height": 512
+    },
+    {
+      "name": "explaining",
+      "texture": "cere-expressions.png",
+      "textureWidth": 1536,
+      "textureHeight": 1024,
+      "x": 768,
+      "y": 512,
+      "width": 384,
+      "height": 512
+    },
+    {
+      "name": "triumph",
+      "texture": "cere-expressions.png",
+      "textureWidth": 1536,
+      "textureHeight": 1024,
+      "x": 1152,
+      "y": 512,
+      "width": 384,
+      "height": 512
+    }
+  ],
+  "idlePool": [
+    "lookLeft",
+    "lookRight",
+    "headTilt",
+    "idleSmug",
+    "idleCurious",
+    "idleSoft"
+  ],
+  "clips": {
+    "quiet": {
+      "label": "Still",
+      "priority": 1000,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 1000
+        }
+      ],
+      "loop": true
+    },
+    "idle": {
+      "label": "At ease",
+      "priority": 0,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 1000
+        }
+      ],
+      "loop": true,
+      "breath": true
+    },
+    "working": {
+      "label": "Working with tools",
+      "priority": 40,
+      "keys": [
+        {
+          "pose": 6,
+          "ms": 1000
+        }
+      ],
+      "loop": true,
+      "breath": true,
+      "symbol": "···"
+    },
+    "waiting": {
+      "label": "Needs your permission or input",
+      "priority": 90,
+      "keys": [
+        {
+          "pose": 9,
+          "ms": 1000
+        }
+      ],
+      "loop": true,
+      "breath": true,
+      "symbol": "?"
+    },
+    "disconnected": {
+      "label": "Reconnecting",
+      "priority": 95,
+      "keys": [
+        {
+          "pose": 7,
+          "ms": 1000
+        }
+      ],
+      "loop": true,
+      "breath": true,
+      "symbol": "…"
+    },
+    "dragging": {
+      "label": "Being carried",
+      "priority": 100,
+      "keys": [
+        {
+          "pose": 8,
+          "ms": 1000,
+          "rotation": -1.5
+        }
+      ],
+      "loop": true
+    },
+    "runRight": {
+      "label": "Roaming right",
+      "priority": 25,
+      "keys": [
+        {
+          "pose": 12,
+          "ms": 150,
+          "y": -1,
+          "rotation": 2
+        },
+        {
+          "pose": 13,
+          "ms": 150,
+          "y": 1
+        },
+        {
+          "pose": 12,
+          "ms": 150,
+          "y": -1,
+          "rotation": 2
+        },
+        {
+          "pose": 13,
+          "ms": 150
+        }
+      ],
+      "loop": true
+    },
+    "runLeft": {
+      "label": "Roaming left",
+      "priority": 25,
+      "keys": [
+        {
+          "pose": 14,
+          "ms": 150,
+          "y": -1,
+          "rotation": -2
+        },
+        {
+          "pose": 15,
+          "ms": 150,
+          "y": 1
+        },
+        {
+          "pose": 14,
+          "ms": 150,
+          "y": -1,
+          "rotation": -2
+        },
+        {
+          "pose": 15,
+          "ms": 150
+        }
+      ],
+      "loop": true
+    },
+    "blink": {
+      "label": "Blink",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 160
+        },
+        {
+          "pose": 1,
+          "ms": 95
+        },
+        {
+          "pose": 0,
+          "ms": 210
+        }
+      ]
+    },
+    "doubleBlink": {
+      "label": "Double blink",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 1,
+          "ms": 90
+        },
+        {
+          "pose": 0,
+          "ms": 160
+        },
+        {
+          "pose": 1,
+          "ms": 105
+        },
+        {
+          "pose": 0,
+          "ms": 260
+        }
+      ]
+    },
+    "lookLeft": {
+      "label": "Look left",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 2,
+          "ms": 440,
+          "rotation": -2
+        },
+        {
+          "pose": 2,
+          "ms": 1100,
+          "x": -2
+        },
+        {
+          "pose": 0,
+          "ms": 550
+        }
+      ]
+    },
+    "lookRight": {
+      "label": "Look right",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 3,
+          "ms": 440,
+          "rotation": 2
+        },
+        {
+          "pose": 3,
+          "ms": 1100,
+          "x": 2
+        },
+        {
+          "pose": 0,
+          "ms": 550
+        }
+      ]
+    },
+    "look": {
+      "label": "Look around",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 2,
+          "ms": 600,
+          "rotation": -2
+        },
+        {
+          "pose": 2,
+          "ms": 700
+        },
+        {
+          "pose": 0,
+          "ms": 400
+        },
+        {
+          "pose": 3,
+          "ms": 600,
+          "rotation": 2
+        },
+        {
+          "pose": 3,
+          "ms": 700
+        },
+        {
+          "pose": 0,
+          "ms": 500
+        }
+      ]
+    },
+    "headTilt": {
+      "label": "Curious tilt",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 3,
+          "ms": 550,
+          "rotation": 4
+        },
+        {
+          "pose": 3,
+          "ms": 1100,
+          "rotation": 3
+        },
+        {
+          "pose": 0,
+          "ms": 700
+        }
+      ]
+    },
+    "stretch": {
+      "label": "Little stretch",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 1,
+          "ms": 500,
+          "sy": 0.98
+        },
+        {
+          "pose": 9,
+          "ms": 650,
+          "sy": 1.025
+        },
+        {
+          "pose": 9,
+          "ms": 1100,
+          "rotation": -2
+        },
+        {
+          "pose": 9,
+          "ms": 1000,
+          "rotation": 2
+        },
+        {
+          "pose": 0,
+          "ms": 750
+        }
+      ]
+    },
+    "sway": {
+      "label": "Happy sway",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 650,
+          "rotation": -3,
+          "x": -2
+        },
+        {
+          "pose": 1,
+          "ms": 800,
+          "rotation": 3,
+          "x": 2
+        },
+        {
+          "pose": 0,
+          "ms": 800,
+          "rotation": -2,
+          "x": -1
+        },
+        {
+          "pose": 0,
+          "ms": 650
+        }
+      ]
+    },
+    "shy": {
+      "label": "A shy moment",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 8,
+          "ms": 550,
+          "rotation": -2
+        },
+        {
+          "pose": 8,
+          "ms": 950,
+          "sy": 0.985
+        },
+        {
+          "pose": 2,
+          "ms": 650
+        },
+        {
+          "pose": 0,
+          "ms": 600
+        }
+      ]
+    },
+    "doze": {
+      "label": "Daydream",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 1,
+          "ms": 700,
+          "rotation": 2
+        },
+        {
+          "pose": 1,
+          "ms": 2300,
+          "rotation": 3,
+          "sy": 0.985
+        },
+        {
+          "pose": 1,
+          "ms": 1300,
+          "rotation": 1,
+          "sy": 1
+        },
+        {
+          "pose": 8,
+          "ms": 200
+        },
+        {
+          "pose": 0,
+          "ms": 650
+        }
+      ],
+      "symbol": "z"
+    },
+    "nod": {
+      "label": "Nod",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 6,
+          "ms": 280
+        },
+        {
+          "pose": 7,
+          "ms": 280,
+          "sy": 0.975,
+          "y": 2
+        },
+        {
+          "pose": 6,
+          "ms": 330
+        },
+        {
+          "pose": 7,
+          "ms": 260,
+          "sy": 0.985,
+          "y": 1
+        },
+        {
+          "pose": 0,
+          "ms": 420
+        }
+      ]
+    },
+    "wave": {
+      "label": "Wave",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 160
+        },
+        {
+          "pose": 4,
+          "ms": 220
+        },
+        {
+          "pose": 5,
+          "ms": 300,
+          "rotation": -2
+        },
+        {
+          "pose": 4,
+          "ms": 260
+        },
+        {
+          "pose": 5,
+          "ms": 300,
+          "rotation": -1
+        },
+        {
+          "pose": 4,
+          "ms": 260
+        },
+        {
+          "pose": 0,
+          "ms": 450
+        }
+      ]
+    },
+    "greeting": {
+      "label": "Hello",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 200,
+          "sy": 0.98
+        },
+        {
+          "pose": 4,
+          "ms": 280
+        },
+        {
+          "pose": 5,
+          "ms": 370,
+          "rotation": -2
+        },
+        {
+          "pose": 4,
+          "ms": 300
+        },
+        {
+          "pose": 5,
+          "ms": 370
+        },
+        {
+          "pose": 0,
+          "ms": 550
+        }
+      ]
+    },
+    "jump": {
+      "label": "Little jump",
+      "priority": 60,
+      "keys": [
+        {
+          "pose": 10,
+          "ms": 240,
+          "sy": 0.95
+        },
+        {
+          "pose": 11,
+          "ms": 320,
+          "y": -6,
+          "sy": 1.02
+        },
+        {
+          "pose": 11,
+          "ms": 230,
+          "y": -3
+        },
+        {
+          "pose": 10,
+          "ms": 220,
+          "sy": 0.97,
+          "y": 1
+        },
+        {
+          "pose": 0,
+          "ms": 500
+        }
+      ]
+    },
+    "celebrate": {
+      "label": "Confirmed completion",
+      "priority": 60,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 200
+        },
+        {
+          "pose": 23,
+          "ms": 420
+        },
+        {
+          "pose": 23,
+          "ms": 1150
+        },
+        {
+          "pose": 0,
+          "ms": 650
+        }
+      ],
+      "symbol": "✓",
+      "outcome": true
+    },
+    "land": {
+      "label": "Soft landing",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 10,
+          "ms": 170,
+          "sy": 0.96
+        },
+        {
+          "pose": 0,
+          "ms": 430,
+          "sy": 1.015
+        },
+        {
+          "pose": 0,
+          "ms": 400
+        }
+      ]
+    },
+    "attentive": {
+      "label": "I see you",
+      "priority": 10,
+      "keys": [
+        {
+          "pose": 19,
+          "ms": 400
+        },
+        {
+          "pose": 19,
+          "ms": 900
+        }
+      ]
+    },
+    "listen": {
+      "label": "You have my attention",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 19,
+          "ms": 400
+        },
+        {
+          "pose": 19,
+          "ms": 1200
+        }
+      ]
+    },
+    "thinking": {
+      "label": "Thinking",
+      "priority": 40,
+      "keys": [
+        {
+          "pose": 19,
+          "ms": 1000,
+          "rotation": -0.6
+        }
+      ],
+      "loop": true,
+      "breath": true,
+      "symbol": "…"
+    },
+    "approval": {
+      "label": "Your call",
+      "priority": 90,
+      "keys": [
+        {
+          "pose": 22,
+          "ms": 450
+        },
+        {
+          "pose": 19,
+          "ms": 900
+        }
+      ],
+      "symbol": "?"
+    },
+    "error": {
+      "label": "Something went wrong",
+      "priority": 85,
+      "keys": [
+        {
+          "pose": 18,
+          "ms": 350
+        },
+        {
+          "pose": 16,
+          "ms": 1000
+        },
+        {
+          "pose": 21,
+          "ms": 700
+        }
+      ],
+      "symbol": "!",
+      "outcome": true
+    },
+    "timer": {
+      "label": "Timer finished",
+      "priority": 85,
+      "keys": [
+        {
+          "pose": 8,
+          "ms": 300
+        },
+        {
+          "pose": 4,
+          "ms": 260
+        },
+        {
+          "pose": 5,
+          "ms": 350,
+          "rotation": -2
+        },
+        {
+          "pose": 4,
+          "ms": 260
+        },
+        {
+          "pose": 5,
+          "ms": 350
+        },
+        {
+          "pose": 0,
+          "ms": 600
+        }
+      ],
+      "symbol": "◷"
+    },
+    "send": {
+      "label": "On it",
+      "priority": 40,
+      "keys": [
+        {
+          "pose": 19,
+          "ms": 300
+        },
+        {
+          "pose": 6,
+          "ms": 500
+        }
+      ]
+    },
+    "success": {
+      "label": "All done",
+      "priority": 60,
+      "keys": [
+        {
+          "pose": 23,
+          "ms": 400
+        },
+        {
+          "pose": 23,
+          "ms": 1050
+        },
+        {
+          "pose": 0,
+          "ms": 600
+        }
+      ],
+      "symbol": "✓",
+      "outcome": true
+    },
+    "capture": {
+      "label": "Captured",
+      "priority": 45,
+      "keys": [
+        {
+          "pose": 9,
+          "ms": 350
+        },
+        {
+          "pose": 1,
+          "ms": 130
+        },
+        {
+          "pose": 8,
+          "ms": 400
+        },
+        {
+          "pose": 0,
+          "ms": 500
+        }
+      ],
+      "symbol": "◇"
+    },
+    "music": {
+      "label": "Music time",
+      "priority": 45,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 400,
+          "rotation": -3
+        },
+        {
+          "pose": 1,
+          "ms": 450,
+          "rotation": 3
+        },
+        {
+          "pose": 0,
+          "ms": 450,
+          "rotation": -3
+        },
+        {
+          "pose": 9,
+          "ms": 450,
+          "rotation": 2
+        },
+        {
+          "pose": 0,
+          "ms": 500
+        }
+      ],
+      "symbol": "♪"
+    },
+    "resize": {
+      "label": "Getting comfortable",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 9,
+          "ms": 300,
+          "sx": 1.015,
+          "sy": 0.99
+        },
+        {
+          "pose": 0,
+          "ms": 450
+        }
+      ],
+      "symbol": "↔"
+    },
+    "copy": {
+      "label": "Copied",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 9,
+          "ms": 300
+        },
+        {
+          "pose": 6,
+          "ms": 500
+        },
+        {
+          "pose": 0,
+          "ms": 400
+        }
+      ],
+      "symbol": "✓"
+    },
+    "wake": {
+      "label": "Welcome back",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 1,
+          "ms": 300,
+          "sy": 0.99
+        },
+        {
+          "pose": 8,
+          "ms": 350
+        },
+        {
+          "pose": 4,
+          "ms": 350
+        },
+        {
+          "pose": 0,
+          "ms": 550
+        }
+      ]
+    },
+    "goodbye": {
+      "label": "See you soon",
+      "priority": 35,
+      "keys": [
+        {
+          "pose": 4,
+          "ms": 300
+        },
+        {
+          "pose": 5,
+          "ms": 380
+        },
+        {
+          "pose": 4,
+          "ms": 320
+        },
+        {
+          "pose": 1,
+          "ms": 420,
+          "rotation": 2
+        },
+        {
+          "pose": 0,
+          "ms": 450
+        }
+      ]
+    },
+    "listening": {
+      "label": "Listening to you",
+      "priority": 20,
+      "keys": [
+        {
+          "pose": 21,
+          "ms": 1000
+        }
+      ],
+      "loop": true,
+      "breath": true
+    },
+    "speaking": {
+      "label": "Speaking · reply streaming",
+      "priority": 40,
+      "keys": [
+        {
+          "pose": 22,
+          "ms": 1000
+        }
+      ],
+      "loop": true,
+      "breath": true
+    },
+    "problem": {
+      "label": "Needs attention",
+      "priority": 85,
+      "keys": [
+        {
+          "pose": 16,
+          "ms": 1000
+        }
+      ],
+      "loop": true,
+      "breath": true,
+      "symbol": "!"
+    },
+    "skeptical": {
+      "label": "Skeptical · really?",
+      "priority": 42,
+      "keys": [
+        {
+          "pose": 16,
+          "ms": 420,
+          "easeMs": 300
+        },
+        {
+          "pose": 16,
+          "ms": 1050,
+          "rotation": 0
+        },
+        {
+          "pose": 16,
+          "ms": 450
+        }
+      ]
+    },
+    "smug": {
+      "label": "Smug confidence",
+      "priority": 42,
+      "keys": [
+        {
+          "pose": 17,
+          "ms": 420,
+          "easeMs": 300
+        },
+        {
+          "pose": 17,
+          "ms": 1050,
+          "rotation": 0
+        },
+        {
+          "pose": 17,
+          "ms": 450
+        }
+      ]
+    },
+    "disbelief": {
+      "label": "Exaggerated disbelief",
+      "priority": 42,
+      "keys": [
+        {
+          "pose": 18,
+          "ms": 420,
+          "easeMs": 300
+        },
+        {
+          "pose": 18,
+          "ms": 1050,
+          "rotation": 0
+        },
+        {
+          "pose": 18,
+          "ms": 450
+        }
+      ]
+    },
+    "curious": {
+      "label": "Curious lean",
+      "priority": 42,
+      "keys": [
+        {
+          "pose": 19,
+          "ms": 420,
+          "easeMs": 300
+        },
+        {
+          "pose": 19,
+          "ms": 1050,
+          "rotation": -0.7
+        },
+        {
+          "pose": 19,
+          "ms": 450
+        }
+      ]
+    },
+    "cheeky": {
+      "label": "Affectionate wink",
+      "priority": 42,
+      "keys": [
+        {
+          "pose": 20,
+          "ms": 420,
+          "easeMs": 300
+        },
+        {
+          "pose": 20,
+          "ms": 1050,
+          "rotation": 0
+        },
+        {
+          "pose": 20,
+          "ms": 450
+        }
+      ]
+    },
+    "tender": {
+      "label": "Here with you",
+      "priority": 42,
+      "keys": [
+        {
+          "pose": 21,
+          "ms": 420,
+          "easeMs": 300
+        },
+        {
+          "pose": 21,
+          "ms": 1600,
+          "rotation": 0
+        },
+        {
+          "pose": 21,
+          "ms": 450
+        }
+      ]
+    },
+    "idleSmug": {
+      "label": "A private joke",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 17,
+          "ms": 450
+        },
+        {
+          "pose": 17,
+          "ms": 950
+        },
+        {
+          "pose": 0,
+          "ms": 650
+        }
+      ]
+    },
+    "idleCurious": {
+      "label": "A curious glance",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 19,
+          "ms": 550
+        },
+        {
+          "pose": 19,
+          "ms": 1100,
+          "rotation": 0.5
+        },
+        {
+          "pose": 0,
+          "ms": 700
+        }
+      ]
+    },
+    "idleSoft": {
+      "label": "A soft moment",
+      "priority": 5,
+      "keys": [
+        {
+          "pose": 21,
+          "ms": 600
+        },
+        {
+          "pose": 21,
+          "ms": 1100
+        },
+        {
+          "pose": 0,
+          "ms": 650
+        }
+      ]
+    },
+    "interrupted": {
+      "label": "Stopped · ready when you are",
+      "priority": 60,
+      "keys": [
+        {
+          "pose": 21,
+          "ms": 450
+        },
+        {
+          "pose": 21,
+          "ms": 1300
+        }
+      ],
+      "outcome": true
+    }
+  },
+  "sourceFrames": [
+    {
+      "x": 0,
+      "y": 0,
+      "width": 313,
+      "height": 326
+    },
+    {
+      "x": 313,
+      "y": 0,
+      "width": 314,
+      "height": 326
+    },
+    {
+      "x": 627,
+      "y": 0,
+      "width": 314,
+      "height": 326
+    },
+    {
+      "x": 941,
+      "y": 0,
+      "width": 313,
+      "height": 326
+    },
+    {
+      "x": 0,
+      "y": 326,
+      "width": 313,
+      "height": 326
+    },
+    {
+      "x": 313,
+      "y": 326,
+      "width": 314,
+      "height": 326
+    },
+    {
+      "x": 627,
+      "y": 326,
+      "width": 314,
+      "height": 326
+    },
+    {
+      "x": 941,
+      "y": 326,
+      "width": 313,
+      "height": 326
+    },
+    {
+      "x": 0,
+      "y": 652,
+      "width": 313,
+      "height": 322
+    },
+    {
+      "x": 313,
+      "y": 652,
+      "width": 314,
+      "height": 322
+    },
+    {
+      "x": 627,
+      "y": 652,
+      "width": 314,
+      "height": 322
+    },
+    {
+      "x": 941,
+      "y": 652,
+      "width": 313,
+      "height": 322
+    },
+    {
+      "x": 0,
+      "y": 974,
+      "width": 313,
+      "height": 280
+    },
+    {
+      "x": 313,
+      "y": 974,
+      "width": 314,
+      "height": 280
+    },
+    {
+      "x": 627,
+      "y": 974,
+      "width": 314,
+      "height": 280
+    },
+    {
+      "x": 941,
+      "y": 974,
+      "width": 313,
+      "height": 280
+    }
+  ],
+  "breathing": {
+    "inhaleMs": 2600,
+    "exhaleMs": 3400,
+    "amount": 0.006
+  },
+  "blink": {
+    "minMs": 3800,
+    "maxMs": 7200,
+    "closedMs": 110
+  }
+}

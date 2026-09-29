@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Cere
+Comment=A playful desktop companion for your CLI sessions
+Exec=cere --show
+Icon=cere
+Terminal=false
+Categories=Utility;
+StartupNotify=false

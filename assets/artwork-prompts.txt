@@ -1,0 +1,47 @@
+Mode: built-in image_gen. Original GIFs and original atlas are preserved.
+The user authorized deterministic pixel/alpha cleanup after generated transparency
+introduced blue speckles. Final transparency comes from tools/clean-artwork.py,
+using the clean opaque master, preserving eye highlights and removing white matte.
+Opaque cleanup source: artwork/cere-clean-white.png.
+Final asset: cere-polished.png (4 x 4 transparent pose sheet).
+
+INITIAL PROMPT
+Use case: identity-preserve.
+Asset type: transparent 4-by-4 sprite sheet for Cere, a desktop companion.
+Input image 1 is the identity and outfit reference. Input image 2 is a supporting pose reference, not the background to copy.
+Refine this same character's artwork: remove jagged GIF fringes and noisy flyaway pixels, draw smooth coherent blue hair locks, clean antialiased silhouette, readable black fabric and silver hardware. Keep her vivid electric cyan/blue wavy long hair, black round eyeglasses, pale skin, black face mask, black goth strapped outfit, gloves, belt buckles, cargo trousers and heavy black boots. Keep original small chibi proportions and adult character identity. Clean detailed anime sprite rendering, not pixel art. No redesign, no glow around silhouette.
+Produce a SQUARE 4-column by 4-row sheet of EXACTLY sixteen full-body poses on genuinely TRANSPARENT background. All cells equal dimensions, no grid lines, no text, no shadows outside character. Each character centered in its cell, same scale/head size, generous transparent gutters on every side. Feet at same baseline in each cell except jumping. Keep entire hair and boots inside each cell.
+Reading left-to-right, row by row:
+0 neutral standing relaxed eyes open;
+1 exactly same neutral with eyes softly closed for blinking;
+2 standing head tilted slightly toward viewer left, curious;
+3 standing head tilted slightly toward viewer right;
+4 friendly wave with one gloved hand at shoulder height;
+5 same friendly wave with that hand raised higher;
+6 standing arms crossed attentive eyes open;
+7 same crossed arms with eyes lowered thoughtfully;
+8 both gloved hands near cheeks/mask, pleasantly surprised;
+9 hands open outwards in a presenting gesture;
+10 crouching slightly preparing a small jump;
+11 little cheerful jump with both hands lifted;
+12 running toward viewer right, legs extended in stride, hair trailing left;
+13 same right-facing run with legs passing beneath the body;
+14 running toward viewer left, legs extended, hair trailing right;
+15 same left-facing run with legs passing beneath the body.
+Prioritize exact consistent character anatomy, outfit and scale across all 16 cells. Crisp but smooth alpha edge, no white or colored matte, no checkerboard painted into image.
+
+FIRST CLEANUP
+Edit this sprite sheet only to clean every silhouette. Preserve the sixteen poses, exact four-by-four equal cell layout, outfit, scale and face of Cere.
+CRITICAL: The existing image has ugly cyan/blue pixel static, ragged halo and floating speckled debris around the hair, boots and between cells. REMOVE ALL of that static and all detached pixels. Redraw the outer hair as SOLID smooth flowing curved locks with clean antialiased contours. Keep interior hair blue shading. Remove every cyan fringe, blue noise cloud, stipple, jagged pixel, neon halo and exterior glow. Use clean professional 2D game art alpha edges. Hair ends should be coherent smooth tapered shapes, not many fine wiry strands. No rough sketch lines. Treat every pixel outside the solid character silhouette as fully transparent. Leave 16 pixels minimum of fully transparent margin at each cell border; shrink each character slightly if needed to fit. Preserve black eyeglasses, face mask, black buckled outfit and blue hair. Transparent background, no grid, no text.
+
+FINAL CLEANUP
+Polish this exact 4 by 4 transparent character sprite sheet for production use. All sixteen poses and their cell locations must remain.
+The one remaining problem is BLUE STATIC and cyan speckles OUTSIDE THE HAIR. Erase the blue speckled patches, the haze, glitter and isolated pixels around EVERY sprite. The hair must have solid, smooth, inked contours like a professionally drawn animation cel, and absolutely NO particles, no cyan outlines, no hair glow, no dithering, no scattered pixels. Slightly simplify hair lock outlines to achieve that. Keep the interior character details, blue hair, glasses, black mask and outfit unchanged.
+Uniform cell size, transparent background with zero color outside each clean silhouette. Put the same neutral white studio illumination on every character. Do not add anything.
+OPAQUE CLEANUP
+Use case: precise-object-edit. Clean this sprite sheet for production.
+Place this exact sixteen-pose sheet on a pure opaque WHITE (#ffffff) background. Preserve the positions, scale, and all sixteen poses exactly, including the shorter last row. Keep the same blue-haired glasses-wearing masked goth character.
+Remove every speck of blue/cyan noise and every stray blue mark outside the actual character contours. On white, there should be absolutely clean uninterrupted white everywhere outside the bodies. Redraw all outer contours with SMOOTH solid clean cel-animation ink lines. Hair should be smooth solid blue locks bounded by a dark-blue fine line, no fine fuzzy flyaway hairs. Get rid of stippling and pixelated halos on head, hands, hair and boots. Do not just paste the noisy current cutouts onto white: actively remove their ugly blue/cyan fringe and floating debris. Preserve interior artwork. No shadows, no grid, no labels, no objects added.
+
+BACKGROUND EXTRACTION
+Use case: background-extraction. Remove ONLY the pure white background from this clean sixteen-pose sprite sheet and replace it with true transparency. Preserve every character pixel, the exact pose positions and sizes, the 1254 by 1254 canvas, and the sixteen poses. Preserve all dark-blue hair contour ink, black glasses, masks, outfits, and interior eye/skin highlights. Transparent gaps between limbs must also be clean. Clean antialiased alpha edges with NO white matte, NO glow, NO colored fringe, NO noisy dithering, NO scattered pixels. Do not redraw, rearrange, resize, or add anything. Output transparent PNG.

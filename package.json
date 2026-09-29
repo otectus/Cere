@@ -1,0 +1,25 @@
+{
+  "name": "cere-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "./tools/run.sh",
+    "build": "./tools/build.sh",
+    "broker": "node broker/main.ts",
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "linkedom": "0.18.13",
+    "neo4j-driver": "6.2.0",
+    "zod": "4.6.5"
+  }
+}

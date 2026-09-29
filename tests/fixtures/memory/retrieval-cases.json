@@ -1,0 +1,2903 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "case-00",
+      "split": "development",
+      "category": "exact_identifier",
+      "query": "case-00 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-00:a0",
+          "evidenceId": "case-00:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-00:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-00:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-00:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-00:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00000",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-00:repeat"
+      ]
+    },
+    {
+      "id": "case-01",
+      "split": "heldout",
+      "category": "exact_identifier",
+      "query": "case-01 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-01:a0",
+          "evidenceId": "case-01:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-01:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-01:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-01:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-01:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00001",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-02",
+      "split": "development",
+      "category": "exact_identifier",
+      "query": "case-02 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-02:a0",
+          "evidenceId": "case-02:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-02:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-02:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-02:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-02:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00002",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-03",
+      "split": "heldout",
+      "category": "exact_identifier",
+      "query": "case-03 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-03:a0",
+          "evidenceId": "case-03:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-03:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-03:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-03:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-03:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00003",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-03:repeat"
+      ]
+    },
+    {
+      "id": "case-04",
+      "split": "development",
+      "category": "exact_identifier",
+      "query": "case-04 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-04:a0",
+          "evidenceId": "case-04:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-04:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-04:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-04:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-04:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00004",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-05",
+      "split": "heldout",
+      "category": "exact_identifier",
+      "query": "case-05 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-05:a0",
+          "evidenceId": "case-05:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-05:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-05:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-05:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-05:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00005",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-06",
+      "split": "development",
+      "category": "exact_identifier",
+      "query": "case-06 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-06:a0",
+          "evidenceId": "case-06:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-06:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-06:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-06:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-06:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00006",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-06:repeat"
+      ]
+    },
+    {
+      "id": "case-07",
+      "split": "heldout",
+      "category": "exact_identifier",
+      "query": "case-07 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-07:a0",
+          "evidenceId": "case-07:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-07:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-07:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-07:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-07:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00007",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-08",
+      "split": "development",
+      "category": "exact_identifier",
+      "query": "case-08 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-08:a0",
+          "evidenceId": "case-08:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-08:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-08:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-08:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-08:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00008",
+      "policyChanges": [
+        {
+          "revision": 90000,
+          "action": "exclude_other_scopes"
+        }
+      ],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-09",
+      "split": "heldout",
+      "category": "exact_identifier",
+      "query": "case-09 synthetic exact identifier",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-09:a0",
+          "evidenceId": "case-09:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-09:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-09:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-09:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-09:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00009",
+      "policyChanges": [],
+      "deletionChanges": [
+        {
+          "revision": 90001,
+          "target": "case-09:deleted-copy"
+        }
+      ],
+      "repeatedSourceIds": [
+        "case-09:repeat"
+      ]
+    },
+    {
+      "id": "case-10",
+      "split": "development",
+      "category": "single_hop",
+      "query": "case-10 synthetic single hop",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-10:a0",
+          "evidenceId": "case-10:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-10:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-10:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-10:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-10:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-10:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00010",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-11",
+      "split": "heldout",
+      "category": "single_hop",
+      "query": "case-11 synthetic single hop",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-11:a0",
+          "evidenceId": "case-11:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-11:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-11:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-11:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-11:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-11:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00011",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-12",
+      "split": "development",
+      "category": "single_hop",
+      "query": "case-12 synthetic single hop",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-12:a0",
+          "evidenceId": "case-12:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-12:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-12:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-12:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-12:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-12:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00012",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-12:repeat"
+      ]
+    },
+    {
+      "id": "case-13",
+      "split": "heldout",
+      "category": "single_hop",
+      "query": "case-13 synthetic single hop",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-13:a0",
+          "evidenceId": "case-13:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-13:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-13:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-13:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-13:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-13:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00013",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-14",
+      "split": "development",
+      "category": "single_hop",
+      "query": "case-14 synthetic single hop",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-14:a0",
+          "evidenceId": "case-14:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-14:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-14:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-14:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-14:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-14:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00014",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-15",
+      "split": "heldout",
+      "category": "single_hop",
+      "query": "case-15 synthetic single hop",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-15:a0",
+          "evidenceId": "case-15:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-15:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-15:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-15:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-15:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-15:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00015",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-15:repeat"
+      ]
+    },
+    {
+      "id": "case-16",
+      "split": "development",
+      "category": "single_hop",
+      "query": "case-16 synthetic single hop",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-16:a0",
+          "evidenceId": "case-16:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-16:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-16:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-16:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-16:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-16:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00016",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-17",
+      "split": "heldout",
+      "category": "single_hop",
+      "query": "case-17 synthetic single hop",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-17:a0",
+          "evidenceId": "case-17:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-17:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-17:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-17:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-17:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-17:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00017",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-18",
+      "split": "development",
+      "category": "single_hop",
+      "query": "case-18 synthetic single hop",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-18:a0",
+          "evidenceId": "case-18:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-18:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-18:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-18:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-18:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-18:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00018",
+      "policyChanges": [
+        {
+          "revision": 90000,
+          "action": "exclude_other_scopes"
+        }
+      ],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-18:repeat"
+      ]
+    },
+    {
+      "id": "case-19",
+      "split": "heldout",
+      "category": "single_hop",
+      "query": "case-19 synthetic single hop",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-19:a0",
+          "evidenceId": "case-19:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-19:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-19:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-19:e0"
+      ],
+      "requiredPaths": [
+        [
+          "case-19:a0"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-19:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00019",
+      "policyChanges": [],
+      "deletionChanges": [
+        {
+          "revision": 90001,
+          "target": "case-19:deleted-copy"
+        }
+      ],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-20",
+      "split": "development",
+      "category": "multi_hop",
+      "query": "case-20 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-20:a0",
+          "evidenceId": "case-20:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-20:a1",
+          "evidenceId": "case-20:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-20:a0",
+        "fact:case-20:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-20:a0",
+        "case-20:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-20:e0",
+        "case-20:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-20:a0",
+          "case-20:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-20:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00020",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-21",
+      "split": "heldout",
+      "category": "multi_hop",
+      "query": "case-21 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-21:a0",
+          "evidenceId": "case-21:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-21:a1",
+          "evidenceId": "case-21:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-21:a0",
+        "fact:case-21:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-21:a0",
+        "case-21:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-21:e0",
+        "case-21:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-21:a0",
+          "case-21:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-21:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00021",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-21:repeat"
+      ]
+    },
+    {
+      "id": "case-22",
+      "split": "development",
+      "category": "multi_hop",
+      "query": "case-22 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-22:a0",
+          "evidenceId": "case-22:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-22:a1",
+          "evidenceId": "case-22:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-22:a0",
+        "fact:case-22:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-22:a0",
+        "case-22:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-22:e0",
+        "case-22:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-22:a0",
+          "case-22:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-22:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00022",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-23",
+      "split": "heldout",
+      "category": "multi_hop",
+      "query": "case-23 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-23:a0",
+          "evidenceId": "case-23:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-23:a1",
+          "evidenceId": "case-23:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-23:a0",
+        "fact:case-23:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-23:a0",
+        "case-23:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-23:e0",
+        "case-23:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-23:a0",
+          "case-23:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-23:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00023",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-24",
+      "split": "development",
+      "category": "multi_hop",
+      "query": "case-24 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-24:a0",
+          "evidenceId": "case-24:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-24:a1",
+          "evidenceId": "case-24:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-24:a0",
+        "fact:case-24:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-24:a0",
+        "case-24:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-24:e0",
+        "case-24:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-24:a0",
+          "case-24:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-24:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00024",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-24:repeat"
+      ]
+    },
+    {
+      "id": "case-25",
+      "split": "heldout",
+      "category": "multi_hop",
+      "query": "case-25 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-25:a0",
+          "evidenceId": "case-25:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-25:a1",
+          "evidenceId": "case-25:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-25:a0",
+        "fact:case-25:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-25:a0",
+        "case-25:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-25:e0",
+        "case-25:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-25:a0",
+          "case-25:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-25:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00025",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-26",
+      "split": "development",
+      "category": "multi_hop",
+      "query": "case-26 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-26:a0",
+          "evidenceId": "case-26:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-26:a1",
+          "evidenceId": "case-26:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-26:a0",
+        "fact:case-26:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-26:a0",
+        "case-26:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-26:e0",
+        "case-26:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-26:a0",
+          "case-26:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-26:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00026",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-27",
+      "split": "heldout",
+      "category": "multi_hop",
+      "query": "case-27 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-27:a0",
+          "evidenceId": "case-27:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-27:a1",
+          "evidenceId": "case-27:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-27:a0",
+        "fact:case-27:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-27:a0",
+        "case-27:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-27:e0",
+        "case-27:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-27:a0",
+          "case-27:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-27:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00027",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-27:repeat"
+      ]
+    },
+    {
+      "id": "case-28",
+      "split": "development",
+      "category": "multi_hop",
+      "query": "case-28 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-28:a0",
+          "evidenceId": "case-28:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-28:a1",
+          "evidenceId": "case-28:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-28:a0",
+        "fact:case-28:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-28:a0",
+        "case-28:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-28:e0",
+        "case-28:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-28:a0",
+          "case-28:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-28:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00028",
+      "policyChanges": [
+        {
+          "revision": 90000,
+          "action": "exclude_other_scopes"
+        }
+      ],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-29",
+      "split": "heldout",
+      "category": "multi_hop",
+      "query": "case-29 synthetic multi hop",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-29:a0",
+          "evidenceId": "case-29:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "case-29:a1",
+          "evidenceId": "case-29:e1"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-29:a0",
+        "fact:case-29:a1"
+      ],
+      "requiredAssertionIds": [
+        "case-29:a0",
+        "case-29:a1"
+      ],
+      "requiredEvidenceIds": [
+        "case-29:e0",
+        "case-29:e1"
+      ],
+      "requiredPaths": [
+        [
+          "case-29:a0",
+          "case-29:a1"
+        ]
+      ],
+      "forbiddenFacts": [
+        "fact:case-29:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00029",
+      "policyChanges": [],
+      "deletionChanges": [
+        {
+          "revision": 90001,
+          "target": "case-29:deleted-copy"
+        }
+      ],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-30",
+      "split": "development",
+      "category": "temporal_change",
+      "query": "case-30 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-30:a0",
+          "evidenceId": "case-30:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-30:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-30:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-30:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-30:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00030",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-30:repeat"
+      ]
+    },
+    {
+      "id": "case-31",
+      "split": "heldout",
+      "category": "temporal_change",
+      "query": "case-31 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-31:a0",
+          "evidenceId": "case-31:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-31:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-31:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-31:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-31:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00031",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-32",
+      "split": "development",
+      "category": "temporal_change",
+      "query": "case-32 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-32:a0",
+          "evidenceId": "case-32:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-32:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-32:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-32:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-32:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00032",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-33",
+      "split": "heldout",
+      "category": "temporal_change",
+      "query": "case-33 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-33:a0",
+          "evidenceId": "case-33:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-33:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-33:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-33:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-33:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00033",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-33:repeat"
+      ]
+    },
+    {
+      "id": "case-34",
+      "split": "development",
+      "category": "temporal_change",
+      "query": "case-34 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-34:a0",
+          "evidenceId": "case-34:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-34:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-34:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-34:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-34:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00034",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-35",
+      "split": "heldout",
+      "category": "temporal_change",
+      "query": "case-35 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-35:a0",
+          "evidenceId": "case-35:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-35:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-35:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-35:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-35:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00035",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-36",
+      "split": "development",
+      "category": "temporal_change",
+      "query": "case-36 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-36:a0",
+          "evidenceId": "case-36:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-36:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-36:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-36:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-36:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00036",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-36:repeat"
+      ]
+    },
+    {
+      "id": "case-37",
+      "split": "heldout",
+      "category": "temporal_change",
+      "query": "case-37 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-37:a0",
+          "evidenceId": "case-37:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-37:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-37:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-37:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-37:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00037",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-38",
+      "split": "development",
+      "category": "temporal_change",
+      "query": "case-38 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-38:a0",
+          "evidenceId": "case-38:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-38:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-38:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-38:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-38:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00038",
+      "policyChanges": [
+        {
+          "revision": 90000,
+          "action": "exclude_other_scopes"
+        }
+      ],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-39",
+      "split": "heldout",
+      "category": "temporal_change",
+      "query": "case-39 synthetic temporal change",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-39:a0",
+          "evidenceId": "case-39:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-39:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-39:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-39:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-39:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00039",
+      "policyChanges": [],
+      "deletionChanges": [
+        {
+          "revision": 90001,
+          "target": "case-39:deleted-copy"
+        }
+      ],
+      "repeatedSourceIds": [
+        "case-39:repeat"
+      ]
+    },
+    {
+      "id": "case-40",
+      "split": "development",
+      "category": "historical_view",
+      "query": "case-40 synthetic historical view",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-40:a0",
+          "evidenceId": "case-40:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-40:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-40:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-40:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-40:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00040",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-41",
+      "split": "heldout",
+      "category": "historical_view",
+      "query": "case-41 synthetic historical view",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-41:a0",
+          "evidenceId": "case-41:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-41:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-41:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-41:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-41:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00041",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-42",
+      "split": "development",
+      "category": "historical_view",
+      "query": "case-42 synthetic historical view",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-42:a0",
+          "evidenceId": "case-42:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-42:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-42:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-42:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-42:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00042",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-42:repeat"
+      ]
+    },
+    {
+      "id": "case-43",
+      "split": "heldout",
+      "category": "historical_view",
+      "query": "case-43 synthetic historical view",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-43:a0",
+          "evidenceId": "case-43:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-43:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-43:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-43:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-43:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00043",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-44",
+      "split": "development",
+      "category": "historical_view",
+      "query": "case-44 synthetic historical view",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-44:a0",
+          "evidenceId": "case-44:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-44:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-44:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-44:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-44:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00044",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-45",
+      "split": "heldout",
+      "category": "historical_view",
+      "query": "case-45 synthetic historical view",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-45:a0",
+          "evidenceId": "case-45:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-45:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-45:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-45:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-45:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00045",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-45:repeat"
+      ]
+    },
+    {
+      "id": "case-46",
+      "split": "development",
+      "category": "historical_view",
+      "query": "case-46 synthetic historical view",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-46:a0",
+          "evidenceId": "case-46:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-46:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-46:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-46:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-46:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00046",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-47",
+      "split": "heldout",
+      "category": "historical_view",
+      "query": "case-47 synthetic historical view",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-47:a0",
+          "evidenceId": "case-47:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-47:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-47:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-47:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-47:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00047",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-48",
+      "split": "development",
+      "category": "historical_view",
+      "query": "case-48 synthetic historical view",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-48:a0",
+          "evidenceId": "case-48:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-48:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-48:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-48:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-48:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00048",
+      "policyChanges": [
+        {
+          "revision": 90000,
+          "action": "exclude_other_scopes"
+        }
+      ],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-48:repeat"
+      ]
+    },
+    {
+      "id": "case-49",
+      "split": "heldout",
+      "category": "historical_view",
+      "query": "case-49 synthetic historical view",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 1500000,
+      "knownRevision": 50,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-49:a0",
+          "evidenceId": "case-49:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-49:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-49:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-49:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-49:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00049",
+      "policyChanges": [],
+      "deletionChanges": [
+        {
+          "revision": 90001,
+          "target": "case-49:deleted-copy"
+        }
+      ],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-50",
+      "split": "development",
+      "category": "interrupted_task",
+      "query": "case-50 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-50:a0",
+          "evidenceId": "case-50:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-50:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-50:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-50:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-50:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00050",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-51",
+      "split": "heldout",
+      "category": "interrupted_task",
+      "query": "case-51 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-51:a0",
+          "evidenceId": "case-51:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-51:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-51:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-51:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-51:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00051",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-51:repeat"
+      ]
+    },
+    {
+      "id": "case-52",
+      "split": "development",
+      "category": "interrupted_task",
+      "query": "case-52 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-52:a0",
+          "evidenceId": "case-52:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-52:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-52:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-52:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-52:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00052",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-53",
+      "split": "heldout",
+      "category": "interrupted_task",
+      "query": "case-53 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-53:a0",
+          "evidenceId": "case-53:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-53:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-53:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-53:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-53:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00053",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-54",
+      "split": "development",
+      "category": "interrupted_task",
+      "query": "case-54 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-54:a0",
+          "evidenceId": "case-54:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-54:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-54:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-54:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-54:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00054",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-54:repeat"
+      ]
+    },
+    {
+      "id": "case-55",
+      "split": "heldout",
+      "category": "interrupted_task",
+      "query": "case-55 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-55:a0",
+          "evidenceId": "case-55:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-55:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-55:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-55:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-55:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00055",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-56",
+      "split": "development",
+      "category": "interrupted_task",
+      "query": "case-56 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-56:a0",
+          "evidenceId": "case-56:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-56:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-56:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-56:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-56:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00056",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-57",
+      "split": "heldout",
+      "category": "interrupted_task",
+      "query": "case-57 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-57:a0",
+          "evidenceId": "case-57:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-57:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-57:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-57:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-57:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00057",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-57:repeat"
+      ]
+    },
+    {
+      "id": "case-58",
+      "split": "development",
+      "category": "interrupted_task",
+      "query": "case-58 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-58:a0",
+          "evidenceId": "case-58:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-58:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-58:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-58:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-58:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00058",
+      "policyChanges": [
+        {
+          "revision": 90000,
+          "action": "exclude_other_scopes"
+        }
+      ],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-59",
+      "split": "heldout",
+      "category": "interrupted_task",
+      "query": "case-59 synthetic interrupted task",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-59:a0",
+          "evidenceId": "case-59:e0"
+        }
+      ],
+      "expectedFacts": [
+        "fact:case-59:a0"
+      ],
+      "requiredAssertionIds": [
+        "case-59:a0"
+      ],
+      "requiredEvidenceIds": [
+        "case-59:e0"
+      ],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-59:forbidden"
+      ],
+      "abstain": false,
+      "anchorEntityId": "entity-00059",
+      "policyChanges": [],
+      "deletionChanges": [
+        {
+          "revision": 90001,
+          "target": "case-59:deleted-copy"
+        }
+      ],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-60",
+      "split": "development",
+      "category": "contradiction_abstention",
+      "query": "case-60 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-60:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-60:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-60:left",
+        "fact:case-60:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00060",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-60:repeat"
+      ]
+    },
+    {
+      "id": "case-61",
+      "split": "heldout",
+      "category": "contradiction_abstention",
+      "query": "case-61 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-61:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-61:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-61:left",
+        "fact:case-61:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00061",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-62",
+      "split": "development",
+      "category": "contradiction_abstention",
+      "query": "case-62 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-62:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-62:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-62:left",
+        "fact:case-62:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00062",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-63",
+      "split": "heldout",
+      "category": "contradiction_abstention",
+      "query": "case-63 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-63:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-63:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-63:left",
+        "fact:case-63:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00063",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-63:repeat"
+      ]
+    },
+    {
+      "id": "case-64",
+      "split": "development",
+      "category": "contradiction_abstention",
+      "query": "case-64 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-64:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-64:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-64:left",
+        "fact:case-64:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00064",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-65",
+      "split": "heldout",
+      "category": "contradiction_abstention",
+      "query": "case-65 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-65:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-65:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-65:left",
+        "fact:case-65:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00065",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-66",
+      "split": "development",
+      "category": "contradiction_abstention",
+      "query": "case-66 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-2"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-66:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-66:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-66:left",
+        "fact:case-66:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00066",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": [
+        "case-66:repeat"
+      ]
+    },
+    {
+      "id": "case-67",
+      "split": "heldout",
+      "category": "contradiction_abstention",
+      "query": "case-67 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-3"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-67:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-67:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-67:left",
+        "fact:case-67:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00067",
+      "policyChanges": [],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-68",
+      "split": "development",
+      "category": "contradiction_abstention",
+      "query": "case-68 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-0"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-68:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-68:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-68:left",
+        "fact:case-68:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00068",
+      "policyChanges": [
+        {
+          "revision": 90000,
+          "action": "exclude_other_scopes"
+        }
+      ],
+      "deletionChanges": [],
+      "repeatedSourceIds": []
+    },
+    {
+      "id": "case-69",
+      "split": "heldout",
+      "category": "contradiction_abstention",
+      "query": "case-69 synthetic contradiction abstention",
+      "eligibleScopes": [
+        "scope-1"
+      ],
+      "worldAtUs": 3000000,
+      "knownRevision": 100000,
+      "sourceTimeline": [
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "conflicting_candidate",
+          "evidenceId": "case-69:e0"
+        },
+        {
+          "revision": 11,
+          "atUs": 1000001,
+          "event": "equal_authority_conflict",
+          "evidenceId": "case-69:e1"
+        }
+      ],
+      "expectedFacts": [],
+      "requiredAssertionIds": [],
+      "requiredEvidenceIds": [],
+      "requiredPaths": [],
+      "forbiddenFacts": [
+        "fact:case-69:left",
+        "fact:case-69:right"
+      ],
+      "abstain": true,
+      "anchorEntityId": "entity-00069",
+      "policyChanges": [],
+      "deletionChanges": [
+        {
+          "revision": 90001,
+          "target": "case-69:deleted-copy"
+        }
+      ],
+      "repeatedSourceIds": [
+        "case-69:repeat"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 2,
+  "model": "gpt-oss:20b-cloud",
+  "modelDigest": "9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae",
+  "baseline": {
+    "promptVersion": "cere-extraction-v1",
+    "evaluatedAt": "2026-09-29T20:18:28.615Z",
+    "samples": 5,
+    "assertionProposals": 5,
+    "expectedPredicateProposals": 3,
+    "predicatePrecision": 0.6,
+    "caseRecall": 0.6,
+    "exactQuoteValidation": true,
+    "latencyMs": { "p50": 7353.672510999997, "p95": 13169.762716, "maximum": 13169.762716 },
+    "targetPrecisionAtLeast95Percent": false,
+    "caseResults": [
+      { "index": 0, "expectedPredicate": "USES_TOOL", "proposedPredicates": ["USES_TOOL"] },
+      { "index": 1, "expectedPredicate": "BLOCKED_BY", "proposedPredicates": ["BLOCKED_BY"] },
+      { "index": 2, "expectedPredicate": "PREFERS_TOOL", "proposedPredicates": ["PREFERS"] },
+      { "index": 3, "expectedPredicate": "IMPLEMENTS", "proposedPredicates": ["IMPLEMENTS"] },
+      { "index": 4, "expectedPredicate": "CHECKOUT_OF", "proposedPredicates": ["IS_A_CHECKOUT_OF"] }
+    ]
+  },
+  "v2": {
+    "promptVersion": "cere-extraction-v2",
+    "evaluatedAt": "2026-09-29T20:37:31.400Z",
+    "samples": 5,
+    "assertionProposals": 5,
+    "expectedPredicateProposals": 5,
+    "predicatePrecision": 1,
+    "caseRecall": 1,
+    "exactQuoteValidation": true,
+    "closedOntologySchemaValidation": true,
+    "canonicalAcceptanceEvaluated": false,
+    "latencyMs": { "p50": 7748.964349, "p95": 11964.805108, "maximum": 11964.805108 },
+    "targetPrecisionAtLeast95Percent": true,
+    "caseResults": [
+      { "index": 0, "expectedPredicate": "USES_TOOL", "proposedPredicates": ["USES_TOOL"] },
+      { "index": 1, "expectedPredicate": "BLOCKED_BY", "proposedPredicates": ["BLOCKED_BY"] },
+      { "index": 2, "expectedPredicate": "PREFERS_TOOL", "proposedPredicates": ["PREFERS_TOOL"] },
+      { "index": 3, "expectedPredicate": "IMPLEMENTS", "proposedPredicates": ["IMPLEMENTS"] },
+      { "index": 4, "expectedPredicate": "CHECKOUT_OF", "proposedPredicates": ["CHECKOUT_OF"] }
+    ]
+  },
+  "caveat": "Small synthetic predicate-level evaluation. The v2 result passed the extraction adapter's closed ontology schema and exact-quote checks, but this runner did not submit proposals through Canonical.remember, so it does not establish canonical accepted-assertion precision or production-domain quality."
+}
