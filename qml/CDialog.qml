@@ -6,12 +6,12 @@ Popup {
     default property alias body: bodyColumn.data
     parent: Overlay.overlay
     anchors.centerIn: parent
-    width: Math.min(500, parent ? parent.width-32 : 500)
-    implicitHeight: Math.min(bodyColumn.implicitHeight+40, parent ? parent.height-32 : 720)
-    modal: true; dim: true; padding: 20; margins: 16
+    width: Math.min(520, parent ? parent.width-32 : 520)
+    implicitHeight: Math.min(bodyColumn.implicitHeight+48, parent ? parent.height-32 : 720)
+    modal: true; dim: true; focus: true; padding: 24; margins: 16
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    background: Rectangle { color: Theme.surface; radius: 14; border.color: Theme.line }
-    Overlay.modal: Rectangle { color: "#99070d14" }
+    background: Rectangle { color: Theme.surface; radius: 16; border.color: "#36536a" }
+    Overlay.modal: Rectangle { color: "#b304090f" }
     contentItem: ScrollView {
         id: viewport
         clip: true; contentWidth: availableWidth; contentHeight: bodyColumn.implicitHeight

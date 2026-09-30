@@ -23,14 +23,22 @@ export const webDefinitions: ToolDefinition[] = [
     schema: { url: { type: 'string', description: 'Public HTTP(S) page URL', maxLength: 2048 } } },
 ];
 
+/**
+ * Non-public IPv4 space, from the IANA IPv4 special-purpose registry plus multicast
+ * and reserved space. Policy for the registry's globally reachable exceptions: the
+ * 192.0.0.0/24 protocol-assignment block (including its PCP/TURN anycast entries)
+ * and the deprecated 6to4 relay anycast block 192.88.99.0/24 are refused, since
+ * they carry protocol services, not web content. The rest of 192.0.0.0/16 is
+ * ordinary public space.
+ */
+const reservedV4 = new BlockList();
+for (const [network, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
+  ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.88.99.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15],
+  ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
+] as const) reservedV4.addSubnet(network, prefix, 'ipv4');
 export function publicAddress(address: string): boolean {
-  if (isIP(address) === 4) {
-    const [a,b,c] = address.split('.').map(Number);
-    return !(a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && (b === 168 || b === 0)) ||
-      (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) || (a === 203 && b === 0 && c === 113));
-  }
+  if (isIP(address) === 4) return !reservedV4.check(address, 'ipv4');
   // Only ordinary global unicast; exclude transition, documentation and local ranges.
   return isIP(address) === 6 && /^[23][0-9a-f]{3}:/i.test(address) && !reservedV6.check(address, 'ipv6');
 }
@@ -44,23 +52,32 @@ export function webUrl(value: unknown, allowPrivate = false): URL {
   return url;
 }
 
+export type WebTransport = {
+  lookup: (hostname: string, options: { all: true }) => Promise<{ address: string; family: number }[]>;
+  request: typeof httpRequest;
+};
 // Resolve and pin the connection address. Recheck every redirect, including DNS,
 // so a page cannot redirect a reader into local services or rebind after validation.
-export const loadWeb: WebLoader = async (value, signal, options = {}) => {
+export function createWebLoader(transport: Partial<WebTransport> = {}): WebLoader {
+  const resolve = transport.lookup ?? ((hostname: string, options: { all: true }) => lookup(hostname, options));
+  return (value, signal, options = {}) => load(value, signal, options, resolve, transport.request);
+}
+export const loadWeb: WebLoader = createWebLoader();
+async function load(value: string, signal: AbortSignal, options: { body?: string; trustedServer?: boolean }, resolve: WebTransport['lookup'], send?: typeof httpRequest): Promise<WebPage> {
   const timeout = AbortSignal.any([signal, AbortSignal.timeout(12000)]);
   let url = webUrl(value, options.trustedServer), body = options.body;
   for (let hop = 0; hop < 4; hop++) {
     timeout.throwIfAborted();
     let aborted!: () => void;
     const addresses = await Promise.race([
-      lookup(url.hostname.replace(/^\[|\]$/g, ''), { all: true }),
+      resolve(url.hostname.replace(/^\[|\]$/g, ''), { all: true }),
       new Promise<never>((_resolve, reject) => { aborted = () => reject(timeout.reason); timeout.addEventListener('abort', aborted, { once: true }); if (timeout.aborted) aborted(); }),
     ]).finally(() => timeout.removeEventListener('abort', aborted));
     timeout.throwIfAborted();
     if (!addresses.length || (!options.trustedServer && addresses.some(a => !publicAddress(a.address)))) throw new Error('This web address resolves to a private or reserved network');
     const pinned = addresses[0];
     const response = await new Promise<{ status: number; headers: import('node:http').IncomingHttpHeaders; text: string }>((resolve, reject) => {
-      const req = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
+      const req = (send ?? (url.protocol === 'https:' ? httpsRequest : httpRequest))(url, {
         method: body === undefined ? 'GET' : 'POST', signal: timeout, agent: false,
         lookup: (_hostname, opts, callback: any) => opts.all ? callback(null, [pinned]) : callback(null, pinned.address, pinned.family),
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Cere/0.1; desktop assistant)', Accept: 'text/html,application/json,text/plain;q=0.9', 'Accept-Encoding': 'identity',
@@ -84,7 +101,7 @@ export const loadWeb: WebLoader = async (value, signal, options = {}) => {
     return { text: response.text, status: response.status, url: url.href, contentType: String(response.headers['content-type'] || '').split(';')[0].toLowerCase() };
   }
   throw new Error('Too many web redirects');
-};
+}
 
 const tidy = (text: string) => text.replace(/\s+/g, ' ').trim();
 function resultUrl(value: string, base: string) {

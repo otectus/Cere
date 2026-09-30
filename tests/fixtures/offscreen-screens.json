@@ -1,0 +1,11 @@
+{
+  "synchronousWindowSystemEvents": false,
+  "windowFrameMargins": false,
+  "screens": [
+    { "name": "Primary", "x": 0, "y": 0, "width": 1920, "height": 1080, "logicalDpi": 96, "logicalBaseDpi": 96, "dpr": 1 },
+    { "name": "Short", "x": 1920, "y": 0, "width": 1280, "height": 720, "logicalDpi": 96, "logicalBaseDpi": 96, "dpr": 1 },
+    { "name": "Below", "x": 0, "y": 1080, "width": 1366, "height": 768, "logicalDpi": 96, "logicalBaseDpi": 96, "dpr": 1 },
+    { "name": "Negative", "x": -1920, "y": 0, "width": 1920, "height": 1080, "logicalDpi": 96, "logicalBaseDpi": 96, "dpr": 1 },
+    { "name": "Narrow", "x": 3200, "y": 0, "width": 360, "height": 640, "logicalDpi": 96, "logicalBaseDpi": 96, "dpr": 1 }
+  ]
+}

@@ -10,16 +10,22 @@
     "start": "./tools/run.sh",
     "build": "./tools/build.sh",
     "broker": "node broker/main.ts",
-    "test": "node --test tests/*.test.ts",
+    "test": "CERE_TTS_DISABLED=1 node --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "24.19.0",
+    "@types/qrcode": "1.5.6",
+    "@types/ws": "8.18.1",
     "typescript": "5.9.3"
   },
   "dependencies": {
+    "canonicalize": "2.1.0",
     "linkedom": "0.18.13",
     "neo4j-driver": "6.2.0",
+    "qrcode": "1.5.4",
+    "sharp": "0.35.5",
+    "ws": "8.22.0",
     "zod": "4.6.5"
   }
 }

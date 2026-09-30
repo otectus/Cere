@@ -4,17 +4,19 @@ import QtQuick.Layouts
 Rectangle {
     id: card
     property var message
+    property string directory: App.session.cwd || ""
     property bool collapsed: message.role==="tool"
-    color: message.role==="user" ? "#1b303e" : message.role==="tool" ? "#161e28" : Theme.surface
-    radius: 9
-    border.color: message.role==="user" ? "#315064" : "#293948"
-    implicitHeight: contents.implicitHeight+22
+    color: message.role==="user" ? "#112638" : message.role==="tool" ? Theme.input : Theme.surface
+    radius: Theme.radius
+    border.color: message.role==="user" ? "#203e54" : Theme.subtle
+    implicitHeight: contents.implicitHeight+32
     ColumnLayout {
-        id:contents;anchors.fill:parent;anchors.margins:11;spacing:8
+        id:contents;anchors.fill:parent;anchors.margins:16;spacing:12
         RowLayout {
-            Text { text:card.message.role==="user" ? "YOU" : card.message.role==="tool" ? "TOOL ACTIVITY" : "REPLY";color:card.message.role==="user"?Theme.muted:Theme.cyan;font.pixelSize:10;font.letterSpacing:1.4;Layout.fillWidth:true }
-            CButton{visible:card.message.role==="tool";text:card.collapsed?"Show":"Hide";implicitHeight:26;onClicked:card.collapsed=!card.collapsed}
-            CButton{objectName:"copyMessage_"+card.message.id;text:"Copy";implicitHeight:26;onClicked:App.copy(card.message.text)}
+            Text { text:card.message.role==="user" ? "You" : card.message.role==="tool" ? "Tool activity" : "Cere";color:card.message.role==="user"?Theme.muted:Theme.cyan;font.family:Theme.font;font.pixelSize:12;font.weight:Font.DemiBold;Layout.fillWidth:true }
+            CButton{visible:card.message.role==="tool";quiet:true;text:card.collapsed?"Show":"Hide";implicitHeight:28;onClicked:card.collapsed=!card.collapsed}
+            // A display copy shortened for transport copies the complete stored text instead.
+            CButton{objectName:"copyMessage_"+card.message.id;text:"Copy";quiet:true;implicitHeight:28;help:"Copy message";onClicked:card.message.truncated?App.copySessionMessage(card.message.sessionId,card.message.id):App.copy(card.message.text)}
         }
         Text { visible:card.collapsed;text:card.message.text.split("\n")[0];color:Theme.muted;Layout.fillWidth:true;elide:Text.ElideRight;font.pixelSize:12 }
         Flickable {
@@ -24,26 +26,32 @@ Rectangle {
             implicitHeight:body.implicitHeight+(contentWidth>width?12:0)
             contentWidth:Math.max(width,body.contentWidth);contentHeight:height
             flickableDirection:Flickable.HorizontalFlick;clip:true
+            onWidthChanged:body.overflowWidth=0
             ScrollBar.horizontal:ScrollBar { policy:ScrollBar.AsNeeded }
             TextArea {
                 id:body;objectName:"messageBody_"+card.message.id
                 property bool formatting:false
+                property real overflowWidth:0
+                function expandForOverflow(){if(contentWidth>width+1)overflowWidth=Math.ceil(contentWidth)}
                 function formatDocument(){
                     if(formatting||card.message.role==="tool")return
                     formatting=true;App.formatMessage(textDocument);formatting=false
                 }
-                onTextChanged:formatDocument()
+                onTextChanged:{if(!formatting)overflowWidth=0;formatDocument()}
+                onContentWidthChanged:Qt.callLater(expandForOverflow)
                 Component.onCompleted:formatDocument()
-                width:messageViewport.width
+                // The item must cover the table so Qt paints columns reached by scrolling.
+                width:Math.max(messageViewport.width,overflowWidth)
                 text:card.message.text
-                readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap
+                // Keep Markdown tables readable; Wrap can crush columns down to single letters.
+                readOnly:true;selectByMouse:true;wrapMode:card.message.role==="tool"?TextEdit.Wrap:TextEdit.WordWrap
                 textFormat:card.message.role==="tool"?TextEdit.PlainText:TextEdit.MarkdownText
-                color:Theme.text;selectionColor:"#396982";selectedTextColor:"white"
-                font.pixelSize:13;font.family:card.message.role==="tool"?"monospace":Theme.font
+                color:Theme.text;selectionColor:Theme.selected;selectedTextColor:Theme.text
+                font.pixelSize:14;font.family:card.message.role==="tool"?"monospace":Theme.font
                 padding:0;background:null
                 palette.link:Theme.cyan
-                baseUrl:"file://"+(App.session.cwd||"")+"/"
-                onLinkActivated:link=>App.openMessageLink(link,App.session.cwd||"")
+                baseUrl:"file://"+card.directory+"/"
+                onLinkActivated:link=>App.openMessageLink(link,card.directory)
                 ToolTip.visible:hoveredLink.length>0
                 ToolTip.text:hoveredLink
             }

@@ -1,151 +1,214 @@
 {
-  "schemaVersion": 1,
-  "generatedAt": "2026-09-29T20:15:01.590Z",
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-29T22:47:58.816Z",
+  "eligibilityEnforced": true,
   "workload": {
     "assertionVersions": 100000,
+    "embeddedAssertions": 100000,
     "entities": 10000,
     "episodes": 10000,
     "vectorDimensions": 64,
     "textBytes": {
-      "minimum": 40,
-      "mean": 41.4853,
-      "maximum": 66
+      "minimum": 27,
+      "mean": 41.50154,
+      "maximum": 72
     },
-    "generationMs": 1435.7491149999998,
-    "databaseBytes": 37150720,
+    "generationMs": 1594.594127,
+    "databaseBytes": 38367232,
     "projectionCatchUpMs": null
   },
   "corpus": {
     "cases": 70,
     "development": 35,
     "heldout": 35,
-    "relational": 20
+    "relational": 20,
+    "temporalViews": 50
   },
   "retrieval": {
     "vector_only": {
+      "factRecallAt10": 0.9857142857142858,
+      "relationalFactRecallAt10": 1,
+      "mrrAt10": 0.8957142857142858,
       "evidenceRecallAt10": 0.9857142857142858,
-      "relationalEvidenceRecallAt10": 1,
-      "mrrAt10": 0.8964285714285715,
-      "temporalAnswerAccuracy": 1,
+      "pathRecall": 1,
+      "temporalViewAccuracy": 1,
+      "temporalViews": 50,
+      "temporalViewFailures": [],
       "abstentionAccuracy": 1,
-      "provenanceCoverage": 0.9857142857142858,
       "unsupportedClaimRate": 0,
-      "falseMerges": 0,
-      "meanEstimatedTokens": 95.21428571428571,
-      "latencyMs": {
-        "p50": 8.356852000000117,
-        "p95": 9.934531000000106,
-        "p99": 18.814606999999796,
-        "samples": 70
+      "selectedFacts": 728,
+      "repeatedRowsMerged": 20,
+      "falseMerges": {
+        "value": null,
+        "status": "unmeasured",
+        "reason": "The SQL workload has no entity resolution; see the canonical runner."
       },
-      "coldLatencyMs": 9.934531000000106,
+      "meanEstimatedTokens": 81.29,
+      "latencyMs": {
+        "p50": 6.664086000000225,
+        "p95": 9.093916000000036,
+        "p99": 15.811157000000094,
+        "samples": 100
+      },
+      "coldLatencyMs": 9.645332000000053,
       "warmLatencyMs": {
-        "p50": 8.318776999999955,
-        "p95": 9.41573799999992,
-        "p99": 18.814606999999796,
-        "samples": 69
+        "p50": 6.643493000000035,
+        "p95": 9.04945900000007,
+        "p99": 15.811157000000094,
+        "samples": 99
       }
     },
-    "exact_lexical_vector": {
-      "evidenceRecallAt10": 0.8857142857142857,
-      "relationalEvidenceRecallAt10": 0.7333333333333333,
-      "mrrAt10": 0.8607709750566893,
-      "temporalAnswerAccuracy": 1,
+    "exact_lexical_vector_rrf": {
+      "factRecallAt10": 1,
+      "relationalFactRecallAt10": 1,
+      "mrrAt10": 0.8916666666666665,
+      "evidenceRecallAt10": 1,
+      "pathRecall": 1,
+      "temporalViewAccuracy": 1,
+      "temporalViews": 50,
+      "temporalViewFailures": [],
       "abstentionAccuracy": 1,
-      "provenanceCoverage": 0.8857142857142857,
       "unsupportedClaimRate": 0,
-      "falseMerges": 0,
-      "meanEstimatedTokens": 112.62857142857143,
-      "latencyMs": {
-        "p50": 6.179466999999931,
-        "p95": 8.667504000000008,
-        "p99": 12.907474999999977,
-        "samples": 70
+      "selectedFacts": 817,
+      "repeatedRowsMerged": 93,
+      "falseMerges": {
+        "value": null,
+        "status": "unmeasured",
+        "reason": "The SQL workload has no entity resolution; see the canonical runner."
       },
-      "coldLatencyMs": 8.898265000000265,
+      "meanEstimatedTokens": 98.66,
+      "latencyMs": {
+        "p50": 6.595507999999882,
+        "p95": 7.153214999999818,
+        "p99": 26.751072999999906,
+        "samples": 100
+      },
+      "coldLatencyMs": 12.18080400000008,
       "warmLatencyMs": {
-        "p50": 6.160808000000088,
-        "p95": 8.655428000000029,
-        "p99": 12.907474999999977,
-        "samples": 69
+        "p50": 6.591598000000431,
+        "p95": 6.955891000000065,
+        "p99": 26.751072999999906,
+        "samples": 99
       }
     },
-    "hybrid_graph": {
-      "evidenceRecallAt10": 0.8857142857142857,
-      "relationalEvidenceRecallAt10": 0.7333333333333333,
-      "mrrAt10": 0.8607709750566893,
-      "temporalAnswerAccuracy": 1,
+    "hybrid_graph_rrf": {
+      "factRecallAt10": 1,
+      "relationalFactRecallAt10": 1,
+      "mrrAt10": 0.8887755102040816,
+      "evidenceRecallAt10": 1,
+      "pathRecall": 1,
+      "temporalViewAccuracy": 1,
+      "temporalViews": 50,
+      "temporalViewFailures": [],
       "abstentionAccuracy": 1,
-      "provenanceCoverage": 0.8857142857142857,
       "unsupportedClaimRate": 0,
-      "falseMerges": 0,
-      "meanEstimatedTokens": 112.62857142857143,
-      "latencyMs": {
-        "p50": 6.057227000000239,
-        "p95": 6.465781999999763,
-        "p99": 26.283375999999862,
-        "samples": 70
+      "selectedFacts": 817,
+      "repeatedRowsMerged": 52,
+      "falseMerges": {
+        "value": null,
+        "status": "unmeasured",
+        "reason": "The SQL workload has no entity resolution; see the canonical runner."
       },
-      "coldLatencyMs": 6.2601049999998395,
+      "meanEstimatedTokens": 94.43,
+      "latencyMs": {
+        "p50": 6.670001000000411,
+        "p95": 7.1220790000002125,
+        "p99": 7.416793999999754,
+        "samples": 100
+      },
+      "coldLatencyMs": 6.803737000000183,
       "warmLatencyMs": {
-        "p50": 6.048917999999958,
-        "p95": 6.465781999999763,
-        "p99": 26.283375999999862,
-        "samples": 69
+        "p50": 6.6682449999998425,
+        "p95": 7.1220790000002125,
+        "p99": 7.416793999999754,
+        "samples": 99
       }
     },
-    "hybrid_graph_ranker": {
-      "evidenceRecallAt10": 0.8857142857142857,
-      "relationalEvidenceRecallAt10": 0.7333333333333333,
-      "mrrAt10": 0.8714285714285714,
-      "temporalAnswerAccuracy": 1,
+    "hybrid_graph_relational_ranker": {
+      "factRecallAt10": 1,
+      "relationalFactRecallAt10": 1,
+      "mrrAt10": 0.8887755102040816,
+      "evidenceRecallAt10": 1,
+      "pathRecall": 1,
+      "temporalViewAccuracy": 1,
+      "temporalViews": 50,
+      "temporalViewFailures": [],
       "abstentionAccuracy": 1,
-      "provenanceCoverage": 0.8857142857142857,
       "unsupportedClaimRate": 0,
-      "falseMerges": 0,
-      "meanEstimatedTokens": 112.62857142857143,
-      "latencyMs": {
-        "p50": 6.055194999999912,
-        "p95": 6.306626999999935,
-        "p99": 6.466436000000158,
-        "samples": 70
+      "selectedFacts": 817,
+      "repeatedRowsMerged": 52,
+      "falseMerges": {
+        "value": null,
+        "status": "unmeasured",
+        "reason": "The SQL workload has no entity resolution; see the canonical runner."
       },
-      "coldLatencyMs": 6.070368000000144,
+      "meanEstimatedTokens": 94.43,
+      "latencyMs": {
+        "p50": 7.009587999999894,
+        "p95": 7.509014999999636,
+        "p99": 7.684419000000162,
+        "samples": 100
+      },
+      "coldLatencyMs": 6.094014000000243,
       "warmLatencyMs": {
-        "p50": 6.052861000000121,
-        "p95": 6.306626999999935,
-        "p99": 6.466436000000158,
-        "samples": 69
+        "p50": 7.009587999999894,
+        "p95": 7.509014999999636,
+        "p99": 7.684419000000162,
+        "samples": 99
       }
     }
   },
   "correctionCommitMs": {
-    "p50": 0.010318999999981315,
-    "p95": 0.018286999999872933,
-    "p99": 0.02920300000005227,
+    "p50": 0.011319999999614083,
+    "p95": 0.017369999999573338,
+    "p99": 0.03139000000010128,
     "samples": 200
   },
   "process": {
     "cpuModel": "13th Gen Intel(R) Core(TM) i7-13700HX",
     "logicalCpus": 24,
     "totalMemoryBytes": 33348431872,
-    "freeMemoryBytesAfter": 20693139456,
-    "peakRssBytes": 177135616,
+    "freeMemoryBytesAfter": 10596171776,
+    "peakRssBytes": 182018048,
     "node": "v26.8.2",
-    "platform": "linux-x64",
-    "queueSizes": {
-      "indexing": 0,
-      "correction": 0
-    }
+    "platform": "linux-x64"
   },
   "gates": {
-    "relationalRecallTarget": false,
-    "improvementOverVectorFivePoints": false,
-    "correctionP95Under100Ms": true
+    "relationalRecallTarget": {
+      "target": "relational fact recall@10 >= 0.90 with the relational ranker",
+      "value": 1,
+      "status": "passed"
+    },
+    "improvementOverVectorFivePoints": {
+      "target": "ranker relational recall at least 0.05 above vector-only",
+      "value": 0,
+      "status": "failed"
+    },
+    "noUnsupportedClaims": {
+      "target": "no ineligible or forbidden fact selected in any mode",
+      "value": 0,
+      "status": "passed"
+    },
+    "temporalViews": {
+      "target": "every temporal and historical view answered exactly (ranker mode)",
+      "value": 1,
+      "status": "passed"
+    },
+    "correctionP95Under100Ms": {
+      "target": "synthetic correction commit p95 < 100 ms",
+      "value": 0.017369999999573338,
+      "status": "passed"
+    },
+    "falseMerges": {
+      "target": "no false entity merges",
+      "value": null,
+      "status": "unmeasured"
+    }
   },
   "limitations": [
     "Deterministic hash embeddings measure retrieval plumbing, not model semantic quality.",
+    "This is a disposable SQL workload, not the canonical engine; benchmarks/memory/canonical-run.ts evaluates the engine itself.",
     "No GPU or VRAM sampler was available in this benchmark.",
-    "End-to-end warm retrieval with live Qdrant, Neo4j, and Ollama is reported separately from this canonical workload."
+    "End-to-end warm retrieval with live Qdrant, Neo4j, and Ollama is not part of this workload."
   ]
 }

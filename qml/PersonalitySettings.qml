@@ -7,6 +7,8 @@ CSection {
     description:"Choose how Cere talks with you. Saved changes apply to the next reply in new and existing Cere conversations with Codex, Claude and Ollama."
     property string savedText:App.state.settings?.personality??""
     property string savedBaseline:""
+    property string savedRevision:"0"
+    property bool conflict:false
     property bool loaded:false
     property int requestId:-1
     property string error:""
@@ -14,8 +16,9 @@ CSection {
     readonly property int maximumLength:App.state.personality?.maxLength||8000
     readonly property bool dirty:editor.text!==savedBaseline
     function syncSaved(){
-        if(!loaded||!dirty)editor.text=savedText
-        savedBaseline=savedText
+        if(!loaded||!dirty){editor.text=savedText;savedBaseline=savedText;savedRevision=App.state.settingsRevision||"0";conflict=false}
+        else if(savedText!==savedBaseline)conflict=true
+        else savedRevision=App.state.settingsRevision||"0"
         loaded=true
     }
     onSavedTextChanged:syncSaved()
@@ -49,12 +52,12 @@ CSection {
         CButton {
             objectName:"personalitySave";text:personality.requestId>=0?"Saving…":"Save personality";primary:true;Layout.fillWidth:true
             enabled:App.connected&&personality.loaded&&personality.requestId<0&&personality.dirty&&editor.length<=personality.maximumLength
-            onClicked:{personality.error="";personality.feedback="";personality.requestId=App.rpc("settings.update",{personality:editor.text})}
+            onClicked:{personality.error="";personality.feedback="";personality.requestId=App.rpc("settings.update",{personality:editor.text,expectedRevision:personality.savedRevision})}
         }
         CButton {
             objectName:"personalityDiscard";text:"Discard changes";Layout.fillWidth:true
             enabled:personality.requestId<0&&personality.dirty
-            onClicked:{editor.text=personality.savedText;personality.savedBaseline=personality.savedText;personality.error="";personality.feedback=""}
+            onClicked:{editor.text=personality.savedText;personality.savedBaseline=personality.savedText;personality.savedRevision=App.state.settingsRevision||"0";personality.conflict=false;personality.error="";personality.feedback=""}
         }
         CButton {
             objectName:"personalityReset";text:"Restore default";Layout.fillWidth:true
@@ -63,15 +66,19 @@ CSection {
         }
     }
     CText { objectName:"personalityError";visible:!!personality.error;text:personality.error;color:Theme.danger;font.pixelSize:12 }
+    CText { visible:personality.conflict;text:"Personality changed on another client. Copy your text, then reload before saving.";color:Theme.amber;font.pixelSize:12 }
     CText { visible:!!personality.feedback;text:personality.feedback;color:Theme.cyan;font.pixelSize:12 }
     Connections {
         target:App
+        function onStateChanged(){personality.syncSaved()}
         function onResult(id,value){
             if(id!==personality.requestId)return
             personality.requestId=-1
             if(value?.error){personality.error=value.error;return}
             editor.text=value.personality
             personality.savedBaseline=value.personality
+            personality.savedRevision=App.state.settingsRevision||"0"
+            personality.conflict=false
             personality.feedback="Saved · applies on the next reply."
         }
     }

@@ -4,5 +4,5 @@
     "strict": true, "allowImportingTsExtensions": true, "noEmit": true,
     "erasableSyntaxOnly": true, "skipLibCheck": true
   },
-  "include": ["broker/**/*.ts", "tests/**/*.ts"]
+  "include": ["broker/**/*.ts", "tests/**/*.ts", "tools/**/*.ts", "benchmarks/**/*.ts"]
 }

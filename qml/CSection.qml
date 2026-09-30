@@ -12,7 +12,7 @@ Rectangle {
     implicitHeight: contents.implicitHeight + 32
     color: Theme.surface
     radius: 12
-    border.color: Theme.line
+    border.color: Theme.subtle
     ColumnLayout {
         id: contents
         x: 16; y: 16; width: Math.max(0,parent.width-32); spacing: 12

@@ -22,7 +22,7 @@ CDialog {
         CButton { text:"Find";enabled:dialog.requestId<0;onClicked:{dialog.offset=0;dialog.reload()} }
     }
     CText { visible:kind.currentIndex===1;text:"Completed turns are recalled as excerpts. Assistant statements may be inaccurate. These passages are not saved facts.";color:Theme.muted;font.pixelSize:12 }
-    CButton { objectName:"addMemory";text:"Add a saved fact";onClicked:{editor.memoryId="";memoryText.text="";editor.open()} }
+    CButton { objectName:"addMemory";text:"Add a saved fact";onClicked:{editor.memoryId="";editor.revision=-1;editor.latest=null;memoryText.text="";editor.open()} }
     CText { visible:dialog.requestId>=0||!dialog.listing.rows.length;text:dialog.requestId>=0?"Loading…":"No memories here yet.";color:Theme.muted;font.pixelSize:12 }
     Repeater {
         model:dialog.listing.rows
@@ -34,7 +34,7 @@ CDialog {
                 Layout.fillWidth:true
                 CText { text:modelData.updated?new Date(modelData.updated).toLocaleDateString():(modelData.status||modelData.state||modelData.type||"");color:Theme.muted;font.pixelSize:11 }
                 CButton { text:"Evidence";onClicked:{graphInspector.sessionId=dialog.sessionId;graphInspector.open();graphInspector.openRecord(modelData.id)} }
-                CButton { visible:modelData.kind==="saved";text:"Edit";onClicked:{editor.memoryId=modelData.id;memoryText.text=modelData.text;editor.open()} }
+                CButton { visible:modelData.kind==="saved";text:"Edit";onClicked:{editor.memoryId=modelData.id;editor.revision=modelData.revision;editor.latest=null;memoryText.text=modelData.text;editor.open()} }
                 CButton { text:"Forget";danger:true;enabled:dialog.changeId<0;onClicked:dialog.changeId=App.rpc("memory.forget",{sessionId:dialog.sessionId,id:modelData.id}) }
             }
             Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
@@ -54,15 +54,25 @@ CDialog {
     }
     CDialog {
         id:editor;property string memoryId:"";property int saveId:-1;property string error:""
+        // The revision this edit started from; a newer saved version is never overwritten silently.
+        property int revision:-1
+        property var latest:null
+        property int latestId:-1
         onOpened:error=""
         CText { text:editor.memoryId?"Edit saved fact":"Remember a fact";font.pixelSize:20;font.weight:Font.DemiBold }
         TextArea { id:memoryText;objectName:"memoryText";Layout.fillWidth:true;Layout.preferredHeight:160;wrapMode:TextEdit.Wrap;selectByMouse:true;color:Theme.text;font.family:Theme.font;Accessible.name:"Memory text";background:Rectangle{color:Theme.input;radius:7} }
         CText { text:memoryText.length+" / 2000 characters";color:Theme.muted;font.pixelSize:12 }
-        CText { visible:!!editor.error;text:editor.error;color:Theme.danger;font.pixelSize:12 }
+        CText { visible:!!editor.error;text:editor.error;color:Theme.danger;font.pixelSize:12;wrapMode:Text.Wrap }
+        ColumnLayout {
+            objectName:"memoryConflict";visible:!!editor.latest;Layout.fillWidth:true;spacing:6
+            CText { text:"This fact changed while you were editing. Your text is kept. The saved version is:";color:Theme.amber;font.pixelSize:12;wrapMode:Text.Wrap }
+            CText { text:editor.latest?.text||"";color:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap }
+            CButton { objectName:"memoryUseLatest";text:"Review against the latest version";onClicked:{editor.revision=editor.latest.revision;editor.latest=null;editor.error=""} }
+        }
         RowLayout {
             Layout.fillWidth:true
             CButton { text:"Cancel";Layout.fillWidth:true;onClicked:editor.close() }
-            CButton { objectName:"saveMemory";text:"Save";primary:true;Layout.fillWidth:true;enabled:editor.saveId<0&&memoryText.text.trim().length>0&&memoryText.length<=2000;onClicked:{let p={sessionId:dialog.sessionId,text:memoryText.text};if(editor.memoryId)p.id=editor.memoryId;editor.saveId=App.rpc("memory.save",p)} }
+            CButton { objectName:"saveMemory";text:"Save";primary:true;Layout.fillWidth:true;enabled:editor.saveId<0&&!editor.latest&&memoryText.text.trim().length>0&&memoryText.length<=2000;onClicked:{let p={sessionId:dialog.sessionId,text:memoryText.text};if(editor.memoryId){p.id=editor.memoryId;p.expected_revision=editor.revision}editor.saveId=App.rpc("memory.save",p)} }
         }
     }
     CDialog {
@@ -77,7 +87,19 @@ CDialog {
     }
     Connections { target:App;function onResult(id,value){
         if(id===dialog.requestId){dialog.requestId=-1;if(value?.error)dialog.error=value.error;else dialog.listing=value}
-        else if(id===editor.saveId){editor.saveId=-1;if(value?.error)editor.error=value.error;else{editor.close();dialog.offset=0;kind.currentIndex=0;dialog.reload()}}
+        else if(id===editor.saveId){
+            editor.saveId=-1
+            if(value?.code==="REVISION_CONFLICT"){editor.error="";editor.latestId=App.rpc("memory.list",{sessionId:dialog.sessionId,kind:"saved",offset:0,filter:""})}
+            else if(value?.error)editor.error=value.error
+            else{editor.close();dialog.offset=0;kind.currentIndex=0;dialog.reload()}
+        }
+        else if(id===editor.latestId){
+            editor.latestId=-1
+            const current=(value?.rows||[]).find(row=>row.id===editor.memoryId)
+            if(current)editor.latest={text:current.text,revision:current.revision}
+            else if(value?.error)editor.error=value.error
+            else{editor.memoryId="";editor.error="This fact was removed while you were editing. Your text is kept and will be saved as a new fact."}
+        }
         else if(id===dialog.changeId){dialog.changeId=-1;if(value?.error)dialog.error=value.error;else{dialog.offset=0;dialog.reload()}}
     } }
 }

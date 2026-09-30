@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { RpcProcess } from './wire.ts';
 import { ollamaModels } from './ollama.ts';
+import { providerExecutable } from './providers.ts';
 import type { ModelOption, Provider } from './types.ts';
 
 function text(value: unknown) { return typeof value === 'string' ? value.trim() : ''; }
@@ -82,6 +83,6 @@ async function claudeModels(command: string): Promise<ModelOption[]> {
 
 export function discoverProviderModels(provider: Provider, command?: string) {
   if (provider === 'ollama') return ollamaModels(command || process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
-  if (provider === 'codex') return codexModels(command || process.env.CERE_CODEX_BIN || 'codex');
-  return claudeModels(command || process.env.CERE_CLAUDE_BIN || 'claude');
+  if (provider === 'codex') return codexModels(command || providerExecutable('codex'));
+  return claudeModels(command || providerExecutable('claude'));
 }

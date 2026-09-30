@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
-import { messageTokens, ollamaContext, ollamaHost, ollamaModels } from '../broker/ollama.ts';
+import { messageTokens, OllamaAdapter, ollamaContext, ollamaHost, ollamaModels } from '../broker/ollama.ts';
 import type { OllamaMessage } from '../broker/ollama.ts';
 import type { Hooks } from '../broker/providers.ts';
 import { defaultPersonality } from '../broker/personality.ts';
@@ -126,6 +126,23 @@ test('Ollama URLs are explicit, and catalogs exclude embeddings and identify clo
   const f=await fixture(t),models=await ollamaModels(f.host);
   assert.deepEqual(models.map(m=>m.id),['chat:latest','plain:latest','remote-cloud']);
   assert.equal(models[2].cloud,true);assert.equal(models[0].capabilities?.includes('vision'),true);
+});
+
+test('remote Ollama distinguishes preflight failure, missing acknowledgement and explicit HTTP rejection',async t=>{
+  const f=await fixture(t,(_body,res,index)=>{if(index===0)res.destroy();else{res.statusCode=503;res.end(JSON.stringify({error:'busy'}));}});
+  const s=await session(f),events:any[]=[];let history:OllamaMessage[]=[];
+  const adapter=new OllamaAdapter(s,{token:'fixture',event:event=>events.push(event),native(){},async approve(){return{choice:'deny'};}},{load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[],async call(){}});
+  t.after(()=>adapter.close());
+  const missing:string[]=[];
+  await assert.rejects(adapter.send('No acknowledgement',[],{beforeAccept:()=>missing.push('authorized'),onDispatched:()=>missing.push('dispatched'),onAccepted:()=>missing.push('accepted'),onRejected:()=>missing.push('rejected')}),/Cannot reach Ollama/);
+  assert.deepEqual(missing,['authorized','dispatched']);await until(()=>!adapter.task);
+  const rejected:string[]=[];
+  await assert.rejects(adapter.send('Rejected',[],{beforeAccept:()=>rejected.push('authorized'),onDispatched:()=>rejected.push('dispatched'),onAccepted:()=>rejected.push('accepted'),onRejected:()=>rejected.push('rejected')}),/Ollama \(503\): busy/);
+  assert.deepEqual(rejected,['authorized','dispatched','rejected']);await until(()=>!adapter.task);
+  const preflight:string[]=[];
+  adapter.session={...s,model:'embed:latest'};
+  await assert.rejects(adapter.send('Unsupported',[],{beforeAccept:()=>preflight.push('authorized'),onDispatched:()=>preflight.push('dispatched'),onAccepted:()=>preflight.push('accepted')}),/cannot chat/);
+  assert.deepEqual(preflight,[]);await until(()=>!adapter.task);
 });
 
 test('default model persists, sessions pin it and their endpoint, and old settings gain Ollama defaults',async t=>{

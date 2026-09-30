@@ -2,6 +2,7 @@ import { request } from './client.ts';
 import { JsonLines } from './wire.ts';
 import net from 'node:net';
 import { socketPath } from './paths.ts';
+import { trustedServer } from './peercred.ts';
 const token = process.env.CERE_SESSION_TOKEN;
 if (!token) { console.error('Cere MCP must be launched by a managed session'); process.exit(1); }
 const lines = new JsonLines();
@@ -9,7 +10,7 @@ const respond = (m: any) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',.
 let initialized=false,lastTools='';
 const changes=net.createConnection(socketPath()),changeLines=new JsonLines();
 changes.setEncoding('utf8');changes.on('error',()=>{});
-changes.on('connect',()=>changes.write(JSON.stringify({id:'watch',method:'subscribe',params:{role:'mcp'}})+'\n'));
+changes.on('connect',()=>{let trusted=false;try{trusted=trustedServer(changes);}catch{}if(!trusted){changes.destroy();return;}changes.write(JSON.stringify({id:'watch',method:'subscribe',params:{role:'mcp'}})+'\n');});
 changes.on('data',chunk=>{try{changeLines.push(String(chunk),m=>{
   const settings=(m.method==='state'?m.params:m.id==='watch'?m.result:null)?.settings;
   if(!settings)return;const signature=JSON.stringify([settings.profile,settings.paused,settings.categories,settings.bypassCliPermissions,settings.bypassComputerPermissions]);

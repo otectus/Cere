@@ -1,0 +1,16 @@
+Generated with the built-in image_gen tool, transparent_background=true.
+Identity/style reference: assets/cere-polished.png. New runtime asset:
+assets/cere-inbetweens.png (4 columns × 2 rows, 1536 × 1024).
+
+Use case: identity-preserve. Asset type: a production intermediate-pose sprite atlas for Cere's native desktop avatar.
+The supplied atlas is the identity/style reference. Create ONE NEW matching supplementary atlas, exactly 4 columns by 2 rows (8 equal cells), landscape 1536x1024. Actual transparent RGBA background, no floor/shadows, no text, no labels, no dividers. Each cell contains one full-body Cere with generous transparent margins. Every sprite has the same character height, boot baseline, head size and frontal camera. Match the original's polished chibi anime rendering, bright cyan-blue long layered hair, round black glasses, blue eyes, black respirator mask with two side filters, the exact black belted jacket/corset, cargo trousers, fingerless gloves and heavy boots. Keep mask and glasses in EVERY cell. Do not redesign her outfit, body proportions, face or hair.
+These are subtle in-between animation drawings rather than extreme new expressions. Hair and boots in their neutral positions. Reading row-major:
+1) RELEASE: shoulders relaxed, elbows just loosening from crossed arms, forearms held low across upper waist but hands separated.
+2) GATHER: both elbows close to body, hands rising from hips toward waist, fingers relaxed, midway from arms down to expressive hands.
+3) OFFER: elbows bent, both palms turning upward just outside waist, hands below chest, midway toward the open-handed explaining pose.
+4) HALF WAVE: viewer-left elbow bent near body, viewer-left forearm lifted halfway, palm open at upper chest height (not overhead); other hand relaxed down.
+5) ADJUST GLASSES: viewer-right hand lightly touching the outer rim of glasses with index finger, elbow contained; other arm down; focused warm eyes.
+6) TUCK HAIR: viewer-left hand lightly gathering a lock of hair beside her shoulder, head turned only very slightly toward that hand; eyes open.
+7) SOFT RESET: neutral arms down, both knees gently bent just a little, shoulders lowered, tiny forward nod; a settling-in pose with feet planted.
+8) ATTENTIVE REST: hands loosely clasped together at waist, head slightly tilted, clear soft attentive eyes.
+Exact equal 4x2 grid, one separate character per cell. No accessories, symbols, props, speech balloons, backdrop, colored matte, white matte or fake checkerboard. Preserve complete hair tips and boot soles inside each cell. Crisp continuous antialiased outlines. New poses must look like they are missing animation frames from the reference sheet.

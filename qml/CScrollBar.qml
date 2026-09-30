@@ -8,8 +8,8 @@ ScrollBar {
     implicitWidth: 10
     contentItem: Rectangle {
         implicitWidth: 6; implicitHeight: 40; radius: 3
-        color: bar.pressed ? Theme.cyan : bar.hovered ? "#658196" : "#3e5365"
+        color: bar.pressed ? Theme.cyan : bar.hovered ? "#658196" : "#344c60"
         opacity: bar.size < 1 ? 1 : 0
     }
-    background: Rectangle { color: "#121c26"; radius: 4; visible: bar.size < 1 }
+    background: Rectangle { color: "transparent" }
 }

@@ -1,0 +1,12 @@
+Generated with the built-in image_gen tool, 2026-09-30.
+Identity reference: mobile/artwork/cere-face-icon.png.
+Master asset: assets/cere-emblem.png.
+Build derivatives: build/icons/hicolor/{size}x{size}/apps/cere.png.
+
+Use case: logo-brand / identity-preserve.
+Asset type: polished desktop application and system tray icon, a simplified Cere HEAD EMBLEM.
+Reference image: the attached Cere head portrait supplies character identity ONLY. Redesign it into a bold clean graphic emblem, much simpler than the detailed illustration.
+Subject: only Cere's front-facing head. Preserve her electric cyan-blue hair, blue eyes, round dark glasses, and distinctive black respirator with two round side filters. Compact head silhouette, large readable eyes with a confident friendly slightly mischievous gaze. Shortened, chunky side hair shapes keep the face prominent.
+Style: premium flat graphic mascot symbol, crisp vector-like geometry rendered as raster, strong balanced silhouette, thick controlled outlines, minimal details, very few broad hair sections, two or three blue/cyan fills with tiny restrained highlights. Dark navy mask with simple gray-blue filter details. Pale icy eye highlights. Design must remain recognizable at 16–24 pixels in a system tray, yet look polished at 256 pixels in a launcher.
+Composition: square canvas, one centered emblem taking 84–88 percent of width and height, all hair enclosed with a consistent transparent margin. Symmetrical balance with subtly asymmetric hair fringe. No shoulders, neck, torso, hands, accessories beyond glasses and respirator. No busy hair strands or gradients, no photorealism, no glossy 3D, no text or letters, no watermark, no badge border, no circular or square background.
+Background: genuine transparent alpha. ONE emblem only.

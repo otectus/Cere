@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { predicates } from '../contracts.ts';
+import { isCloudModel } from '../../ollama.ts';
 import type {
   EmbeddingAdapter, EmbeddingIdentity, ExtractionAdapter, ExtractionRun, ExtractionSource, JsonValue, MutationProposalBatch, VectorDistance,
 } from './contracts.ts';
@@ -62,8 +63,10 @@ function endpoint(value: string): URL {
   return url;
 }
 
-function cloudModel(tag: OllamaTag): boolean {
-  return Boolean(tag.remote_host || tag.remote_model || (tag.model ?? tag.name ?? '').endsWith('-cloud'));
+/** Policy denials are terminal until configuration changes; they are not retryable outages. */
+export class ExtractionPolicyError extends Error {
+  readonly code: 'CLOUD_EXTRACTION_DISABLED' | 'LOCAL_ONLY_CLOUD_ROUTE';
+  constructor(code: ExtractionPolicyError['code'], message: string) { super(message); this.code = code; }
 }
 
 function exactOccurrence(text: string, quote: string, occurrence: number): boolean {
@@ -113,7 +116,7 @@ class OllamaApi {
     const tag = (tags.models ?? []).find((candidate: OllamaTag) => candidate.model === model || candidate.name === model) as OllamaTag | undefined;
     if (!tag) throw new Error(`Configured Ollama model ${model} is not installed or registered`);
     if (!tag.digest || !/^[a-f0-9]{64}$/iu.test(tag.digest)) throw new Error(`Ollama did not provide a stable digest for ${model}`);
-    return { tag, digest: tag.digest.toLowerCase(), capabilities: Array.isArray(show.capabilities) ? show.capabilities.map(String) : [], cloud: cloudModel(tag) };
+    return { tag, digest: tag.digest.toLowerCase(), capabilities: Array.isArray(show.capabilities) ? show.capabilities.map(String) : [], cloud: isCloudModel(model, tag, show) };
   }
 }
 
@@ -130,7 +133,7 @@ export class OllamaExtractionAdapter implements ExtractionAdapter {
   async probe(signal?: AbortSignal): Promise<{ model: string; digest: string; capabilities: string[] }> {
     const info = await this.api.model(this.config.model, this.config.probeTimeoutMs ?? 8_000, signal);
     if (this.config.expectedDigest && info.digest !== this.config.expectedDigest.toLowerCase()) throw new Error('Configured extraction model digest does not match the registered Ollama model');
-    if (info.cloud && !this.config.allowCloud) throw new Error('Cloud extraction model requires explicit allowCloud authorization');
+    if (info.cloud && !this.config.allowCloud) throw new ExtractionPolicyError('CLOUD_EXTRACTION_DISABLED', 'Cloud extraction model requires explicit allowCloud authorization');
     if (info.capabilities.length && !info.capabilities.includes('completion')) throw new Error('Extraction model does not advertise completion capability');
     const response = await this.api.json('chat', {
       model: this.config.model, stream: false, format: MUTATION_PROPOSAL_JSON_SCHEMA, messages: [
@@ -152,7 +155,7 @@ export class OllamaExtractionAdapter implements ExtractionAdapter {
     const current = await this.api.model(this.config.model, this.config.probeTimeoutMs ?? 8_000, signal);
     if (!this.probed || this.probed.digest !== current.digest) await this.probe(signal);
     const info = this.probed!;
-    if (info.cloud && source.modelRoute !== 'cloud_allowed') throw new Error('Local-only source cannot be dispatched to an Ollama cloud model');
+    if (info.cloud && source.modelRoute !== 'cloud_allowed') throw new ExtractionPolicyError('LOCAL_ONLY_CLOUD_ROUTE', 'Local-only source cannot be dispatched to an Ollama cloud model');
     const request = {
       model: this.config.model, stream: false, format: MUTATION_PROPOSAL_JSON_SCHEMA, keep_alive: '5m', options: {
         temperature: 0, num_predict: this.config.maxOutputTokens ?? 2_048,

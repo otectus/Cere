@@ -9,12 +9,21 @@ Item {
     property var settings: App.state.settings || ({})
     property bool dragging: false
     property point pressPoint
+    // Only the primary surface advances placement; the seam mirror is visual.
+    property bool motionDriver: true
+    property alias animationPlayer: art
+    property alias motionSource: art.mirrorSource
+    FrameAnimation {
+        running: pet.visible && pet.motionDriver && App.petMoving
+        onTriggered: App.advancePetMotion()
+    }
     property int busy: (App.state.sessions || []).filter(s => ["working","starting","stopping"].indexOf(s.status) >= 0).length
     property int waiting: (App.state.approvals || []).length
     GesturePlayer {
         id: art
         anchors.fill: parent
         clip: true
+        transform: Translate { x: App.petSubpixel.x; y: App.petSubpixel.y }
     }
     MouseArea {
         id:petMouse
@@ -24,7 +33,7 @@ Item {
         cursorShape: pet.dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
         onPressed: mouse => { App.setPetInteracting(true);pet.pressPoint = Qt.point(mouse.x,mouse.y);pet.dragging = false }
         onPositionChanged: mouse => {
-            if (!pressed) art.gazeAt(mouse.x/width)
+            if (!pressed) art.gazeAt(mouse.x/width, mouse.y/height)
             if (!pressed || pressedButtons !== Qt.LeftButton) return
             if (!pet.dragging && Math.hypot(mouse.x-pet.pressPoint.x, mouse.y-pet.pressPoint.y)>6) { pet.dragging=true; App.beginDrag(pet.pressPoint.x,pet.pressPoint.y) }
             if (pet.dragging) App.drag(mouse.x,mouse.y)

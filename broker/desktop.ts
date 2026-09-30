@@ -43,27 +43,61 @@ export function validateAction(name: string, args: any) {
   if (name === 'apps.launch' && !/^[\w. -]+\.desktop$/.test(args.desktopId)) throw new Error('Invalid application ID');
   return def;
 }
+/**
+ * Desktop entry files beneath one applications root, with their desktop IDs: the
+ * root-relative path with '/' replaced by '-', as the Desktop Entry specification
+ * defines. Traversal is depth- and count-bounded and follows each real directory
+ * once, so symlink loops terminate. Sorted paths make conflicting IDs deterministic.
+ */
+async function desktopEntries(root: string) {
+  const entries: { id: string; path: string }[] = [], visited = new Set<string>();
+  const walk = async (directory: string, prefix: string, depth: number) => {
+    if (depth > 8 || entries.length >= 5000) return;
+    const real = await realpath(directory).catch(() => '');
+    if (!real || visited.has(real)) return;
+    visited.add(real);
+    const names = (await readdir(directory).catch(() => [] as string[])).sort();
+    for (const name of names) {
+      if (entries.length >= 5000) return;
+      const path = join(directory, name), info = await stat(path).catch(() => null);
+      if (!info) continue;
+      if (info.isDirectory()) await walk(path, prefix + name + '-', depth + 1);
+      else if (info.isFile() && name.endsWith('.desktop')) entries.push({ id: prefix + name, path });
+    }
+  };
+  await walk(root, '', 0);
+  return entries;
+}
 export async function applications() {
   const roots = [join(process.env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'applications'), ...(process.env.XDG_DATA_DIRS || '/usr/local/share:/usr/share').split(':').map(p => join(p, 'applications'))];
   const found = new Map<string, any>();
   for (const root of roots) {
-    for (const name of await readdir(root).catch(() => [])) {
-      if (!name.endsWith('.desktop') || found.has(name)) continue;
-      const data = await readFile(join(root, name), 'utf8').catch(() => '');
+    // Earlier roots take precedence by desktop ID, including Hidden tombstones.
+    for (const { id, path } of await desktopEntries(root)) {
+      if (found.has(id)) continue;
+      const data = await readFile(path, 'utf8').catch(() => '');
       const group = data.split('[Desktop Entry]')[1]?.split(/\n\[/)[0] || '';
-      if (/^(Hidden|NoDisplay)=true$/m.test(group)) { found.set(name, null); continue; }
+      if (/^(Hidden|NoDisplay)=true$/m.test(group)) { found.set(id, null); continue; }
       const title = /^Name=(.*)$/m.exec(group)?.[1];
-      if (title && /^Type=Application$/m.test(group)) found.set(name, { id: name, name: title, icon: /^Icon=(.*)$/m.exec(group)?.[1] || '' });
+      if (title && /^Type=Application$/m.test(group)) found.set(id, { id, name: title, icon: /^Icon=(.*)$/m.exec(group)?.[1] || '' });
+      else found.set(id, null);
     }
   }
-  return [...found.values()].filter(Boolean).sort((a,b) => a.name.localeCompare(b.name));
+  return [...found.values()].filter(Boolean).sort((a,b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 export async function windows() { return JSON.parse((await exec('hyprctl', ['-j', 'clients'], { timeout: 5000 })).stdout); }
 let luaDispatch: Promise<boolean> | undefined;
-async function dispatch(lua: string, legacy: string[]) {
+async function dispatch(lua: string, legacy: string[], signal?: AbortSignal, authorize?: () => void) {
   luaDispatch ??= exec('hyprctl', ['eval', 'assert(hl and hl.dsp)'], {timeout:3000})
     .then(r=>r.stdout.trim()==='ok', ()=>false);
-  return exec('hyprctl', await luaDispatch ? ['dispatch', lua] : ['dispatch', ...legacy], {timeout:5000});
+  const supported=await luaDispatch;
+  authorize?.();signal?.throwIfAborted();
+  return effect(exec('hyprctl', supported ? ['dispatch', lua] : ['dispatch', ...legacy], {timeout:5000,signal}));
+}
+/** A started process can act before its acknowledgement is lost or it exits. */
+async function effect<T>(operation:Promise<T>):Promise<T> {
+  try { return await operation; }
+  catch(error:any) { if(['ENOENT','EACCES'].includes(error?.code))throw error;throw Object.assign(new Error(error?.message||'Action completion could not be confirmed.'),{code:'OUTCOME_UNKNOWN'}); }
 }
 export async function audioStatus() {
   try {
@@ -97,24 +131,34 @@ export async function mediaStatus(preferred?:string) {
   return (preferred?players.find(p=>p.player===preferred):players[0])||{available:false};
 }
 let capturing=false;
-async function captureInSatty() {
+/**
+ * Every step honors cancellation, including the open Satty editor: Stop or shutdown
+ * terminates it, removes the raw image and releases the capture lock.
+ */
+async function captureInSatty(signal?: AbortSignal) {
+  signal?.throwIfAborted();
   if(capturing)throw new Error('A capture is already open in Satty. Save it or close it before starting another.');
   capturing=true;
   const directory=join(paths().state,'captures'), id=randomUUID();
   const raw=join(directory,`.capture-${id}.png`), path=join(directory,`${id}.png`);
   try {
-    await exec('satty',['--version'],{timeout:3000}).catch(()=>{throw new Error('Satty is required for captures. Install the satty package and try again.');});
+    await exec('satty',['--version'],{timeout:3000,signal}).catch(()=>{signal?.throwIfAborted();throw new Error('Satty is required for captures. Install the satty package and try again.');});
     await mkdir(directory,{recursive:true,mode:0o700});
-    const monitors=JSON.parse((await exec('hyprctl',['-j','monitors'],{timeout:3000})).stdout);
+    const monitors=JSON.parse((await exec('hyprctl',['-j','monitors'],{timeout:3000,signal})).stdout);
     const monitor=monitors.find((m:any)=>m.focused&&!m.disabled)||monitors.find((m:any)=>!m.disabled);
     if(!monitor)throw new Error('No active display is available to capture.');
     // Let the dismissed Cere panel finish unmapping before capturing its display.
-    await new Promise(resolve=>setTimeout(resolve,200));
-    await exec('grim',['-o',monitor.name,raw],{timeout:10000});
+    await new Promise<void>((resolve,reject)=>{
+      const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},200);
+      const abort=()=>{clearTimeout(timer);reject(signal!.reason);};
+      signal?.addEventListener('abort',abort,{once:true});
+    });
+    await exec('grim',['-o',monitor.name,raw],{timeout:10000,signal});
     // Separate input/output means Escape can never accidentally share the unedited capture.
     await exec('satty',['--filename',raw,'--output-filename',path,'--initial-tool','crop',
       '--app-id',`org.satty.cere.capture_${id.replaceAll('-','_')}`,
-      '--save-after-copy','--early-exit','all','--actions-on-enter','save-to-file,exit','--actions-on-escape','exit'],{maxBuffer:1024*1024});
+      '--save-after-copy','--early-exit','all','--actions-on-enter','save-to-file,exit','--actions-on-escape','exit'],{maxBuffer:1024*1024,signal});
+    signal?.throwIfAborted();
     if(!(await stat(path).catch(()=>null))?.size)return {cancelled:true,message:'Capture cancelled'};
     return {path,message:'Capture saved from Satty'};
   } finally {
@@ -122,10 +166,10 @@ async function captureInSatty() {
     capturing=false;
   }
 }
-export async function desktopAction(name: string, args: any, settings: Settings, signal?: AbortSignal) {
+export async function desktopAction(name: string, args: any, settings: Settings, signal?: AbortSignal, authorize?: () => void) {
   validateAction(name, args);
   signal?.throwIfAborted();
-  const run = (file: string, argv: string[], timeout = 10000) => exec(file, argv, { timeout, signal, maxBuffer: 1024 * 1024 });
+  const run = (file: string, argv: string[], timeout = 10000) => { authorize?.();signal?.throwIfAborted();return effect(exec(file, argv, { timeout, signal, maxBuffer: 1024 * 1024 })); };
   switch (name) {
     case 'apps.list': return applications();
     case 'windows.list': return (await windows()).map((w: any) => ({ address: w.address, title: w.title, class: w.class, workspace: w.workspace }));
@@ -136,10 +180,10 @@ export async function desktopAction(name: string, args: any, settings: Settings,
       if (!(await applications()).some(a => a.id === args.desktopId)) throw new Error('Application is no longer installed');
       await run('gtk-launch', [args.desktopId]); return 'Application launched';
     }
-    case 'files.open': await realpath(args.path); await run('xdg-open', [args.path]); return 'Opened';
-    case 'windows.focus': await dispatch(`hl.dsp.focus({window="address:${args.address}"})`, ['focuswindow', `address:${args.address}`]); return 'Window focused';
-    case 'windows.move': await dispatch(`hl.dsp.window.move({window="address:${args.address}",workspace="${args.workspace}",follow=false})`, ['movetoworkspacesilent', `${args.workspace},address:${args.address}`]); return 'Window moved';
-    case 'workspace.switch': await dispatch(`hl.dsp.focus({workspace="${args.workspace}"})`, ['workspace', String(args.workspace)]); return 'Workspace switched';
+    case 'files.open': {args.path=await realpath(args.path);authorize?.();await run('xdg-open', [args.path]); return 'Opened';}
+    case 'windows.focus': await dispatch(`hl.dsp.focus({window="address:${args.address}"})`, ['focuswindow', `address:${args.address}`],signal,authorize); return 'Window focused';
+    case 'windows.move': await dispatch(`hl.dsp.window.move({window="address:${args.address}",workspace="${args.workspace}",follow=false})`, ['movetoworkspacesilent', `${args.workspace},address:${args.address}`],signal,authorize); return 'Window moved';
+    case 'workspace.switch': await dispatch(`hl.dsp.focus({workspace="${args.workspace}"})`, ['workspace', String(args.workspace)],signal,authorize); return 'Workspace switched';
     case 'audio.volume': await run('wpctl', ['set-volume', '@DEFAULT_AUDIO_SINK@', `${args.percent}%`]); return `Volume ${args.percent}%`;
     case 'audio.mute': await run('wpctl', ['set-mute', '@DEFAULT_AUDIO_SINK@', 'toggle']); return 'Mute toggled';
     case 'media.control': {
@@ -147,16 +191,17 @@ export async function desktopAction(name: string, args: any, settings: Settings,
       if(!('player' in player))throw new Error(args.player?'This media player is no longer available. Refresh and try again.':'No media player is running. Open Spotify or another music player first.');
       const allowed={PlayPause:player.canPlayPause,Next:player.canNext,Previous:player.canPrevious,Stop:player.canStop};
       if(!allowed[args.command as keyof typeof allowed])throw new Error(`${player.name} cannot perform ${args.command} right now.`);
-      await bus('call',player.player,mediaPath,mediaInterface,args.command);
+      await run('busctl',['--user','--json=short','call',player.player,mediaPath,mediaInterface,args.command],3000);
       return {message:`${player.name}: ${args.command==='PlayPause'?(player.status==='Playing'?'Pause':'Play'):args.command} requested`,player:player.player};
     }
     case 'screenshot.capture': {
-      return captureInSatty();
+      return captureInSatty(signal);
     }
     case 'script.run': {
       const script = settings.scripts.find(s => s.id === args.id);
       if (!script) throw new Error('Script no longer exists');
-      const result = await exec(script.executable, script.args, { cwd: script.cwd, timeout: script.timeout, signal, maxBuffer: 1024 * 1024 });
+      authorize?.();signal?.throwIfAborted();
+      const result = await effect(exec(script.executable, script.args, { cwd: script.cwd, timeout: script.timeout, signal, maxBuffer: 1024 * 1024 }));
       return { stdout: result.stdout, stderr: result.stderr };
     }
     default: throw new Error('Action is handled by the broker');

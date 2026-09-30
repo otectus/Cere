@@ -14,6 +14,7 @@ if (args.includes('app-server')) {
     if (m.method === 'config/read') reply({ config: { approval_policy: 'on-request', approvals_reviewer: 'user', sandbox_mode: 'workspace-write', developer_instructions: 'Existing project guidance must survive.' } });
     if (m.method === 'thread/start' || m.method === 'thread/resume') reply({ thread: { id: 'permission-thread' }, approvalPolicy: m.params.approvalPolicy, approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: [process.cwd()], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } });
     if (m.method === 'turn/start') { reply({ turn: { id: 'turn' } }); send({ method: 'turn/completed', params: { turn: { id: 'turn', status: 'completed' } } }); }
+    if (m.method === 'thread/list') reply({ data: [{ id: 'fixture-history-thread', name: 'Fixture history', cwd: process.cwd() }] });
   });
 } else if (args.includes('-p')) {
   const promptIndex=args.indexOf('--append-system-prompt-file');

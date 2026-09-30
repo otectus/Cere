@@ -12,6 +12,8 @@ export class GraphMemory {
     { resolve: (v: any) => void; reject: (e: any) => void }
   >();
   closed = false;
+  /** Terminal worker failure; every later call rejects with it instead of waiting. */
+  failure?: MemoryError;
   notify: (event: any) => void;
   constructor(directory: string, notify: (event: any) => void = () => {}) {
     this.notify = notify;
@@ -23,13 +25,19 @@ export class GraphMemory {
       resolve = a;
       reject = b;
     });
+    const failed = (error: MemoryError) => {
+      this.failure ??= error;
+      reject(this.failure);
+      for (const r of this.pending.values()) r.reject(this.failure);
+      this.pending.clear();
+    };
     this.worker.on("message", (m) => {
       if (m.ready) {
         resolve();
         return;
       }
       if (m.fatal) {
-        reject(new MemoryError(m.fatal.code, m.fatal.message));
+        failed(new MemoryError(m.fatal.code, m.fatal.message));
         return;
       }
       if (m.event) {
@@ -43,21 +51,12 @@ export class GraphMemory {
         ? request.reject(new MemoryError(m.error.code, m.error.message))
         : request.resolve(m.result);
     });
-    this.worker.on("error", (e) => {
-      reject(e);
-      for (const r of this.pending.values()) r.reject(e);
-      this.pending.clear();
-    });
+    this.worker.on("error", (e: any) =>
+      failed(new MemoryError("BACKEND_UNAVAILABLE", `Memory worker failed: ${e?.message || e}`)),
+    );
     this.worker.on("exit", (code) => {
-      if (!this.closed) {
-        const e = new MemoryError(
-          "BACKEND_UNAVAILABLE",
-          `Memory worker exited (${code})`,
-        );
-        reject(e);
-        for (const r of this.pending.values()) r.reject(e);
-        this.pending.clear();
-      }
+      if (!this.closed)
+        failed(new MemoryError("BACKEND_UNAVAILABLE", `Memory worker exited (${code})`));
     });
     this.ready.catch(() => {});
   }
@@ -68,13 +67,18 @@ export class GraphMemory {
   ): Promise<any> {
     await this.ready;
     signal?.throwIfAborted();
+    if (this.failure) throw this.failure;
     if (this.closed)
       throw new MemoryError("BACKEND_UNAVAILABLE", "Memory worker is closed");
     const id = randomUUID();
+    // Shared cancellation is observed by the worker before it starts queued work.
+    // Once claimed, a mutation may already have committed: report uncertainty.
+    const cancellation = new Int32Array(new SharedArrayBuffer(4));
     return new Promise((resolve, reject) => {
       const abort = () => {
         this.pending.delete(id);
-        reject(signal!.reason);
+        const previous=Atomics.compareExchange(cancellation,0,0,1);
+        reject(previous===2 ? new MemoryError('OUTCOME_UNKNOWN','Memory work may have completed before cancellation.') : signal!.reason);
       };
       if (signal) signal.addEventListener("abort", abort, { once: true });
       this.pending.set(id, {
@@ -84,20 +88,30 @@ export class GraphMemory {
         },
         reject: (e) => {
           signal?.removeEventListener("abort", abort);
-          reject(e);
+          reject(e?.code==='BACKEND_UNAVAILABLE'&&Atomics.load(cancellation,0)===2 ? new MemoryError('OUTCOME_UNKNOWN','The memory worker stopped after accepting this operation.') : e);
         },
       });
-      this.worker.postMessage({ id, method, params });
+      try {
+        this.worker.postMessage({ id, method, params, cancellation });
+      } catch (error: any) {
+        this.pending.delete(id);
+        signal?.removeEventListener("abort", abort);
+        reject(new MemoryError("BACKEND_UNAVAILABLE", `Memory request could not be sent: ${error?.message || error}`));
+      }
     });
   }
-  async close() {
-    if (this.closed) return;
-    try {
-      await this.call("close");
-    } finally {
-      this.closed = true;
-      await this.worker.terminate();
-    }
+  /** Idempotent; a failed worker is terminated without requesting an impossible acknowledgement. */
+  closing?: Promise<void>;
+  close() {
+    this.closing ??= (async () => {
+      try {
+        if (!this.failure) await this.call("close").catch(() => {});
+      } finally {
+        this.closed = true;
+        await this.worker.terminate();
+      }
+    })();
+    return this.closing;
   }
 }
 /** RFC 4122 UUIDv5 for immutable vector publication identity, never raw content. */

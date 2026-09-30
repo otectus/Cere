@@ -1,0 +1,25 @@
+Cere Mobile dependency and artwork notices
+
+The generated mobile-sbom.cdx.json lists resolved release-runtime Maven components,
+versions and artifact SHA-256 hashes. Repository source retains its existing
+license. Android platform components are supplied by the device operating system.
+
+Major bundled components and upstream license sources:
+AndroidX / Compose / CameraX: Apache License 2.0
+  https://android.googlesource.com/platform/frameworks/support/+/androidx-main/LICENSE.txt
+Kotlin / kotlinx.coroutines / kotlinx.serialization: Apache License 2.0
+  https://github.com/JetBrains/kotlin/blob/master/license/LICENSE.txt
+OkHttp / Okio: Apache License 2.0
+  https://github.com/square/okhttp/blob/master/LICENSE.txt
+ZXing: Apache License 2.0
+  https://github.com/zxing/zxing/blob/master/LICENSE
+CommonMark Java and GFM tables: BSD 2-Clause
+  https://github.com/commonmark/commonmark-java/blob/main/LICENSE.txt
+
+Review the generated inventory against upstream notices for the exact release;
+this source list is not an assertion that every transitive notice is included.
+Preserve embedded upstream META-INF notices in packages where applicable.
+
+Cere face artwork was generated from this repository's existing Cere reference
+art. Its unmodified transparent PNG and exact generation prompt are retained in
+mobile/artwork/cere-face-icon.png and cere-face-icon.prompt.txt.

@@ -3,6 +3,9 @@ set -euo pipefail
 prefix="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 root="$prefix/share/cere"
 case "${1:-}" in
+  remote|tts-test|tts-stop|tts.status|tts.voices)
+    exec node "$root/broker/cli.ts" "$@"
+    ;;
   memory)
     shift
     exec node "$root/broker/memory-cli.ts" "$@"

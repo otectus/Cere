@@ -1,10 +1,10 @@
 import { join, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { GraphMemory, pointId } from "./client.ts";
 import { Neo4jGraphRepository } from "./adapters/neo4j.ts";
 import { QdrantVectorRepository } from "./adapters/qdrant.ts";
-import { OllamaExtractionAdapter } from "./adapters/ollama.ts";
+import { OllamaExtractionAdapter, ExtractionPolicyError } from "./adapters/ollama.ts";
 import { LiveWorkspaceState } from "./adapters/live.ts";
 import { HyprlandCollector } from "./adapters/hyprland.ts";
 import { KittyCollector } from "./adapters/kitty.ts";
@@ -14,9 +14,10 @@ import {
 } from "./adapters/workspace.ts";
 import type {
   LiveCollector,
+  LiveObservation,
   VectorArtifactMetadata,
 } from "./adapters/contracts.ts";
-import { ollamaJson, ollamaHost } from "../ollama.ts";
+import { ollamaJson, ollamaHost, isCloudModel } from "../ollama.ts";
 import { createHash } from "node:crypto";
 import { fail, entityTypes } from "./contracts.ts";
 import { CollectorRpc } from "./collector-rpc.ts";
@@ -58,6 +59,10 @@ export class MemoryService {
   notify: (event: Row) => void;
   lastError = "";
   modelIdentity?: { key: string; dimension: number; digest: string };
+  /** Collector generation: callbacks from a stopped generation are discarded. */
+  collectorGeneration = 0;
+  /** Current collector policy with resolved approved roots, used to filter every live read. */
+  livePolicy: { policy: Row; roots: string[] } = { policy: { enabled: false }, roots: [] };
   constructor(directory: string, notify: (event: Row) => void = () => {}) {
     this.notify = notify;
     this.canonical = new GraphMemory(directory, (event) => {
@@ -74,6 +79,9 @@ export class MemoryService {
   }
   async configure(p: MemoryConfiguration) {
     const changed = JSON.stringify(this.configuration) !== JSON.stringify(p);
+    const extractionChanged = ["host", "extraction_model", "allow_cloud_extraction"].some(
+      (key) => (this.configuration as any)[key] !== (p as any)[key],
+    );
     this.configuration = { ...p };
     if (!changed) return;
     this.controller.abort(new Error("Memory configuration changed"));
@@ -91,21 +99,53 @@ export class MemoryService {
           allow_cloud_memory: p.allow_cloud_memory,
         },
       });
+    // Runs denied under the previous extraction route are re-evaluated at dispatch.
+    if (extractionChanged)
+      await this.canonical.call("extraction_reconcile", { include_denied: true });
     await this.startCollectors();
   }
   async startCollectors() {
+    const generation = ++this.collectorGeneration;
     await this.collectorRpc?.close();
     this.collectorRpc = undefined;
     for (const c of this.collectors) await c.stop();
     this.collectors = [];
-    if (!this.configuration.enabled || this.configuration.paused) return;
     const { policy } = await this.canonical.call("policy_get");
+    const roots = (
+      await Promise.all(
+        (policy.approved_roots as string[]).map((root) => realpath(root).catch(() => "")),
+      )
+    ).filter(Boolean);
+    // Configuration and canonical policy must both allow collection; otherwise nothing survives.
+    const enabled = this.configuration.enabled && !this.configuration.paused && policy.enabled;
+    this.livePolicy = { policy: enabled ? policy : { ...policy, enabled: false }, roots };
+    // Revocation takes effect before any new collector starts: revoked sources, roots
+    // and titles leave the live state immediately.
+    this.live.redact((o) => this.permitted(o));
+    this.notify({ type: "workspace", generation: this.live.snapshot().generation });
+    if (!enabled || generation !== this.collectorGeneration) return;
+    const accept = (o: LiveObservation) => {
+      if (generation !== this.collectorGeneration || this.closed) return false;
+      const permitted = this.permitted(o);
+      if (!permitted) return false;
+      this.live.apply(permitted);
+      this.notify({
+        type: "workspace",
+        generation: this.live.snapshot().generation,
+      });
+      return true;
+    };
     if (policy.fish_enabled) {
       this.collectorRpc = new CollectorRpc(
         process.env.CERE_RUNTIME_DIR
           ? join(paths().runtime, "memory")
           : join(process.env.XDG_RUNTIME_DIR || paths().runtime, "cere-memory"),
-        this.live,
+        {
+          apply: accept,
+          snapshot: () => this.live.snapshot(),
+          markSourceUnknown: (source, reason) =>
+            generation === this.collectorGeneration ? this.live.markSourceUnknown(source, reason) : 0,
+        },
         () => this.canonical.call("policy_get"),
       );
       try {
@@ -116,7 +156,10 @@ export class MemoryService {
     }
     if (policy.hyprland_enabled)
       this.collectors.push(
-        new HyprlandCollector({ captureTitles: policy.capture_titles }),
+        new HyprlandCollector({
+          captureTitles: policy.capture_titles,
+          titleApplicationAllowlist: policy.title_applications,
+        }),
       );
     if (policy.kitty_enabled && process.env.CERE_KITTY_INSPECT_ENDPOINT)
       this.collectors.push(
@@ -136,25 +179,74 @@ export class MemoryService {
       this.collectors.push(new RepositoryCollector(policy.approved_roots));
     for (const c of this.collectors)
       try {
-        await c.start((o) => {
-          this.live.apply(o);
-          this.notify({
-            type: "workspace",
-            generation: this.live.snapshot().generation,
-          });
-        });
+        await c.start((o) => void accept(o));
       } catch {
         this.lastError = "COLLECTOR_UNAVAILABLE";
       }
   }
+  /**
+   * Applies the current collector policy to one live observation: the kept
+   * observation, a copy with revoked properties removed, or null when its source,
+   * root or collector is no longer approved. Freshness is never authorization.
+   */
+  permitted(o: LiveObservation): LiveObservation | null {
+    const { policy, roots } = this.livePolicy;
+    if (!policy.enabled) return null;
+    const within = (path: unknown) =>
+      typeof path === "string" &&
+      roots.some((root) => {
+        const delta = relative(root, path);
+        return delta === "" || (!delta.startsWith("..") && !isAbsolute(delta));
+      });
+    const properties: Record<string, any> = { ...o.properties };
+    const enabled: Record<string, boolean> = {
+      hyprland: policy.hyprland_enabled,
+      fish: policy.fish_enabled,
+      kitty: policy.kitty_enabled,
+      filesystem: policy.filesystem_enabled,
+      repository: roots.length > 0,
+      editor: false,
+    };
+    if (!enabled[o.source]) return null;
+    if (o.source === "hyprland" && "title" in properties &&
+      !(policy.capture_titles && (policy.title_applications || []).includes(String(properties.appClass))))
+      delete properties.title;
+    if ((o.source === "fish" || o.source === "kitty") && "cwd" in properties && !within(properties.cwd))
+      delete properties.cwd;
+    if (o.source === "filesystem" && o.freshness !== "unknown" && !(within(properties.path) && within(properties.root)))
+      return null;
+    if (o.source === "repository" && o.freshness !== "unknown") {
+      const checkout = properties.checkoutRoot;
+      const overlaps = within(checkout) || (typeof checkout === "string" && roots.some((root) => {
+        const delta = relative(checkout, root);
+        return delta === "" || (!delta.startsWith("..") && !isAbsolute(delta));
+      }));
+      if (!overlaps) return null;
+    }
+    return { ...o, properties };
+  }
+  /**
+   * Production embedding identity. The route is validated from current /tags and
+   * /show metadata before any memory text is embedded: cloud-backed embedding
+   * models are refused, so local-only sources never leave through indexing. A
+   * user-configured remote Ollama server remains supported; it is not cloud.
+   */
   async identity(host: string, signal: AbortSignal) {
-    const tags = await ollamaJson(host, "tags", undefined, signal),
-      model = this.configuration.embedding_model;
+    const model = this.configuration.embedding_model;
+    const tags = await ollamaJson(host, "tags", undefined, signal);
     const m = tags.models?.find((m: Row) =>
       [model, model + ":latest"].includes(m.name || m.model),
     );
     if (!m?.digest)
       fail("BACKEND_UNAVAILABLE", "Embedding model digest is unavailable");
+    const shown = await ollamaJson(host, "show", { model: m.model || m.name }, signal).catch((error: any) => {
+      signal.throwIfAborted();
+      fail("BACKEND_UNAVAILABLE", `Embedding model metadata is unavailable: ${String(error?.message || error).slice(0, 200)}`);
+    });
+    if (isCloudModel(model, m, shown))
+      fail("POLICY_DENIED", "Memory embedding requires a local model; cloud-backed embedding models are not used");
+    if (Array.isArray(shown?.capabilities) && shown.capabilities.length && !shown.capabilities.includes("embedding"))
+      fail("BACKEND_UNAVAILABLE", "Configured memory model does not advertise embedding capability");
     const key = JSON.stringify([
       ollamaHost(host),
       model,
@@ -235,7 +327,7 @@ export class MemoryService {
       .update(identity.key + ":" + dimension)
       .digest("hex");
   }
-  async vectorRepo(fingerprint: string, dimension: number) {
+  async vectorRepo(fingerprint: string, dimension: number, signal?: AbortSignal) {
     let repo = this.vectors.get(fingerprint);
     if (!repo) {
       repo = new QdrantVectorRepository({
@@ -246,8 +338,8 @@ export class MemoryService {
         distance: "Cosine",
         requestTimeoutMs: 1000,
       });
-      await repo.initialize();
-      await this.canonical.call("embedding_space", { fingerprint, dimension });
+      await repo.initialize(signal);
+      await this.canonical.call("embedding_space", { fingerprint, dimension }, signal);
       this.vectors.set(fingerprint, repo);
     }
     return repo;
@@ -301,7 +393,16 @@ export class MemoryService {
           this.controller.signal,
           AbortSignal.timeout(15000),
         ]);
-        const identity = await this.identity(this.configuration.host, signal);
+        // Physical purge needs only Qdrant and the persisted embedding spaces; it never
+        // waits on an embedding model. The job is acknowledged only after every
+        // generation's deletion and every publication in it succeeded.
+        if (data.deletedIds.length) {
+          for (const space of await this.canonical.call("embedding_spaces"))
+            await this.vectorRepo(space.fingerprint, space.dimension, signal);
+          for (const target of data.deletedIds)
+            for (const repo of this.vectors.values())
+              await repo.deleteByArtifact(target);
+        }
         for (const artifact of data.artifacts) {
           const host = artifact.embedding_host || this.configuration.host,
             identity = await this.identity(host, signal);
@@ -328,7 +429,7 @@ export class MemoryService {
             point_id: point,
             vector,
           });
-          const repo = await this.vectorRepo(fingerprint, vector.length);
+          const repo = await this.vectorRepo(fingerprint, vector.length, signal);
           const metadata: VectorArtifactMetadata = {
             ownerId: data.owner_id,
             scopeId: artifact.scope_id,
@@ -369,26 +470,6 @@ export class MemoryService {
             await repo.retire([point]);
             throw e;
           }
-        }
-        if (data.deletedIds.length) {
-          for (const space of await this.canonical.call("embedding_spaces"))
-            await this.vectorRepo(space.fingerprint, space.dimension);
-        }
-        for (const target of data.deletedIds) {
-          for (const repo of this.vectors.values())
-            await repo.deleteByArtifact(target);
-        }
-        if (!data.artifacts.length && !this.vectors.size) {
-          const [probe] = await this.embed(
-            this.configuration.host,
-            ["memory health"],
-            "query",
-            signal,
-          );
-          await this.vectorRepo(
-            this.fingerprint(identity, probe.length),
-            probe.length,
-          );
         }
       }
       await this.canonical.call("finish_job", { id: job.id });
@@ -446,11 +527,15 @@ export class MemoryService {
         if (!s || !s.aliases[0] || ("entityRef" in a.object && !o)) throw new Error('Unresolved extraction entity');
         const quote = a.quotes[0];
         if (!quote || quote.sourceRecordId !== run.observation_id) throw new Error('Unsupported extraction quote');
-        const temporal =
+        // An uncertain or unparseable interpretation never becomes an exact boundary.
+        const parsed =
+          !a.temporal.uncertain &&
           a.temporal.interpretation &&
           /^\d{4}-\d\d-\d\dT/.test(a.temporal.interpretation)
             ? Date.parse(a.temporal.interpretation) * 1000
-            : null;
+            : NaN;
+        const temporal = Number.isSafeInteger(parsed) ? parsed : null;
+        const uncertain = a.temporal.uncertain || (!!a.temporal.interpretation && temporal === null);
         const claim = {
           subject: { type: entityTypes.find(type=>type.toUpperCase()===s.kind), name: s.aliases[0] },
           predicate: a.predicate,
@@ -462,13 +547,14 @@ export class MemoryService {
           modality: a.modality,
           epistemic_type: a.epistemicType,
           valid_mode:
-            temporal !== null && Number.isFinite(temporal)
+            temporal !== null
               ? "bounded"
-              : a.temporal.uncertain
+              : uncertain
                 ? "unknown"
                 : "known_current",
           valid_from_us: temporal,
           valid_to_us: null,
+          time_precision: temporal !== null ? "instant" : uncertain ? "approximate" : "unknown",
           time_expression: a.temporal.expression || "",
           extraction_confidence: 1,
         };
@@ -485,14 +571,16 @@ export class MemoryService {
           });
       }
       await this.canonical.call('apply_extraction',{id:run.id,proposals});
-    } catch {
+    } catch (error) {
+      // Route and consent denials are terminal until configuration changes; they are not outages.
+      const denied = error instanceof ExtractionPolicyError ? error.code : undefined;
       await this.canonical
-        .call("extraction_result", {
+        .call("extraction_result", denied ? { id: run.id, denied } : {
           id: run.id,
           error: "MODEL_UNAVAILABLE_OR_INVALID",
         })
         .catch(() => {});
-      this.lastError = "EXTRACTION_RETRYABLE";
+      this.lastError = denied ? "EXTRACTION_DENIED" : "EXTRACTION_RETRYABLE";
     }
   }
   async maintain() {
@@ -525,12 +613,14 @@ export class MemoryService {
     let semantic: Row[] = [],
       coverage: string[] = [];
     const {host: _host,...seedQuery}=p;
+    // Inherited scopes are authorized for every retrieval route, not only lexical recall.
+    const scopeIds: string[] = await this.canonical.call("effective_scopes", { scope_id: p.scope_id }, guard);
     const graphPromise=(async()=>{
       if(!this.graph)return [];
-      const seedPacket=await this.canonical.call('retrieve',seedQuery),seeds=[...new Set<string>(seedPacket.assertions.flatMap((a:Row)=>[a.subject_id,a.object_entity_id].filter(Boolean)))];
+      const seedPacket=await this.canonical.call('retrieve',seedQuery,guard),seeds=[...new Set<string>(seedPacket.assertions.flatMap((a:Row)=>[a.subject_id,a.object_entity_id].filter(Boolean)))];
       if(!seeds.length)return [];
       const projection=seedPacket.snapshot.projections.find((v:Row)=>v.backend==='graph');
-      const expanded=await this.graph.expand({seedIds:seeds,generation:Number(projection?.generation||1),scopeIds:[p.scope_id],depth:3,deadline:guard});
+      const expanded=await this.graph.expand({seedIds:seeds,generation:Number(projection?.generation||1),scopeIds,depth:3,deadline:guard});
       return this.canonical.call('graph_pointers',{scope_id:p.scope_id,seeds,nodes:expanded.nodes,edges:expanded.edges,known_revision:seedQuery.known_revision,world_at_us:seedQuery.world_at_us,model_route:seedQuery.model_route});
     })().catch(()=>{coverage.push('graph_degraded');return [];});
     try {
@@ -541,7 +631,7 @@ export class MemoryService {
       const pending = await this.canonical.call("pending_artifacts", {
         scope_id: p.scope_id,
         fingerprint,
-      });
+      }, guard);
       if (pending.length) {
         const vectors = await this.embed(
           host,
@@ -564,9 +654,10 @@ export class MemoryService {
           });
         }
       }
-      const health = await this.canonical.call("health");
+      const health = await this.canonical.call("health", {}, guard);
       try {
-        const repo = await this.vectorRepo(fingerprint, vector.length);
+        // Collection preparation shares the retrieval deadline; expiry degrades to canonical recall.
+        const repo = await this.vectorRepo(fingerprint, vector.length, guard);
         const generation = Number(
           health.projections.find((b: Row) => b.backend === "vector")
             ?.generation || 1,
@@ -574,7 +665,7 @@ export class MemoryService {
         const hits = await repo.query({
           vector,
           ownerId: health.owner_id,
-          scopeIds: [p.scope_id],
+          scopeIds,
           embeddingFingerprint: fingerprint,
           generation,
           currentErasureEpoch: health.erasure_epoch,
@@ -591,14 +682,16 @@ export class MemoryService {
           scope_id: p.scope_id,
           fingerprint,
           vector,
-        })),
+        }, guard)),
       );
-    } catch {
+    } catch (error: any) {
       signal?.throwIfAborted();
-      coverage.push("semantic_degraded");
+      coverage.push(error?.code === "POLICY_DENIED" ? "semantic_route_denied" : "semantic_degraded");
     }
     const { host, ...query } = p;
     const graphIds=await graphPromise;
+    // Setup that outlived the deadline must not keep the foreground waiting on stragglers.
+    if (guard.aborted && !signal?.aborted && !coverage.includes("deadline_partial")) coverage.push("deadline_partial");
     const result = await this.canonical.call(
       "retrieve",
       {
@@ -630,8 +723,19 @@ export class MemoryService {
     result.snapshot.live_generation = result.workspace.generation;
     return result;
   }
+  /** Live state filtered against the current collector policy at every read. */
+  liveSnapshot() {
+    const snapshot = this.live.snapshot();
+    return {
+      generation: snapshot.generation,
+      observations: snapshot.observations.flatMap((o) => {
+        const kept = this.permitted(o);
+        return kept ? [kept] : [];
+      }),
+    };
+  }
   workspace() {
-    const snapshot = this.live.snapshot(),
+    const snapshot = this.liveSnapshot(),
       fresh = snapshot.observations.filter((o) => o.freshness === "fresh");
     const focus = fresh.find((o) => o.kind === "WINDOW_FOCUS"),
       address = focus?.properties.address;
@@ -709,7 +813,7 @@ export class MemoryService {
         ...(await this.canonical.call("health")),
         extraction_model: this.configuration.extraction_model,
         extraction_error: this.lastError,
-        workspace: this.live.snapshot(),
+        workspace: this.liveSnapshot(),
         collectors: this.collectors.length,
       };
     const result = await this.canonical.call(method, p, signal);

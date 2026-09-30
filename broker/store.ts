@@ -45,10 +45,26 @@ export class Store {
     const row = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id);
     if (!row) throw new Error('Session no longer exists'); return JSON.parse(row.data as string);
   }
-  saveSession(s: Session) { this.db.prepare('INSERT OR REPLACE INTO sessions VALUES (?,?)').run(s.id, JSON.stringify(s)); }
+  saveSession(s: Session) {
+    const row = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(s.id);
+    const previous: Session | undefined = row ? JSON.parse(row.data as string) : undefined;
+    s.revision = String(BigInt(previous?.revision || '0') + 1n);
+    s.draftRevision = String(BigInt(previous?.draftRevision || '0') + (previous && previous.draft !== s.draft ? 1n : 0n));
+    const config = (v: Session) => JSON.stringify([v.title,v.model,v.effort,v.ollama,v.mode,v.remote]);
+    s.configRevision = String(BigInt(previous?.configRevision || '0') + (previous && config(previous) !== config(s) ? 1n : 0n));
+    this.db.prepare('INSERT OR REPLACE INTO sessions VALUES (?,?)').run(s.id, JSON.stringify(s));
+  }
   messages(id: string): Message[] { return this.db.prepare('SELECT data FROM messages WHERE session_id=? ORDER BY rowid').all(id).map(r => JSON.parse(r.data as string)); }
   messageById(id: string): Message | undefined { const row=this.db.prepare('SELECT data FROM messages WHERE id=?').get(id);return row?JSON.parse(row.data as string):undefined; }
-  message(m: Message) { this.db.prepare('INSERT INTO messages VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(m.id, m.sessionId, JSON.stringify(m)); }
+  /** Newest-first rows before an insertion cursor; callers bound the page by bytes. */
+  messageRows(id: string, before: number | null, limit: number): { cursor: number; data: string }[] {
+    return this.db.prepare('SELECT rowid AS cursor,data FROM messages WHERE session_id=? AND (? IS NULL OR rowid<?) ORDER BY rowid DESC LIMIT ?').all(id, before, before, limit) as any;
+  }
+  message(m: Message) {
+    m.revision = String(BigInt(this.messageById(m.id)?.revision || '0') + 1n);
+    m.turnId ||= this.session(m.sessionId).turnId;
+    this.db.prepare('INSERT INTO messages VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(m.id, m.sessionId, JSON.stringify(m));
+  }
   activity(data: unknown) {
     this.db.prepare('INSERT INTO activity(time,data) VALUES (?,?)').run(Date.now(), JSON.stringify(data));
     this.db.exec('DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY id DESC LIMIT 500)');
@@ -56,6 +72,7 @@ export class Store {
   activities() { return this.db.prepare('SELECT time,data FROM activity ORDER BY id DESC LIMIT 100').all().map(r => ({time:r.time, ...JSON.parse(r.data as string)})); }
   timers(): any[] { return this.db.prepare('SELECT data FROM timers').all().map(r => JSON.parse(r.data as string)); }
   timer(t: any) { this.db.prepare('INSERT OR REPLACE INTO timers VALUES (?,?)').run(t.id, JSON.stringify(t)); }
-  removeTimer(id: string) { this.db.prepare('DELETE FROM timers WHERE id=?').run(id); }
+  /** True only for the caller whose DELETE actually claimed the timer. */
+  removeTimer(id: string): boolean { return Number(this.db.prepare('DELETE FROM timers WHERE id=?').run(id).changes) > 0; }
   close() { this.db.close(); }
 }

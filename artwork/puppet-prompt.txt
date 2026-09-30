@@ -1,0 +1,29 @@
+Built-in image_gen tool, transparent background.
+Reference: assets/cere-polished.png. Original asset preserved.
+
+Use case: identity-preserve
+Asset type: production 2D skeletal cutout character atlas, transparent PNG, 1536 by 1024.
+Reference image: Cere's existing artwork, used strictly for character identity, proportions, materials and rendering style.
+Create ONE clean animation-parts atlas of this same adult blue-haired masked chibi woman. This is disassembled paper-doll artwork for a runtime skeleton: each cell contains ONLY the single detached part specified. No complete people, no labels, no grid lines, no shadows on the transparent background. Preserve bright cyan blue hair, light skin, round dark glasses, black respirator mask, black leather outfit, silver buckles, fingerless gloves, strapped cargo trousers, chunky black boots. Same polished illustrated rendering as reference. Front view, no perspective foreshortening. Rounded fully painted hidden joint ends provide generous overlap when parts rotate; do not leave cut-off flat unpainted joints.
+Layout: exactly FOUR columns and FOUR rows, sixteen equally sized cells, 384 wide by 256 high. Keep every part entirely in its own cell, centered, with at least 12 pixels of transparent gutter. Each detached part may fill its cell independently; code will scale parts into place. All limb parts point straight DOWN in their rest orientation, proximal joint at top, distal joint at bottom. Viewer-left and viewer-right refer to screen side.
+ROW 1, left to right:
+1) BACK HAIR only: the full flowing bright blue rear hair mass and long side locks, framing an EMPTY transparent face opening. No face, glasses, respirator, skin, chest or hands.
+2) HEAD FRONT open eyes: face, round glasses, blue eyes, black respirator mask, forehead bangs and crown hair only. No long side locks below chin, no neck, torso, shoulders or hands. Head upright, eyes looking forward.
+3) Exact same HEAD FRONT as cell 2 with eyes gently closed. Same size, silhouette, angle, crown, glasses and respirator; only eyelids change.
+4) Exact same HEAD FRONT as cell 2 with an affectionate one-eye wink. Same size, silhouette, angle, crown, glasses and respirator.
+ROW 2:
+5) TORSO only: neck joint stub, black cropped leather chest outfit, visible small neckline, buckled straps and waist belt. No head, hair, arms, hands, legs. Both shoulder sockets painted as black leather overlap pads.
+6) HIPS only: waistband, hip straps, black cargo trousers seat, and rounded left and right hip joints. No torso, arms, knees, boots.
+7) VIEWER-LEFT THIGH only: black strapped trouser upper leg from hip to knee, pointing down. Rounded hip and knee overlaps. No boot or shin.
+8) VIEWER-RIGHT THIGH only, matching the left, mirrored placement of buckles.
+ROW 3:
+9) VIEWER-LEFT SHIN AND BOOT: lower trouser leg from knee into chunky black boot; knee at top, boot sole flat at bottom, foot toe slightly toward viewer-left. No thigh.
+10) VIEWER-RIGHT SHIN AND BOOT, matching with toe slightly toward viewer-right.
+11) VIEWER-LEFT UPPER ARM only: rounded black leather shoulder/sleeve pad, short exposed light-skin upper arm below, ending at rounded elbow. Points down. No hand or forearm.
+12) VIEWER-RIGHT UPPER ARM only, matching.
+ROW 4:
+13) VIEWER-LEFT FOREARM AND RELAXED HAND: elbow at top, black wrist cuff/glove and relaxed slightly curled fingerless gloved hand below, pointing down. No upper arm.
+14) VIEWER-RIGHT FOREARM AND RELAXED HAND, matching.
+15) VIEWER-LEFT FOREARM AND OPEN WAVING HAND: same elbow/cuff proportions and orientation as cell 13; open palm, five naturally separated fingers pointing DOWN at rest. No upper arm. Runtime rotates this upward for a wave.
+16) HEAD FRONT curious: exact same head geometry as cell 2, same upright orientation, a subtle inquisitive eyebrow/eye expression. No neck or body.
+Critical: physically detached components with clean alpha, no stray duplicate parts, no intact avatars in any cell. Preserve identity and outfit. Clean separations and fully painted overlaps matter more than extra detail. Transparent RGBA background.

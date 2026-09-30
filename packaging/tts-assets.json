@@ -1,0 +1,122 @@
+[
+  {
+    "name": "piper_linux_x86_64.tar.gz",
+    "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz",
+    "sha256": "a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992",
+    "bytes": 26460462
+  },
+  {
+    "name": "piper_linux_aarch64.tar.gz",
+    "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz",
+    "sha256": "fea0fd2d87c54dbc7078d0f878289f404bd4d6eea6e7444a77835d1537ab88eb",
+    "bytes": 26004717
+  },
+  {
+    "name": "en_US-amy-medium.onnx",
+    "url": "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/amy/medium/en_US-amy-medium.onnx",
+    "sha256": "b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18",
+    "bytes": 63201294
+  },
+  {
+    "name": "en_US-amy-medium.onnx.json",
+    "url": "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/amy/medium/en_US-amy-medium.onnx.json",
+    "sha256": "95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77",
+    "bytes": 4882
+  },
+  {
+    "name": "MODEL_CARD",
+    "url": "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/amy/medium/MODEL_CARD",
+    "sha256": "858419ea604c427ff2e9918556345667eb46397da3c965de75f4f7f0bb50a962",
+    "bytes": 284
+  },
+  {
+    "name": "PIPER-MIT.txt",
+    "url": "https://raw.githubusercontent.com/rhasspy/piper/2023.11.14-2/LICENSE.md",
+    "sha256": "4cd71dece7037f1d6d93cce7570c57ab75ea9ac566fd4990be2f3ab08d15b47f",
+    "bytes": 1071
+  },
+  {
+    "name": "PIPER-PHONEMIZE-MIT.txt",
+    "url": "https://raw.githubusercontent.com/rhasspy/piper-phonemize/fccd4f335aa68ac0b72600822f34d84363daa2bf/LICENSE.md",
+    "sha256": "13746d509d74e55ea2265fbef204bb7cdbf84a8315b0207e988326cb54387028",
+    "bytes": 1071
+  },
+  {
+    "name": "ESPEAK-GPL-3.0.txt",
+    "url": "https://raw.githubusercontent.com/rhasspy/espeak-ng/0f65aa301e0d6bae5e172cc74197d32a6182200f/COPYING",
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "bytes": 35147
+  },
+  {
+    "name": "ONNXRUNTIME-MIT.txt",
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.14.1/LICENSE",
+    "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+    "bytes": 1073
+  },
+  {
+    "name": "ONNXRUNTIME-NOTICES.txt",
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.14.1/ThirdPartyNotices.txt",
+    "sha256": "cc63920441c5681cfb1663caf1de1858349b517fc1bed9ca669a85bc526cd13e",
+    "bytes": 299762
+  },
+  {
+    "name": "FMT-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/fmtlib/fmt/10.0.0/LICENSE.rst",
+    "sha256": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8",
+    "bytes": 1431
+  },
+  {
+    "name": "SPDLOG-MIT.txt",
+    "url": "https://raw.githubusercontent.com/gabime/spdlog/v1.12.0/LICENSE",
+    "sha256": "a7241a379cb98d37788f82c2fc2e484c3ae85dae881fd3406f0637644850926f",
+    "bytes": 1348
+  },
+  {
+    "name": "UNI-ALGO-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/rhasspy/piper-phonemize/fccd4f335aa68ac0b72600822f34d84363daa2bf/licenses/uni-algo/LICENSE.md",
+    "sha256": "c55648b02873556d6ab2de14938998101fda3a0f293337542af9196435def318",
+    "bytes": 2208
+  },
+  {
+    "name": "MIMIC3-CC-BY-SA-4.0.txt",
+    "url": "https://raw.githubusercontent.com/MycroftAI/mimic3-voices/b239a9084e21fbaa7ac78ea6e31f5de1c31c8f42/LICENSE",
+    "sha256": "28a9529c7d0bb4dc51f4bf5c116a3d16ef247a052f7591466768ddf563fd1cf5",
+    "bytes": 20138
+  },
+  {
+    "name": "PIPER-VOICES-README.md",
+    "url": "https://huggingface.co/rhasspy/piper-voices/raw/c10ece1aade47bb51c153c893d14e5bf8e5b7117/README.md",
+    "sha256": "33e93643fce5180886300f9f0070eeeab8af148efb8e84361f8904def80fd9fb",
+    "bytes": 497
+  },
+  {
+    "name": "piper-source.tar.gz",
+    "url": "https://codeload.github.com/rhasspy/piper/tar.gz/2023.11.14-2",
+    "sha256": "8b684e102cfe23af097830db9555a8641f17735725853c531a1daeb34b6ed1a8",
+    "bytes": 25602353
+  },
+  {
+    "name": "piper-phonemize-source.tar.gz",
+    "url": "https://codeload.github.com/rhasspy/piper-phonemize/tar.gz/fccd4f335aa68ac0b72600822f34d84363daa2bf",
+    "sha256": "625cc8f76b3ba2c0e0e7c7e47c1c5aaaf163df9b8296fcf42b9628231f3e264a",
+    "bytes": 9788138
+  },
+  {
+    "name": "espeak-ng-source.tar.gz",
+    "url": "https://codeload.github.com/rhasspy/espeak-ng/tar.gz/0f65aa301e0d6bae5e172cc74197d32a6182200f",
+    "sha256": "37ebbabb010200be8ec26c61b770e93f964f4503a329d7d74c239a1a40051e43",
+    "bytes": 16321475
+  },
+  {
+    "name": "fmt-source.tar.gz",
+    "url": "https://codeload.github.com/fmtlib/fmt/tar.gz/10.0.0",
+    "sha256": "ede1b6b42188163a3f2e0f25ad5c0637eca564bd8df74d02e31a311dd6b37ad8",
+    "bytes": 851582
+  },
+  {
+    "name": "spdlog-source.tar.gz",
+    "url": "https://codeload.github.com/gabime/spdlog/tar.gz/v1.12.0",
+    "sha256": "4dccf2d10f410c1e2feaff89966bfc49a1abb29ef6f08246335b110e001e09a9",
+    "bytes": 251037
+  }
+]

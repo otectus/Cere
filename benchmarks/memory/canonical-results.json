@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-29T22:48:16.273Z",
+  "engine": "broker/graph-memory/canonical.ts Canonical.retrieve (lexical, entity anchors and graph expansion; no embeddings)",
+  "corpus": {
+    "cases": 70,
+    "temporalViews": 50,
+    "loadMs": 448.78056100000003,
+    "revisions": 425
+  },
+  "retrieval": {
+    "relational_ranker": {
+      "factRecallAt10": 1,
+      "relationalFactRecallAt10": 1,
+      "mrrAt10": 0.9,
+      "evidenceRecallAt10": 1,
+      "pathRecall": 1,
+      "temporalViewAccuracy": 1,
+      "temporalViews": 50,
+      "temporalViewFailures": [],
+      "abstentionAccuracy": 1,
+      "unsupportedClaimRate": 0,
+      "settledFacts": 100,
+      "meanEstimatedTokens": 1232.69,
+      "latencyMs": {
+        "p50": 6.059865000000059,
+        "p95": 14.56808100000012,
+        "p99": 20.845054000000005,
+        "samples": 100
+      }
+    },
+    "rrf_without_relational_ranker": {
+      "factRecallAt10": 1,
+      "relationalFactRecallAt10": 1,
+      "mrrAt10": 0.9,
+      "evidenceRecallAt10": 1,
+      "pathRecall": 1,
+      "temporalViewAccuracy": 1,
+      "temporalViews": 50,
+      "temporalViewFailures": [],
+      "abstentionAccuracy": 1,
+      "unsupportedClaimRate": 0,
+      "settledFacts": 100,
+      "meanEstimatedTokens": 1232.69,
+      "latencyMs": {
+        "p50": 5.6242030000000796,
+        "p95": 13.071138000000019,
+        "p99": 23.042961000000105,
+        "samples": 100
+      }
+    }
+  },
+  "lookAlikes": {
+    "future_bound": {
+      "planted": 10,
+      "demonstrated": 10
+    },
+    "planned": {
+      "planted": 10,
+      "demonstrated": 10
+    },
+    "erased": {
+      "planted": 10,
+      "demonstrated": 10
+    },
+    "other_scope": {
+      "planted": 10,
+      "demonstrated": 10
+    },
+    "question": {
+      "planted": 10,
+      "demonstrated": 10
+    },
+    "disputed": {
+      "planted": 10,
+      "demonstrated": 10
+    }
+  },
+  "integrity": {
+    "F011_polarity_disputed": true,
+    "F012_batch_committed": true,
+    "F013_question_candidate": true,
+    "F025_inherited_anchor": true,
+    "F034_uncertain_candidate": true
+  },
+  "gates": {
+    "noUnsupportedClaims": {
+      "target": "no forbidden, erased, out-of-scope, planned or questioned fact settled",
+      "value": 0,
+      "status": "passed"
+    },
+    "temporalViews": {
+      "target": "every temporal and historical view answered exactly",
+      "value": 1,
+      "status": "passed"
+    },
+    "abstention": {
+      "target": "every equal-authority contradiction abstains",
+      "value": 1,
+      "status": "passed"
+    },
+    "relationalRecallTarget": {
+      "target": "relational fact recall@10 >= 0.90",
+      "value": 1,
+      "status": "passed"
+    },
+    "rankerImprovement": {
+      "target": "relational ranker at least 0.05 above plain fusion on relational recall",
+      "value": 0,
+      "status": "failed"
+    },
+    "lookAlikesLive": {
+      "target": "every planted look-alike is reachable, a conflict, or erased",
+      "value": 60,
+      "status": "passed"
+    },
+    "integrityFixtures": {
+      "target": "F-011, F-012, F-013, F-025 and F-034 fixtures hold",
+      "value": 5,
+      "status": "passed"
+    },
+    "acceptedAssertionPrecision": {
+      "target": ">= 95% accepted-assertion precision on real extraction output",
+      "value": null,
+      "status": "unmeasured"
+    },
+    "semanticQuality": {
+      "target": "production embedding retrieval quality",
+      "value": null,
+      "status": "unmeasured"
+    }
+  },
+  "limitations": [
+    "Corpus text is synthetic and anchored by known entity IDs; it measures engine eligibility, temporal and conflict behavior, not natural-language recall.",
+    "No embedding model, Neo4j or Qdrant is involved; semantic and projection routes are unmeasured here.",
+    "Model extraction quality is not measured; integrity fixtures submit proposals directly."
+  ]
+}

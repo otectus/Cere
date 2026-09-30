@@ -5,12 +5,14 @@
 #include <QLocalSocket>
 #include <QTimer>
 #include <QQuickView>
+#include <QQmlEngine>
 #include <QProcess>
 #include <QSystemTrayIcon>
 #include <QPointer>
 #include <QAbstractListModel>
 #include <QElapsedTimer>
 #include <QSortFilterProxyModel>
+#include <QSet>
 #include "motion.h"
 #include "follow.h"
 class QQuickTextDocument;
@@ -25,7 +27,12 @@ public:
     QHash<int,QByteArray> roleNames() const override {return {{Qt::UserRole+1,"entry"}};}
     void reset(QVariantList values){beginResetModel();rows=std::move(values);endResetModel();}
     void upsert(const QVariantMap &message){for(int i=0;i<rows.size();++i)if(rows[i].toMap().value("id")==message.value("id")){rows[i]=message;emit dataChanged(index(i),index(i),{Qt::UserRole+1});return;}int n=rows.size();beginInsertRows({},n,n);rows.append(message);endInsertRows();}
+    void prepend(const QVariantList &older){if(older.isEmpty())return;beginInsertRows({},0,older.size()-1);rows=older+rows;endInsertRows();}
 };
+// Broker message revisions increase with every stored update of the same message.
+inline bool newerMessage(const QVariantMap &incoming,const QVariantMap &existing){
+    return incoming.value("revision").toString().toULongLong()>=existing.value("revision").toString().toULongLong();
+}
 
 // Keep streaming updates incremental in both views, with a single source of truth.
 class TranscriptFilter : public QSortFilterProxyModel {
@@ -55,6 +62,7 @@ class Controller : public QObject {
     Q_PROPERTY(QVariantMap animations READ animations CONSTANT)
     Q_PROPERTY(QString toast READ toast NOTIFY toastChanged)
     Q_PROPERTY(QString motion READ motion NOTIFY motionChanged)
+    Q_PROPERTY(bool hasOlderMessages READ hasOlderMessages NOTIFY messagesChanged)
 public:
     explicit Controller(QString root, bool overlay, QObject *parent=nullptr);
     ~Controller();
@@ -71,6 +79,14 @@ public:
     QVariantMap animations() const { return m_animations; }
     QString toast() const { return m_toast; }
     QString motion() const { return m_motion; }
+    Q_PROPERTY(QPointF petVelocity READ petVelocity NOTIFY motionDynamicsChanged)
+    Q_PROPERTY(QPointF petSubpixel READ petSubpixel NOTIFY motionDynamicsChanged)
+    Q_PROPERTY(bool petMoving READ petMoving NOTIFY motionDynamicsChanged)
+    QPointF petVelocity() const { return m_petVelocity; }
+    QPointF petSubpixel() const { return m_petSubpixel; }
+    bool petMoving() const { return !m_motionPaused && (m_roamStep || m_settling); }
+    Q_INVOKABLE void advancePetMotion();
+    bool hasOlderMessages() const { return m_olderCursor>0; }
     Q_INVOKABLE int rpc(const QString &method, const QVariantMap &params={});
     Q_INVOKABLE void select(const QString &id);
     Q_INVOKABLE void togglePanel();
@@ -96,28 +112,56 @@ public:
     Q_INVOKABLE bool autostartEnabled() const;
     Q_INVOKABLE void preview(const QString &state);
     Q_INVOKABLE void attachImage(const QString &path) { emit attachmentRequested(path); }
+    Q_INVOKABLE void loadOlderMessages();
+    Q_INVOKABLE void copyMessage(const QString &messageId);
+    Q_INVOKABLE void copySessionMessage(const QString &sessionId, const QString &messageId);
+    Q_INVOKABLE void openCompletion(const QString &completionId);
+    Q_INVOKABLE QVariantMap questionDraft(const QString &approvalId) const { return m_questionDrafts.value(approvalId); }
+    Q_INVOKABLE void setQuestionDraft(const QString &approvalId, const QVariantMap &answers);
+    // The pet's current logical placement in global coordinates (diagnostics and tests).
+    QPoint petPosition() const { return m_petPosition; }
     void start(bool show);
+    // The broker is trusted only when its socket belongs to the expected user.
+    static bool trustedBroker(qintptr descriptor, uint expectedUid);
+    static bool privateRuntime(const QString &path);
 signals:
     void stateChanged();
     void messagesChanged();
+    void conversationMessage(const QVariantMap &message);
     void activityChanged();
+    void questionDraftsChanged();
     void toastChanged();
     void motionChanged();
+    void motionDynamicsChanged();
     void result(int id, const QVariant &value);
+    // Editors persist unsaved text before a window hides, expands or quits.
+    void flushDrafts();
     void attachmentRequested(const QString &path);
 private:
+    // Pet and output-seam mirror share QML values and one animation sample.
+    QQmlEngine m_qmlEngine;
     QString m_root, m_selected, m_toast, m_motion="idle";
     bool m_overlay, m_expanded=false, m_dragging=false, m_roamStep=false;
     QLocalSocket m_socket;
     QByteArray m_buffer;
     QVariantMap m_state, m_animations;
     QVariantList m_messages;
+    QHash<QString,QVariantMap> m_questionDrafts;
     TranscriptModel m_transcript;
     TranscriptFilter m_replies{false},m_activity{true};
     QHash<int,QString> m_requests;
     int m_sequence=0;
-    int m_messagesRequest=-1;
-    QTimer m_retry, m_toastTimer, m_roamTimer, m_followTimer, m_motionTimer, m_idleTimer;
+    int m_messagesRequest=-1, m_olderRequest=-1;
+    qint64 m_olderCursor=0;
+    QSet<QString> m_liveMessages;
+    QHash<int,QVariantMap> m_copies;
+    QPointer<QQuickView> m_petMirror;
+    QPoint m_settleTarget;
+    QPointF m_settlePosition;
+    bool m_settling=false, m_motionPaused=false;
+    QElapsedTimer m_settleClock;
+    void settleOrPersist();
+    QTimer m_retry, m_toastTimer, m_roamTimer, m_motionTimer, m_idleTimer;
     QTimer m_successTimer;
     QString m_successSession;
     MotionDirector m_director;
@@ -126,6 +170,8 @@ private:
     QHash<QString,qint64> m_lastReaction;
     MouseFollower m_follower;
     QElapsedTimer m_followClock;
+    QElapsedTimer m_dragClock;
+    QPointF m_petVelocity, m_petSubpixel;
     QPoint m_followCursor;
     QPointer<QScreen> m_followScreen;
     bool m_roamLeft=false,m_petInteracting=false;
@@ -143,7 +189,10 @@ private:
     void receive();
     void applyState(const QVariantMap &state);
     void syncPet();
-    void placePet(QPoint global, QScreen *screen, bool persist);
+    void placePet(QPoint global, QScreen *screen, bool persist, bool roaming=false);
+    void syncPetMirror(bool roaming);
+    void reloadMessages();
+    void failPendingRequests(const QString &message);
     void updateMask();
     void positionPanel();
     void syncApprovalBubble();

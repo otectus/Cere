@@ -1,0 +1,55 @@
+name: Cere Mobile checks
+on:
+  pull_request:
+    paths: ['mobile/**', 'broker/**', 'protocol/**', 'tests/**', 'tools/mobile-*', 'package*.json', 'tsconfig*.json', '.github/workflows/mobile-*.yml']
+  push:
+    branches: [main, master]
+    paths: ['mobile/**', 'broker/**', 'protocol/**', 'tests/**', 'tools/mobile-*', 'package*.json', 'tsconfig*.json', '.github/workflows/mobile-*.yml']
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -p tsconfig.mobile.json
+      - run: node tools/mobile-contract.ts --check
+      - name: Build same-user peer credentials adapter for isolated process tests
+        run: |
+          mkdir -p build
+          curl --fail --silent --show-error "https://nodejs.org/dist/v$(node --version | cut -c2-)/node-$(node --version)-headers.tar.gz" -o /tmp/node-headers.tar.gz
+          tar -xzf /tmp/node-headers.tar.gz -C /tmp
+          g++ -std=c++17 -shared -fPIC -I"/tmp/node-$(node --version)/include/node" native/peercred.cpp -o build/cere-peercred.node
+      - run: node --test tests/remote.test.ts tests/remote-process.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mobile/android
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
+      - run: ./gradlew --no-daemon :core:protocol:test :core:data:testDebugUnitTest :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
+      - run: ./gradlew --no-daemon --no-configuration-cache -I ../../tools/mobile-sbom.gradle :app:mobileSbom
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cere-mobile-unsigned
+          if-no-files-found: error
+          path: |
+            mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
+            mobile/android/app/build/reports/mobile-sbom.cdx.json
+            mobile/android/app/build/reports/lint-results-*.html
+          retention-days: 14

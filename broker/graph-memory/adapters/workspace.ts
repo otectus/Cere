@@ -58,6 +58,7 @@ export class FilesystemMetadataCollector implements LiveCollector {
   private emit?: (observation: LiveObservation) => void;
   private factory: LiveObservationFactory;
   private identities = new Map<string, { generation: string; device: number; inode: number; exists: boolean }>();
+  private stopped = false;
   constructor(config: FilesystemCollectorConfig) { this.config = config; this.factory = new LiveObservationFactory('filesystem', config.ttlMs ?? 10_000); }
   async start(emit: (observation: LiveObservation) => void): Promise<void> {
     this.emit = emit; this.roots = await Promise.all(this.config.approvedRoots.map(root => realpath(root)));
@@ -71,6 +72,8 @@ export class FilesystemMetadataCollector implements LiveCollector {
     if (!inside(root, lexical) || this.config.excludes?.some(pattern => pattern.test(relative(root, lexical)))) return;
     let canonical = lexical, fileStat: Awaited<ReturnType<typeof stat>> | undefined;
     try { canonical = await realpath(lexical); if (!inside(root, canonical)) return; fileStat = await stat(canonical); } catch { /* deletion metadata uses the verified lexical root */ }
+    // A watch callback completing after stop() must not reinsert revoked metadata.
+    if (this.stopped) return;
     const identityKey = `${root}:${relative(root, lexical)}`, prior = this.identities.get(identityKey);
     const device = fileStat ? Number(fileStat.dev) : prior?.device ?? 0, inode = fileStat ? Number(fileStat.ino) : prior?.inode ?? 0;
     const sameObject = Boolean(fileStat && prior?.exists && prior.device === device && prior.inode === inode);
@@ -84,7 +87,7 @@ export class FilesystemMetadataCollector implements LiveCollector {
     }));
   }
   async reconcile(): Promise<void> {}
-  async stop(): Promise<void> { for (const watcher of this.watchers) watcher.close(); this.watchers = []; }
+  async stop(): Promise<void> { this.stopped = true; for (const watcher of this.watchers) watcher.close(); this.watchers = []; this.emit = undefined; }
 }
 
 function redactRemote(value: string): string {
@@ -104,10 +107,13 @@ export interface CheckoutMetadata {
 const checkoutIds = new Map<string, string>();
 
 export async function inspectGitCheckout(path: string, git = 'git'): Promise<CheckoutMetadata> {
-  const rootResult = await execFileAsync(git, ['-C', path, 'rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'], { timeout: 3_000, maxBuffer: 256 * 1024 });
+  // Git reports relative metadata paths against the -C directory, not the checkout root.
+  // Request absolute paths, and resolve any relative fallback against the -C directory.
+  const base = await realpath(path);
+  const rootResult = await execFileAsync(git, ['-C', base, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'], { timeout: 3_000, maxBuffer: 256 * 1024 });
   const [rootText, gitDirectoryText, commonDirectoryText] = rootResult.stdout.trim().split('\n');
   if (!rootText || !gitDirectoryText || !commonDirectoryText) throw new Error('Git returned incomplete checkout metadata');
-  const checkoutRoot = await realpath(rootText), gitDirectory = await realpath(resolve(checkoutRoot, gitDirectoryText)), commonDirectory = await realpath(resolve(checkoutRoot, commonDirectoryText));
+  const checkoutRoot = await realpath(resolve(base, rootText)), gitDirectory = await realpath(resolve(base, gitDirectoryText)), commonDirectory = await realpath(resolve(base, commonDirectoryText));
   const rootStat = await stat(checkoutRoot);
   const identityKey = JSON.stringify([Number(rootStat.dev), Number(rootStat.ino), checkoutRoot, gitDirectory]);
   let checkoutId = checkoutIds.get(identityKey);

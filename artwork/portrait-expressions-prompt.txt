@@ -1,0 +1,13 @@
+Generated with the built-in image_gen tool, 2026-09-30.
+Identity reference: mobile/artwork/cere-face-icon.png.
+Runtime asset: assets/cere-portrait-expressions.png.
+
+Use case: identity-preserve / stylized-concept.
+Asset type: production expression sprite atlas for a small animated desktop companion portrait.
+Input image 1 is the identity reference: Cere's existing face icon. Preserve this exact character, electric cyan and blue fluffy layered hair, blue eyes, round black glasses, black respirator with two side filters, glossy anime illustration. Create ONE transparent landscape atlas with exactly FOUR columns and THREE rows of equal square cells, ideally 2048x1536, twelve head-only portraits. No full bodies, no shoulders, no hands.
+Every cell has the same front-facing head position, head scale, glasses, mask, hairstyle silhouette, and studio light. Head fills 90 percent of each square; keep all hair inside each cell with a narrow transparent margin. Face and eyes large enough to read at 64 pixels. Straight-on portrait, no camera changes, no props, no typography, no labels, no grid borders, no background, no particles, no emoji. True transparent alpha outside hair. Make expressions unmistakably different through eyelids, brows, gaze and slight cheek cues while the mask stays fixed.
+Exact expression order left to right, top to bottom:
+Row 1: 1 neutral warm attentive eyes; 2 curious raised eyebrow with eyes glancing slightly sideways; 3 thoughtful eyes glancing up and inward with one brow gently lowered; 4 happy delighted crescent-shaped smiling eyes, still slightly open.
+Row 2: 5 cheeky affectionate WINK one eye closed, other playful; 6 skeptical half-lidded side-eye with one raised brow; 7 tender empathetic soft kind eyes with brows raised slightly at the inner ends; 8 concerned worried brows drawn inward gently, no tears.
+Row 3: 9 surprised wide round eyes and raised eyebrows; 10 focused confident determined eyes, brows subtly narrowed but not angry; 11 sleepy drowsy half-closed eyes; 12 natural BLINK both eyes completely closed with relaxed lids and brows.
+This is an animation asset, so head and silhouette registration across all twelve cells matters more than pose variation. Keep the eye/mask/forehead positions aligned. Beautiful polished face closeups matching the supplied reference. No cut-off cells.

@@ -85,6 +85,42 @@ load_secrets() {
   : "${QDRANT_API_KEY:?QDRANT_API_KEY is required}"
 }
 
+# Qdrant PID records hold "pid start-time executable". A record is trusted only while
+# the live process has the same owner, executable and kernel start time, so a reused
+# PID can never receive a signal meant for Qdrant. PIDs 0 and 1 are never valid.
+readonly QDRANT_RECORD="$DEPS_HOME/run/qdrant.pid"
+process_start() {
+  local stat
+  stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+  stat="${stat##*) }"
+  # shellcheck disable=SC2086
+  set -- $stat
+  [[ -n "${20:-}" ]] && printf '%s\n' "${20}"
+}
+qdrant_executable() { realpath -e -- "$DEPS_HOME/qdrant/qdrant" 2>/dev/null; }
+record_qdrant() {
+  local pid="$1" start executable
+  start="$(process_start "$pid")" || return 1
+  executable="$(readlink -f "/proc/$pid/exe" 2>/dev/null)" || return 1
+  (umask 077 && printf '%s %s %s\n' "$pid" "$start" "$executable" >"$QDRANT_RECORD")
+}
+qdrant_pid() {
+  [[ -f "$QDRANT_RECORD" ]] || return 1
+  local pid="" start="" executable="" expected
+  read -r pid start executable <"$QDRANT_RECORD" || true
+  expected="$(qdrant_executable)" || expected=""
+  if [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 && "$start" =~ ^[0-9]+$ && -n "$executable" && "$executable" == "$expected" ]] &&
+    [[ "$(stat -c '%u' "/proc/$pid" 2>/dev/null)" == "$(id -u)" ]] &&
+    [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null)" == "$executable" ]] &&
+    [[ "$(process_start "$pid")" == "$start" ]]; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+  echo "removing stale Qdrant PID record without signaling" >&2
+  rm -f -- "$QDRANT_RECORD"
+  return 1
+}
+
 wait_port() {
   local name="$1" port="$2"
   [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] || { echo "invalid $name port: $port" >&2; return 1; }
@@ -120,14 +156,16 @@ local_start() {
   NEO4J_server_bolt_listen__address="127.0.0.1:${NEO4J_BOLT_PORT:-7687}" \
   NEO4J_server_http_listen__address="127.0.0.1:${NEO4J_HTTP_PORT:-7474}" \
     "$DEPS_HOME/neo4j/bin/neo4j" start
-  if [[ -f "$DEPS_HOME/run/qdrant.pid" ]] && kill -0 "$(<"$DEPS_HOME/run/qdrant.pid")" 2>/dev/null; then
+  if qdrant_pid >/dev/null; then
     echo "Qdrant is already running"
   else
     QDRANT__STORAGE__STORAGE_PATH="$DEPS_HOME/qdrant-storage" QDRANT__SERVICE__HOST=127.0.0.1 \
     QDRANT__SERVICE__HTTP_PORT="${QDRANT_HTTP_PORT:-6333}" QDRANT__SERVICE__API_KEY="$QDRANT_API_KEY" QDRANT__TELEMETRY_DISABLED=true \
       nohup "$DEPS_HOME/qdrant/qdrant" >"$DEPS_HOME/run/qdrant.log" 2>&1 &
-    echo "$!" >"$DEPS_HOME/run/qdrant.pid"
-    chmod 600 "$DEPS_HOME/run/qdrant.pid" "$DEPS_HOME/run/qdrant.log"
+    local started="$!"
+    for _ in $(seq 1 20); do [[ "$(readlink -f "/proc/$started/exe" 2>/dev/null)" == "$(qdrant_executable)" ]] && break; sleep 0.05; done
+    record_qdrant "$started" || { echo "Qdrant exited before its identity could be recorded" >&2; return 1; }
+    chmod 600 "$DEPS_HOME/run/qdrant.log"
   fi
   wait_port Neo4j "${NEO4J_BOLT_PORT:-7687}"
   wait_port Qdrant "${QDRANT_HTTP_PORT:-6333}"
@@ -136,18 +174,16 @@ local_start() {
 
 local_stop() {
   "$DEPS_HOME/neo4j/bin/neo4j" stop 2>/dev/null || true
-  if [[ -f "$DEPS_HOME/run/qdrant.pid" ]]; then
-    local pid
-    pid="$(<"$DEPS_HOME/run/qdrant.pid")"
-    if [[ "$pid" =~ ^[0-9]+$ ]]; then
-      kill "$pid" 2>/dev/null || true
-      for _ in $(seq 1 40); do
-        kill -0 "$pid" 2>/dev/null || break
-        sleep 0.1
-      done
-      kill -9 "$pid" 2>/dev/null || true
-    fi
-    rm -f -- "$DEPS_HOME/run/qdrant.pid"
+  local pid
+  if pid="$(qdrant_pid)"; then
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 40); do
+      qdrant_pid >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+    # Identity is rechecked immediately before escalation.
+    if [[ "$(qdrant_pid 2>/dev/null)" == "$pid" ]]; then kill -KILL "$pid" 2>/dev/null || true; fi
+    rm -f -- "$QDRANT_RECORD"
   fi
 }
 
@@ -167,7 +203,7 @@ local_check() {
 case "${1:-}" in
   up) compose up -d --wait ;;
   down) compose down ;;
-  status) if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then compose ps; else "$DEPS_HOME/neo4j/bin/neo4j" status 2>/dev/null || true; [[ -f "$DEPS_HOME/run/qdrant.pid" ]] && ps -p "$(<"$DEPS_HOME/run/qdrant.pid")" -o pid=,stat=,cmd= || true; fi ;;
+  status) if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then compose ps; else "$DEPS_HOME/neo4j/bin/neo4j" status 2>/dev/null || true; if pid="$(qdrant_pid)"; then ps -p "$pid" -o pid=,stat=,cmd=; fi; fi ;;
   logs) compose logs --tail=200 ;;
   local-install) local_install ;;
   local-start) local_start ;;

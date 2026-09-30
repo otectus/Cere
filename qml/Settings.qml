@@ -1,16 +1,59 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-PageScroll {
+ColumnLayout {
     id:settingsView
-    objectName:"settingsScroll"
-    maximumContentWidth:900
+    spacing:16
+    function focusSearch(){settingsSearch.forceActiveFocus()}
     property var settings:App.state.settings||({})
     property var categoryNames:({apps:"Applications",files:"Files and folders",windows:"Windows and workspaces",audio:"Volume and mute",media:"Media playback",capture:"Screen captures",timers:"Timers",scripts:"Saved scripts",providers:"Provider orchestration"})
+    readonly property var navigationEntries:[
+        {label:"Companion",detail:"window, size, roaming, login",target:companionSection},
+        {label:"Personality",detail:"tone and response style",target:personalitySection},
+        {label:"Voice",detail:"speech and Piper voices",target:voiceSection},
+        {label:"Motion & expressions",detail:"animation, quiet mode, previews",target:motionSection},
+        {label:"Cere Mobile",detail:"pairing and remote access",target:remoteSection},
+        {label:"AI assistance",detail:"permissions, categories, grants",target:assistanceSection},
+        {label:"Saved scripts",detail:"commands and working folders",target:scriptsSection},
+        {label:"Connections",detail:"Ollama, Codex, Claude",target:connectionsSection},
+        {label:"Web search & memory",detail:"search providers and recall",target:knowledgeSection},
+        {label:"Application",detail:"Hyprland shortcut and quit",target:applicationSection}
+    ]
+    readonly property string navigationQuery:settingsSearch.text.trim().toLowerCase()
+    readonly property var matchingNavigationEntries:navigationEntries.filter(entry=>(entry.target!==voiceSection||voiceSection.available)&&(!navigationQuery||(entry.label+" "+entry.detail).toLowerCase().indexOf(navigationQuery)>=0))
     function update(value){return App.rpc("settings.update",value)}
-    CText { text:"Settings";font.pixelSize:22;font.weight:Font.DemiBold }
-    CText { text:"Make Cere feel at home on your desktop.";color:Theme.muted;font.pixelSize:12 }
+    function jumpTo(item){
+        if(!item)return
+        const point=item.mapToItem(settingsScroll,0,0)
+        settingsScroll.contentY=Math.max(0,Math.min(settingsScroll.contentHeight-settingsScroll.height,settingsScroll.contentY+point.y-12))
+    }
+    RowLayout {
+        Layout.fillWidth:true
+        ColumnLayout {
+            Layout.fillWidth:true;spacing:4
+            CText { text:"Settings";font.pixelSize:24;font.weight:Font.DemiBold }
+            CText { text:"Shape how Cere looks, speaks, connects, and acts on your desktop.";color:Theme.muted;font.pixelSize:12 }
+        }
+    }
+    RowLayout {
+        Layout.fillWidth:true;spacing:8
+        CField {
+            id:settingsSearch;objectName:"settingsSearch";Layout.fillWidth:true;Layout.preferredWidth:1
+            placeholderText:"Find a setting…";Accessible.name:"Find a settings section"
+            onAccepted:if(settingsView.matchingNavigationEntries.length===1)settingsView.jumpTo(settingsView.matchingNavigationEntries[0].target)
+        }
+        CComboBox {
+            id:sectionPicker;objectName:"settingsSectionPicker";Layout.fillWidth:true;Layout.preferredWidth:1;Layout.minimumWidth:0
+            model:settingsView.matchingNavigationEntries;textRole:"label";Accessible.name:"Jump to settings section"
+            displayText:settingsView.navigationQuery?(count?count+" matching section"+(count===1?"":"s"):"No matching sections"):"Jump to section…"
+            onActivated:if(currentIndex>=0)settingsView.jumpTo(settingsView.matchingNavigationEntries[currentIndex].target)
+        }
+    }
+    PageScroll {
+        id:settingsScroll;objectName:"settingsScroll"
+        Layout.fillWidth:true;Layout.fillHeight:true;maximumContentWidth:820
     CSection {
+        id:companionSection
         title:"Companion"
         CCheckBox { text:"Always on top";checked:settingsView.settings.topmost===true;onClicked:settingsView.update({topmost:checked}) }
         CText { text:"Keep Cere above your applications, including fullscreen windows.";color:Theme.muted;font.pixelSize:12 }
@@ -24,11 +67,15 @@ PageScroll {
         CText { visible:settingsView.settings.roaming;text:"She follows across your displays and stops short of the pointer. Hovering, dragging, open panels, fullscreen apps and active tasks pause her movement.";color:Theme.muted;font.pixelSize:12 }
         CCheckBox { text:"Start Cere at login";checked:App.autostartEnabled();onClicked:App.setAutostart(checked) }
     }
-    PersonalitySettings {}
+    PersonalitySettings { id:personalitySection }
+    VoiceSettings { id:voiceSection }
+    RemoteSettings { id:remoteSection }
     CSection {
+        id:motionSection
         title:"Motion & expressions"
+        description:"A little attitude, a little grace. Make her movement feel like home."
         CCheckBox { text:"Quiet mode";checked:settingsView.settings.quiet===true;onClicked:settingsView.update({quiet:checked}) }
-        CText { text:"Pause animations and ordinary notifications.";color:Theme.muted;font.pixelSize:12 }
+        CText { text:"Pause animations, spoken replies and ordinary notifications.";color:Theme.muted;font.pixelSize:12 }
         CCheckBox { objectName:"reducedMotion";text:"Reduce motion";checked:settingsView.settings.reducedMotion===true;onClicked:settingsView.update({reducedMotion:checked}) }
         CText { text:"Use still poses for her current state. Breathing, blinking, transitions and roaming stop; permission requests stay visible.";color:Theme.muted;font.pixelSize:12 }
         RowLayout {
@@ -42,7 +89,8 @@ PageScroll {
             }
             Text { text:Math.round((settingsView.settings.motionIntensity === undefined ? 0.7 : settingsView.settings.motionIntensity)*100)+"%";color:Theme.cyan;font.pixelSize:12 }
         }
-        CText { text:"Lower intensity softens movement and spaces out idle gestures. Zero keeps state poses still.";color:Theme.muted;font.pixelSize:12 }
+        CText { text:"From a quiet presence to full personality: soften her breathing, gaze, hair sway and gestures together. Zero keeps state poses still.";color:Theme.muted;font.pixelSize:12 }
+        MotionStage { Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0 }
         CCheckBox { objectName:"expressiveCues";text:"Respond to conversational tone";checked:settingsView.settings.expressiveCues!==false;onClicked:settingsView.update({expressiveCues:checked}) }
         CText { text:"Occasional expressions from clear English conversational cues, interpreted locally. Task results always come from the app.";color:Theme.muted;font.pixelSize:12 }
         RowLayout {
@@ -54,10 +102,23 @@ PageScroll {
             }
             CButton { objectName:"previewAnimation";text:"Preview";enabled:!settingsView.settings.quiet&&!settingsView.settings.reducedMotion&&!settingsView.settings.hidden&&settingsView.settings.motionIntensity!==0;onClicked:App.preview(expression.currentValue) }
         }
+        Flow {
+            Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:6
+            Repeater {
+                model:[{name:"wave",label:"Say hello"},{name:"nod",label:"A knowing nod"},{name:"giggle",label:"Try to behave"},{name:"stretch",label:"Stretch"},{name:"glassesAdjust",label:"Adjust glasses"},{name:"hairTuck",label:"Tuck her hair"},{name:"smallShrug",label:"Who, me?"},{name:"hairToss",label:"A little drama"},{name:"music",label:"Find the rhythm"}]
+                CButton {
+                    required property var modelData
+                    text:modelData.label
+                    enabled:!settingsView.settings.quiet&&!settingsView.settings.reducedMotion&&!settingsView.settings.hidden&&settingsView.settings.motionIntensity!==0
+                    onClicked:App.preview(modelData.name)
+                }
+            }
+        }
         CText { visible:settingsView.settings.quiet||settingsView.settings.reducedMotion||settingsView.settings.hidden;text:"Show Cere and turn off quiet mode and reduced motion to preview expressions.";color:Theme.muted;font.pixelSize:12 }
         CButton { text:settingsView.settings.hidden?"Show Cere":"Hide Cere";onClicked:settingsView.update({hidden:!settingsView.settings.hidden}) }
     }
     CSection {
+        id:assistanceSection
         title:"AI assistance"
         description:"Choose which actions your assistant sessions can request. Manual controls in the Desktop tab remain available."
         CCheckBox {
@@ -109,6 +170,7 @@ PageScroll {
         }
     }
     CSection {
+        id:scriptsSection
         title:"Saved scripts"
         description:"Save an executable, its arguments and a working folder. Review it in Desktop before running."
         CButton { objectName:"addScript";text:"Add script";onClicked:scriptDialog.open() }
@@ -123,6 +185,7 @@ PageScroll {
         CText { visible:!(settingsView.settings.scripts||[]).length;text:"No saved scripts yet.";color:Theme.muted;font.pixelSize:12 }
     }
     CSection {
+        id:connectionsSection
         title:"Connections"
         OllamaConnection {}
         Repeater {
@@ -136,8 +199,9 @@ PageScroll {
             }
         }
     }
-    KnowledgeSettings {}
+    KnowledgeSettings { id:knowledgeSection }
     CSection {
+        id:applicationSection
         title:"Application"
         description:"Find Cere in your application menu or tray. Closing a panel keeps your sessions running."
         CButton { text:"Copy Hyprland shortcut";help:"Copy a suggested Super+C binding for a Lua configuration";onClicked:App.copy('hl.bind("SUPER + C", hl.dsp.exec_cmd("cere toggle"))') }
@@ -146,6 +210,7 @@ PageScroll {
             CButton { objectName:"quitKeepSessions";Layout.fillWidth:true;text:"Quit · keep sessions running";onClicked:App.quit(false) }
             CButton { Layout.fillWidth:true;text:"Stop sessions and quit";danger:true;onClicked:quitConfirm.open() }
         }
+    }
     }
     CDialog {
         id:quitConfirm

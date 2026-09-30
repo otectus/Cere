@@ -1,4 +1,5 @@
 import { defaultPersonality } from './personality.ts';
+import type { RemoteExecution } from './execution.ts';
 
 export type Provider = 'codex' | 'claude' | 'ollama';
 export type EffortOption = { id: string; displayName: string; description?: string };
@@ -8,18 +9,31 @@ export type ModelOption = {
   capabilities?: string[]; cloud?: boolean; contextLength?: number;
 };
 export type Status = 'idle' | 'starting' | 'working' | 'waiting' | 'stopping' | 'error' | 'interrupted' | 'disconnected';
-export type SessionActivity = 'thinking' | 'speaking' | 'working';
+export type SessionActivity = 'thinking' | 'speaking' | 'working' | 'delegating' | 'waitingForAgents' | 'compacting' | 'planning';
+export type AgentActivity = {
+  id: string; name: string; task?: string;
+  status: 'starting' | 'running' | 'waiting' | 'completed' | 'failed' | 'interrupted' | 'closed';
+  detail?: string; parentId?: string; updated: number;
+};
 export type Session = {
   id: string; provider: Provider; nativeId: string | null; title: string; cwd: string;
   mode: 'managed' | 'linked' | 'historical'; status: Status; created: number; updated: number;
   draft: string; scroll: number; model: string; effort?: string; error?: string; activity?: SessionActivity;
   ollama?: { host: string; tools: boolean }; parentId?: string;
+  revision?: string; draftRevision?: string; configRevision?: string; turnId?: string;
+  remote?: RemoteExecution; effectivePolicy?: 'restricted' | 'unknown';
+  agents?: AgentActivity[];
 };
 export type Source = { title: string; url: string };
-export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[] };
+export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string };
+export type RunCompletion = {
+  id: string; sessionId: string; turnId?: string; title: string; provider: Provider; cwd: string; time: number;
+  message: Message & { truncated?: boolean };
+};
 export type SearchProvider = 'auto' | 'duckduckgo' | 'brave' | 'mojeek' | 'searxng';
 export type Settings = {
   personality: string;
+  voice: string; speechEnabled: boolean;
   ollama: { host: string; model: string };
   webSearch: { enabled: boolean; provider: SearchProvider; searxngUrl: string };
   memory: { enabled: boolean; model: string; extractionModel?: string; allowCloudMemory?: boolean; allowCloudExtraction?: boolean };
@@ -31,22 +45,42 @@ export type Settings = {
   position: { output: string; x: number; y: number }; roamArea: { left: number; right: number; top: number; bottom: number };
   onboarding: boolean; scripts: { id: string; name: string; executable: string; args: string[]; cwd: string; timeout: number }[];
 };
+export type Question = {
+  id: string; question: string; header?: string;
+  options?: { label: string; description?: string }[];
+  multiSelect?: boolean; isSecret?: boolean; allowOther?: boolean; required?: boolean;
+};
 export type Approval = {
   id: string; sessionId: string; kind: string; title: string; detail: string;
-  choices: string[]; questions?: { id: string; question: string; options?: { label: string; description?: string }[] }[];
+  choices: string[]; questions?: Question[];
   time: number;
   nativeRequestId?: string | number;
+  nativeThreadId?: string;
   image?: string;
+  url?: string;
   fields?: Record<string, any>;
+  remoteAllow?: boolean;
 };
 export type ProviderEvent = { type: string; id?: string; text?: string; data?: any };
+export type SendOptions = {
+  webSearch?: boolean;
+  /** Reauthorize immediately before the provider request can leave the broker. */
+  beforeAccept?: () => void;
+  /** The request left the broker, so a missing acknowledgement has an unknown outcome. */
+  onDispatched?: () => void;
+  /** The provider positively acknowledged the turn. */
+  onAccepted?: () => void;
+  /** The provider positively rejected the dispatched turn without starting it. */
+  onRejected?: () => void;
+};
 export interface Adapter {
-  send(text: string, images?: string[], options?: { webSearch?: boolean }): Promise<void>;
+  send(text: string, images?: string[], options?: SendOptions): Promise<void>;
   interrupt(): Promise<void>;
   close(): Promise<void>;
 }
 export const defaultSettings: Settings = {
   personality: defaultPersonality,
+  voice: 'en_US-amy-medium', speechEnabled: true,
   ollama: { host: 'http://127.0.0.1:11434', model: '' },
   webSearch: { enabled: false, provider: 'auto', searxngUrl: '' },
   memory: { enabled: false, model: 'nomic-embed-text' },

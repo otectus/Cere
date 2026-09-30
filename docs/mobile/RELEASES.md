@@ -1,0 +1,23 @@
+# Sideload releases
+
+No release has been published by this implementation task. The build produces a debug-signed APK and an unsigned R8-shrunk release APK. Stable releases require the owner's permanent signing key and completed hardware gates.
+
+Tags are `mobile-vX.Y.Z`; the Android `versionName` must be `X.Y.Z`, and `versionCode = major*1000000 + minor*1000 + patch`, with each component below 1000. Do not reuse/downgrade a released version. Stable package: `dev.otectus.cere.mobile`; debug: `.debug` suffix.
+
+`.github/workflows/mobile-check.yml` runs secretless contract, broker, Kotlin, lint and APK builds with commit-pinned Actions. `.github/workflows/mobile-release.yml` builds the same gates for mobile tags, then uses a protected `mobile-release` environment to sign the tested unsigned artifact, verify signer/package/version, generate checksums/metadata, attest the APK and upload a **draft** GitHub release. It does not publish the draft automatically.
+
+Before enabling signing, the repository owner must configure required reviewers and mobile-tag restrictions for that environment. A YAML environment name does not configure GitHub's protection rules. Create the permanent keystore offline, retain an encrypted offline backup, and record recovery ownership. Required environment secrets:
+
+- `MOBILE_KEYSTORE_BASE64`, `MOBILE_KEYSTORE_PASSWORD`, `MOBILE_KEY_PASSWORD`, `MOBILE_KEY_ALIAS`.
+- Environment variable `MOBILE_SIGNING_CERT_SHA256`: expected 64-character certificate digest.
+- Environment variable `MOBILE_HARDWARE_GATES=passed`: set only after the documented target-device, release install/upgrade, accessibility and no-Play checks pass; clear it when those assumptions change.
+
+The release job fails without these values. Secrets are passed to apksigner through environment references, the temporary keystore is removed, and no secret-bearing job is exposed to pull requests. Approve only reviewed source/tags. Never check in a keystore, its passwords or a signing identity generated casually by CI.
+
+Assets are `cere-mobile-vX.Y.Z.apk`, `SHA256SUMS`, `SIGNING-CERTIFICATE-SHA256.txt`, `mobile-release.json`, APK verification output, CycloneDX dependency inventory, notices and build provenance. `tools/mobile-release.ts` verifies the actual APK package, version, minSdk and signer before producing metadata. Runtime dependency hashes come from `tools/mobile-sbom.gradle`; an inventory is not a substitute for dependency-license review.
+
+The app's manual and at-most-daily foreground Settings check queries up to ten GitHub Releases pages with ETags, bounded bodies/timeouts and no token. It accepts only published stable mobile tags with matching APK and metadata, higher versionCode, supported Android level and protocol 1.0 compatibility. It opens the exact GitHub release page for user-controlled installation. Rate limits/offline checks never affect chat. There is no silent install or `REQUEST_INSTALL_PACKAGES` flow.
+
+For Obtainium, use `https://github.com/otectus/Cere`, filter release tags with `^mobile-v[0-9]+\.[0-9]+\.[0-9]+$`, and APK assets with `^cere-mobile-v[0-9]+\.[0-9]+\.[0-9]+\.apk$`. Exclude prereleases. Verify the first install's signing fingerprint against the owner's separately retained value. Android requires the same signer for future in-place updates. Test those filters against an actual draft/staged release before recommending unattended updates.
+
+Maintain release notes with protocol/minimum-desktop compatibility and measured device/VPN/battery behavior. Complete [TESTING.md](TESTING.md) gates before making the GitHub draft public.

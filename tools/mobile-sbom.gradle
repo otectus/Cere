@@ -1,0 +1,34 @@
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+
+// Invoke with ./gradlew -I ../../tools/mobile-sbom.gradle :app:mobileSbom.
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.register('mobileSbom') {
+        notCompatibleWithConfigurationCache('This release inventory reads the resolved Maven archive cache')
+        doLast {
+            def components = app.configurations.releaseRuntimeClasspath.incoming.resolutionResult.allComponents.findAll {
+                it.id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier
+            }.collect { component ->
+                def module = component.moduleVersion
+                def archives = []
+                def cached = new File(gradle.gradleUserHomeDir, "caches/modules-2/files-2.1/${module.group}/${module.name}/${module.version}")
+                if (cached.isDirectory()) cached.eachDir { digestDir ->
+                    digestDir.eachFile { file ->
+                        if (file.name in ["${module.name}-${module.version}.jar".toString(), "${module.name}-${module.version}.aar".toString()]) archives.add(file)
+                    }
+                }
+                [type: 'library', group: module.group, name: module.name, version: module.version,
+                 purl: "pkg:maven/${module.group}/${module.name}@${module.version}",
+                 hashes: archives.collect { file -> [alg: 'SHA-256', content: MessageDigest.getInstance('SHA-256').digest(file.bytes).encodeHex().toString()] }.unique { it.content }]
+            }.unique { it.purl }.sort { it.purl }
+            def output = new File(app.layout.buildDirectory.get().asFile, 'reports/mobile-sbom.cdx.json')
+            output.parentFile.mkdirs()
+            output.text = JsonOutput.prettyPrint(JsonOutput.toJson([
+                bomFormat: 'CycloneDX', specVersion: '1.5', version: 1,
+                metadata: [component: [type: 'application', name: 'Cere Mobile', version: app.android.defaultConfig.versionName]],
+                components: components
+            ])) + '\n'
+        }
+    }
+}

@@ -1,0 +1,1040 @@
+{
+  "version": 1,
+  "texture": "cere-puppet-v2.png",
+  "referenceSize": [
+    192,
+    208
+  ],
+  "bones": [
+    {
+      "name": "root",
+      "parent": "",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "name": "torso",
+      "parent": "root",
+      "x": 96,
+      "y": 146,
+      "angle": "bodyTilt",
+      "offsetX": "hipX",
+      "offsetY": "breathLift"
+    },
+    {
+      "name": "head",
+      "parent": "torso",
+      "x": 0,
+      "y": -46,
+      "angle": "headTilt",
+      "offsetX": "headX",
+      "offsetY": "headY"
+    },
+    {
+      "name": "hair",
+      "parent": "head",
+      "x": 0,
+      "y": 0,
+      "angle": "hairRotation"
+    },
+    {
+      "name": "leftUpperArm",
+      "parent": "torso",
+      "x": -28,
+      "y": -44,
+      "angle": "leftArm",
+      "offsetY": "shoulderLeft"
+    },
+    {
+      "name": "leftForearm",
+      "parent": "leftUpperArm",
+      "x": -12.06,
+      "y": 26.73,
+      "angle": "leftElbow"
+    },
+    {
+      "name": "rightUpperArm",
+      "parent": "torso",
+      "x": 28,
+      "y": -44,
+      "angle": "rightArm",
+      "offsetY": "shoulderRight"
+    },
+    {
+      "name": "rightForearm",
+      "parent": "rightUpperArm",
+      "x": 12.06,
+      "y": 26.73,
+      "angle": "rightElbow"
+    },
+    {
+      "name": "hips",
+      "parent": "root",
+      "x": 96,
+      "y": 146,
+      "offsetX": "hipX",
+      "offsetY": "hipDrop"
+    },
+    {
+      "name": "leftThigh",
+      "parent": "root",
+      "x": 84,
+      "y": 151,
+      "angle": "leftLeg"
+    },
+    {
+      "name": "leftShin",
+      "parent": "leftThigh",
+      "x": -10.741379310344827,
+      "y": 25.0,
+      "angle": "leftKnee"
+    },
+    {
+      "name": "rightThigh",
+      "parent": "root",
+      "x": 109,
+      "y": 151,
+      "angle": "rightLeg"
+    },
+    {
+      "name": "rightShin",
+      "parent": "rightThigh",
+      "x": 9.051724137931034,
+      "y": 24.85,
+      "angle": "rightKnee"
+    }
+  ],
+  "parts": [
+    {
+      "name": "backHair",
+      "bone": "hair",
+      "sourceRect": [
+        45,
+        9,
+        362,
+        301
+      ],
+      "rect": [
+        -70,
+        -93,
+        137,
+        132
+      ],
+      "z": 0
+    },
+    {
+      "name": "leftThigh",
+      "bone": "leftThigh",
+      "sourceRect": [
+        861,
+        294,
+        199,
+        258
+      ],
+      "rect": [
+        -23.522413793103446,
+        -3.04,
+        35,
+        32
+      ],
+      "z": 1
+    },
+    {
+      "name": "rightThigh",
+      "bone": "rightThigh",
+      "sourceRect": [
+        1224,
+        294,
+        204,
+        258
+      ],
+      "rect": [
+        -11.827586206896552,
+        -3.14,
+        35,
+        32
+      ],
+      "z": 1
+    },
+    {
+      "name": "leftBoot",
+      "bone": "leftShin",
+      "sourceRect": [
+        101,
+        530,
+        197,
+        242
+      ],
+      "rect": [
+        -19.5,
+        -7.5,
+        39,
+        33
+      ],
+      "z": 2
+    },
+    {
+      "name": "rightBoot",
+      "bone": "rightShin",
+      "sourceRect": [
+        526,
+        529,
+        194,
+        243
+      ],
+      "rect": [
+        -19.5,
+        -7.5,
+        39,
+        33
+      ],
+      "z": 2
+    },
+    {
+      "name": "hips",
+      "bone": "hips",
+      "sourceRect": [
+        450,
+        299,
+        325,
+        145
+      ],
+      "rect": [
+        -35,
+        -12,
+        70,
+        29.45
+      ],
+      "z": 3
+    },
+    {
+      "name": "torso",
+      "bone": "torso",
+      "sourceRect": [
+        124,
+        306,
+        200,
+        222
+      ],
+      "rect": [
+        -32,
+        -60,
+        64,
+        65
+      ],
+      "z": 4
+    },
+    {
+      "name": "leftSleeve",
+      "bone": "leftUpperArm",
+      "sourceRect": [
+        852,
+        556,
+        172,
+        197
+      ],
+      "rect": [
+        -20.36,
+        -4.1,
+        30,
+        35.18
+      ],
+      "z": 5
+    },
+    {
+      "name": "rightSleeve",
+      "bone": "rightUpperArm",
+      "sourceRect": [
+        1251,
+        552,
+        174,
+        198
+      ],
+      "rect": [
+        -9.04,
+        -4.1,
+        30,
+        35.15
+      ],
+      "z": 5
+    },
+    {
+      "name": "head",
+      "bone": "head",
+      "sourceRect": [
+        455,
+        12,
+        325,
+        262
+      ],
+      "rect": [
+        -52,
+        -90,
+        104,
+        83.84
+      ],
+      "z": 6
+    },
+    {
+      "name": "curiousEyes",
+      "bone": "head",
+      "sourceRect": [
+        1261,
+        881,
+        150,
+        67
+      ],
+      "rect": [
+        -22.72,
+        -44.56,
+        48,
+        21.44
+      ],
+      "z": 7,
+      "opacityChannel": "curiousFace"
+    },
+    {
+      "name": "wink",
+      "bone": "head",
+      "sourceRect": [
+        1262,
+        147,
+        150,
+        67
+      ],
+      "rect": [
+        -21.44,
+        -46.8,
+        48,
+        21.44
+      ],
+      "z": 8,
+      "opacityChannel": "wink"
+    },
+    {
+      "name": "blink",
+      "bone": "head",
+      "sourceRect": [
+        884,
+        147,
+        150,
+        67
+      ],
+      "rect": [
+        -21.6,
+        -46.8,
+        48,
+        21.44
+      ],
+      "z": 9,
+      "opacityChannel": "eyeClose"
+    },
+    {
+      "name": "leftHand",
+      "bone": "leftForearm",
+      "sourceRect": [
+        154,
+        771,
+        137,
+        238
+      ],
+      "rect": [
+        -10.96,
+        -3.43,
+        22.8,
+        30
+      ],
+      "z": 10,
+      "visibleWhen": {
+        "channel": "leftHandOpen",
+        "max": 0.5
+      }
+    },
+    {
+      "name": "rightHand",
+      "bone": "rightForearm",
+      "sourceRect": [
+        531,
+        770,
+        140,
+        239
+      ],
+      "rect": [
+        -11.55,
+        -3.43,
+        22.8,
+        30
+      ],
+      "z": 10,
+      "visibleWhen": {
+        "channel": "rightHandOpen",
+        "max": 0.5
+      }
+    },
+    {
+      "name": "leftPalm",
+      "bone": "leftForearm",
+      "sourceRect": [
+        882,
+        773,
+        166,
+        235
+      ],
+      "rect": [
+        -10.79,
+        -3.3,
+        28.2,
+        29.62
+      ],
+      "z": 10,
+      "visibleWhen": {
+        "channel": "leftHandOpen",
+        "min": 0.5
+      }
+    },
+    {
+      "name": "rightPalm",
+      "bone": "rightForearm",
+      "sourceRect": [
+        882,
+        773,
+        166,
+        235
+      ],
+      "rect": [
+        -17.41,
+        -3.3,
+        28.2,
+        29.62
+      ],
+      "z": 10,
+      "mirrorX": true,
+      "visibleWhen": {
+        "channel": "rightHandOpen",
+        "min": 0.5
+      }
+    },
+    {
+      "name": "trouserOverlap",
+      "bone": "hips",
+      "sourceRect": [
+        580,
+        357,
+        64,
+        52
+      ],
+      "rect": [
+        -9,
+        4,
+        18,
+        12
+      ],
+      "z": 0.5
+    }
+  ],
+  "channels": {
+    "x": {
+      "min": -5,
+      "max": 5,
+      "omega": 22
+    },
+    "y": {
+      "min": -8,
+      "max": 8,
+      "omega": 22
+    },
+    "rotation": {
+      "min": -6,
+      "max": 6,
+      "omega": 20
+    },
+    "headTilt": {
+      "min": -9,
+      "max": 9,
+      "omega": 15
+    },
+    "headX": {
+      "min": -3,
+      "max": 3,
+      "omega": 14
+    },
+    "headY": {
+      "min": -3,
+      "max": 3,
+      "omega": 14
+    },
+    "bodyTilt": {
+      "min": -4,
+      "max": 4,
+      "omega": 12
+    },
+    "breathLift": {
+      "min": -2,
+      "max": 2,
+      "omega": 12
+    },
+    "hipX": {
+      "min": -2.5,
+      "max": 2.5,
+      "omega": 10
+    },
+    "hipDrop": {
+      "min": -2,
+      "max": 3,
+      "omega": 12
+    },
+    "leftArm": {
+      "min": -80,
+      "max": 150,
+      "omega": 17
+    },
+    "rightArm": {
+      "min": -150,
+      "max": 80,
+      "omega": 17
+    },
+    "leftElbow": {
+      "min": -155,
+      "max": 155,
+      "omega": 22
+    },
+    "rightElbow": {
+      "min": -155,
+      "max": 155,
+      "omega": 22
+    },
+    "leftLeg": {
+      "min": -22,
+      "max": 22,
+      "omega": 16
+    },
+    "rightLeg": {
+      "min": -22,
+      "max": 22,
+      "omega": 16
+    },
+    "leftKnee": {
+      "min": -25,
+      "max": 25,
+      "omega": 16
+    },
+    "rightKnee": {
+      "min": -25,
+      "max": 25,
+      "omega": 16
+    },
+    "shoulderLeft": {
+      "min": -1.5,
+      "max": 1.5,
+      "omega": 14
+    },
+    "shoulderRight": {
+      "min": -1.5,
+      "max": 1.5,
+      "omega": 14
+    },
+    "hairRotation": {
+      "min": -2,
+      "max": 2,
+      "omega": 7,
+      "damping": 0.8
+    },
+    "leftHandOpen": {
+      "min": 0,
+      "max": 1,
+      "omega": 25
+    },
+    "rightHandOpen": {
+      "min": 0,
+      "max": 1,
+      "omega": 25
+    },
+    "wink": {
+      "min": 0,
+      "max": 1,
+      "omega": 25
+    },
+    "curiousFace": {
+      "min": 0,
+      "max": 1,
+      "omega": 25
+    },
+    "eyeClose": {
+      "min": 0,
+      "max": 1,
+      "omega": 25
+    }
+  },
+  "poses": {
+    "0": {
+      "name": "rest",
+      "joints": {
+        "leftArm": -8,
+        "leftElbow": -12,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": -0.7,
+        "headTilt": 0.8,
+        "hipX": 0.5,
+        "shoulderRight": 0.35
+      }
+    },
+    "1": {
+      "name": "restClosed",
+      "joints": {
+        "leftArm": -8,
+        "leftElbow": -12,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": -0.7,
+        "headTilt": 0.8,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "eyeClose": 1
+      }
+    },
+    "2": {
+      "name": "lookLeft",
+      "joints": {
+        "leftArm": -8,
+        "leftElbow": -12,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": -0.7,
+        "headTilt": -3,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "headX": -1.4
+      }
+    },
+    "3": {
+      "name": "lookRight",
+      "joints": {
+        "leftArm": -8,
+        "leftElbow": -12,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": -0.7,
+        "headTilt": 3,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "headX": 1.4
+      }
+    },
+    "4": {
+      "name": "wave",
+      "joints": {
+        "leftArm": 55,
+        "leftElbow": 125,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": 0.7,
+        "headTilt": -1.5,
+        "hipX": -0.7,
+        "shoulderRight": 0.35,
+        "leftHandOpen": 1,
+        "shoulderLeft": -0.4
+      }
+    },
+    "5": {
+      "name": "highWave",
+      "joints": {
+        "leftArm": 68,
+        "leftElbow": 113,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": 1,
+        "headTilt": -2,
+        "hipX": -0.8,
+        "shoulderRight": 0.35,
+        "leftHandOpen": 1,
+        "wink": 1
+      }
+    },
+    "6": {
+      "name": "folded",
+      "joints": {
+        "leftArm": -45,
+        "leftElbow": -45,
+        "rightArm": 55,
+        "rightElbow": 50,
+        "bodyTilt": -0.7,
+        "headTilt": 0.8,
+        "hipX": 0.5,
+        "shoulderRight": 0.35
+      }
+    },
+    "7": {
+      "name": "foldedClosed",
+      "joints": {
+        "leftArm": -45,
+        "leftElbow": -45,
+        "rightArm": 55,
+        "rightElbow": 50,
+        "bodyTilt": -0.7,
+        "headTilt": 0.8,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "eyeClose": 1
+      }
+    },
+    "8": {
+      "name": "surprise",
+      "joints": {
+        "leftArm": -22,
+        "leftElbow": -142,
+        "rightArm": 12,
+        "rightElbow": 135,
+        "bodyTilt": -1,
+        "headTilt": -1,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "headY": -1
+      }
+    },
+    "9": {
+      "name": "offer",
+      "joints": {
+        "leftArm": -10,
+        "leftElbow": 125,
+        "rightArm": 8,
+        "rightElbow": 26,
+        "bodyTilt": 0.8,
+        "headTilt": -1.8,
+        "hipX": -0.8,
+        "shoulderRight": 0.35,
+        "leftHandOpen": 1,
+        "rightHandOpen": 0,
+        "shoulderLeft": -0.3
+      }
+    },
+    "10": {
+      "name": "crouch",
+      "joints": {
+        "leftArm": -5,
+        "leftElbow": -15,
+        "rightArm": 5,
+        "rightElbow": 15,
+        "bodyTilt": -0.7,
+        "headTilt": 0.8,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "hipDrop": 2,
+        "headY": 2,
+        "leftLeg": -7,
+        "rightLeg": 7,
+        "leftKnee": 10,
+        "rightKnee": -10
+      }
+    },
+    "11": {
+      "name": "jump",
+      "joints": {
+        "leftArm": 110,
+        "leftElbow": 60,
+        "rightArm": -92,
+        "rightElbow": -70,
+        "bodyTilt": -1.5,
+        "headTilt": 2,
+        "hipX": 0.5,
+        "shoulderRight": 0.3,
+        "eyeClose": 1,
+        "leftLeg": 13,
+        "rightLeg": -13,
+        "leftKnee": -20,
+        "rightKnee": 20,
+        "shoulderLeft": -0.5
+      }
+    },
+    "12": {
+      "name": "strideRight",
+      "joints": {
+        "leftArm": -18,
+        "leftElbow": -42,
+        "rightArm": 16,
+        "rightElbow": -25,
+        "bodyTilt": 1.4,
+        "headTilt": -0.5,
+        "hipX": 0.8,
+        "shoulderRight": 0.35
+      }
+    },
+    "13": {
+      "name": "strideRightPassing",
+      "joints": {
+        "leftArm": 12,
+        "leftElbow": -30,
+        "rightArm": -12,
+        "rightElbow": -42,
+        "bodyTilt": 1.4,
+        "headTilt": -0.5,
+        "hipX": 0.5,
+        "shoulderRight": 0.35
+      }
+    },
+    "14": {
+      "name": "strideLeft",
+      "joints": {
+        "leftArm": -16,
+        "leftElbow": 25,
+        "rightArm": 18,
+        "rightElbow": 42,
+        "bodyTilt": -1.4,
+        "headTilt": 0.5,
+        "hipX": -0.8,
+        "shoulderRight": 0.35
+      }
+    },
+    "15": {
+      "name": "strideLeftPassing",
+      "joints": {
+        "leftArm": 12,
+        "leftElbow": 42,
+        "rightArm": -12,
+        "rightElbow": 30,
+        "bodyTilt": -1.4,
+        "headTilt": 0.5,
+        "hipX": 0.5,
+        "shoulderRight": 0.35
+      }
+    },
+    "16": {
+      "name": "skeptical",
+      "joints": {
+        "leftArm": -45,
+        "leftElbow": -45,
+        "rightArm": 55,
+        "rightElbow": 50,
+        "bodyTilt": -0.7,
+        "headTilt": -4,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "curiousFace": 0.75
+      }
+    },
+    "17": {
+      "name": "smug",
+      "joints": {
+        "leftArm": -5,
+        "leftElbow": -28,
+        "rightArm": 22,
+        "rightElbow": 45,
+        "bodyTilt": 0.9,
+        "headTilt": -2,
+        "hipX": -0.8,
+        "shoulderRight": 0.35,
+        "wink": 0.6
+      }
+    },
+    "18": {
+      "name": "disbelief",
+      "joints": {
+        "leftArm": -4,
+        "leftElbow": 144,
+        "rightArm": 8,
+        "rightElbow": -110,
+        "bodyTilt": 0.7,
+        "headTilt": -2.2,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "leftHandOpen": 1,
+        "rightHandOpen": 1,
+        "headY": -0.6,
+        "shoulderLeft": -0.8
+      }
+    },
+    "19": {
+      "name": "thinking",
+      "joints": {
+        "leftArm": -80,
+        "leftElbow": -100,
+        "rightArm": 35,
+        "rightElbow": 55,
+        "bodyTilt": -0.7,
+        "headTilt": 2,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "curiousFace": 0.8,
+        "shoulderLeft": -1
+      }
+    },
+    "20": {
+      "name": "cheeky",
+      "joints": {
+        "leftArm": -12,
+        "leftElbow": -28,
+        "rightArm": 22,
+        "rightElbow": 45,
+        "bodyTilt": 1.1,
+        "headTilt": -2,
+        "hipX": -0.7,
+        "shoulderRight": 0.35,
+        "wink": 1
+      }
+    },
+    "21": {
+      "name": "tender",
+      "joints": {
+        "leftArm": -19,
+        "leftElbow": -38,
+        "rightArm": 12,
+        "rightElbow": 24,
+        "bodyTilt": -0.9,
+        "headTilt": 2,
+        "hipX": 0.7,
+        "shoulderRight": 0.35
+      }
+    },
+    "22": {
+      "name": "explaining",
+      "joints": {
+        "leftArm": -6,
+        "leftElbow": 112,
+        "rightArm": 15,
+        "rightElbow": 35,
+        "bodyTilt": -0.8,
+        "headTilt": 1.4,
+        "hipX": 0.7,
+        "shoulderRight": 0.35,
+        "leftHandOpen": 1,
+        "rightHandOpen": 0
+      }
+    },
+    "23": {
+      "name": "triumph",
+      "joints": {
+        "leftArm": 55,
+        "leftElbow": 116,
+        "rightArm": 16,
+        "rightElbow": 32,
+        "bodyTilt": 1.1,
+        "headTilt": -2,
+        "hipX": -0.8,
+        "shoulderRight": 0.35
+      }
+    },
+    "24": {
+      "name": "release",
+      "joints": {
+        "leftArm": -10,
+        "leftElbow": -24,
+        "rightArm": 10,
+        "rightElbow": 20,
+        "bodyTilt": -0.5,
+        "headTilt": 0.7,
+        "hipX": 0.5,
+        "shoulderRight": 0.35
+      }
+    },
+    "25": {
+      "name": "gather",
+      "joints": {
+        "leftArm": -12,
+        "leftElbow": 65,
+        "rightArm": 10,
+        "rightElbow": 22,
+        "bodyTilt": 0.3,
+        "headTilt": -0.8,
+        "hipX": 0.5,
+        "shoulderRight": 0.35
+      }
+    },
+    "26": {
+      "name": "lowOffer",
+      "joints": {
+        "leftArm": -8,
+        "leftElbow": 88,
+        "rightArm": 12,
+        "rightElbow": 25,
+        "bodyTilt": 0.4,
+        "headTilt": -0.7,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "leftHandOpen": 1,
+        "rightHandOpen": 0
+      }
+    },
+    "27": {
+      "name": "halfWave",
+      "joints": {
+        "leftArm": -3,
+        "leftElbow": 143,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": 0.4,
+        "headTilt": -1,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "leftHandOpen": 1
+      }
+    },
+    "28": {
+      "name": "glassesAdjust",
+      "joints": {
+        "leftArm": 146,
+        "leftElbow": 99,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": -0.7,
+        "headTilt": 1,
+        "hipX": 0.5,
+        "shoulderRight": 0.35
+      }
+    },
+    "29": {
+      "name": "hairTuck",
+      "joints": {
+        "leftArm": 120,
+        "leftElbow": 100,
+        "rightArm": 6,
+        "rightElbow": 18,
+        "bodyTilt": -0.7,
+        "headTilt": 2,
+        "hipX": 0.5,
+        "shoulderRight": 0.35
+      }
+    },
+    "30": {
+      "name": "softReset",
+      "joints": {
+        "leftArm": -6,
+        "leftElbow": -16,
+        "rightArm": 9,
+        "rightElbow": 22,
+        "bodyTilt": -0.4,
+        "headTilt": 0.8,
+        "hipX": 0.5,
+        "shoulderRight": 0.35,
+        "hipDrop": 0.7
+      }
+    },
+    "31": {
+      "name": "attentiveRest",
+      "joints": {
+        "leftArm": -19,
+        "leftElbow": -42,
+        "rightArm": 14,
+        "rightElbow": 28,
+        "bodyTilt": -1,
+        "headTilt": 2,
+        "hipX": 0.7,
+        "shoulderRight": 0.35
+      }
+    }
+  },
+  "articulation": {
+    "foldLead": 0.22,
+    "arms": [
+      {
+        "shoulder": "leftArm",
+        "elbow": "leftElbow",
+        "liftSign": 1
+      },
+      {
+        "shoulder": "rightArm",
+        "elbow": "rightElbow",
+        "liftSign": -1
+      }
+    ]
+  }
+}

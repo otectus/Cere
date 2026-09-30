@@ -47,3 +47,23 @@ CREATE TABLE response_records(id TEXT PRIMARY KEY,scope_id TEXT NOT NULL REFEREN
 CREATE TABLE read_tokens(token TEXT PRIMARY KEY,scope_id TEXT NOT NULL REFERENCES scopes(id),revision INTEGER NOT NULL,targets TEXT NOT NULL,policy_epoch INTEGER NOT NULL,erasure_epoch INTEGER NOT NULL) STRICT;
 CREATE TABLE embedding_records(artifact_id TEXT NOT NULL REFERENCES artifacts(id),content_revision INTEGER NOT NULL,fingerprint TEXT NOT NULL,generation TEXT NOT NULL,point_id TEXT NOT NULL,vector TEXT NOT NULL,PRIMARY KEY(artifact_id,content_revision,fingerprint,generation)) STRICT;
 `;
+/**
+ * Ordered upgrades after the initial schema. Each entry is applied once in its
+ * own transaction and verified by checksum on every open, so these texts are
+ * immutable once published. Append new migrations; never edit an existing one.
+ */
+export const migrations: { id: number; sql: string }[] = [
+  {
+    id: 2,
+    sql: `
+CREATE TABLE note_revisions(note_id TEXT NOT NULL,observation_id TEXT NOT NULL REFERENCES observations(id),artifact_id TEXT NOT NULL REFERENCES artifacts(id),revision INTEGER NOT NULL,source_role TEXT NOT NULL,PRIMARY KEY(note_id,observation_id)) STRICT;
+CREATE INDEX note_revisions_observation ON note_revisions(observation_id);
+INSERT OR IGNORE INTO note_revisions(note_id,observation_id,artifact_id,revision,source_role) SELECT a.record_id,e.observation_id,a.id,a.content_revision,o.role FROM artifacts a JOIN lineage l ON l.derived_id=a.id AND l.role='derived' JOIN evidence e ON e.id=l.input_id JOIN observations o ON o.id=e.observation_id WHERE a.kind='saved';
+ALTER TABLE episodes ADD COLUMN consolidation_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE episodes ADD COLUMN next_retry_us INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE episodes ADD COLUMN error_code TEXT;
+ALTER TABLE response_records ADD COLUMN evidence_scopes TEXT NOT NULL DEFAULT '{}';
+CREATE INDEX extraction_runs_status ON extraction_runs(status,revision);
+`,
+  },
+];

@@ -1,0 +1,2 @@
+-keepattributes Signature,*Annotation*
+-dontwarn org.commonmark.**

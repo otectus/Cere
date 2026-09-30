@@ -19,6 +19,20 @@ export function sameUserPeer(socket: Socket) {
     return false;
   }
 }
+/**
+ * Authenticates the broker to a client: the connected server socket must belong to
+ * the expected user. A reachable socket alone is never proof of a trusted broker.
+ */
+export function trustedServer(socket: Socket, expectedUid = process.getuid?.()) {
+  const fd = (socket as any)._handle?.fd;
+  if (!native) throw new Error("Cere peer credential helper is missing. Run npm run build before connecting to Cere.");
+  if (!Number.isInteger(fd)) return false;
+  try {
+    return native.credentials(fd).uid === expectedUid;
+  } catch {
+    return false;
+  }
+}
 export function requirePeerCredentials() {
   if (!native)
     throw new Error(

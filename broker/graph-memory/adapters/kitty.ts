@@ -60,6 +60,7 @@ export class KittyCollector implements LiveCollector {
   private generations = new Map<string, string>();
   private endpoint: string;
   private roots: string[] = [];
+  private stopped = false;
   constructor(config: KittyCollectorConfig) {
     this.config = config;
     this.endpoint = validEndpoint(config.endpoint);
@@ -92,11 +93,14 @@ export class KittyCollector implements LiveCollector {
       seen.add(pane.paneId);
       const generation = this.generations.get(pane.paneId) ?? randomUUID(); this.generations.set(pane.paneId, generation);
       const cwd = await this.allowedCwd(pane.cwd);
+      // Reconciliation finishing after stop() must not reinsert revoked state.
+      if (this.stopped || !this.emit) return;
       this.emit(this.factory.observation(`kitty:${this.config.instanceId}:pane:${pane.paneId}`, generation, 'TERMINAL_PANE', {
         instanceId: this.config.instanceId, osWindowId: pane.osWindowId, tabId: pane.tabId, paneId: pane.paneId,
         osWindowFocused: pane.osWindowFocused, tabActive: pane.tabActive, paneFocused: pane.paneFocused, ...(cwd ? { cwd } : {}),
       }));
     }
+    if (this.stopped || !this.emit) return;
     for (const [paneId, generation] of this.generations) if (!seen.has(paneId)) {
       this.emit(this.factory.observation(`kitty:${this.config.instanceId}:pane:${paneId}`, generation, 'TERMINAL_PANE_CLOSED', { instanceId: this.config.instanceId, paneId }));
       this.generations.delete(paneId);
@@ -104,5 +108,5 @@ export class KittyCollector implements LiveCollector {
   }
 
   private unknown(reason: string) { this.emit?.(this.factory.unknown(`kitty:${this.config.instanceId}`, this.factory.sourceEpoch, reason)); }
-  async stop(): Promise<void> { if (this.timer) clearInterval(this.timer); this.unknown('collector_stopped'); }
+  async stop(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.unknown('collector_stopped'); this.emit = undefined; }
 }

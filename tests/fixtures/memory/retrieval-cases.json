@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "cases": [
     {
       "id": "case-00",
@@ -38,7 +38,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-00:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-01",
@@ -75,7 +76,8 @@
       "anchorEntityId": "entity-00001",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-02",
@@ -112,7 +114,8 @@
       "anchorEntityId": "entity-00002",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-03",
@@ -151,7 +154,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-03:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-04",
@@ -188,7 +192,8 @@
       "anchorEntityId": "entity-00004",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-05",
@@ -225,7 +230,8 @@
       "anchorEntityId": "entity-00005",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-06",
@@ -264,7 +270,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-06:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-07",
@@ -301,7 +308,8 @@
       "anchorEntityId": "entity-00007",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-08",
@@ -343,7 +351,8 @@
         }
       ],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-09",
@@ -387,7 +396,8 @@
       ],
       "repeatedSourceIds": [
         "case-09:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-10",
@@ -428,7 +438,8 @@
       "anchorEntityId": "entity-00010",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-11",
@@ -469,7 +480,8 @@
       "anchorEntityId": "entity-00011",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-12",
@@ -512,7 +524,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-12:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-13",
@@ -553,7 +566,8 @@
       "anchorEntityId": "entity-00013",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-14",
@@ -594,7 +608,8 @@
       "anchorEntityId": "entity-00014",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-15",
@@ -637,7 +652,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-15:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-16",
@@ -678,7 +694,8 @@
       "anchorEntityId": "entity-00016",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-17",
@@ -719,7 +736,8 @@
       "anchorEntityId": "entity-00017",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-18",
@@ -767,7 +785,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-18:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-19",
@@ -813,7 +832,8 @@
           "target": "case-19:deleted-copy"
         }
       ],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-20",
@@ -864,7 +884,8 @@
       "anchorEntityId": "entity-00020",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-21",
@@ -917,7 +938,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-21:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-22",
@@ -968,7 +990,8 @@
       "anchorEntityId": "entity-00022",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-23",
@@ -1019,7 +1042,8 @@
       "anchorEntityId": "entity-00023",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-24",
@@ -1072,7 +1096,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-24:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-25",
@@ -1123,7 +1148,8 @@
       "anchorEntityId": "entity-00025",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-26",
@@ -1174,7 +1200,8 @@
       "anchorEntityId": "entity-00026",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-27",
@@ -1227,7 +1254,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-27:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-28",
@@ -1283,7 +1311,8 @@
         }
       ],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-29",
@@ -1339,7 +1368,8 @@
           "target": "case-29:deleted-copy"
         }
       ],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-30",
@@ -1357,6 +1387,24 @@
           "atUs": 1000000,
           "event": "case-30:a0",
           "evidenceId": "case-30:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-30:prior",
+          "evidenceId": "case-30:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-30:prior",
+          "evidenceId": "case-30:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1378,6 +1426,30 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-30:repeat"
+      ],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-30:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-30:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-30:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-30:prior-e"
+          ]
+        }
       ]
     },
     {
@@ -1396,6 +1468,24 @@
           "atUs": 1000000,
           "event": "case-31:a0",
           "evidenceId": "case-31:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-31:prior",
+          "evidenceId": "case-31:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-31:prior",
+          "evidenceId": "case-31:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1415,7 +1505,31 @@
       "anchorEntityId": "entity-00031",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-31:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-31:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-31:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-31:prior-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-32",
@@ -1433,6 +1547,24 @@
           "atUs": 1000000,
           "event": "case-32:a0",
           "evidenceId": "case-32:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-32:prior",
+          "evidenceId": "case-32:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-32:prior",
+          "evidenceId": "case-32:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1452,7 +1584,31 @@
       "anchorEntityId": "entity-00032",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-32:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-32:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-32:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-32:prior-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-33",
@@ -1470,6 +1626,24 @@
           "atUs": 1000000,
           "event": "case-33:a0",
           "evidenceId": "case-33:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-33:prior",
+          "evidenceId": "case-33:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-33:prior",
+          "evidenceId": "case-33:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1491,6 +1665,30 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-33:repeat"
+      ],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-33:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-33:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-33:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-33:prior-e"
+          ]
+        }
       ]
     },
     {
@@ -1509,6 +1707,24 @@
           "atUs": 1000000,
           "event": "case-34:a0",
           "evidenceId": "case-34:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-34:prior",
+          "evidenceId": "case-34:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-34:prior",
+          "evidenceId": "case-34:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1528,7 +1744,31 @@
       "anchorEntityId": "entity-00034",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-34:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-34:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-34:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-34:prior-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-35",
@@ -1546,6 +1786,24 @@
           "atUs": 1000000,
           "event": "case-35:a0",
           "evidenceId": "case-35:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-35:prior",
+          "evidenceId": "case-35:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-35:prior",
+          "evidenceId": "case-35:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1565,7 +1823,31 @@
       "anchorEntityId": "entity-00035",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-35:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-35:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-35:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-35:prior-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-36",
@@ -1583,6 +1865,24 @@
           "atUs": 1000000,
           "event": "case-36:a0",
           "evidenceId": "case-36:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-36:prior",
+          "evidenceId": "case-36:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-36:prior",
+          "evidenceId": "case-36:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1604,6 +1904,30 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-36:repeat"
+      ],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-36:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-36:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-36:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-36:prior-e"
+          ]
+        }
       ]
     },
     {
@@ -1622,6 +1946,24 @@
           "atUs": 1000000,
           "event": "case-37:a0",
           "evidenceId": "case-37:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-37:prior",
+          "evidenceId": "case-37:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-37:prior",
+          "evidenceId": "case-37:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1641,7 +1983,31 @@
       "anchorEntityId": "entity-00037",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-37:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-37:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-37:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-37:prior-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-38",
@@ -1659,6 +2025,24 @@
           "atUs": 1000000,
           "event": "case-38:a0",
           "evidenceId": "case-38:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-38:prior",
+          "evidenceId": "case-38:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-38:prior",
+          "evidenceId": "case-38:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1683,7 +2067,31 @@
         }
       ],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-38:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-38:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-38:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-38:prior-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-39",
@@ -1701,6 +2109,24 @@
           "atUs": 1000000,
           "event": "case-39:a0",
           "evidenceId": "case-39:e0"
+        },
+        {
+          "revision": 5,
+          "atUs": 500000,
+          "event": "case-39:prior",
+          "evidenceId": "case-39:prior-e",
+          "validFromUs": 500000,
+          "validToUs": null,
+          "knownToRevision": 10
+        },
+        {
+          "revision": 10,
+          "atUs": 1000000,
+          "event": "case-39:prior",
+          "evidenceId": "case-39:prior-e",
+          "validFromUs": 500000,
+          "validToUs": 1000000,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1727,6 +2153,30 @@
       ],
       "repeatedSourceIds": [
         "case-39:repeat"
+      ],
+      "views": [
+        {
+          "name": "pre_change",
+          "worldAtUs": 750000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-39:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-39:prior-e"
+          ]
+        },
+        {
+          "name": "old_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 9,
+          "requiredAssertionIds": [
+            "case-39:prior"
+          ],
+          "requiredEvidenceIds": [
+            "case-39:prior-e"
+          ]
+        }
       ]
     },
     {
@@ -1745,6 +2195,15 @@
           "atUs": 1000000,
           "event": "case-40:a0",
           "evidenceId": "case-40:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-40:later",
+          "evidenceId": "case-40:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1764,7 +2223,20 @@
       "anchorEntityId": "entity-00040",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-40:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-40:later-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-41",
@@ -1782,6 +2254,15 @@
           "atUs": 1000000,
           "event": "case-41:a0",
           "evidenceId": "case-41:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-41:later",
+          "evidenceId": "case-41:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1801,7 +2282,20 @@
       "anchorEntityId": "entity-00041",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-41:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-41:later-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-42",
@@ -1819,6 +2313,15 @@
           "atUs": 1000000,
           "event": "case-42:a0",
           "evidenceId": "case-42:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-42:later",
+          "evidenceId": "case-42:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1840,6 +2343,19 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-42:repeat"
+      ],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-42:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-42:later-e"
+          ]
+        }
       ]
     },
     {
@@ -1858,6 +2374,15 @@
           "atUs": 1000000,
           "event": "case-43:a0",
           "evidenceId": "case-43:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-43:later",
+          "evidenceId": "case-43:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1877,7 +2402,20 @@
       "anchorEntityId": "entity-00043",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-43:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-43:later-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-44",
@@ -1895,6 +2433,15 @@
           "atUs": 1000000,
           "event": "case-44:a0",
           "evidenceId": "case-44:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-44:later",
+          "evidenceId": "case-44:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1914,7 +2461,20 @@
       "anchorEntityId": "entity-00044",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-44:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-44:later-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-45",
@@ -1932,6 +2492,15 @@
           "atUs": 1000000,
           "event": "case-45:a0",
           "evidenceId": "case-45:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-45:later",
+          "evidenceId": "case-45:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1953,6 +2522,19 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-45:repeat"
+      ],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-45:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-45:later-e"
+          ]
+        }
       ]
     },
     {
@@ -1971,6 +2553,15 @@
           "atUs": 1000000,
           "event": "case-46:a0",
           "evidenceId": "case-46:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-46:later",
+          "evidenceId": "case-46:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -1990,7 +2581,20 @@
       "anchorEntityId": "entity-00046",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-46:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-46:later-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-47",
@@ -2008,6 +2612,15 @@
           "atUs": 1000000,
           "event": "case-47:a0",
           "evidenceId": "case-47:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-47:later",
+          "evidenceId": "case-47:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -2027,7 +2640,20 @@
       "anchorEntityId": "entity-00047",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-47:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-47:later-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-48",
@@ -2045,6 +2671,15 @@
           "atUs": 1000000,
           "event": "case-48:a0",
           "evidenceId": "case-48:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-48:later",
+          "evidenceId": "case-48:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -2071,6 +2706,19 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-48:repeat"
+      ],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-48:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-48:later-e"
+          ]
+        }
       ]
     },
     {
@@ -2089,6 +2737,15 @@
           "atUs": 1000000,
           "event": "case-49:a0",
           "evidenceId": "case-49:e0"
+        },
+        {
+          "revision": 60,
+          "atUs": 2000000,
+          "event": "case-49:later",
+          "evidenceId": "case-49:later-e",
+          "validFromUs": 2000000,
+          "validToUs": null,
+          "knownToRevision": null
         }
       ],
       "expectedFacts": [
@@ -2113,7 +2770,20 @@
           "target": "case-49:deleted-copy"
         }
       ],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": [
+        {
+          "name": "current_knowledge",
+          "worldAtUs": 3000000,
+          "knownRevision": 100000,
+          "requiredAssertionIds": [
+            "case-49:later"
+          ],
+          "requiredEvidenceIds": [
+            "case-49:later-e"
+          ]
+        }
+      ]
     },
     {
       "id": "case-50",
@@ -2150,7 +2820,8 @@
       "anchorEntityId": "entity-00050",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-51",
@@ -2189,7 +2860,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-51:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-52",
@@ -2226,7 +2898,8 @@
       "anchorEntityId": "entity-00052",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-53",
@@ -2263,7 +2936,8 @@
       "anchorEntityId": "entity-00053",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-54",
@@ -2302,7 +2976,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-54:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-55",
@@ -2339,7 +3014,8 @@
       "anchorEntityId": "entity-00055",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-56",
@@ -2376,7 +3052,8 @@
       "anchorEntityId": "entity-00056",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-57",
@@ -2415,7 +3092,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-57:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-58",
@@ -2457,7 +3135,8 @@
         }
       ],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-59",
@@ -2499,7 +3178,8 @@
           "target": "case-59:deleted-copy"
         }
       ],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-60",
@@ -2539,7 +3219,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-60:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-61",
@@ -2577,7 +3258,8 @@
       "anchorEntityId": "entity-00061",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-62",
@@ -2615,7 +3297,8 @@
       "anchorEntityId": "entity-00062",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-63",
@@ -2655,7 +3338,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-63:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-64",
@@ -2693,7 +3377,8 @@
       "anchorEntityId": "entity-00064",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-65",
@@ -2731,7 +3416,8 @@
       "anchorEntityId": "entity-00065",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-66",
@@ -2771,7 +3457,8 @@
       "deletionChanges": [],
       "repeatedSourceIds": [
         "case-66:repeat"
-      ]
+      ],
+      "views": []
     },
     {
       "id": "case-67",
@@ -2809,7 +3496,8 @@
       "anchorEntityId": "entity-00067",
       "policyChanges": [],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-68",
@@ -2852,7 +3540,8 @@
         }
       ],
       "deletionChanges": [],
-      "repeatedSourceIds": []
+      "repeatedSourceIds": [],
+      "views": []
     },
     {
       "id": "case-69",
@@ -2897,7 +3586,8 @@
       ],
       "repeatedSourceIds": [
         "case-69:repeat"
-      ]
+      ],
+      "views": []
     }
   ]
 }

@@ -51,14 +51,14 @@ bool MotionDirector::finish(quint64 revision) {
 }
 int MotionDirector::duration() const {
     if(!m_transient)return 0;
-    int total=0;
+    int total=m_clips.value(m_name).toMap().value("entryMs").toInt();
     for(const auto &key:m_clips.value(m_name).toMap().value("keys").toList())total+=key.toMap().value("ms").toInt();
     return total;
 }
 bool MotionDirector::canIdle() const {
     return base()=="idle"&&!m_context.reduced&&m_context.intensity>0&&!m_transient&&!m_context.panel&&!m_context.roaming;
 }
-int MotionDirector::nextIdleDelay(){return qRound((18000+int(m_random.bounded(18000)))/std::max(.35,m_context.intensity));}
+int MotionDirector::nextIdleDelay(){return qRound((9000+int(m_random.bounded(9000)))/std::max(.35,m_context.intensity));}
 bool MotionDirector::idle() {
     if(!canIdle()||m_idlePool.isEmpty())return false;
     if(m_bag.isEmpty()){

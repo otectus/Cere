@@ -27,6 +27,7 @@ port.on("message", (m) => {
   depth++;
   queue = queue.then(async () => {
     try {
+      if(m.cancellation && Atomics.compareExchange(m.cancellation,0,0,2)!==0)throw Object.assign(new Error('Memory request cancelled before execution'),{code:'SOURCE_CHANGED'});
       if (m.method === "close") {
         store.close();
         port.postMessage({ id: m.id, result: true });

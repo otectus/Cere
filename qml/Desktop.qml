@@ -35,7 +35,7 @@ ColumnLayout {
     property bool showWindows: (category===0||category===3) && (!query || matches("workspace windows") || filteredWindows.length>0)
     property bool showApps: (category===0||category===2) && (!query || filteredApps.length>0)
     property bool showScripts: controls && (!query || filteredScripts.length>0)
-    spacing: 12
+    spacing: 14
     function matches(text) { return !query || String(text).toLowerCase().indexOf(query)>=0 }
     function focusSearch() { search.forceActiveFocus() }
     function pending(name) { return Object.values(requests).some(r=>r.name===name) }
@@ -57,18 +57,36 @@ ColumnLayout {
     onQueryChanged: { appLimit=12;desktopScroll.contentY=0 }
     onCategoryChanged: desktopScroll.contentY=0
     Component.onCompleted: if(visible)refresh()
-    RowLayout {
-        Layout.fillWidth:true
-        ColumnLayout {
-            Layout.fillWidth:true;spacing:3
-            CText { text:"Desktop";font.pixelSize:22;font.weight:Font.DemiBold }
-            CText { text:"Everyday controls, close at hand.";color:Theme.muted;font.pixelSize:12 }
+    Rectangle {
+        Layout.fillWidth:true;implicitHeight:desktopHeader.implicitHeight+28
+        color:Theme.surface;radius:Theme.radius;border.color:Theme.line
+        RowLayout {
+            id:desktopHeader;x:16;y:14;width:parent.width-32;spacing:12
+            Rectangle {
+                visible:desktop.width>=500
+                Layout.preferredWidth:42;Layout.preferredHeight:42;radius:12
+                color:Theme.selected
+                Text { anchors.centerIn:parent;text:"⌁";color:Theme.cyan;font.family:Theme.font;font.pixelSize:24;font.weight:Font.DemiBold }
+            }
+            ColumnLayout {
+                Layout.fillWidth:true;Layout.minimumWidth:0;spacing:3
+                CText { text:"Desktop";font.pixelSize:24;font.weight:Font.DemiBold }
+                CText { text:desktop.width>=500?"Your apps, windows, sound, and everyday actions.":"Your everyday controls.";color:Theme.muted;font.pixelSize:12 }
+            }
+            ColumnLayout {
+                spacing:5;Layout.alignment:Qt.AlignVCenter
+                RowLayout {
+                    Layout.alignment:Qt.AlignRight;spacing:6
+                    Rectangle { Layout.preferredWidth:8;Layout.preferredHeight:8;radius:4;color:App.connected?Theme.success:Theme.muted }
+                    CText { text:App.connected?"Ready":"Offline";color:App.connected?Theme.success:Theme.muted;font.pixelSize:11 }
+                }
+                CButton { text:desktop.loading?"Loading…":"Refresh";help:"Refresh applications, windows and volume";onClicked:desktop.refresh();enabled:App.connected&&!desktop.loading }
+            }
         }
-        CButton { text:desktop.loading?"Loading…":"Refresh";help:"Refresh applications, windows and volume";onClicked:desktop.refresh();enabled:App.connected&&!desktop.loading }
     }
     RowLayout {
-        Layout.fillWidth:true
-        CField { id:search;objectName:"desktopSearch";Layout.fillWidth:true;placeholderText:"Search controls, applications or windows";Accessible.name:"Search desktop actions" }
+        Layout.fillWidth:true;spacing:8
+        CField { id:search;objectName:"desktopSearch";Layout.fillWidth:true;placeholderText:"Search actions, apps, or open windows";Accessible.name:"Search desktop actions" }
         CButton { visible:search.text.length>0;text:"Clear";onClicked:search.clear() }
     }
     RowLayout {
@@ -77,6 +95,13 @@ ColumnLayout {
             model:["All","Controls","Apps","Windows"]
             CButton { required property string modelData;required property int index;objectName:"desktopFilter_"+index;Layout.fillWidth:true;Layout.preferredWidth:1;leftPadding:8;rightPadding:8;text:modelData;primary:desktop.category===index;onClicked:desktop.category=index }
         }
+    }
+    CText {
+        Layout.fillWidth:true
+        text:desktop.query
+            ? "Results for “"+search.text.trim()+"”"
+            : ["All desktop tools and recent activity","Quick actions, sound, timers, and scripts","Installed applications","Open windows and workspaces"][desktop.category]
+        color:desktop.query?Theme.cyan:Theme.muted;font.pixelSize:11
     }
     Rectangle {
         visible:desktop.feedback.length>0||desktop.catalogError.length>0
@@ -90,6 +115,7 @@ ColumnLayout {
     }
     PageScroll {
         id:desktopScroll;objectName:"desktopScroll"
+        maximumContentWidth:1040
         Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:80
         GridLayout {
             id:sections;Layout.fillWidth:true;Layout.minimumWidth:0

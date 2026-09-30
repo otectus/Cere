@@ -1,0 +1,100 @@
+{
+  "description": "Public conformance fixtures only; randomly generated test key was discarded. Canonicalize 2.1.0 on Node 26.8.2.",
+  "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9DKkcOvTkdo1iRDNUwN2WgefNym4c1mcqkce7nw_Uc9KBdXrwDWzUKimpxBv1Few7WGGrp6-CM2SsvHwfRNO1w",
+  "cases": [
+    {
+      "name": "hello",
+      "value": {
+        "v": 1,
+        "type": "hello",
+        "protocolMin": 0,
+        "protocolMax": 0,
+        "desktopId": "10000000-0000-4000-8000-000000000001",
+        "deviceId": "20000000-0000-4000-8000-000000000002",
+        "keyVersion": 1,
+        "clientNonce": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "appVersion": "0.1.0"
+      },
+      "canonical": "{\"appVersion\":\"0.1.0\",\"clientNonce\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"desktopId\":\"10000000-0000-4000-8000-000000000001\",\"deviceId\":\"20000000-0000-4000-8000-000000000002\",\"keyVersion\":1,\"protocolMax\":0,\"protocolMin\":0,\"type\":\"hello\",\"v\":1}",
+      "sha256": "ZElZXvpfe_GRmT4m_NsFl5TDVZu_Tv0TRG_swje7Cg4",
+      "signature": "MEUCIBDya352e76cvxaIZIVg12FIFaMAxiSVSXqV8RckimwKAiEArz52K5rlPuViAAcwy1v3hjKuPp1w_LclRCbxNJYegOs"
+    },
+    {
+      "name": "auth",
+      "value": {
+        "domain": "cere.mobile.auth.v1",
+        "helloDigest": "ZElZXvpfe_GRmT4m_NsFl5TDVZu_Tv0TRG_swje7Cg4",
+        "challenge": {
+          "challengeId": "40000000-0000-4000-8000-000000000004",
+          "serverNonce": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "epoch": "30000000-0000-4000-8000-000000000003",
+          "audience": "10000000-0000-4000-8000-000000000001",
+          "expiresAt": 1800000000000
+        },
+        "desktopId": "10000000-0000-4000-8000-000000000001",
+        "deviceId": "20000000-0000-4000-8000-000000000002",
+        "keyVersion": 1,
+        "epoch": "30000000-0000-4000-8000-000000000003"
+      },
+      "canonical": "{\"challenge\":{\"audience\":\"10000000-0000-4000-8000-000000000001\",\"challengeId\":\"40000000-0000-4000-8000-000000000004\",\"epoch\":\"30000000-0000-4000-8000-000000000003\",\"expiresAt\":1800000000000,\"serverNonce\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\"},\"desktopId\":\"10000000-0000-4000-8000-000000000001\",\"deviceId\":\"20000000-0000-4000-8000-000000000002\",\"domain\":\"cere.mobile.auth.v1\",\"epoch\":\"30000000-0000-4000-8000-000000000003\",\"helloDigest\":\"ZElZXvpfe_GRmT4m_NsFl5TDVZu_Tv0TRG_swje7Cg4\",\"keyVersion\":1}",
+      "sha256": "MCDbQZsZYD4KpqvOhy4I7hbl4OTIP-8fMKYRQs4JuXI",
+      "signature": "MEUCIEyI7UvtNs-X_UNBNhAL5pqK8Z3HNVx4UIDA5qE75Z3bAiEArq97A8IT4w8ESFXPrWxBAwTdwnAZm0Mtmsx50ZjVglA"
+    },
+    {
+      "name": "send-params",
+      "value": {
+        "sessionId": "50000000-0000-4000-8000-000000000005",
+        "text": "Cere 🦊 漢字\n| a | b |\n|---|---|",
+        "attachments": [],
+        "webSearch": false,
+        "expectedDraftRevision": "0",
+        "expectedConfigRevision": "2"
+      },
+      "canonical": "{\"attachments\":[],\"expectedConfigRevision\":\"2\",\"expectedDraftRevision\":\"0\",\"sessionId\":\"50000000-0000-4000-8000-000000000005\",\"text\":\"Cere 🦊 漢字\\n| a | b |\\n|---|---|\",\"webSearch\":false}",
+      "sha256": "lvSPwsJq0d-M55EDMyL83IFTe29LMwQAvkAwanPnlRk",
+      "signature": "MEQCIGHRkFneT38SsGRe-6QwBt6N8j8Bh1oTR3LEK22a4Yr7AiBzrNV2JNXcSKJg2m4DJH9EAVj1hIn8vjSooEPZjd3klg"
+    },
+    {
+      "name": "action",
+      "value": {
+        "domain": "cere.mobile.action.v1",
+        "desktopId": "10000000-0000-4000-8000-000000000001",
+        "deviceId": "20000000-0000-4000-8000-000000000002",
+        "keyVersion": 1,
+        "scopeVersion": "1",
+        "epoch": "30000000-0000-4000-8000-000000000003",
+        "authSessionId": "60000000-0000-4000-8000-000000000006",
+        "challengeId": "40000000-0000-4000-8000-000000000004",
+        "nonce": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+        "method": "sessions.send",
+        "paramsDigest": "lvSPwsJq0d-M55EDMyL83IFTe29LMwQAvkAwanPnlRk",
+        "commandId": "70000000-0000-4000-8000-000000000007"
+      },
+      "canonical": "{\"authSessionId\":\"60000000-0000-4000-8000-000000000006\",\"challengeId\":\"40000000-0000-4000-8000-000000000004\",\"commandId\":\"70000000-0000-4000-8000-000000000007\",\"desktopId\":\"10000000-0000-4000-8000-000000000001\",\"deviceId\":\"20000000-0000-4000-8000-000000000002\",\"domain\":\"cere.mobile.action.v1\",\"epoch\":\"30000000-0000-4000-8000-000000000003\",\"keyVersion\":1,\"method\":\"sessions.send\",\"nonce\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\"paramsDigest\":\"lvSPwsJq0d-M55EDMyL83IFTe29LMwQAvkAwanPnlRk\",\"scopeVersion\":\"1\"}",
+      "sha256": "mSAdxBHw3nRRUUiRuo3ZPtB0yT7_CHUdrlNXB-UbA-c",
+      "signature": "MEQCIGBM_ilvw8o4njwNZHjEymfelVoC4nlMBxPx0fqKMlkEAiAvuH72hWuyBRD38jDOUQo-kx9zg9FfK9cc-RIxazkieQ"
+    },
+    {
+      "name": "unicode-null",
+      "value": {
+        "z": null,
+        "values": [
+          null,
+          true,
+          false,
+          0,
+          -7,
+          9007199254740991
+        ],
+        "text": "Control \u0001\n\t\"\\ · 🦊 · 漢字 ·  ",
+        "nested": {
+          "z": "last",
+          "a": "first"
+        }
+      },
+      "canonical": "{\"nested\":{\"a\":\"first\",\"z\":\"last\"},\"text\":\"Control \\u0001\\n\\t\\\"\\\\ · 🦊 · 漢字 ·  \",\"values\":[null,true,false,0,-7,9007199254740991],\"z\":null}",
+      "sha256": "9KQqTqelRmrPqhjQ1B8fNqmyEhbsgH4n8Iji-ACtPfY",
+      "signature": "MEUCIE_2rdM0Mjk6pHOCZcLVdcAbZPvs9Ja8A5V9FwClsfkqAiEAzC04iVJaCW5w51gAgREMpLVm0VGl6h81EF159wa-_OI"
+    }
+  ]
+}

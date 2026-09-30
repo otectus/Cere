@@ -164,13 +164,17 @@ export class HyprlandCollector implements LiveCollector {
       execFileAsync(executable, ['-j', 'clients'], { timeout: 2_000, maxBuffer: 2 * 1024 * 1024 }),
       execFileAsync(executable, ['-j', 'activewindow'], { timeout: 2_000, maxBuffer: 256 * 1024 }),
     ]);
+    // A snapshot finishing after stop() must not publish revoked or stale state.
+    if (this.stopped || !this.emit) return;
     const clients = JSON.parse(clientsResult.stdout) as any[], active = JSON.parse(activeResult.stdout) as any;
     if (!Array.isArray(clients) || !active || typeof active !== 'object') throw new Error('hyprctl returned an invalid structured snapshot');
     const seen = new Set<string>();
     for (const client of clients) {
       const address = String(client.address ?? '').replace(/^0x/u, ''); if (!address) continue; seen.add(address);
       let window = this.windows.get(address);
-      if (!window) { window = { generation: randomUUID(), appClass: String(client.class ?? ''), workspace: String(client.workspace?.id ?? '') }; this.windows.set(address, window); }
+      if (!window) { window = { generation: randomUUID(), appClass: '', workspace: '' }; this.windows.set(address, window); }
+      // Every verified snapshot refreshes class and workspace; the generation stays per window lifetime.
+      window.appClass = String(client.class ?? ''); window.workspace = String(client.workspace?.id ?? '');
       const properties: Record<string, JsonValue> = { address, workspace: window.workspace, appClass: window.appClass, focused: address === String(active.address ?? '').replace(/^0x/u, '') };
       if (this.titleAllowed(window.appClass)) properties.title = String(client.title ?? '');
       this.emit(this.factory.observation(`window:${this.sessionId}:${address}`, window.generation, 'WINDOW_SNAPSHOT', properties));
@@ -190,5 +194,6 @@ export class HyprlandCollector implements LiveCollector {
     if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
     for (const timer of this.titleTimers.values()) clearTimeout(timer);
     this.titleTimers.clear(); this.socket?.destroy(); this.unknown('collector_stopped');
+    this.emit = undefined;
   }
 }

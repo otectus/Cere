@@ -13,7 +13,7 @@ import {
   readdirSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { schema } from "./schema.ts";
+import { schema, migrations } from "./schema.ts";
 import {
   claimSchema,
   witnessSchema,
@@ -83,9 +83,7 @@ export class Canonical {
         throw e;
       }
     }
-    const migrations = this.all("SELECT * FROM schema_migrations");
-    if (migrations.length !== 1 || migrations[0].checksum !== digest(schema))
-      fail("INCOMPATIBLE_SCHEMA", "Unknown or modified memory migration");
+    this.migrate();
     this.owner = this.meta("owner_id", "");
     if (!this.owner) {
       this.owner = uuid();
@@ -104,7 +102,97 @@ export class Canonical {
       "UPDATE outbox SET state='pending',lease_until_us=NULL WHERE state='leased'",
     );
     this.run("UPDATE extraction_runs SET status='pending' WHERE status='running'");
+    // A crash between freeze and archive leaves consolidation for the bounded retry path.
+    this.run(
+      "UPDATE episodes SET state='retryable',error_code='INTERRUPTED',next_retry_us=0 WHERE state='consolidating' AND erased=0",
+    );
     this.reconcileRegistry();
+    this.queue(() => this.reconcileExtraction());
+  }
+  /** Runs queue bookkeeping atomically, joining an enclosing canonical mutation when present. */
+  queue<T>(fn: () => T): T {
+    if (this.db.isTransaction) return fn();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+  /**
+   * Re-evaluates queued extraction against current source, payload and epochs.
+   * Runs claimed under an older epoch are superseded by a fresh run, so a stale
+   * in-flight result stays rejected while the surviving source is extracted again.
+   */
+  reconcileExtraction(includeDenied = false) {
+    const policy = this.epoch("policy"),
+      erasure = this.epoch("erasure"),
+      statuses = ["pending", "running", "revoked", ...(includeDenied ? ["denied"] : [])];
+    let rescheduled = 0;
+    for (const run of this.all(
+      `SELECT x.*,o.erased AS source_erased,o.payload_id,p.erased AS payload_erased FROM extraction_runs x JOIN observations o ON o.id=x.observation_id LEFT JOIN payloads p ON p.id=o.payload_id WHERE x.status IN (${statuses.map(() => "?").join(",")}) ORDER BY x.revision,x.id`,
+      ...statuses,
+    )) {
+      if (run.source_erased) {
+        this.run("UPDATE extraction_runs SET status='erased',error_code=NULL WHERE id=?", run.id);
+        continue;
+      }
+      if (!run.payload_id || run.payload_erased) {
+        this.run(
+          "UPDATE extraction_runs SET status='expired',error_code='SOURCE_PAYLOAD_EXPIRED' WHERE id=?",
+          run.id,
+        );
+        continue;
+      }
+      if (run.status === "pending" && run.policy_epoch === policy && run.erasure_epoch === erasure)
+        continue;
+      this.run("UPDATE extraction_runs SET status='superseded' WHERE id=?", run.id);
+      this.insert("extraction_runs", {
+        id: uuid(),
+        observation_id: run.observation_id,
+        model_identity: "unconfigured",
+        prompt_version: run.prompt_version,
+        parser_version: run.parser_version,
+        schema_version: run.schema_version,
+        status: "pending",
+        policy_epoch: policy,
+        erasure_epoch: erasure,
+        revision: this.revision,
+      });
+      rescheduled++;
+    }
+    return { rescheduled };
+  }
+  /** Verifies every applied migration by checksum, then applies the missing suffix in order. */
+  migrate() {
+    const known = new Map<number, string>([
+      [1, digest(schema)],
+      ...migrations.map((m): [number, string] => [m.id, digest(m.sql)]),
+    ]);
+    const applied = this.all("SELECT * FROM schema_migrations ORDER BY id");
+    for (const [index, row] of applied.entries())
+      if (row.id !== index + 1 || known.get(row.id) !== row.checksum)
+        fail("INCOMPATIBLE_SCHEMA", "Unknown or modified memory migration");
+    for (const migration of migrations) {
+      if (applied.some((row) => row.id === migration.id)) continue;
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.exec(migration.sql);
+        this.run(
+          "INSERT INTO schema_migrations VALUES (?,?,?)",
+          migration.id,
+          digest(migration.sql),
+          now(),
+        );
+        this.db.exec("COMMIT");
+      } catch (e) {
+        this.db.exec("ROLLBACK");
+        throw e;
+      }
+    }
   }
   one(sql: string, ...args: any[]): Row {
     return (this.db.prepare(sql).get(...args) as Row) || {};
@@ -200,6 +288,21 @@ export class Canonical {
       this.revision = previous;
       throw e;
     }
+  }
+  /**
+   * The authorized scope closure: the scope and its registered ancestors, bounded
+   * at sixteen levels. Siblings and unrelated scopes are never included.
+   */
+  effectiveScopes(scope: string): string[] {
+    const scopes: string[] = [scope];
+    let parent = this.scope(scope).parent_id;
+    while (parent && scopes.length < 16) {
+      if (scopes.includes(parent))
+        fail("INVALID_ARGUMENT", "Cyclic scope hierarchy");
+      scopes.push(parent);
+      parent = this.scope(parent).parent_id;
+    }
+    return scopes;
   }
   receipt(scope: string, targets: string[]) {
     const token = uuid();
@@ -395,169 +498,181 @@ export class Canonical {
         erased: !!old.erased,
       };
     return this.tx((r, time) => {
-      const source = this.source(p.scope_id, role, external),
-        id = uuid(),
-        payload = this.payload(
-          p.scope_id,
-          text,
-          p.kind === "saved" ? "evidence" : "raw_turn",
-          p.sensitivity || "cloud_allowed",
-          p.kind === "saved" ? null : time + this.policy.raw_turn_days * 864e8,
-        ),
-        seq =
-          p.source_sequence ??
-          this.one(
-            "SELECT COALESCE(MAX(source_sequence),0)+1 AS n FROM observations WHERE source_id=?",
-            source.id,
-          ).n;
-      this.insert("observations", {
-        id,
-        scope_id: p.scope_id,
-        source_id: source.id,
-        source_epoch: source.epoch,
-        source_sequence: seq,
-        source_event_id: event,
-        occurred_us: p.occurred_us || time,
-        captured_us: time,
-        payload_id: payload,
-        role,
-        storage_mode: "durable",
-        extraction_state: role === "assistant" ? "derived" : "pending",
-        revision: r,
-      });
-      this.lineage(payload, id, "content");
-      const evidence = uuid();
-      this.insert("evidence", {
-        id: evidence,
-        scope_id: p.scope_id,
-        observation_id: id,
-        source_revision: r,
-        locator: JSON.stringify({
-          start: 0,
-          end: Array.from(text).length,
-          units: "unicode_code_points",
-        }),
-        witness: text,
-        digest: digest(text),
-        trust: source.trust,
-        independence_group: id,
-        sensitivity: p.sensitivity || "cloud_allowed",
-        revision: r,
-      });
-      this.lineage(evidence, id, "witness");
-      this.artifact(
-        p.scope_id,
-        p.kind || "conversation",
-        id,
-        (role === "assistant" ? "Assistant (unverified): " : "") + text,
-        [evidence],
-        external,
-        p.sensitivity || "cloud_allowed",
-      );
-      this.insert("extraction_runs", {
-        id: uuid(),
-        observation_id: id,
-        model_identity: "unconfigured",
-        prompt_version: "cere-extract-1",
-        parser_version: "1",
-        schema_version: 1,
-        status: role === "assistant" ? "derived" : "pending",
-        policy_epoch: this.epoch("policy"),
-        erasure_epoch: this.epoch("erasure"),
-        revision: r,
-      });
-      const eid = uuid(),
-        thread = p.task_id || external;
-      this.insert("events", {
-        id: eid,
-        scope_id: p.scope_id,
-        observation_id: id,
-        task_id: p.task_id || null,
-        thread_id: thread,
-        kind:
-          role === "assistant"
-            ? "response"
-            : role === "tool"
-              ? "result"
-              : "statement",
-        actor: role,
-        occurred_us: p.occurred_us || time,
-        captured_us: time,
-        stream_sequence: seq,
-        payload_id: payload,
-        revision: r,
-      });
-      this.lineage(eid, id);
-      // Rebuild source ordering for late arrivals; capture order is never causality.
-      const preceding = this.one(
-          "SELECT e.id FROM events e JOIN observations o ON o.id=e.observation_id WHERE o.source_id=? AND e.stream_sequence<? AND e.erased=0 ORDER BY e.stream_sequence DESC LIMIT 1",
-          source.id,
-          seq,
-        ),
-        following = this.one(
-          "SELECT e.id FROM events e JOIN observations o ON o.id=e.observation_id WHERE o.source_id=? AND e.stream_sequence>? AND e.erased=0 ORDER BY e.stream_sequence LIMIT 1",
-          source.id,
-          seq,
-        );
-      if (preceding.id && following.id)
-        this.run(
-          "DELETE FROM event_edges WHERE from_id=? AND to_id=? AND relation='NEXT_IN_STREAM'",
-          preceding.id,
-          following.id,
-        );
-      for (const [from, to] of [
-        [preceding.id, eid],
-        [eid, following.id],
-      ])
-        if (from && to)
-          this.insert("event_edges", {
-            id: uuid(),
-            from_id: from,
-            to_id: to,
-            relation: "NEXT_IN_STREAM",
-            order_basis: "source_sequence",
-            revision: r,
-          });
-      let episode = this.one(
-        "SELECT * FROM episodes WHERE scope_id=? AND thread_id=? AND state='open' AND erased=0 ORDER BY revision DESC LIMIT 1",
-        p.scope_id,
-        thread,
-      );
-      if (!episode.id) {
-        episode = { id: uuid() };
-        this.insert("episodes", {
-          id: episode.id,
-          scope_id: p.scope_id,
-          thread_id: thread,
-          state: "open",
-          source_generation: r,
-          revision: r,
-          policy_epoch: this.epoch("policy"),
-          erasure_epoch: this.epoch("erasure"),
-        });
-      }
-      this.insert("episode_events", {
-        episode_id: episode.id,
-        event_id: eid,
-        ordering: seq,
-      });
-      this.run(
-        "UPDATE episodes SET source_generation=?,revision=? WHERE id=?",
-        r,
-        r,
-        episode.id,
-      );
-      this.lineage(episode.id, eid, "member");
-      this.effect(id);
-      this.effect(eid);
-      this.effect(episode.id);
+      const observed = this.recordObservation(p, text, role, external, event, r, time);
       return {
-        id,
-        evidence_id: evidence,
+        ...observed,
         durable: true,
-        ...this.receipt(p.scope_id, [id]),
+        ...this.receipt(p.scope_id, [observed.id]),
       };
     });
+  }
+  /** Inserts one durable source occurrence inside the caller's canonical mutation. */
+  recordObservation(
+    p: Row,
+    text: string,
+    role: string,
+    external: string,
+    event: string,
+    r: number,
+    time: number,
+  ) {
+    const source = this.source(p.scope_id, role, external),
+      id = uuid(),
+      payload = this.payload(
+        p.scope_id,
+        text,
+        p.kind === "saved" ? "evidence" : "raw_turn",
+        p.sensitivity || "cloud_allowed",
+        p.kind === "saved" ? null : time + this.policy.raw_turn_days * 864e8,
+      ),
+      seq =
+        p.source_sequence ??
+        this.one(
+          "SELECT COALESCE(MAX(source_sequence),0)+1 AS n FROM observations WHERE source_id=?",
+          source.id,
+        ).n;
+    this.insert("observations", {
+      id,
+      scope_id: p.scope_id,
+      source_id: source.id,
+      source_epoch: source.epoch,
+      source_sequence: seq,
+      source_event_id: event,
+      occurred_us: p.occurred_us || time,
+      captured_us: time,
+      payload_id: payload,
+      role,
+      storage_mode: "durable",
+      extraction_state: role === "assistant" ? "derived" : "pending",
+      revision: r,
+    });
+    this.lineage(payload, id, "content");
+    const evidence = uuid();
+    this.insert("evidence", {
+      id: evidence,
+      scope_id: p.scope_id,
+      observation_id: id,
+      source_revision: r,
+      locator: JSON.stringify({
+        start: 0,
+        end: Array.from(text).length,
+        units: "unicode_code_points",
+      }),
+      witness: text,
+      digest: digest(text),
+      trust: source.trust,
+      independence_group: id,
+      sensitivity: p.sensitivity || "cloud_allowed",
+      revision: r,
+    });
+    this.lineage(evidence, id, "witness");
+    this.artifact(
+      p.scope_id,
+      p.kind || "conversation",
+      id,
+      (role === "assistant" ? "Assistant (unverified): " : "") + text,
+      [evidence],
+      external,
+      p.sensitivity || "cloud_allowed",
+    );
+    this.insert("extraction_runs", {
+      id: uuid(),
+      observation_id: id,
+      model_identity: "unconfigured",
+      prompt_version: "cere-extract-1",
+      parser_version: "1",
+      schema_version: 1,
+      status: role === "assistant" ? "derived" : "pending",
+      policy_epoch: this.epoch("policy"),
+      erasure_epoch: this.epoch("erasure"),
+      revision: r,
+    });
+    const eid = uuid(),
+      thread = p.task_id || external;
+    this.insert("events", {
+      id: eid,
+      scope_id: p.scope_id,
+      observation_id: id,
+      task_id: p.task_id || null,
+      thread_id: thread,
+      kind:
+        role === "assistant"
+          ? "response"
+          : role === "tool"
+            ? "result"
+            : "statement",
+      actor: role,
+      occurred_us: p.occurred_us || time,
+      captured_us: time,
+      stream_sequence: seq,
+      payload_id: payload,
+      revision: r,
+    });
+    this.lineage(eid, id);
+    // Rebuild source ordering for late arrivals; capture order is never causality.
+    const preceding = this.one(
+        "SELECT e.id FROM events e JOIN observations o ON o.id=e.observation_id WHERE o.source_id=? AND e.stream_sequence<? AND e.erased=0 ORDER BY e.stream_sequence DESC LIMIT 1",
+        source.id,
+        seq,
+      ),
+      following = this.one(
+        "SELECT e.id FROM events e JOIN observations o ON o.id=e.observation_id WHERE o.source_id=? AND e.stream_sequence>? AND e.erased=0 ORDER BY e.stream_sequence LIMIT 1",
+        source.id,
+        seq,
+      );
+    if (preceding.id && following.id)
+      this.run(
+        "DELETE FROM event_edges WHERE from_id=? AND to_id=? AND relation='NEXT_IN_STREAM'",
+        preceding.id,
+        following.id,
+      );
+    for (const [from, to] of [
+      [preceding.id, eid],
+      [eid, following.id],
+    ])
+      if (from && to)
+        this.insert("event_edges", {
+          id: uuid(),
+          from_id: from,
+          to_id: to,
+          relation: "NEXT_IN_STREAM",
+          order_basis: "source_sequence",
+          revision: r,
+        });
+    let episode = this.one(
+      "SELECT * FROM episodes WHERE scope_id=? AND thread_id=? AND state='open' AND erased=0 ORDER BY revision DESC LIMIT 1",
+      p.scope_id,
+      thread,
+    );
+    if (!episode.id) {
+      episode = { id: uuid() };
+      this.insert("episodes", {
+        id: episode.id,
+        scope_id: p.scope_id,
+        thread_id: thread,
+        state: "open",
+        source_generation: r,
+        revision: r,
+        policy_epoch: this.epoch("policy"),
+        erasure_epoch: this.epoch("erasure"),
+      });
+    }
+    this.insert("episode_events", {
+      episode_id: episode.id,
+      event_id: eid,
+      ordering: seq,
+    });
+    this.run(
+      "UPDATE episodes SET source_generation=?,revision=? WHERE id=?",
+      r,
+      r,
+      episode.id,
+    );
+    this.lineage(episode.id, eid, "member");
+    this.effect(id);
+    this.effect(eid);
+    this.effect(episode.id);
+    return { id, evidence_id: evidence };
   }
   saveText(p: Row) {
     strict(p, [
@@ -570,7 +685,14 @@ export class Canonical {
       "source_event_id",
     ]);
     this.scope(p.scope_id);
-    safeText(p.text, 2000);
+    const text = safeText(p.text, 2000),
+      // Every branch keeps the caller's authority: a model-authored edit stays an
+      // assistant source even when it replaces a note originally written by the user.
+      role = p.source_role || "user",
+      external = String(p.session_id || "manual");
+    if (!["user", "assistant"].includes(role))
+      fail("INVALID_ARGUMENT", "Unsupported saved-note source role");
+    const saved = { scope_id: p.scope_id, kind: "saved" };
     if (p.id) {
       const old = this.one(
         "SELECT * FROM artifacts WHERE scope_id=? AND (record_id=? OR id=?) AND kind='saved' AND invalidated=0 AND known_to_revision IS NULL",
@@ -588,23 +710,17 @@ export class Canonical {
           "REVISION_CONFLICT",
           "Memory changed; inspect its current revision",
         );
-      const observed = this.observeText({
-        scope_id: p.scope_id,
-        text: p.text,
-        role: "user",
-        session_id: p.session_id,
-        kind: "saved",
-        source_event_id: p.source_event_id,
-      });
-      return this.tx(() => {
+      // The replacement source, its artifact and the stable note identity commit together.
+      return this.tx((r, time) => {
+        const observed = this.recordObservation(saved, text, role, external, String(p.source_event_id || uuid()), r, time);
         this.run(
           "UPDATE artifacts SET known_to_revision=? WHERE id=?",
-          this.revision,
+          r,
           old.id,
         );
         this.effect(old.id);
         const fresh = this.one(
-          "SELECT * FROM artifacts WHERE record_id=?",
+          "SELECT * FROM artifacts WHERE record_id=? AND kind='saved'",
           observed.id,
         );
         this.run(
@@ -612,30 +728,40 @@ export class Canonical {
           old.record_id,
           fresh.id,
         );
+        this.insert("note_revisions", {
+          note_id: old.record_id,
+          observation_id: observed.id,
+          artifact_id: fresh.id,
+          revision: r,
+          source_role: role,
+        });
         return {
           id: old.record_id,
-          text: p.text,
+          text,
           saved: true,
-          revision: this.revision,
+          revision: r,
           receipt: this.receipt(p.scope_id, [old.record_id]),
         };
       });
     }
-    const receipt = this.observeText({
-      scope_id: p.scope_id,
-      text: p.text,
-      role: p.source_role || "user",
-      session_id: p.session_id,
-      source_event_id: p.source_event_id,
-      kind: "saved",
+    return this.tx((r, time) => {
+      const observed = this.recordObservation(saved, text, role, external, String(p.source_event_id || uuid()), r, time);
+      this.insert("note_revisions", {
+        note_id: observed.id,
+        observation_id: observed.id,
+        artifact_id: this.one("SELECT id FROM artifacts WHERE record_id=? AND kind='saved'", observed.id).id,
+        revision: r,
+        source_role: role,
+      });
+      const receipt = { ...observed, durable: true, ...this.receipt(p.scope_id, [observed.id]) };
+      return {
+        id: observed.id,
+        text,
+        saved: true,
+        revision: r,
+        receipt,
+      };
     });
-    return {
-      id: receipt.id,
-      text: p.text,
-      saved: true,
-      revision: receipt.accepted_revision,
-      receipt,
-    };
   }
   entity(scope: string, e: Claim["subject"]) {
     if (e.id) {
@@ -857,11 +983,14 @@ export class Canonical {
       }
       let status = "accepted";
       if (p.model_proposal || p.extraction_run_id) {
-        const quotation=normalized(e.witness),objectText=normalized(claim.object?.name||String(claim.value));
-        if(!quotation.includes(objectText)||!quotation.includes(normalized(claim.subject.name))&&!/\bthis project\b/.test(quotation))status='candidate';
-        if(claim.modality==='actual'&&/\b(if|might|could|would|hypothetical|plan|planning|reported|said)\b/.test(quotation))status='candidate';
-        if(claim.polarity==='positive'&&/\b(not|never|isn't|isn’t|don't|don’t|no longer)\b/.test(quotation))status='candidate';
-        if(/\b(ignore|pretend|fabricate|invent)\b/.test(quotation))status='candidate';
+        // A quoted span proves words were said, not that the user asserted this
+        // relation. Anything short of a grounded direct statement stays a candidate.
+        if (!this.grounded(e, claim)) status = "candidate";
+        if (
+          (claim.valid_mode === "unknown" && claim.time_expression.trim()) ||
+          claim.time_precision === "approximate"
+        )
+          status = "candidate";
       }
       if (
         e.trust === "derived_summary" ||
@@ -895,56 +1024,49 @@ export class Canonical {
         "SELECT * FROM assertion_versions WHERE slot_id=? AND known_to_revision IS NULL AND erased=0 AND status IN ('accepted','disputed')",
         slot.id,
       ).filter((v) => overlaps(v as any, claim));
+      const member = (v: Row) => `${v.object_entity_id ?? ""}\u0000${v.value_json ?? ""}`,
+        incoming = `${object?.id ?? ""}\u0000${claim.value === undefined ? "" : JSON.stringify(claim.value)}`;
       const conflicting = current.filter(
-        (v) =>
-          v.object_entity_id !== (object?.id || null) ||
-          v.value_json !==
-            (claim.value === undefined ? null : JSON.stringify(claim.value)) ||
-          v.polarity !== claim.polarity,
+        (v) => member(v) !== incoming || v.polarity !== claim.polarity,
       );
-      // A multivalued slot correction changes only its explicitly selected member.
-      const corrected = operation === 'assert' ? [] : rule.single ? current : current.filter(v=>v.version_id===p.id||v.logical_id===p.id);
+      // The same member with opposite polarity over an overlapping interval is a
+      // contradiction in any slot; other members of a multivalued slot are unrelated.
+      const contradictory = current.filter(
+        (v) => member(v) === incoming && v.polarity !== claim.polarity,
+      );
+      // A multivalued slot correction changes only its explicitly selected member;
+      // resolving a dispute closes that member's whole contradictory set.
+      const selected = current.find((v) => v.version_id === p.id || v.logical_id === p.id);
+      const corrected = operation === 'assert' ? [] : rule.single ? current : current.filter(v=>v===selected||(operation==='resolve'&&!!selected&&member(v)===member(selected)));
       if(operation!=='assert'&&!rule.single&&!corrected.length)fail('INVALID_ARGUMENT','A multivalued correction requires an active assertion ID');
       const targets: string[] = [];
       if(operation!=='assert'&&status==='candidate'&&corrected.length){
-        for(const prior of corrected){this.closeVersion(prior,time);targets.push(this.newVersion({...prior,status:'disputed'},this.support(prior.version_id),time,prior.logical_id));}
+        for(const prior of corrected)targets.push(this.amend(prior,{status:'disputed'},time));
       }
-      if (((rule.single && conflicting.length) || operation!=='assert' && corrected.length) && status === "accepted") {
-        if (operation === "assert") {
-          status = "disputed";
-          for (const v of current) {
-            this.closeVersion(v, time);
-            const support = this.support(v.version_id);
+      if (operation === "assert" && status === "accepted" && (rule.single ? conflicting : contradictory).length) {
+        status = "disputed";
+        for (const v of rule.single ? current : contradictory)
+          targets.push(this.amend(v, { status: "disputed" }, time));
+      } else if (operation !== "assert" && corrected.length && status === "accepted") {
+        if (
+          e.trust !== "explicit_user" &&
+          corrected.some((v) => conflicting.includes(v) && v.epistemic_type === "explicit_user")
+        )
+          fail(
+            "POLICY_DENIED",
+            "Weaker evidence cannot override a direct user assertion",
+          );
+        for (const v of corrected) {
+          this.closeVersion(v, time);
+          for (const interval of remainder(v as any, claim))
             targets.push(
               this.newVersion(
-                { ...v, status: "disputed" },
-                support,
+                { ...v, ...interval },
+                this.support(v.version_id),
                 time,
                 v.logical_id,
               ),
             );
-          }
-        } else {
-          if (
-            e.trust !== "explicit_user" &&
-            conflicting.some((v) => v.epistemic_type === "explicit_user")
-          )
-            fail(
-              "POLICY_DENIED",
-              "Weaker evidence cannot override a direct user assertion",
-            );
-          for (const v of corrected) {
-            this.closeVersion(v, time);
-            for (const interval of remainder(v as any, claim))
-              targets.push(
-                this.newVersion(
-                  { ...v, ...interval },
-                  this.support(v.version_id),
-                  time,
-                  v.logical_id,
-                ),
-              );
-          }
         }
       }
       const v = {
@@ -977,9 +1099,15 @@ export class Canonical {
       };
       const same = operation==='assert' ? current.find(prior=>!conflicting.includes(prior)&&prior.status===status&&prior.modality===v.modality&&prior.epistemic_type===v.epistemic_type&&prior.valid_mode===v.valid_mode&&prior.valid_from_us===v.valid_from_us&&prior.valid_to_us===v.valid_to_us) : undefined;
       // Repetition adds source lineage without creating a competing fact or a confidence boost.
-      let supports=[e];
-      if(same){supports=[...this.support(same.version_id).filter(old=>old.id!==e.id),e];this.closeVersion(same,time);}
-      const version = this.newVersion(v, supports, time, same?.logical_id);
+      let version: string;
+      if (same) {
+        const supports = [...this.support(same.version_id).filter((old) => old.id !== e.id), e];
+        if (same.known_from_revision === this.revision) version = this.amend(same, {}, time, supports);
+        else {
+          this.closeVersion(same, time);
+          version = this.newVersion(v, supports, time, same.logical_id);
+        }
+      } else version = this.newVersion(v, [e], time);
       targets.push(version);
       for (const old of current)
         if (old.known_to_revision === null && operation !== "assert")
@@ -1001,13 +1129,90 @@ export class Canonical {
       this.lineage(subject.id, e.id, "identity");
       if (object) this.lineage(object.id, e.id, "identity");
       return {
-        ...this.receipt(p.scope_id, targets),
+        ...this.receipt(p.scope_id, [...new Set(targets)]),
         id: version,
         slot_id: slot.id,
         status,
         aggregate_revision: r,
       };
     });
+  }
+  /**
+   * Re-versions a current assertion. One inserted earlier in this same revision
+   * (an extraction batch) is amended in place: closing it would create an empty
+   * knowledge interval, and nothing outside the batch has observed it yet.
+   */
+  amend(v: Row, patch: Row, time: number, supports?: Row[]) {
+    if (v.known_from_revision !== this.revision) {
+      this.closeVersion(v, time);
+      return this.newVersion({ ...v, ...patch }, supports ?? this.support(v.version_id), time, v.logical_id);
+    }
+    const next = { ...v, ...patch };
+    this.run(
+      "UPDATE assertion_versions SET status=?,retention_class=?,expires_at_us=? WHERE version_id=?",
+      next.status,
+      next.retention_class,
+      next.expires_at_us,
+      v.version_id,
+    );
+    for (const e of supports ?? [])
+      if (!this.one("SELECT 1 AS n FROM assertion_evidence WHERE version_id=? AND evidence_id=? AND relation='support'", v.version_id, e.id).n) {
+        this.insert("assertion_evidence", {
+          version_id: v.version_id,
+          evidence_id: e.id,
+          relation: "support",
+          independence_group: e.independence_group,
+        });
+        this.lineage(v.version_id, e.id, "support");
+      }
+    this.effect(v.version_id);
+    return v.version_id as string;
+  }
+  /**
+   * Conservative semantic grounding for model-proposed claims: the quoted
+   * sentence must be a direct, unquoted, non-interrogative, non-hypothetical
+   * first-hand statement whose negation matches the proposal and which contains
+   * the named entities and a cue for the registered predicate. This is a
+   * candidate gate, not a certificate of natural-language meaning.
+   */
+  grounded(e: Row, claim: Claim) {
+    const body: string = this.one(
+      "SELECT p.body FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.id=?",
+      e.observation_id,
+    ).body ?? e.witness;
+    const points = Array.from(body);
+    let { start, end } = JSON.parse(e.locator);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) ({ start, end } = { start: 0, end: points.length });
+    while (start > 0 && !/[.!?\n]/u.test(points[start - 1])) start--;
+    while (end < points.length && !/[.!?\n]/u.test(points[end - 1] ?? "")) end++;
+    if (end < points.length && /[.!?]/u.test(points[end] ?? "")) end++;
+    const sentence = normalized(points.slice(start, end).join("")),
+      quotation = normalized(e.witness);
+    const object = normalized(claim.object?.name ?? String(claim.value));
+    if (!quotation.includes(object)) return false;
+    if (!quotation.includes(normalized(claim.subject.name)) && !/\bthis project\b/u.test(quotation)) return false;
+    // Questions, including interrogative clauses without a terminal question mark.
+    if (/\?/u.test(sentence) || /^(?:do|does|did|is|are|was|were|am|can|could|should|would|will|shall|may|might|must|has|have|had|who|whom|whose|what|when|where|why|which|how|whether)\b/u.test(sentence) ||
+      /\b(?:i wonder|wondering|not sure (?:if|whether)|asked (?:if|whether)|ask (?:if|whether)|unsure)\b/u.test(sentence)) return false;
+    // Hypothetical, planned, reported or quoted statements are not first-hand facts.
+    if (/\b(?:if|might|could|would|may|maybe|perhaps|probably|possibly|suppose|supposing|unless|hypothetical|hypothetically|assume|assuming|plan|plans|planning|planned|will|going to|want to|wants to|should|said|says|told|tells|according to|reportedly|reported|claims?|claimed|heard|apparently|ignore|pretend|fabricate|invent)\b/u.test(sentence)) return false;
+    if (/["“”«»„]/u.test(sentence)) return false;
+    const negated = /\b(?:not|never|no longer|cannot|stopped|without)\b|n['’]t\b/u.test(quotation);
+    if (negated !== (claim.polarity === "negative")) return false;
+    const cues: Record<string, RegExp> = {
+      WORKS_ON: /\b(?:works?|working|worked) on\b|\b(?:build|builds|building|develop|develops|developing|maintain|maintains|maintaining|contribute|contributes|contributing)\b/u,
+      USES_TOOL: /\b(?:use|uses|used|using|run|runs|running|ran|adopt|adopts|adopted)\b|\b(?:relies|rely|relied|relying) on\b|\b(?:switched|moved|migrated) to\b|\b(?:formats?|formatted|lints?|linted|built|builds) with\b|\bpowered by\b/u,
+      PREFERS_TOOL: /\b(?:prefer|prefers|preferred|preference|favou?rite|like|likes|love|loves|rather|go-to|choose|chooses|chose|pick|picks)\b/u,
+      BELONGS_TO: /\b(?:belongs?|belonged) to\b|\bpart of\b|\b(?:in|inside|within|under)\b/u,
+      CHECKOUT_OF: /\b(?:checkout|checked out|clone|cloned|worktree|mirror|fork)\b/u,
+      IMPLEMENTS: /\b(?:implements?|implemented|implementation|code for|source for|repository for|repo for)\b/u,
+      DEPENDS_ON: /\b(?:depends?|depended|depending) on\b|\b(?:dependency|dependencies|requires?|required|needs?|needed)\b|\b(?:relies|rely) on\b/u,
+      BLOCKED_BY: /\b(?:blocked|blocking|blocker|stuck|waiting (?:on|for)|until)\b/u,
+      LOCATED_AT: /\b(?:located|lives?|stored|kept|at|in|under|path)\b/u,
+      HAS_STATE: /./u,
+      RELATED_TO: /\b(?:related|relates|relation|connected|linked|associated|about|regarding)\b/u,
+    };
+    return cues[claim.predicate].test(quotation);
   }
   support(version: string) {
     return this.all(
@@ -1039,11 +1244,11 @@ export class Canonical {
     };
   }
   graphPointers(p:Row){
-    this.scope(p.scope_id);const k=p.known_revision??this.revision,valid=new Set<string>(),assertions=new Set<string>();
+    const scopes=JSON.stringify(this.effectiveScopes(p.scope_id)),k=p.known_revision??this.revision,valid=new Set<string>(),assertions=new Set<string>();
     for(const node of (p.nodes||[]).slice(0,200)){
-      if(node.kind==='MemoryEntity'&&this.one('SELECT id FROM entities WHERE id=? AND scope_id=? AND erased=0',node.id,p.scope_id).id)valid.add(node.id);
-      if(node.kind==='MemoryAssertion'){const a=this.one('SELECT * FROM assertion_versions WHERE version_id=? AND scope_id=?',node.id,p.scope_id);if(a.version_id&&this.eligibleAssertion(a,k,p.world_at_us,p.model_route||'local')){valid.add(node.id);assertions.add(node.id);}}
-      if(node.kind==='MemoryEvidence'&&this.one('SELECT id FROM evidence WHERE id=? AND scope_id=? AND erased=0',node.id,p.scope_id).id)valid.add(node.id);
+      if(node.kind==='MemoryEntity'&&this.one('SELECT id FROM entities WHERE id=? AND scope_id IN (SELECT value FROM json_each(?)) AND erased=0',node.id,scopes).id)valid.add(node.id);
+      if(node.kind==='MemoryAssertion'){const a=this.one('SELECT * FROM assertion_versions WHERE version_id=? AND scope_id IN (SELECT value FROM json_each(?))',node.id,scopes);if(a.version_id&&this.eligibleAssertion(a,k,p.world_at_us,p.model_route||'local')){valid.add(node.id);assertions.add(node.id);}}
+      if(node.kind==='MemoryEvidence'&&this.one('SELECT id FROM evidence WHERE id=? AND scope_id IN (SELECT value FROM json_each(?)) AND erased=0',node.id,scopes).id)valid.add(node.id);
     }
     const reached=new Set<string>((p.seeds||[]).filter((id:string)=>valid.has(id)));
     for(let hop=0;hop<4;hop++)for(const edge of (p.edges||[]).slice(0,500)){
@@ -1169,15 +1374,7 @@ export class Canonical {
       "intent",
       "backend_coverage",
     ]);
-    this.scope(p.scope_id);
-    const scopes: string[] = [p.scope_id];
-    let parent = this.scope(p.scope_id).parent_id;
-    while (parent && scopes.length < 16) {
-      if (scopes.includes(parent))
-        fail("INVALID_ARGUMENT", "Cyclic scope hierarchy");
-      scopes.push(parent);
-      parent = this.scope(parent).parent_id;
-    }
+    const scopes = this.effectiveScopes(p.scope_id);
     const lookupScopes = JSON.stringify(scopes);
     const text = safeText(p.text || "memory", 1000),
       route = p.model_route || "local",
@@ -1252,10 +1449,11 @@ export class Canonical {
       ]),
     ].slice(0, 40);
     for (const anchor of anchors) {
+      // Anchors use the same authorized closure as lexical and semantic recall.
       const entity = this.one(
-        "SELECT id FROM entities WHERE id=? AND scope_id=? AND erased=0",
+        "SELECT id FROM entities WHERE id=? AND scope_id IN (SELECT value FROM json_each(?)) AND erased=0",
         anchor,
-        p.scope_id,
+        lookupScopes,
       );
       if (!entity.id) continue;
       for (const a of this.all(
@@ -1521,6 +1719,15 @@ export class Canonical {
         .n,
     };
   }
+  /** Formats one assertion from joined subject/object names, without per-row lookups. */
+  static claimText(v: Row, subject: string, object: string | null) {
+    const target = v.object_entity_id ? object : JSON.parse(v.value_json);
+    return `${subject} ${v.polarity === "negative" ? "does not " : ""}${v.predicate} ${target}${v.qualifiers !== "{}" ? " " + v.qualifiers : ""} [${v.modality}; ${v.valid_mode}]`;
+  }
+  /**
+   * One COUNT and one bounded page per view. Only the selected page is
+   * materialized and formatted; ordering has a deterministic ID tie-break.
+   */
   list(p: Row) {
     strict(p, ["scope_id", "kind", "filter", "offset"]);
     this.scope(p.scope_id);
@@ -1535,41 +1742,53 @@ export class Canonical {
       fail("INVALID_ARGUMENT", "Invalid memory filter");
     const pattern =
       "%" + String(p.filter || "").replace(/[\\%_]/g, "\\$&") + "%";
-    let rows: Row[] = [];
+    const page = (from: string, columns: string, order: string, ...args: any[]) => ({
+      total: this.one(`SELECT COUNT(*) AS n ${from}`, ...args).n as number,
+      rows: this.all(`SELECT ${columns} ${from} ORDER BY ${order} LIMIT 25 OFFSET ?`, ...args, offset),
+    });
+    let result: { total: number; rows: Row[] };
     if (kind === "entities")
-      rows = this.all(
-        "SELECT id,name AS text,type,identity_revision AS revision FROM entities WHERE scope_id=? AND erased=0 AND name LIKE ? ESCAPE '\\' ORDER BY name",
+      result = page(
+        "FROM entities WHERE scope_id=? AND erased=0 AND name LIKE ? ESCAPE '\\'",
+        "id,name AS text,type,identity_revision AS revision",
+        "name,id",
         p.scope_id,
         pattern,
       );
     else if (kind === "episodes")
-      rows = this.all(
-        "SELECT id,thread_id AS text,state,revision,source_generation FROM episodes WHERE scope_id=? AND erased=0 ORDER BY revision DESC",
+      result = page(
+        "FROM episodes WHERE scope_id=? AND erased=0 AND thread_id LIKE ? ESCAPE '\\'",
+        "id,thread_id AS text,state,revision,source_generation",
+        "revision DESC,id",
         p.scope_id,
+        pattern,
       );
-    else if (kind === "assertions")
-      rows = this.all(
-        "SELECT version_id AS id,status,predicate,aggregate_revision AS revision FROM assertion_versions WHERE scope_id=? AND erased=0 AND known_to_revision IS NULL ORDER BY aggregate_revision DESC",
+    else if (kind === "assertions") {
+      result = page(
+        "FROM assertion_versions v JOIN entities s ON s.id=v.subject_id LEFT JOIN entities o ON o.id=v.object_entity_id WHERE v.scope_id=? AND v.erased=0 AND v.known_to_revision IS NULL AND (s.name LIKE ? ESCAPE '\\' OR o.name LIKE ? ESCAPE '\\' OR v.predicate LIKE ? ESCAPE '\\' OR v.value_json LIKE ? ESCAPE '\\')",
+        "v.version_id AS id,v.status,v.predicate,v.aggregate_revision AS revision,v.polarity,v.modality,v.valid_mode,v.qualifiers,v.value_json,v.object_entity_id,s.name AS subject_name,o.name AS object_name",
+        "v.aggregate_revision DESC,v.version_id",
         p.scope_id,
-      ).map((v) => ({
-        ...v,
-        text: this.assertionText(
-          this.one("SELECT * FROM assertion_versions WHERE version_id=?", v.id),
-        ),
+        pattern,
+        pattern,
+        pattern,
+        pattern,
+      );
+      result.rows = result.rows.map(({ polarity, modality, valid_mode, qualifiers, value_json, object_entity_id, subject_name, object_name, ...row }) => ({
+        ...row,
+        text: Canonical.claimText({ polarity, modality, valid_mode, qualifiers, value_json, object_entity_id, predicate: row.predicate }, subject_name, object_name),
       }));
-    else if (["saved", "conversation"].includes(kind))
-      rows = this.all(
-        "SELECT a.record_id AS id,a.kind,p.body AS text,a.content_revision AS revision,c.transaction_us/1000 AS updated,c.transaction_us/1000 AS created FROM artifacts a JOIN payloads p ON p.id=a.payload_id JOIN commits c ON c.revision=a.content_revision WHERE a.scope_id=? AND a.kind=? AND a.invalidated=0 AND a.known_to_revision IS NULL AND p.erased=0 AND p.body LIKE ? ESCAPE '\\' ORDER BY a.content_revision DESC,a.id",
+    } else if (["saved", "conversation"].includes(kind))
+      result = page(
+        "FROM artifacts a JOIN payloads p ON p.id=a.payload_id JOIN commits c ON c.revision=a.content_revision WHERE a.scope_id=? AND a.kind=? AND a.invalidated=0 AND a.known_to_revision IS NULL AND p.erased=0 AND p.body LIKE ? ESCAPE '\\'",
+        "a.record_id AS id,a.kind,p.body AS text,a.content_revision AS revision,c.transaction_us/1000 AS updated,c.transaction_us/1000 AS created",
+        "a.content_revision DESC,a.id",
         p.scope_id,
         kind,
         pattern,
       );
     else fail("INVALID_ARGUMENT", "Unsupported memory view");
-    return {
-      rows: rows.slice(offset, offset + 25),
-      total: rows.length,
-      offset,
-    };
+    return { rows: result.rows, total: result.total, offset };
   }
   inspect(p: Row) {
     strict(p, ["scope_id", "id", "known_revision", "world_at_us"]);
@@ -1625,6 +1844,7 @@ export class Canonical {
           record.slot_id,
         ).aggregate_revision,
       };
+      record.claim_data = this.claimData(record);
     } else
       for (const table of [
         "entities",
@@ -1669,6 +1889,34 @@ export class Canonical {
       projections: this.snapshot().projections,
     };
   }
+  /**
+   * The complete versioned claim, typed for a correction round trip. Every
+   * semantic field is explicit so a client never falls back to schema defaults.
+   */
+  claimData(v: Row) {
+    const entity = (id: string) => {
+      const e = this.one("SELECT id,type,name FROM entities WHERE id=?", id);
+      return { id: e.id, type: e.type, name: e.name };
+    };
+    return {
+      subject: entity(v.subject_id),
+      predicate: v.predicate,
+      ...(v.object_entity_id
+        ? { object: entity(v.object_entity_id) }
+        : { value: JSON.parse(v.value_json) }),
+      qualifiers: JSON.parse(v.qualifiers),
+      polarity: v.polarity,
+      modality: v.modality,
+      epistemic_type: v.epistemic_type,
+      valid_mode: v.valid_mode,
+      valid_from_us: v.valid_from_us,
+      valid_to_us: v.valid_to_us,
+      time_precision: v.time_precision,
+      time_zone: v.time_zone,
+      time_expression: v.time_expression,
+      extraction_confidence: v.extraction_confidence,
+    };
+  }
   descendants(ids: string[]) {
     const found = new Set(ids),
       queue = [...ids];
@@ -1694,12 +1942,62 @@ export class Canonical {
     }
     return [...found];
   }
-  forgetPreview(p: Row) {
-    strict(p, ["scope_id", "id", "from_us", "to_us"]);
-    this.scope(p.scope_id);
-    let roots: string[] = [];
-    if (p.id) {
-      let found = false;
+  /**
+   * Resolves a forget request to its stable identity before descendant closure.
+   * A visible saved-note ID selects every revision of the note; a logical
+   * assertion ID selects every version and supporting source of that fact; an
+   * explicit observation selects only that occurrence, so independently
+   * supported facts survive. The same resolver serves preview, transcript
+   * scrubbing, suppression and registry replay.
+   */
+  resolveForget(scope: string, p: Row): { selector: Row; roots: string[] } {
+    if (!p.id) {
+      const from = p.from_us ?? 0,
+        to = p.to_us ?? Number.MAX_SAFE_INTEGER;
+      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to))
+        fail("INVALID_ARGUMENT", "Forget range must use UTC microseconds");
+      return {
+        selector: { kind: "range", from_us: from, to_us: to },
+        roots: this.all(
+          "SELECT id FROM observations WHERE scope_id=? AND erased=0 AND captured_us>=? AND captured_us<?",
+          scope,
+          from,
+          to,
+        ).map((r) => r.id),
+      };
+    }
+    const id = String(p.id);
+    const note = this.one(
+      "SELECT record_id FROM artifacts WHERE scope_id=? AND kind='saved' AND (record_id=? OR id=?) LIMIT 1",
+      scope,
+      id,
+      id,
+    ).record_id;
+    if (note) return { selector: { kind: "note", id: note }, roots: this.noteSources(scope, note) };
+    const roots: string[] = [];
+    let kind = "";
+    const version = this.one(
+      "SELECT version_id FROM assertion_versions WHERE version_id=? AND scope_id=?",
+      id,
+      scope,
+    ).version_id;
+    const logical = version
+      ? []
+      : this.all(
+          "SELECT version_id FROM assertion_versions WHERE logical_id=? AND scope_id=? ORDER BY known_from_revision",
+          id,
+          scope,
+        ).map((v) => v.version_id);
+    if (version) {
+      kind = "assertion_version";
+      roots.push(version);
+    } else if (logical.length) {
+      // The logical ID itself stays in the target list as the registry's selector marker.
+      kind = "logical_assertion";
+      roots.push(...logical);
+      for (const v of logical)
+        for (const e of this.allSupport(v)) roots.push(e.observation_id);
+    } else
       for (const table of [
         "observations",
         "entities",
@@ -1711,30 +2009,72 @@ export class Canonical {
         if (
           this.one(
             `SELECT id FROM ${table} WHERE id=? AND scope_id=?`,
-            p.id,
-            p.scope_id,
+            id,
+            scope,
           ).id
-        )
-          found = true;
-      const a = this.one(
-        "SELECT version_id FROM assertion_versions WHERE (version_id=? OR logical_id=?) AND scope_id=?",
-        p.id,
-        p.id,
-        p.scope_id,
-      );
-      if (a.version_id) {
-        roots.push(a.version_id);
-        found = true;
-      }
-      if (!found) fail("NOT_FOUND", "Forget target is not in this scope");
-      roots.push(p.id);
-    } else
-      roots = this.all(
-        "SELECT id FROM observations WHERE scope_id=? AND erased=0 AND captured_us>=? AND captured_us<?",
-        p.scope_id,
-        p.from_us ?? 0,
-        p.to_us ?? Number.MAX_SAFE_INTEGER,
-      ).map((r) => r.id);
+        ) {
+          kind = table === "observations" ? "observation" : table === "entities" ? "entity" : "record";
+          break;
+        }
+    if (!kind) fail("NOT_FOUND", "Forget target is not in this scope");
+    roots.push(id);
+    return { selector: { kind, id }, roots };
+  }
+  /** Every source occurrence and artifact of a saved note, including all edits. */
+  noteSources(scope: string, note: string) {
+    const roots = new Set<string>([note]);
+    for (const row of this.all(
+      "SELECT n.observation_id,n.artifact_id FROM note_revisions n JOIN observations o ON o.id=n.observation_id WHERE n.note_id=? AND o.scope_id=?",
+      note,
+      scope,
+    )) {
+      roots.add(row.observation_id);
+      roots.add(row.artifact_id);
+    }
+    // Artifact -> evidence lineage also recovers edits recorded before note revisions existed.
+    for (const artifact of this.all(
+      "SELECT id FROM artifacts WHERE scope_id=? AND kind='saved' AND record_id=?",
+      scope,
+      note,
+    )) {
+      roots.add(artifact.id);
+      for (const source of this.all(
+        "SELECT e.observation_id FROM lineage l JOIN evidence e ON e.id=l.input_id WHERE l.derived_id=? AND l.role='derived'",
+        artifact.id,
+      ))
+        roots.add(source.observation_id);
+    }
+    return [...roots];
+  }
+  /** Support rows regardless of prior erasure; closure must include already-suppressed sources. */
+  allSupport(version: string) {
+    return this.all(
+      "SELECT e.* FROM evidence e JOIN assertion_evidence ae ON ae.evidence_id=e.id WHERE ae.version_id=? AND ae.relation='support'",
+      version,
+    );
+  }
+  forgetPreview(p: Row) {
+    strict(p, ["scope_id", "id", "from_us", "to_us"]);
+    this.scope(p.scope_id);
+    const { selector, roots } = this.resolveForget(p.scope_id, p);
+    const ids = this.closure(roots, !!p.id);
+    return {
+      scope_id: p.scope_id,
+      selector,
+      target_ids: ids,
+      count: ids.length,
+      source_policy:
+        "Whole supporting source removed when safe span redaction is not established",
+      revision: this.revision,
+      // Binds a confirmation to exactly this selector, target set and revision.
+      selection: digest(
+        JSON.stringify([p.scope_id, selector, [...ids].sort(), this.revision]),
+      ),
+    };
+  }
+  /** Descendant erasure closure with independent-survivor and orphan-entity handling. */
+  closure(initial: string[], selected = true) {
+    const roots = [...initial];
     // Conservative source occurrence removal: entire supporting source when safe span redaction is not established.
     for (const root of [...roots]) {
       for (const e of this.support(root)) roots.push(e.observation_id);
@@ -1746,7 +2086,7 @@ export class Canonical {
       const art = this.one("SELECT record_id FROM artifacts WHERE id=?", root);
       if (art.record_id) roots.push(art.record_id);
     }
-    if(p.id) {
+    if(selected) {
       for(const root of [...roots]) {
         const assertions=this.all('SELECT version_id FROM assertion_versions WHERE version_id=? OR subject_id=? OR object_entity_id=?',root,root,root);
         for(const assertion of assertions)for(const support of this.support(assertion.version_id))roots.push(support.observation_id);
@@ -1773,15 +2113,7 @@ export class Canonical {
       ).some((v) => !ids.includes(v.version_id));
       if (!other && !survivors.has(entity)) ids.push(entity);
     }
-    ids = [...new Set(ids)];
-    return {
-      scope_id: p.scope_id,
-      target_ids: ids,
-      count: ids.length,
-      source_policy:
-        "Whole supporting source removed when safe span redaction is not established",
-      revision: this.revision,
-    };
+    return [...new Set(ids)];
   }
   appendRegistry(intent: Row) {
     const file = join(this.directory, "erasure-registry.jsonl"),
@@ -1800,20 +2132,20 @@ export class Canonical {
     }
   }
   forget(p: Row, reason = "forget") {
-    const preview = this.forgetPreview(
-      Object.fromEntries(
-        Object.entries(p).filter(([k]) => k !== "expected_revision"),
-      ),
-    );
+    const { expected_revision, selection, ...selector } = p;
+    const preview = this.forgetPreview(selector);
     if (
-      p.expected_revision !== undefined &&
-      p.expected_revision !== this.revision
+      expected_revision !== undefined &&
+      expected_revision !== this.revision
     )
       fail("REVISION_CONFLICT", "Memory changed since forget preview");
+    if (selection !== undefined && selection !== preview.selection)
+      fail("SELECTION_MISMATCH", "The forget request differs from the previewed record");
     const intent = {
       id: uuid(),
       scope_id: p.scope_id,
       epoch: this.epoch("erasure") + 1,
+      selector: preview.selector,
       targets: preview.target_ids,
     };
     this.appendRegistry(intent);
@@ -1928,6 +2260,8 @@ export class Canonical {
         this.newVersion(version,evidence,time,version.logical_id);
       }
       this.run("DELETE FROM read_tokens WHERE scope_id=?", intent.scope_id);
+      // The epoch advance and the rescheduling of unrelated queued extraction commit together.
+      this.reconcileExtraction();
       this.events.push({
         type: "invalidate",
         scope_id: intent.scope_id,
@@ -1945,6 +2279,7 @@ export class Canonical {
       };
     });
   }
+  registryRepairs: { supplemented: Row[]; unresolved: Row[] } = { supplemented: [], unresolved: [] };
   reconcileRegistry() {
     const path = join(this.directory, "erasure-registry.jsonl");
     if (!existsSync(path)) {
@@ -1954,6 +2289,7 @@ export class Canonical {
       return;
     }
     const lines = readFileSync(path, "utf8").trim().split("\n").filter(Boolean);
+    const intents: Row[] = [];
     for (const line of lines) {
       let intent: Row;
       try {
@@ -1972,15 +2308,82 @@ export class Canonical {
           );
         continue;
       }
+      intents.push(intent);
       if (
         !this.one("SELECT id FROM erasure_jobs WHERE id=?", intent.id).id &&
         this.one("SELECT id FROM scopes WHERE id=?", intent.scope_id).id
       )
         this.suppress(
-          { ...intent, targets: this.descendants(intent.targets) },
+          { ...intent, targets: this.descendants([...intent.targets, ...this.selectorRoots(intent)]) },
           "registry_recovery",
         );
     }
+    this.repairRegistry(intents);
+  }
+  /** Roots a recorded selector still resolves to; used when replaying the registry. */
+  selectorRoots(intent: Row): string[] {
+    const selector = intent.selector;
+    if (!selector?.id || !this.one("SELECT id FROM scopes WHERE id=?", intent.scope_id).id) return [];
+    if (selector.kind === "note") return this.noteSources(intent.scope_id, selector.id);
+    if (selector.kind === "logical_assertion") {
+      const roots: string[] = [];
+      for (const v of this.all("SELECT version_id FROM assertion_versions WHERE logical_id=? AND scope_id=?", selector.id, intent.scope_id)) {
+        roots.push(v.version_id);
+        for (const e of this.allSupport(v.version_id)) roots.push(e.observation_id);
+      }
+      return roots;
+    }
+    return [];
+  }
+  /**
+   * Completes erasures recorded before stable-identity resolution existed. Only
+   * provable closures are repaired: an erased saved-note artifact proves its own
+   * source revision was meant to go, and a logical assertion ID recorded as a
+   * target proves whole-fact deletion. Supplementary intents are appended and
+   * fsynced before suppression; original entries stay immutable and a reopen
+   * after repair finds nothing left to add. Ambiguous legacy entries are exposed
+   * for review instead of being widened.
+   */
+  repairRegistry(intents: Row[]) {
+    const tombstoned = (id: string) => !!this.one("SELECT target_id FROM tombstones WHERE target_id=?", id).target_id;
+    const repairs = { supplemented: [] as Row[], unresolved: [] as Row[] };
+    for (const intent of intents) {
+      // Selector-bearing intents were resolved completely when recorded, and replay re-resolves them.
+      if (intent.selector || !this.one("SELECT id FROM scopes WHERE id=?", intent.scope_id).id) continue;
+      const roots = new Set<string>();
+      for (const target of intent.targets as string[]) {
+        const artifact = this.one("SELECT record_id FROM artifacts WHERE id=? AND kind='saved'", target);
+        if (artifact.record_id) for (const root of this.noteSources(intent.scope_id, artifact.record_id)) roots.add(root);
+        const logical = this.one("SELECT 1 AS n FROM assertion_versions WHERE logical_id=? AND version_id!=? LIMIT 1", target, target).n;
+        if (logical) for (const root of this.selectorRoots({ ...intent, selector: { kind: "logical_assertion", id: target } })) roots.add(root);
+      }
+      const missing = roots.size ? this.closure([...roots]).filter((id) => !tombstoned(id)) : [];
+      if (missing.length) {
+        const supplement = {
+          id: uuid(),
+          scope_id: intent.scope_id,
+          epoch: this.epoch("erasure") + 1,
+          supplements: intent.id,
+          selector: { kind: "registry_repair", of: intent.id },
+          targets: missing,
+        };
+        this.appendRegistry(supplement);
+        this.suppress(supplement, "registry_repair");
+        repairs.supplemented.push({ intent_id: intent.id, supplement_id: supplement.id, count: missing.length });
+      }
+      if (this.one("SELECT reason FROM erasure_jobs WHERE id=?", intent.id).reason === "expiration") continue;
+      // A legacy target list cannot say whether a surviving version of a touched fact
+      // was an intended independent survivor or a missed whole-fact deletion.
+      const live = new Set<string>();
+      for (const target of intent.targets as string[]) {
+        const version = this.one("SELECT logical_id FROM assertion_versions WHERE version_id=?", target);
+        if (version.logical_id && !(intent.targets as string[]).includes(version.logical_id) &&
+          this.one("SELECT 1 AS n FROM assertion_versions WHERE logical_id=? AND erased=0 AND known_to_revision IS NULL LIMIT 1", version.logical_id).n)
+          live.add(version.logical_id);
+      }
+      if (live.size) repairs.unresolved.push({ intent_id: intent.id, logical_ids: [...live], reason: "LEGACY_SELECTOR_AMBIGUOUS" });
+    }
+    this.registryRepairs = repairs;
   }
   policyUpdate(p: Row) {
     strict(p, ["policy", "expected_epoch"]);
@@ -1994,9 +2397,9 @@ export class Canonical {
       this.policy = next;
       this.setMeta("policy", next);
       this.setMeta("policy_epoch", this.epoch("policy") + 1);
-      this.run(
-        "UPDATE extraction_runs SET status='revoked' WHERE status IN ('pending','running')",
-      );
+      // Stale in-flight work stays rejected by its epoch; retained eligible sources are
+      // rescheduled under the new policy instead of being stranded as revoked.
+      this.reconcileExtraction();
       this.events.push({
         type: "invalidate",
         policy_epoch: this.epoch("policy"),
@@ -2014,8 +2417,22 @@ export class Canonical {
       p.scope_id,
     );
     if (!e.id) fail("NOT_FOUND", "Episode does not exist");
-    if (["consolidating", "retryable"].includes(e.state)) return e;
     if (e.state === "archived") return e;
+    if (["consolidating", "retryable"].includes(e.state))
+      // A retry revalidates the already-frozen membership under current epochs. The
+      // successor created at the first freeze keeps every late event.
+      return this.tx((r) => {
+        this.run(
+          "UPDATE episodes SET state='consolidating',revision=?,source_generation=?,policy_epoch=?,erasure_epoch=? WHERE id=?",
+          r,
+          r,
+          this.epoch("policy"),
+          this.epoch("erasure"),
+          e.id,
+        );
+        this.effect(e.id);
+        return this.one("SELECT * FROM episodes WHERE id=?", e.id);
+      });
     return this.tx((r) => {
       const cutoff = this.one(
         "SELECT COALESCE(MAX(ev.revision),0) AS n FROM episode_events m JOIN events ev ON ev.id=m.event_id WHERE m.episode_id=?",
@@ -2174,9 +2591,20 @@ export class Canonical {
     const frozen = this.freezeEpisode(p);
     if (frozen.state === "archived") return frozen;
     const witnesses = this.all(
-      "SELECT e.* FROM evidence e JOIN events ev ON ev.observation_id=e.observation_id JOIN episode_events m ON m.event_id=ev.id WHERE m.episode_id=? AND e.erased=0 AND ev.actor!='assistant' ORDER BY m.ordering LIMIT 32",
+      "SELECT e.* FROM evidence e JOIN events ev ON ev.observation_id=e.observation_id JOIN episode_events m ON m.event_id=ev.id WHERE m.episode_id=? AND e.erased=0 AND ev.erased=0 AND ev.actor!='assistant' ORDER BY m.ordering LIMIT 32",
       p.id,
     );
+    if (!witnesses.length)
+      // Assistant-only or fully erased membership has nothing citable to publish.
+      return this.tx((r) => {
+        this.run(
+          "UPDATE episodes SET state='archived',summary_id=NULL,revision=?,error_code='EMPTY_EPISODE' WHERE id=?",
+          r,
+          p.id,
+        );
+        this.effect(p.id);
+        return { id: p.id, state: "archived", empty: true };
+      });
     return this.archiveEpisode({
       scope_id: p.scope_id,
       id: p.id,
@@ -2246,15 +2674,18 @@ export class Canonical {
       cited.some((id: string) => !supplied.includes(id))
     )
       fail("INVALID_ARGUMENT", "Response cited evidence that was not supplied");
-    for (const id of supplied)
-      if (
-        !this.one(
-          "SELECT id FROM evidence WHERE id=? AND scope_id=? AND erased=0",
-          id,
-          p.scope_id,
-        ).id
-      )
-        fail("SOURCE_CHANGED", "Response evidence is no longer eligible");
+    // Evidence recalled from an ancestor scope is recorded with its owner scope.
+    const scopes = JSON.stringify(this.effectiveScopes(p.scope_id)),
+      owners: Record<string, string> = {};
+    for (const id of supplied) {
+      const owner = this.one(
+        "SELECT scope_id FROM evidence WHERE id=? AND scope_id IN (SELECT value FROM json_each(?)) AND erased=0",
+        id,
+        scopes,
+      ).scope_id;
+      if (!owner) fail("SOURCE_CHANGED", "Response evidence is no longer eligible");
+      if (owner !== p.scope_id) owners[id] = owner;
+    }
     return this.tx(() => {
       const id = uuid();
       this.insert("response_records", {
@@ -2266,6 +2697,7 @@ export class Canonical {
         snapshot_revision: p.snapshot_revision,
         policy_epoch: p.policy_epoch,
         erasure_epoch: p.erasure_epoch,
+        evidence_scopes: JSON.stringify(owners),
       });
       for (const source of supplied) this.lineage(id, source, "supplied");
       if (
@@ -2280,6 +2712,7 @@ export class Canonical {
     });
   }
   extractionNext() {
+    if (!this.policy.enabled) return null;
     const run = this.one(
       "SELECT x.*,o.scope_id,o.role,o.revision AS source_revision,o.payload_id,p.body AS text,p.sensitivity FROM extraction_runs x JOIN observations o ON o.id=x.observation_id JOIN payloads p ON p.id=o.payload_id WHERE x.status='pending' AND o.erased=0 AND p.erased=0 AND x.policy_epoch=? AND x.erasure_epoch=? ORDER BY x.revision LIMIT 1",
       this.epoch("policy"),
@@ -2301,10 +2734,20 @@ export class Canonical {
     if (
       !run.id ||
       run.erased ||
+      run.status !== "running" ||
       run.policy_epoch !== this.epoch("policy") ||
       run.erasure_epoch !== this.epoch("erasure")
     )
       fail("SOURCE_CHANGED", "Extraction source or policy changed");
+    if (p.denied) {
+      // Policy denial is terminal until the extraction configuration changes.
+      this.run(
+        "UPDATE extraction_runs SET status='denied',error_code=? WHERE id=?",
+        String(p.denied).slice(0, 100),
+        p.id,
+      );
+      return { denied: true };
+    }
     if (p.error) {
       this.run(
         "UPDATE extraction_runs SET status='retryable',error_code=? WHERE id=?",
@@ -2324,16 +2767,38 @@ export class Canonical {
   }
   applyExtraction(p:Row){
     const run=this.one('SELECT x.*,o.scope_id,o.erased FROM extraction_runs x JOIN observations o ON o.id=x.observation_id WHERE x.id=?',p.id);
-    if(!run.id||run.erased||run.policy_epoch!==this.epoch('policy')||run.erasure_epoch!==this.epoch('erasure'))fail('SOURCE_CHANGED','Extraction source changed');
+    if(!run.id||run.erased||!['running','validated'].includes(run.status)||run.policy_epoch!==this.epoch('policy')||run.erasure_epoch!==this.epoch('erasure'))fail('SOURCE_CHANGED','Extraction source changed');
     if(!Array.isArray(p.proposals)||p.proposals.length>32)fail('INVALID_ARGUMENT','Extraction batch exceeds quota');
     return this.tx(()=>{this.batchTransaction=true;try{const results=p.proposals.map((proposal:Row)=>this.remember({...proposal,scope_id:run.scope_id,extraction_run_id:run.id}));this.run("UPDATE extraction_runs SET status='complete' WHERE id=?",run.id);return results;}finally{this.batchTransaction=false;}});
   }
-  retry(p:Row){if(p.scope_id)this.scope(p.scope_id);this.run("UPDATE extraction_runs SET status='pending',error_code=NULL,policy_epoch=?,erasure_epoch=? WHERE status='retryable' AND observation_id IN (SELECT id FROM observations WHERE erased=0 AND (? IS NULL OR scope_id=?))",this.epoch('policy'),this.epoch('erasure'),p.scope_id||null,p.scope_id||null);this.run("UPDATE outbox SET next_retry_us=0 WHERE state='retryable'");return {scheduled:true};}
+  retry(p:Row){
+    if(p.scope_id)this.scope(p.scope_id);
+    return this.queue(()=>{
+      this.run("UPDATE extraction_runs SET status='pending',error_code=NULL,policy_epoch=?,erasure_epoch=? WHERE status='retryable' AND observation_id IN (SELECT id FROM observations WHERE erased=0 AND (? IS NULL OR scope_id=?))",this.epoch('policy'),this.epoch('erasure'),p.scope_id||null,p.scope_id||null);
+      // Stale, revoked and policy-denied runs are revalidated rather than blindly requeued.
+      const {rescheduled}=this.reconcileExtraction(true);
+      this.run("UPDATE outbox SET next_retry_us=0 WHERE state='retryable'");
+      const episodes=Number(this.run("UPDATE episodes SET next_retry_us=0,consolidation_attempts=0 WHERE state='retryable' AND erased=0 AND (? IS NULL OR scope_id=?)",p.scope_id||null,p.scope_id||null).changes);
+      return {scheduled:true,rescheduled,episodes};
+    });
+  }
   maintenance(){
     const result=this.expire();
-    const episodes=this.all("SELECT ep.id,ep.scope_id,COUNT(e.id) AS count,MAX(e.captured_us) AS captured FROM episodes ep JOIN episode_events m ON m.episode_id=ep.id JOIN events e ON e.id=m.event_id WHERE ep.state='open' AND ep.erased=0 AND e.erased=0 GROUP BY ep.id HAVING COUNT(e.id)>=500 OR MAX(e.captured_us)<? LIMIT 4",now()-600e6);
-    let archived=0;for(const episode of episodes){try{this.consolidate({scope_id:episode.scope_id,id:episode.id});archived++;}catch{this.run("UPDATE episodes SET state='retryable' WHERE id=?",episode.id);}}
-    this.db.exec('PRAGMA wal_checkpoint(PASSIVE)');return {...result,archived};
+    const episodes=[
+      ...this.all("SELECT ep.id,ep.scope_id FROM episodes ep JOIN episode_events m ON m.episode_id=ep.id JOIN events e ON e.id=m.event_id WHERE ep.state='open' AND ep.erased=0 AND e.erased=0 GROUP BY ep.id HAVING COUNT(e.id)>=500 OR MAX(e.captured_us)<? LIMIT 4",now()-600e6),
+      // Failed or interrupted consolidation retries with backoff and a bounded attempt count.
+      ...this.all("SELECT id,scope_id FROM episodes WHERE state='retryable' AND erased=0 AND next_retry_us<=? AND consolidation_attempts<8 ORDER BY next_retry_us,id LIMIT 4",now()),
+    ];
+    let archived=0,empty=0,failed=0;
+    for(const episode of episodes){
+      try{const outcome:Row=this.consolidate({scope_id:episode.scope_id,id:episode.id});if(outcome.empty)empty++;else archived++;}
+      catch(e:any){
+        failed++;
+        const attempts=this.one('SELECT consolidation_attempts AS n FROM episodes WHERE id=?',episode.id).n+1;
+        this.run("UPDATE episodes SET state='retryable',consolidation_attempts=?,next_retry_us=?,error_code=? WHERE id=? AND state IN ('open','consolidating','retryable')",attempts,now()+Math.min(36e8,1e6*2**attempts),String(e.code||'CONSOLIDATION_FAILED').slice(0,100),episode.id);
+      }
+    }
+    this.db.exec('PRAGMA wal_checkpoint(PASSIVE)');return {...result,archived,empty,failed};
   }
   claimJob(p: Row) {
     if (!["graph", "vector"].includes(p.backend))
@@ -2578,13 +3043,13 @@ export class Canonical {
     return { eligible: true };
   }
   embeddingSearch(p: Row) {
-    this.scope(p.scope_id);
+    const scopes = JSON.stringify(this.effectiveScopes(p.scope_id));
     const scores: Row[] = [];
     for (const row of this.db
       .prepare(
-        "SELECT e.*,a.source_generation FROM embedding_records e JOIN artifacts a ON a.id=e.artifact_id WHERE a.scope_id=? AND a.invalidated=0 AND e.content_revision=a.content_revision AND e.fingerprint=? ORDER BY e.content_revision DESC LIMIT 256",
+        "SELECT e.*,a.source_generation FROM embedding_records e JOIN artifacts a ON a.id=e.artifact_id WHERE a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND e.content_revision=a.content_revision AND e.fingerprint=? ORDER BY e.content_revision DESC LIMIT 256",
       )
-      .iterate(p.scope_id, p.fingerprint) as Iterable<Row>) {
+      .iterate(scopes, p.fingerprint) as Iterable<Row>) {
       const v = JSON.parse(row.vector);
       if (v.length !== p.vector.length) continue;
       scores.push({
@@ -2603,10 +3068,9 @@ export class Canonical {
       .slice(0, 40);
   }
   pendingArtifacts(p: Row) {
-    this.scope(p.scope_id);
     return this.all(
-      "SELECT a.*,p.body AS text FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE a.scope_id=? AND a.invalidated=0 AND p.erased=0 AND a.known_to_revision IS NULL AND NOT EXISTS (SELECT 1 FROM embedding_records e WHERE e.artifact_id=a.id AND e.content_revision=a.content_revision AND e.fingerprint=?) ORDER BY a.content_revision DESC LIMIT 8",
-      p.scope_id,
+      "SELECT a.*,p.body AS text FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND p.erased=0 AND a.known_to_revision IS NULL AND NOT EXISTS (SELECT 1 FROM embedding_records e WHERE e.artifact_id=a.id AND e.content_revision=a.content_revision AND e.fingerprint=?) ORDER BY a.content_revision DESC LIMIT 8",
+      JSON.stringify(this.effectiveScopes(p.scope_id)),
       p.fingerprint,
     );
   }
@@ -2662,8 +3126,16 @@ export class Canonical {
           "SELECT COUNT(*) AS n FROM extraction_runs WHERE status IN ('pending','running','retryable')",
         ).n,
         consolidation: this.one(
-          "SELECT COUNT(*) AS n FROM episodes WHERE state IN ('retryable','consolidating')",
+          "SELECT COUNT(*) AS n FROM episodes WHERE state IN ('retryable','consolidating') AND erased=0",
         ).n,
+        extraction_denied: this.one(
+          "SELECT COUNT(*) AS n FROM extraction_runs WHERE status='denied'",
+        ).n,
+      },
+      erasure_registry: {
+        // Unresolved legacy selectors need an explicit review; they are never widened silently.
+        supplemented: this.registryRepairs.supplemented.length,
+        unresolved: this.registryRepairs.unresolved,
       },
       wal_bytes: existsSync(join(this.directory, "memory.sqlite-wal"))
         ? statSync(join(this.directory, "memory.sqlite-wal")).size
@@ -2672,12 +3144,15 @@ export class Canonical {
     };
   }
   expire() {
+    // Only live raw payloads qualify: a retained witness keeps its observation live after
+    // its payload is erased, and must not be selected again. Deterministic expiry order
+    // lets a bounded batch drain without starving later sources.
     const expired = this.all(
-      "SELECT DISTINCT scope_id,id FROM observations WHERE erased=0 AND payload_id IN (SELECT id FROM payloads WHERE expires_us IS NOT NULL AND expires_us<?)",
+      "SELECT o.scope_id,o.id FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL AND p.expires_us<? ORDER BY p.expires_us,o.id LIMIT 50",
       now(),
     );
     let count = 0;
-    for (const row of expired.slice(0, 50)) {
+    for (const row of expired) {
       const retained=this.policy.retain_evidence?this.all("SELECT DISTINCT e.id FROM evidence e JOIN assertion_evidence ae ON ae.evidence_id=e.id JOIN assertion_versions a ON a.version_id=ae.version_id WHERE e.observation_id=? AND e.erased=0 AND a.erased=0 AND a.status='accepted'",row.id).map(e=>e.id):[];
       if(retained.length){
         // The exact supporting quotations have their own evidence retention.
@@ -2685,14 +3160,14 @@ export class Canonical {
         const roots=[this.one('SELECT payload_id FROM observations WHERE id=?',row.id).payload_id,
           ...this.all("SELECT id FROM artifacts WHERE record_id=? AND kind='conversation'",row.id).map(a=>a.id),
           ...this.all('SELECT id FROM evidence WHERE observation_id=? AND erased=0',row.id).filter(e=>!retained.includes(e.id)).map(e=>e.id)];
-        const intent={id:uuid(),scope_id:row.scope_id,epoch:this.epoch('erasure')+1,targets:this.descendants(roots)};
+        const intent={id:uuid(),scope_id:row.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'raw_expiration',id:row.id},targets:this.descendants(roots)};
         this.appendRegistry(intent);this.suppress(intent,'expiration');count++;continue;
       }
       this.forget({ scope_id: row.scope_id, id: row.id }, "expiration");
       count++;
     }
-    for(const candidate of this.all("SELECT version_id,scope_id FROM assertion_versions WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<? LIMIT 50",now())){
-      const intent={id:uuid(),scope_id:candidate.scope_id,epoch:this.epoch('erasure')+1,targets:this.descendants([candidate.version_id])};
+    for(const candidate of this.all("SELECT version_id,scope_id FROM assertion_versions WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<? ORDER BY expires_at_us,version_id LIMIT 50",now())){
+      const intent={id:uuid(),scope_id:candidate.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'candidate_expiration',id:candidate.version_id},targets:this.descendants([candidate.version_id])};
       this.appendRegistry(intent);this.suppress(intent,'expiration');count++;
     }
     return { expired: count };
@@ -2790,7 +3265,8 @@ export class Canonical {
           r,
           link.id,
         );
-        return { id: link.id, reverted_revision: r };
+        // Decisions are history only: entity, anchor and slot resolution do not consume them yet.
+        return { id: link.id, reverted_revision: r, applied: false, recorded_only: true };
       }
       const left = this.one(
           "SELECT * FROM entities WHERE id=? AND scope_id=? AND erased=0",
@@ -2826,10 +3302,24 @@ export class Canonical {
       });
       this.effect(left.id);
       this.effect(right.id);
-      return { id, revision: r, decision: p.decision };
+      return { id, revision: r, decision: p.decision, applied: false, recorded_only: true };
     });
   }
   async call(method: string, p: Row = {}): Promise<any> {
+    // Remote inspection/erasure shares the canonical semantics, with a bounded
+    // work envelope checked inside the worker before materializing a closure.
+    // Large stores remain available through the desktop maintenance interface.
+    if(['mobile_inspect','mobile_forget_preview','mobile_forget_sources','mobile_forget'].includes(method)) {
+      this.scope(p.scope_id);
+      let count=0;
+      for(const table of ['observations','assertion_versions','evidence','events','entities','artifacts','episodes','lineage','assertion_evidence']) {
+        count+=this.all(`SELECT 1 FROM ${table} LIMIT 2049`).length;
+        if(count>2048)fail('LIMIT_EXCEEDED','This memory graph exceeds the mobile inspection quota; use desktop maintenance.');
+      }
+      const payload=this.one('SELECT COALESCE(SUM(size),0) AS size,COALESCE(MAX(size),0) AS largest FROM (SELECT length(CAST(body AS BLOB)) AS size FROM payloads WHERE erased=0 LIMIT 2049)');
+      if(payload.size>8*1024*1024||payload.largest>256*1024)fail('LIMIT_EXCEEDED','This memory graph exceeds the mobile payload quota; use desktop maintenance.');
+      return this.call(method.slice('mobile_'.length),p);
+    }
     switch (method) {
       case "scope":
         return this.registerScope(p);
@@ -2860,7 +3350,7 @@ export class Canonical {
       case "forget_sources": {
         const preview=this.forgetPreview(p),texts=new Set<string>();
         for(const id of preview.target_ids){const payload=this.one('SELECT body FROM payloads WHERE id=? AND erased=0',id);if(payload.body)texts.add(payload.body);const witness=this.one('SELECT witness FROM evidence WHERE id=? AND erased=0',id);if(witness.witness)texts.add(witness.witness);}
-        return {texts:[...texts],revision:preview.revision};
+        return {texts:[...texts],revision:preview.revision,selection:preview.selection};
       }
       case "forget":
         return this.forget(p);
@@ -2917,6 +3407,10 @@ export class Canonical {
         return this.applyExtraction(p);
       case "retry":
         return this.retry(p);
+      case "extraction_reconcile":
+        return this.queue(() => this.reconcileExtraction(p.include_denied === true));
+      case "effective_scopes":
+        return this.effectiveScopes(p.scope_id);
       case "maintenance":
         return this.maintenance();
       case "rebuild":

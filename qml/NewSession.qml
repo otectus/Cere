@@ -39,15 +39,23 @@ CDialog {
         const id=App.rpc("provider.models",{provider:providerName})
         const requests=Object.assign({},modelRequests);requests[id]=providerName;modelRequests=requests
     }
-    onModelOptionsChanged:Qt.callLater(()=>chooseModel(desiredModel,desiredEffort))
+    onModelOptionsChanged:Qt.callLater(()=>{if(popup)popup.chooseModel(popup.desiredModel,popup.desiredEffort)})
     onOpened:{
+        sessionTitle.text=imported.title||""
         if(imported.cwd)folder.text=imported.cwd
         provider.currentIndex=imported.provider==="claude"?1:imported.provider==="ollama"?2:0
         desiredModel=imported.model||"";desiredEffort=imported.effort||""
         chooseModel(desiredModel,desiredEffort);refreshModels()
         tools.checked=false;trust.checked=false;handoff.checked=false;error="";modelError=""
+        Qt.callLater(()=>sessionTitle.forceActiveFocus())
     }
-    CText { text:popup.imported.nativeId?"Continue a CLI session":"Start a conversation";font.pixelSize:20;font.weight:Font.DemiBold }
+    CText { text:popup.imported.nativeId?"Continue a CLI session":"Start a conversation";font.pixelSize:22;font.weight:Font.DemiBold }
+    CText { text:popup.imported.nativeId?"Review the details before bringing this session into Cere.":"Name the conversation, then choose where and how it should run.";color:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap }
+    CText { text:"Title (optional)";color:Theme.muted;font.pixelSize:12 }
+    CField {
+        id:sessionTitle;objectName:"sessionTitle";Layout.fillWidth:true;maximumLength:100
+        placeholderText:"Untitled session";Accessible.name:"Session title"
+    }
     CText { text:"Provider";color:Theme.muted;font.pixelSize:12 }
     CComboBox {
         id:provider;objectName:"sessionProvider";Layout.fillWidth:true;model:["Codex","Claude","Ollama"];enabled:!popup.imported.nativeId;Accessible.name:"Session provider"
@@ -88,7 +96,7 @@ CDialog {
         CButton {
             objectName:"sessionOpen";Layout.fillWidth:true;text:popup.requestId>=0?"Opening…":"Open session";primary:true
             enabled:popup.requestId<0&&App.connected&&(!trust.visible||trust.checked)&&(folder.text.startsWith("/")||(popup.isOllama&&!tools.checked&&!folder.text.trim()))&&(!popup.isOllama||(popup.capability.modelsStatus==="ready"&&!!popup.effectiveModel))&&(!popup.imported.nativeId||handoff.checked)
-            onClicked:popup.requestId=App.rpc("session.create",{provider:popup.providerName,cwd:folder.text.trim(),trusted:trust.checked,tools:popup.isOllama&&tools.checked,nativeId:popup.imported.nativeId||"",handoffConfirmed:handoff.checked,title:popup.imported.title||"New conversation",model:modelName.currentValue||"",effort:popup.isOllama?"":reasoningEffort.currentValue||""})
+            onClicked:popup.requestId=App.rpc("session.create",{provider:popup.providerName,cwd:folder.text.trim(),trusted:trust.checked,tools:popup.isOllama&&tools.checked,nativeId:popup.imported.nativeId||"",handoffConfirmed:handoff.checked,title:sessionTitle.text.trim()||"Untitled session",model:modelName.currentValue||"",effort:popup.isOllama?"":reasoningEffort.currentValue||""})
         }
     }
     Connections { target:App;function onResult(id,value){

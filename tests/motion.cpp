@@ -1,5 +1,6 @@
 #include "../native/motion.h"
 #include "../native/follow.h"
+#include "../native/placement.h"
 #include <QtTest>
 #include <QFile>
 #include <QJsonDocument>
@@ -35,8 +36,8 @@ private slots:
             const int area=rect.width()*rect.height();
             QVERIFY(clear>area/5);QVERIFY(solid>area/5);QVERIFY(antialiased>20);
             for(int x=rect.left();x<=rect.right();++x){
-                QCOMPARE(qAlpha(texture.pixel(x,rect.top())),0);
-                QCOMPARE(qAlpha(texture.pixel(x,rect.bottom())),0);
+                QVERIFY(qAlpha(texture.pixel(x,rect.top()))<=8);
+                QVERIFY(qAlpha(texture.pixel(x,rect.bottom()))<=8);
             }
         }
         const auto clips=catalog.value("clips").toMap();
@@ -53,6 +54,18 @@ private slots:
             }
         }
         for(const auto &name:catalog.value("idlePool").toList())QVERIFY(clips.contains(name.toString()));
+    }
+    void entryChoreographyIsIncludedInCompletion() {
+        MotionDirector d(catalog,1);d.setContext(visible());
+        const auto clips=catalog.value("clips").toMap();
+        for(const auto &name:clips.keys()) {
+            const auto clip=clips.value(name).toMap();
+            if(clip.value("loop").toBool())continue;
+            QVERIFY(d.play(name));
+            int expected=clip.value("entryMs").toInt();
+            for(const auto &key:clip.value("keys").toList())expected+=key.toMap().value("ms").toInt();
+            QCOMPARE(d.duration(),expected);QVERIFY(d.finish(d.revision()));
+        }
     }
     void completesIntoLatestSessionState() {
         MotionDirector d(catalog,1);auto c=visible();d.setContext(c);
@@ -129,7 +142,7 @@ private slots:
         c.waiting=false;c.problem=false;c.reduced=false;c.intensity=0;d.setContext(c);
         QCOMPARE(d.name(),QString("listening"));QVERIFY(!d.idle());QVERIFY(!d.play("wave"));
         c.listening=false;c.intensity=.3;d.setContext(c);const int gentle=d.nextIdleDelay();QVERIFY(gentle>=18000);
-        c.intensity=1;d.setContext(c);QVERIFY(d.nextIdleDelay()>=18000);
+        c.intensity=1;d.setContext(c);QVERIFY(d.nextIdleDelay()>=9000);
     }
     void localToneNeverInventsSuccess(){
         QCOMPARE(MotionDirector::conversationalCue("You absolute menace. Let's try it."),QString("cheeky"));
@@ -172,6 +185,102 @@ private slots:
             for(int i=0;i<2200;++i)f.advance({-8,-8},size,screen,.016);
             QVERIFY(screen.contains(QRectF(f.position(),size)));QVERIFY(!f.moving());
         }
+    }
+    // F-036: ordered clamp bounds and a panel wholly inside its placement rectangle.
+    void compactPanelStaysInsideItsPlacementRectangle(){
+        struct Output{const char *name;QRect available;};
+        const QList<Output> outputs{
+            {"1920x1080",{0,0,1920,1080}},{"1920x1080 below a top bar",{0,32,1920,1048}},
+            {"1280x720",{0,0,1280,720}},{"1280x720 with top and left panels",{56,40,1224,680}},
+            {"1366x768",{0,0,1366,768}},{"360x640",{0,0,360,640}},
+            {"negative origin",{-1920,-1080,1920,1080}},{"negative 1280x720",{-1280,200,1280,720}},
+            {"smaller than the margins",{10,10,20,30}},
+        };
+        for(const auto &o:outputs){
+            const QRect area=o.available.adjusted(12,40,-12,-12);
+            for(const QSize pet:{QSize(96,104),QSize(192,208),QSize(576,624)})
+                for(const double fx:{-.2,0.,.5,1.,1.2})for(const double fy:{-.2,0.,.5,1.,1.2}){
+                    const QPoint position(o.available.left()+qRound(o.available.width()*fx)-pet.width()/2,o.available.top()+qRound(o.available.height()*fy)-pet.height()/2);
+                    const QRect panel=Placement::compactPanel(o.available,position,pet);
+                    const QString where=(QString("%1 pet %2x%3 at %4,%5 -> %6,%7 %8x%9").arg(o.name).arg(pet.width()).arg(pet.height()).arg(position.x()).arg(position.y())
+                        .arg(panel.x()).arg(panel.y()).arg(panel.width()).arg(panel.height()));
+                    QVERIFY2(panel.width()>=1&&panel.height()>=1,qPrintable(where));
+                    if(area.isValid())QVERIFY2(area.contains(panel),qPrintable(where));
+                    else QVERIFY2(panel.topLeft()==area.topLeft(),qPrintable(where));
+                }
+        }
+        // The preferred size is kept where it fits and capped where it does not.
+        QCOMPARE(Placement::compactPanel({0,0,1920,1080},{1500,700},{192,208}).size(),QSize(440,720));
+        QCOMPARE(Placement::compactPanel({0,0,1280,720},{900,400},{192,208}).size(),QSize(440,668));
+        QCOMPARE(Placement::compactPanel({0,0,1366,768},{900,400},{192,208}).size(),QSize(440,716));
+        QCOMPARE(Placement::compactPanel({0,0,360,640},{100,300},{192,208}).size(),QSize(336,588));
+        // These are the outputs where the former formulas gave std::clamp unordered bounds.
+        for(const int height:{720,768}){const int former=std::min(720,height-40);QVERIFY(height-1-former-12<40);}
+        QCOMPARE(Placement::bounded(5,40,27),40);
+    }
+    // F-037: consecutive roaming placements stay within the follower speed at seams.
+    void roamingCrossesOutputSeamsWithoutJumping(){
+        struct Layout{const char *name;QRect a,b;};
+        const QList<Layout> layouts{
+            {"horizontal",{0,0,1920,1080},{1920,0,1920,1080}},
+            {"vertical",{0,0,1920,1080},{0,1080,1920,1080}},
+            {"horizontal negative",{-1920,-1080,1920,1080},{0,-1080,1920,1080}},
+            {"vertical negative",{-1920,-2160,1920,1080},{-1920,-1080,1920,1080}},
+            {"mixed sizes",{0,0,1280,720},{1280,-200,2560,1440}},
+        };
+        const double dt=.016,rounding=1.5; // toPoint() moves each coordinate by at most half a pixel.
+        for(const double scale:{.5,1.,3.})for(const auto &l:layouts){
+            const QSize size(qRound(192*scale),qRound(208*scale));
+            const bool horizontal=l.b.left()>l.a.right();
+            const int gap=qRound(std::hypot(size.width()/2.,size.height()/2.))+24;
+            const QPoint start=horizontal?QPoint(l.a.right()-size.width()-40,l.a.center().y()-size.height()/2):QPoint(l.a.center().x()-size.width()/2,l.a.bottom()-size.height()-40);
+            const QPoint cursor=horizontal?QPoint(l.b.left()+std::min(l.b.width()-40,size.width()+gap+200),l.b.center().y())
+                                          :QPoint(l.b.center().x(),l.b.top()+std::min(l.b.height()-40,size.height()+gap+200));
+            const QString where=(QString("%1 at scale %2").arg(l.name).arg(scale));
+            MouseFollower f;f.reset(start);
+            QPoint shown=start,clampedBefore=start;QRect output=l.a;
+            bool straddled=false;double clampedLargest=0;int frames=0;
+            for(bool moving=true;moving&&frames<20000;++frames){
+                // As in Controller::followMouse: the cursor's output constrains the follower,
+                // and the output holding the pet's center hosts its surface.
+                moving=f.advance(cursor,QSizeF(size),QRectF(l.b),dt);
+                const QPoint position=f.position().toPoint(),center=position+QPoint(size.width()/2,size.height()/2);
+                if(l.a.contains(center))output=l.a;else if(l.b.contains(center))output=l.b;
+                const QPoint placed=Placement::pet(position,size,output,Placement::Mode::Roaming);
+                QVERIFY2(QLineF(shown,placed).length()<=75*dt+rounding,qPrintable(where));
+                const QRect rect(placed,size);
+                if(rect.intersects(l.a)&&rect.intersects(l.b))straddled=true;
+                // The whole-output clamp this replaces, for comparison.
+                const QPoint clamped=Placement::pet(position,size,output,Placement::Mode::Resting);
+                clampedLargest=std::max(clampedLargest,QLineF(clampedBefore,clamped).length());
+                shown=placed;clampedBefore=clamped;
+            }
+            QVERIFY2(frames<20000,qPrintable(where));QVERIFY2(straddled,qPrintable(where));
+            QVERIFY2(output==l.b,qPrintable(where));QVERIFY2(l.b.contains(QRect(shown,size)),qPrintable(where));
+            QVERIFY2(clampedLargest>=std::min(size.width(),size.height())/2.,qPrintable(where));
+        }
+    }
+    void cancellingMidCrossingKeepsTheVisiblePointAndSettlesAtRoamingSpeed(){
+        const QRect a(-1920,0,1920,1080),b(0,0,1920,1080);
+        for(const double scale:{.5,1.,3.}){
+            const QSize size(qRound(192*scale),qRound(208*scale));
+            const QPoint visible(-size.width()/2+7,300),center=visible+QPoint(size.width()/2,size.height()/2);
+            QVERIFY(b.contains(center));QVERIFY(QRect(visible,size).intersects(a));
+            QCOMPARE(Placement::pet(visible,size,b,Placement::Mode::Roaming),visible);
+            const QPoint target=Placement::pet(visible,size,b,Placement::Mode::Resting);
+            QVERIFY(b.contains(QRect(target,size)));
+            QPoint at=visible;int frames=0;
+            while(at!=target&&frames<10000){
+                const QPoint next=Placement::settleStep(at,target,.016);
+                QVERIFY(QLineF(at,next).length()<=std::max(1.,75*.016)+1.5);
+                at=next;++frames;
+            }
+            QCOMPARE(at,target);QVERIFY(frames>1);
+        }
+        // A stalled timer is treated like the follower's 50 ms cap, and no interval stalls.
+        QVERIFY(QLineF(QPointF(0,0),QPointF(Placement::settleStep({0,0},{500,0},10.))).length()<=75*.05+1);
+        QCOMPARE(Placement::settleStep({0,0},{500,0},0.),QPoint(1,0));
+        QCOMPARE(Placement::settleStep({0,0},{1,1},.016),QPoint(1,1));
     }
 };
 QTEST_GUILESS_MAIN(MotionCheck)

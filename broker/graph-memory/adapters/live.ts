@@ -62,6 +62,21 @@ export class LiveWorkspaceState {
     return this.generation;
   }
 
+  /**
+   * Applies a revocation: each observation is kept, replaced by a redacted copy, or
+   * deleted. Revoked properties leave every later snapshot immediately.
+   */
+  redact(filter: (observation: LiveObservation) => LiveObservation | null): number {
+    for (const [key, observation] of [...this.observations]) {
+      const kept = filter(structuredClone(observation));
+      if (!kept) this.observations.delete(key);
+      else if (JSON.stringify(kept) !== JSON.stringify(observation)) this.observations.set(key, kept);
+      else continue;
+      this.generation++;
+    }
+    return this.generation;
+  }
+
   snapshot(): { generation: number; observations: LiveObservation[] } {
     const now = this.monotonicNowMs();
     const observations = [...this.observations.values()].map(observation => {

@@ -30,7 +30,7 @@ async function wait(id:string){
     const session=state.sessions.find((s:any)=>s.id===id);
     if(!['starting','working','waiting','stopping'].includes(session.status)){
       assert.equal(session.status,'idle',session.error);
-      return {session,approvals,messages:await call('session.messages',{id})};
+      return {session,approvals,messages:(await call('session.messages',{id})).messages};
     }
     await delay(200);
   }

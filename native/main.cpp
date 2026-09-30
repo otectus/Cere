@@ -9,6 +9,7 @@
 #include <QStandardPaths>
 #include <QLockFile>
 #include <QPalette>
+#include <QIcon>
 #include <QSocketNotifier>
 #include <csignal>
 #include <unistd.h>
@@ -32,14 +33,16 @@ int main(int argc,char **argv) {
     parser.addOption({"root","Application data directory","directory"});
     parser.process(app);
     QString runtime=qEnvironmentVariable("CERE_RUNTIME_DIR");
-    if(runtime.isEmpty())runtime=QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation)+"/cere";
+    if(runtime.isEmpty()){const QString base=qEnvironmentVariable("XDG_RUNTIME_DIR");runtime=(base.isEmpty()?QDir::tempPath()+"/cere-"+QString::number(::getuid()):base)+"/cere";}
     QDir().mkpath(runtime);
+    // Lock files and the broker socket live here: it must be private to this user.
+    if(!Controller::privateRuntime(runtime)){qCritical("Cere runtime directory %s is not private to this user.",qPrintable(runtime));return 1;}
     QLockFile instance(runtime+(parser.isSet("overlay")?"/overlay.lock":"/ui.lock"));
     instance.setStaleLockTime(0);
     if(!instance.tryLock(0)){
         if(!parser.isSet("overlay")){
             QLocalSocket client;client.connectToServer(runtime+"/broker.sock");
-            if(client.waitForConnected(1000)){client.write("{\"id\":1,\"method\":\"ui.expand\"}\n");client.waitForBytesWritten(1000);}
+            if(client.waitForConnected(1000)&&Controller::trustedBroker(client.socketDescriptor(),::getuid())){client.write("{\"id\":1,\"method\":\"ui.expand\"}\n");client.waitForBytesWritten(1000);}
         }
         return 0;
     }
@@ -52,10 +55,11 @@ int main(int argc,char **argv) {
     if(root.isEmpty()) root=qEnvironmentVariable("CERE_ROOT");
     if(root.isEmpty()) root="/usr/share/cere";
     if(!QFileInfo::exists(root+"/qml/Pet.qml")) root=CERE_SOURCE_DIR;
+    app.setWindowIcon(QIcon(root+"/assets/cere-emblem.png"));
     QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath()+"/plugins");
     // Development autostart can launch the binary directly, outside tools/run.sh.
     if(QDir(root+"/.local-deps/usr/lib/qt6/plugins").exists())QCoreApplication::addLibraryPath(root+"/.local-deps/usr/lib/qt6/plugins");
-    if(!QFileInfo::exists(root+"/assets/cere-polished.png")||!QFileInfo::exists(root+"/assets/motions.json")) { qCritical("Cere artwork or motion catalog is missing. Restore the assets directory."); return 1; }
+    if(!QFileInfo::exists(root+"/assets/cere-puppet.png")||!QFileInfo::exists(root+"/assets/cere-rig.json")||!QFileInfo::exists(root+"/assets/motions.json")) { qCritical("Cere artwork or motion catalog is missing. Restore the assets directory."); return 1; }
     Controller controller(root,parser.isSet("overlay"));
     controller.start(parser.isSet("show"));
     return app.exec();

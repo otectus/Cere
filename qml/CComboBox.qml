@@ -2,11 +2,11 @@ import QtQuick
 import QtQuick.Controls
 ComboBox {
     id: control
-    implicitHeight: 40
+    implicitHeight: 42
     implicitWidth: 200
     leftPadding: 12; rightPadding: 32
     font.family: Theme.font; font.pixelSize: 13
-    background: Rectangle { radius: 7; color: Theme.input; border.color: control.activeFocus ? Theme.cyan : Theme.line }
+    background: Rectangle { radius: 9; color: Theme.input; border.color: control.activeFocus ? Theme.cyan : Theme.line; border.width: control.activeFocus ? 2 : 1 }
     contentItem: Text {
         text: control.displayText; font: control.font
         color: control.enabled ? Theme.text : Theme.muted

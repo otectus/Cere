@@ -1,0 +1,85 @@
+name: Cere Mobile signed release
+on:
+  push:
+    tags: ['mobile-v*']
+permissions:
+  contents: read
+jobs:
+  checks:
+    uses: ./.github/workflows/mobile-check.yml
+  sign:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Configure required reviewers and tag restrictions before enabling this workflow.
+    environment: mobile-release
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - run: sdkmanager 'build-tools;36.0.0'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: cere-mobile-unsigned
+          path: unsigned
+      - name: Sign and verify the tested APK
+        env:
+          MOBILE_KEYSTORE_BASE64: ${{ secrets.MOBILE_KEYSTORE_BASE64 }}
+          MOBILE_KEYSTORE_PASSWORD: ${{ secrets.MOBILE_KEYSTORE_PASSWORD }}
+          MOBILE_KEY_PASSWORD: ${{ secrets.MOBILE_KEY_PASSWORD }}
+          MOBILE_KEY_ALIAS: ${{ secrets.MOBILE_KEY_ALIAS }}
+          MOBILE_SIGNING_CERT_SHA256: ${{ vars.MOBILE_SIGNING_CERT_SHA256 }}
+          MOBILE_HARDWARE_GATES: ${{ vars.MOBILE_HARDWARE_GATES }}
+        run: |
+          set -euo pipefail
+          test "$MOBILE_HARDWARE_GATES" = passed
+          test -n "$MOBILE_KEYSTORE_BASE64"
+          test -n "$MOBILE_SIGNING_CERT_SHA256"
+          umask 077
+          task_key="$RUNNER_TEMP/cere-mobile-release.jks"
+          trap 'rm -f "$task_key"' EXIT
+          printf '%s' "$MOBILE_KEYSTORE_BASE64" | base64 --decode > "$task_key"
+          mkdir -p release
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -p -f 4 unsigned/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --ks "$task_key" --ks-key-alias "$MOBILE_KEY_ALIAS" --ks-pass env:MOBILE_KEYSTORE_PASSWORD --key-pass env:MOBILE_KEY_PASSWORD --out release/signed.apk "$RUNNER_TEMP/aligned.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs release/signed.apk > release/APK-VERIFICATION.txt
+          task_fingerprint=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' release/APK-VERIFICATION.txt)
+          test "${task_fingerprint,,}" = "${MOBILE_SIGNING_CERT_SHA256,,}"
+          node tools/mobile-release.ts "$GITHUB_REF_NAME" release/signed.apk "$task_fingerprint" release
+          rm release/signed.apk
+          cp unsigned/reports/mobile-sbom.cdx.json release/
+          cp docs/mobile/NOTICES.txt release/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cere-mobile-signed
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+  publish:
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: mobile-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: cere-mobile-signed
+          path: release
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: release/*.apk
+      - name: Upload a draft release for final install and upgrade review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --draft --title "Cere Mobile $GITHUB_REF_NAME" --notes-file docs/mobile/RELEASE-NOTES.md

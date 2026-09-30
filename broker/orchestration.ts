@@ -33,7 +33,7 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   const permitted = () => {
     signal.throwIfAborted();
     const parent = core.store.session(parentId);
-    if (parent.provider !== 'ollama' || !parent.ollama?.tools || !categoryEnabled(core.settings, 'providers')) throw new Error('Provider orchestration is disabled in Cere settings');
+    if (parent.provider !== 'ollama' || !parent.ollama?.tools || !categoryEnabled(core.settingsFor(parentId), 'providers') || (parent.remote && !parent.remote.caps.includes('providers.execute'))) throw new Error('Provider orchestration is disabled in Cere settings');
     return parent;
   };
   const parent = permitted();
@@ -61,6 +61,7 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   if (child && busy(child)) throw new Error('The delegated session is busy. Wait for it or stop it first.');
   if (!child && children().filter(busy).length >= 4) throw new Error('At most four delegated sessions may run at once');
   const provider = child?.provider || args.provider;
+  if (parent.remote && provider === 'claude') throw new Error('Claude native policy is unverified for remote delegation');
   if (core.capabilities[provider]?.available === false) throw new Error(provider + ' is unavailable');
   const answer = await core.approval(parentId, { kind: 'provider', title: `Send this task to ${provider === 'codex' ? 'Codex' : 'Claude'}?`,
     detail: `Project: ${parent.cwd}\nModel: ${child?.model || args.model || 'CLI default'}\nEffort: ${child?.effort || args.effort || 'CLI default'}\n\n${args.prompt}`,
@@ -68,10 +69,14 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   if (answer.choice !== 'allow') throw new Error('Delegation declined. Do not send this task again without a new user request.');
   permitted();
   if (!child) {
-    child = await core.create({ provider, cwd: parent.cwd, trusted: true, model: args.model, effort: args.effort, title: 'Delegated · ' + args.prompt.trim().slice(0, 60) });
-    child = core.updateSession(child.id, { parentId });
+    child = await core.create({ provider, cwd: parent.cwd, trusted: true, model: args.model, effort: args.effort, title: 'Delegated · ' + args.prompt.trim().slice(0, 60) },permitted);
+    child = core.updateSession(child.id, { parentId, remote:parent.remote ? structuredClone(parent.remote) : undefined, effectivePolicy:parent.remote ? 'unknown' : undefined });
   }
   permitted();
+  if (parent.remote && child.remote?.deviceId !== parent.remote.deviceId) {
+    await core.disconnect(child.id);
+    child = core.updateSession(child.id,{remote:structuredClone(parent.remote),effectivePolicy:'unknown'});
+  }
   const active = core.delegations.get(parentId) || new Set<string>(); active.add(child.id); core.delegations.set(parentId, active);
   await core.send({ id: child.id, text: args.prompt });
   if (signal.aborted) { await core.stop(child.id); signal.throwIfAborted(); }

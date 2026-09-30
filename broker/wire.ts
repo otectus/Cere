@@ -13,6 +13,7 @@ export class JsonLines {
     }
   }
 }
+export class RpcResponseError extends Error {}
 export class RpcProcess extends EventEmitter {
   child: ChildProcessWithoutNullStreams; seq = 0; closed = false; stderr = '';
   pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
@@ -24,7 +25,7 @@ export class RpcProcess extends EventEmitter {
       try { lines.push(chunk, message => {
         if (message.id !== undefined && !message.method && this.pending.has(message.id)) {
           const p = this.pending.get(message.id)!; clearTimeout(p.timer); this.pending.delete(message.id);
-          message.error ? p.reject(new Error(message.error.message || JSON.stringify(message.error))) : p.resolve(message.result);
+          message.error ? p.reject(new RpcResponseError(message.error.message || JSON.stringify(message.error))) : p.resolve(message.result);
         } else this.emit('message', message);
       }); } catch (e) { this.emit('fault', e); this.child.kill('SIGTERM'); }
     });
@@ -42,12 +43,12 @@ export class RpcProcess extends EventEmitter {
     if (this.closed || !this.child.stdin.writable) throw new Error('Provider disconnected');
     this.child.stdin.write(JSON.stringify(message) + '\n');
   }
-  request(method: string, params: unknown, timeout = 60000): Promise<any> {
+  request(method: string, params: unknown, timeout = 60000, onDispatched?: () => void): Promise<any> {
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out; the request may have been received`)); }, timeout);
       this.pending.set(id, { resolve, reject, timer });
-      try { this.write({ id, method, params }); } catch (e) { clearTimeout(timer); this.pending.delete(id); reject(e); }
+      try { this.write({ id, method, params }); onDispatched?.(); } catch (e) { clearTimeout(timer); this.pending.delete(id); reject(e); }
     });
   }
   async close() {

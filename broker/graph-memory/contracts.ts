@@ -108,6 +108,8 @@ export const policySchema = z
     allow_cloud_memory: z.boolean().default(false),
     history_enabled: z.boolean().default(false),
     capture_titles: z.boolean().default(false),
+    // Titles are captured only for these exact application classes, and only with capture_titles.
+    title_applications: z.array(z.string().trim().min(1).max(128)).max(64).default([]),
     hyprland_enabled: z.boolean().default(false),
     fish_enabled: z.boolean().default(false),
     kitty_enabled: z.boolean().default(false),

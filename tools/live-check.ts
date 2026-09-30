@@ -39,7 +39,7 @@ try{
     await call('session.disconnect',{id:s.id});
     await call('session.send',{id:s.id,text:'This process was disconnected and resumed. Without using tools, repeat the exact script output from this conversation.'});
     const resumed=await wait(s.id);
-    const messages=await call('session.messages',{id:s.id});
+    const messages=(await call('session.messages',{id:s.id})).messages;
     console.log(JSON.stringify({provider,first,second,resumed,replies:messages.filter((m:any)=>m.role==='assistant').map((m:any)=>m.text),tools:messages.filter((m:any)=>m.role==='tool').map((m:any)=>m.text.slice(0,150))}));
     if(first.status!=='idle'||first.approvals<1||second.status!=='idle'||resumed.status!=='idle')process.exitCode=1;
   }

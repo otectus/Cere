@@ -3,7 +3,7 @@ node_modules/
 .local-deps/
 .test-state/
 *.pkg.tar.zst
-src/
+/src/
 pkg/
 __pycache__/
 *.py[cod]

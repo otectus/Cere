@@ -1,0 +1,723 @@
+{
+  "protocol": {
+    "major": 1,
+    "minor": 0
+  },
+  "path": "/mobile/v1",
+  "subprotocol": "cere.mobile.v1",
+  "encoding": "RFC8785 canonical JSON; SHA256 digests and P256 SHA256withECDSA DER signatures use unpadded base64url. Public keys are X509 SPKI DER base64url.",
+  "pairing": {
+    "uri": "cere-pair://v1/<base64url(canonical JSON)>",
+    "offer": {
+      "type": "offer",
+      "v": 1,
+      "desktopId": "uuid",
+      "name": "Cere",
+      "certificate": "DER base64url",
+      "spki": "sha256(SPKI bytes)",
+      "identityKey": "SPKI base64url",
+      "endpoints": [
+        "wss://192.168.1.2:8443/mobile/v1"
+      ],
+      "pairingId": "uuid",
+      "nonce": "32 bytes base64url",
+      "expiresAt": 0,
+      "signature": "DER base64url"
+    },
+    "offerSignatureTranscript": {
+      "domain": "cere.mobile.pair.offer.v1",
+      "offer": "entire offer object without signature"
+    },
+    "responseBody": {
+      "type": "response",
+      "v": 1,
+      "desktopId": "uuid",
+      "pairingId": "uuid",
+      "offerDigest": "digest of complete signed offer",
+      "nonce": "offer nonce",
+      "deviceId": "uuid",
+      "name": "Phone",
+      "keyVersion": 1,
+      "connectionKey": "SPKI base64url",
+      "actionKey": "SPKI base64url",
+      "deviceNonce": "32 bytes base64url"
+    },
+    "responseSignatureTranscript": {
+      "domain": "cere.mobile.pair.response.v1",
+      "response": "responseBody"
+    },
+    "response": "responseBody plus connectionProof and actionProof signatures of responseSignatureTranscript using respective keys",
+    "sas": "SHA256 UTF8(offerDigest + '.' + digest(complete signed response)); first six bytes index sas-words.json; join words with spaces",
+    "maximumUriBytes": 2000
+  },
+  "authentication": {
+    "hello": {
+      "v": 1,
+      "type": "hello",
+      "protocolMin": 0,
+      "protocolMax": 0,
+      "desktopId": "uuid",
+      "deviceId": "uuid",
+      "keyVersion": 1,
+      "clientNonce": "32 bytes base64url",
+      "appVersion": "0.1.0"
+    },
+    "challenge": {
+      "challengeId": "uuid",
+      "serverNonce": "32 bytes base64url",
+      "epoch": "uuid",
+      "audience": "desktopId",
+      "expiresAt": 0
+    },
+    "challengeFrame": "challenge plus v:1,type:auth.challenge",
+    "transcript": {
+      "domain": "cere.mobile.auth.v1",
+      "helloDigest": "digest of entire hello frame",
+      "challenge": "challenge without v/type",
+      "desktopId": "uuid",
+      "deviceId": "uuid",
+      "keyVersion": 1,
+      "epoch": "uuid"
+    },
+    "reply": {
+      "v": 1,
+      "type": "auth",
+      "challengeId": "uuid",
+      "signature": "connection key DER base64url"
+    },
+    "welcome": {
+      "v": 1,
+      "type": "welcome",
+      "desktopId": "uuid",
+      "authSessionId": "uuid",
+      "expiresAt": 0,
+      "epoch": "uuid",
+      "scopeVersion": "1",
+      "protocol": {
+        "major": 1,
+        "minor": 0
+      },
+      "sendAuthentication": "connection-key (optional; absence means legacy action-key send proofs)",
+      "operations": [],
+      "limits": {
+        "maxFrameBytes": 1048576
+      },
+      "brokerBuild": "0.1.0/mobile-v1"
+    }
+  },
+  "actions": {
+    "challengeParams": {
+      "method": "sessions.send",
+      "paramsDigest": "digest(params)",
+      "commandId": "uuid"
+    },
+    "challengeResult": {
+      "challengeId": "uuid",
+      "nonce": "32 bytes base64url",
+      "expiresAt": 0
+    },
+    "transcript": {
+      "domain": "cere.mobile.action.v1",
+      "desktopId": "uuid",
+      "deviceId": "uuid",
+      "keyVersion": 1,
+      "scopeVersion": "1",
+      "epoch": "uuid",
+      "authSessionId": "uuid",
+      "challengeId": "uuid",
+      "nonce": "challenge nonce",
+      "method": "sessions.send",
+      "paramsDigest": "digest(params)",
+      "commandId": "uuid"
+    },
+    "proof": {
+      "challengeId": "uuid",
+      "signature": "action key DER base64url; sessions.send also accepts connection key DER base64url when welcome sendAuthentication is connection-key"
+    },
+    "proofKeys": {
+      "sessions.send": "connection key or legacy action key",
+      "all other signedMethods": "action key only"
+    },
+    "signedMethods": [
+      "sessions.create",
+      "sessions.send",
+      "sessions.configure",
+      "approvals.answer except deny/cancel",
+      "desktop.execute",
+      "timers.cancel",
+      "settings.patch",
+      "memory.save",
+      "attachments.begin",
+      "attachments.commit"
+    ]
+  },
+  "request": {
+    "v": 1,
+    "type": "request",
+    "id": "uuid",
+    "method": "operation",
+    "params": {},
+    "commandId": "uuid for ALL mutations",
+    "proof": "required only for signed methods"
+  },
+  "response": {
+    "v": 1,
+    "type": "response",
+    "id": "uuid",
+    "result": {}
+  },
+  "error": {
+    "v": 1,
+    "type": "response",
+    "id": "uuid",
+    "error": {
+      "code": "REVISION_CONFLICT",
+      "message": "Review the current revision.",
+      "retryable": false
+    }
+  },
+  "event": {
+    "v": 1,
+    "type": "event",
+    "eventId": "uuid",
+    "cursor": "opaque",
+    "name": "message.upsert",
+    "resourceRevision": "1",
+    "data": {}
+  },
+  "operations": {
+    "sync.open": {
+      "params": {
+        "resumeCursor": "optional",
+        "selectedSessionId": "optional"
+      },
+      "result": {
+        "cursor": "opaque",
+        "sessions": [],
+        "approvals": [],
+        "projects": [],
+        "providers": {},
+        "permissions": {},
+        "settings": {},
+        "messages": [],
+        "sessionIds": [],
+        "nextSessionOffset": null,
+        "messagesBefore": null
+      }
+    },
+    "sync.ack": {
+      "params": {
+        "cursor": "opaque"
+      },
+      "result": true
+    },
+    "sessions.list": {
+      "params": {
+        "filter": "optional",
+        "offset": 0
+      },
+      "result": {
+        "items": [],
+        "nextOffset": null
+      }
+    },
+    "sessions.get": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": "session"
+    },
+    "projects.list": {
+      "params": {},
+      "result": [
+        {
+          "id": "uuid",
+          "name": "project",
+          "path": "approved absolute project path"
+        }
+      ]
+    },
+    "sessions.create": {
+      "params": {
+        "provider": "ollama|codex|claude",
+        "projectId": "uuid",
+        "title": "optional",
+        "model": "optional",
+        "effort": "optional",
+        "tools": false
+      },
+      "result": "session"
+    },
+    "sessions.messages": {
+      "params": {
+        "sessionId": "uuid",
+        "before": "optional message id",
+        "limit": 100
+      },
+      "result": {
+        "items": [],
+        "before": null
+      }
+    },
+    "sessions.send": {
+      "params": {
+        "sessionId": "uuid",
+        "text": "message",
+        "attachments": [],
+        "webSearch": false,
+        "expectedDraftRevision": "0",
+        "expectedConfigRevision": "0"
+      },
+      "result": {
+        "commandId": "uuid",
+        "status": "accepted",
+        "turnId": "uuid"
+      }
+    },
+    "sessions.stop": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": true
+    },
+    "sessions.disconnect": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": true
+    },
+    "sessions.rename": {
+      "params": {
+        "sessionId": "uuid",
+        "title": "title",
+        "expectedRevision": "0"
+      },
+      "result": "session"
+    },
+    "drafts.get": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": {
+        "text": "draft",
+        "revision": "0"
+      }
+    },
+    "drafts.put": {
+      "params": {
+        "sessionId": "uuid",
+        "text": "draft",
+        "expectedRevision": "0"
+      },
+      "result": {
+        "text": "draft",
+        "revision": "1"
+      }
+    },
+    "providers.models": {
+      "params": {
+        "provider": "ollama|codex|claude",
+        "sessionId": "optional"
+      },
+      "result": []
+    },
+    "sessions.configure": {
+      "params": {
+        "sessionId": "uuid",
+        "model": "model",
+        "tools": false,
+        "expectedConfigRevision": "0"
+      },
+      "result": "session"
+    },
+    "approvals.list": {
+      "params": {},
+      "result": []
+    },
+    "approvals.get": {
+      "params": {
+        "approvalId": "uuid"
+      },
+      "result": "approval"
+    },
+    "approvals.answer": {
+      "params": {
+        "approvalId": "uuid",
+        "revision": "1",
+        "digest": "proposal hash",
+        "choice": "allow|deny|answer|cancel",
+        "answers": {
+          "questionId": {
+            "answers": [
+              "string"
+            ]
+          }
+        }
+      },
+      "result": true
+    },
+    "commands.status": {
+      "params": {
+        "commandId": "uuid"
+      },
+      "result": {
+        "commandId": "uuid",
+        "status": "accepted|completed|failed|unknown",
+        "result": {},
+        "error": {}
+      }
+    },
+    "activity.list": {
+      "params": {
+        "sessionId": "uuid",
+        "limit": 100
+      },
+      "result": []
+    },
+    "permissions.get": {
+      "params": {},
+      "result": "permissions"
+    },
+    "permissions.pause": {
+      "params": {},
+      "result": true
+    },
+    "devices.self": {
+      "params": {},
+      "result": {
+        "id": "uuid",
+        "name": "Phone",
+        "expiresAt": 0,
+        "scopeVersion": "1",
+        "caps": []
+      }
+    },
+    "devices.selfRevoke": {
+      "params": {},
+      "result": true
+    },
+    "desktop.status": {
+      "params": {
+        "projectId": "uuid"
+      },
+      "result": {
+        "audio": {},
+        "media": {},
+        "timers": [],
+        "scripts": [],
+        "actions": []
+      }
+    },
+    "desktop.apps": {
+      "params": {
+        "projectId": "uuid"
+      },
+      "result": []
+    },
+    "desktop.windows": {
+      "params": {
+        "projectId": "uuid"
+      },
+      "result": []
+    },
+    "desktop.execute": {
+      "params": {
+        "projectId": "uuid",
+        "action": "allowlisted desktop action",
+        "args": {},
+        "definitionDigest": "required for script.run"
+      },
+      "result": {}
+    },
+    "timers.cancel": {
+      "params": {
+        "projectId": "uuid",
+        "timerId": "uuid"
+      },
+      "result": true
+    },
+    "settings.get": {
+      "params": {},
+      "result": {
+        "personality": "text",
+        "revision": "0",
+        "webSearch": {
+          "enabled": false,
+          "provider": "auto"
+        },
+        "defaultModel": ""
+      }
+    },
+    "settings.patch": {
+      "params": {
+        "expectedRevision": "0",
+        "personality": "optional text",
+        "defaultModel": "optional",
+        "searchProvider": "optional"
+      },
+      "result": "settings"
+    },
+    "memory.list": {
+      "params": {
+        "sessionId": "uuid",
+        "kind": "saved|conversation|assertions|episodes|entities",
+        "offset": 0,
+        "filter": ""
+      },
+      "result": {}
+    },
+    "memory.retrieve": {
+      "params": {
+        "sessionId": "uuid",
+        "query": "text"
+      },
+      "result": {}
+    },
+    "memory.save": {
+      "params": {
+        "sessionId": "uuid",
+        "text": "max2000",
+        "id": "optional",
+        "expectedRevision": "optional"
+      },
+      "result": {}
+    },
+    "sessions.messagePart": {
+      "params": {
+        "sessionId": "uuid",
+        "messageId": "opaque",
+        "revision": "string",
+        "part": 0
+      },
+      "result": {
+        "messageId": "opaque",
+        "revision": "string",
+        "part": 0,
+        "count": 1,
+        "content": "text",
+        "encoding": "unicode-scalar"
+      }
+    },
+    "sessions.handoffPreview": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": {
+        "sourceSessionId": "uuid",
+        "sourceDigest": "hash",
+        "draft": "reviewed recent transcript",
+        "shortened": false
+      }
+    },
+    "sessions.handoffCreate": {
+      "params": {
+        "sourceSessionId": "uuid",
+        "sourceDigest": "hash",
+        "draft": "1..100000 UTF16 units",
+        "projectId": "uuid",
+        "provider": "codex|ollama",
+        "model": "optional",
+        "effort": "optional",
+        "tools": false
+      },
+      "result": "new restrictive session DTO, draft only"
+    },
+    "sessions.history": {
+      "params": {
+        "projectId": "uuid"
+      },
+      "result": "sanitized stopped Codex thread tickets; no raw native IDs"
+    },
+    "sessions.import": {
+      "params": {
+        "historyId": "uuid",
+        "externalWriterStopped": true
+      },
+      "result": "new restrictive session DTO"
+    },
+    "memory.inspect": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "result": "bounded scoped canonical record"
+    },
+    "memory.forgetPreview": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "optional uuid"
+      },
+      "result": {
+        "count": 0,
+        "selection": "64 lowercase hex",
+        "revision": "safe integer as decimal string",
+        "sourcePolicy": "description"
+      }
+    },
+    "memory.forget": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid",
+        "selection": "64 hex",
+        "expectedRevision": "safe integer string"
+      },
+      "result": "erasure receipt"
+    },
+    "memory.clear": {
+      "params": {
+        "sessionId": "uuid",
+        "confirmProjectId": "uuid",
+        "selection": "64 hex",
+        "expectedRevision": "safe integer string"
+      },
+      "result": "erasure receipt"
+    },
+    "memory.erasureStatus": {
+      "params": {
+        "sessionId": "uuid",
+        "jobId": "uuid"
+      },
+      "result": {
+        "id": "uuid",
+        "state": "canonical job state",
+        "purgeComplete": false
+      }
+    }
+  },
+  "dto": {
+    "session": {
+      "id": "uuid",
+      "provider": "ollama",
+      "title": "title",
+      "projectId": "uuid",
+      "project": "approved path",
+      "mode": "managed",
+      "status": "idle",
+      "model": "model",
+      "effort": "",
+      "draft": "",
+      "draftRevision": "0",
+      "configRevision": "0",
+      "revision": "1",
+      "turnId": "optional uuid",
+      "remoteRestricted": true,
+      "canSend": true,
+      "updated": 0,
+      "draftIncluded": true,
+      "ollamaHost": "optional approved Ollama server"
+    },
+    "message": {
+      "id": "opaque",
+      "sessionId": "uuid",
+      "turnId": "optional uuid",
+      "role": "assistant",
+      "kind": "text",
+      "text": "whole accumulated text",
+      "time": 0,
+      "revision": "1",
+      "sources": [],
+      "contentTruncated": "optional true; contentChars/contentBytes and textParts describe omitted text"
+    },
+    "approval": {
+      "id": "uuid",
+      "sessionId": "uuid",
+      "kind": "question",
+      "title": "Question",
+      "detail": "exact proposal",
+      "choices": [
+        "answer"
+      ],
+      "questions": [],
+      "fields": {},
+      "time": 0,
+      "revision": "1",
+      "digest": "SHA256 proposal",
+      "turnId": "uuid",
+      "canAnswer": true
+    },
+    "permissions": {
+      "profile": "scoped",
+      "paused": false,
+      "categories": [],
+      "caps": [],
+      "revision": "0",
+      "restricted": true
+    }
+  },
+  "events": [
+    "message.upsert (data is message DTO)",
+    "snapshot.changed (reconcile scoped snapshot, including resolved approvals)",
+    "device.revoked",
+    "remote.disabled",
+    "attachment.progress (data is upload DTO; cursor is opaque like other events)"
+  ],
+  "notes": "All operations are capability negotiated. Absent operation must have no enabled control. Unsupported forms/unsafe active providers expose deny/Stop only. All mutation failures preserve drafts. Connection loss never queues a new action. On ambiguous mutation query commands.status with original ID. All snapshot arrays replace cached scope; removed resources must be purged. Reconnect always supports full scoped snapshot even without retained replay. No command retry with a new ID without review. TLS trust exactly paired SPKI and valid certificate/SAN. No network pairing endpoint. Session summaries set draftIncluded:false; fetch sessions.get before enabling Send. sync.open sessionIds is authoritative for cache removal; use sessions.list with nextSessionOffset to hydrate omitted summaries. Submitted Ollama image files can be removed after a completed turn because full image context is persisted. Native path inputs remain until session removal, local clear, or device revocation. Command outcomes are redacted across device scopeVersion changes. Memory invalidation clears retained result payloads. cacheEpoch changes clear phone transcript and transient memory views. Memory CAS revisions above 9007199254740991 are rejected.",
+  "media": {
+    "binaryFrame": "16-byte UUID, 8-byte unsigned big endian offset, up to 262144 payload bytes; single outstanding chunk per upload; wait attachment.progress before next chunk",
+    "upload": "attachments.begin signed; binary chunks; attachments.status after reconnect; attachments.commit signed; session-specific opaque IDs in signed sessions.send",
+    "preview": "approvals.preview returns readId,size,mime,sha256,imageDigest,expiresAt. attachments.read sends binary read frame then response {bytes:payloadLength}. Verify full preview sha256, show preview, add imageDigest to signed approvals.answer for image Allow. Handles expire or become invalid when approval resolves.",
+    "operations": {
+      "attachments.begin": {
+        "params": {
+          "sessionId": "uuid",
+          "size": "1..10485760",
+          "mime": "image/png|image/jpeg|image/webp",
+          "sha256": "base64url SHA256 bytes"
+        },
+        "result": {
+          "attachmentId": "uuid",
+          "uploadId": "uuid",
+          "size": 0,
+          "offset": 0,
+          "mime": "image/png",
+          "sha256": "hash",
+          "status": "uploading",
+          "expiresAt": 0
+        }
+      },
+      "attachments.status": {
+        "params": {
+          "attachmentId": "uuid"
+        },
+        "result": "same upload DTO"
+      },
+      "attachments.commit": {
+        "params": {
+          "attachmentId": "uuid"
+        },
+        "result": "same DTO with status ready and width/height"
+      },
+      "attachments.abort": {
+        "params": {
+          "attachmentId": "uuid"
+        },
+        "result": true
+      },
+      "approvals.preview": {
+        "params": {
+          "approvalId": "uuid",
+          "revision": "1",
+          "digest": "hash"
+        },
+        "result": {
+          "readId": "uuid",
+          "size": 0,
+          "mime": "image/jpeg",
+          "sha256": "hash",
+          "imageDigest": "hash",
+          "expiresAt": 0
+        }
+      },
+      "attachments.read": {
+        "params": {
+          "readId": "uuid",
+          "offset": 0,
+          "length": 262144
+        },
+        "result": {
+          "bytes": 0
+        }
+      }
+    }
+  }
+}

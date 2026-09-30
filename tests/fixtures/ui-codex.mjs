@@ -12,7 +12,7 @@ function complete() {
 createInterface({input:process.stdin}).on('line',line=>{
   const m=JSON.parse(line);
   if(!m.method){
-    if(pending.delete(m.id)){decisions.push(m.result?.decision||'decline');if(!pending.size)complete()}
+    if(pending.delete(m.id)){decisions.push(m.result?.answers ? JSON.stringify(m.result.answers) : m.result?.decision||'decline');if(!pending.size)complete()}
     return;
   }
   const reply=result=>send({id:m.id,result});
@@ -40,6 +40,26 @@ createInterface({input:process.stdin}).on('line',line=>{
       },1400));
     }else if(prompt==='acting-error'){
       actingTimers.push(setTimeout(()=>event('turn/completed',{turn:{id:`turn-${turn}`,status:'failed',error:{message:'Fixture failure'}}}),1400));
+    }else if(prompt==='questions'){
+      const id=`question-${turn}`;pending.add(id);
+      send({id,method:'item/tool/requestUserInput',params:{threadId:'fixture-thread',questions:[
+        {id:'checks',header:'Checks',question:'Which checks should run?',multiSelect:true,options:[{label:'Build',description:'Compile the application'},{label:'Tests',description:'Exercise the user interface'}]},
+        {id:'context',header:'Context',question:'What else should I know?',options:[]}
+      ]}});
+    }else if(prompt==='agents'){
+      event('item/completed',{threadId:'fixture-thread',item:{id:`spawn-${turn}`,type:'collabAgentToolCall',tool:'spawnAgent',senderThreadId:'fixture-thread',receiverThreadIds:['fixture-child'],prompt:'Inspect question handling',agentsStates:{'fixture-child':{status:'running'}}}});
+      actingTimers.push(setTimeout(()=>{
+        event('item/completed',{threadId:'fixture-thread',item:{id:`reply-${turn}`,type:'agentMessage',text:'The background review is still running.'}});
+        event('turn/completed',{threadId:'fixture-thread',turn:{id:`turn-${turn}`,status:'completed'}});
+      },500));
+      actingTimers.push(setTimeout(()=>event('item/completed',{threadId:'fixture-child',item:{id:'child-reply',type:'agentMessage',text:'Reviewed the question UI.'}}),4000));
+      actingTimers.push(setTimeout(()=>event('turn/completed',{threadId:'fixture-child',turn:{id:'child-turn',status:'completed'}}),8000));
+    }else if(prompt.startsWith('completion-')){
+      event('item/completed',{item:{id:`comment-${turn}`,type:'agentMessage',phase:'commentary',text:'Still working.'}});
+      event('item/completed',{item:{id:`tool-${turn}`,type:'commandExecution',aggregatedOutput:'A tool trace, not the final answer.'}});
+      const text=prompt==='completion-long'?'# Final report\n\n'+('Completed work with a readable explanation.\n\n'.repeat(700)):'**'+prompt+' finished.**\n\nThe final reply belongs to this conversation.\n\n- Changes are ready.\n- Checks passed.';
+      event('item/completed',{item:{id:`reply-${turn}`,type:'agentMessage',phase:'final_answer',text}});
+      event('turn/completed',{turn:{id:`turn-${turn}`,status:'completed'}});
     }else if(prompt==='activity'){
       for(let i=0;i<3;i++){
         event('item/started',{item:{id:`tool-${turn}-${i}`,type:'commandExecution',command:'Test activity '+i}});

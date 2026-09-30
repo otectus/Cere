@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
-import { CodexAdapter, ClaudeAdapter } from '../broker/providers.ts';
+import { CodexAdapter, ClaudeAdapter, claudeRestrictedHelp } from '../broker/providers.ts';
 import type { Hooks } from '../broker/providers.ts';
 import type { Session } from '../broker/types.ts';
 import { defaultPersonality } from '../broker/personality.ts';
@@ -25,14 +25,15 @@ async function fixture(t: any) {
 }
 
 test('Codex applies bypass per turn and restores the configured sandbox on disable and resume', async t => {
-  const f = await fixture(t); let bypass = false;
+  const f = await fixture(t); let bypass = false;const phases:string[]=[];
   const hooks: Hooks = { token: 'fixture', event() {}, native() {}, async approve() { return { choice: 'allow' }; }, bypassCliPermissions: () => bypass };
   const adapter = new CodexAdapter(f.session, hooks); t.after(() => adapter.close());
-  await adapter.send('normal'); bypass = true;
+  await adapter.send('normal',[],{beforeAccept:()=>phases.push('authorized'),onDispatched:()=>phases.push('dispatched'),onAccepted:()=>phases.push('accepted')}); bypass = true;
   await adapter.send('full access'); bypass = false;
   await adapter.send('restricted again');
   const turns = (await f.messages()).filter(m => m.method === 'turn/start').map(m => m.params);
   assert.equal(turns[0].approvalPolicy, 'on-request'); assert.equal(turns[0].sandboxPolicy.type, 'workspaceWrite');
+  assert.deepEqual(phases,['authorized','dispatched','accepted']);
   assert.equal(turns[1].approvalPolicy, 'never'); assert.deepEqual(turns[1].sandboxPolicy, { type: 'dangerFullAccess' });
   assert.equal(turns[1].approvalsReviewer, 'user');
   assert.deepEqual(turns[2].sandboxPolicy, turns[0].sandboxPolicy);
@@ -53,6 +54,89 @@ test('Codex reports only confirmed success as complete and preserves terminal fa
   }
   assert.deepEqual(events.slice(-7).map(event=>event.type),['complete','complete','error','interrupted','interrupted','interrupted','error']);
   assert.equal(events.at(-5).text,'Provider failure');assert.match(events.at(-1).text,/mystery/);
+});
+
+test('Codex enables input APIs and normalizes question metadata without replying after external resolution', async t => {
+  const f=await fixture(t),approvals:any[]=[],events:any[]=[],writes:any[]=[];
+  let finish:(answer:any)=>void=()=>{};
+  const hooks:Hooks={token:'fixture',event:event=>events.push(event),native(){},approve:value=>{approvals.push(value);return new Promise(resolve=>{finish=resolve;});}};
+  const adapter=new CodexAdapter(f.session,hooks);t.after(()=>adapter.close());await adapter.ready;
+  const originalWrite=adapter.process.write.bind(adapter.process);adapter.process.write=(message:any)=>writes.push(message);
+  const pending=adapter.handle({id:41,method:'item/tool/requestUserInput',params:{threadId:'child-thread',questions:[
+    {id:'scope',header:'Scope',question:'Which areas?',options:[{label:'UI',description:'Desktop UI'}],multiSelect:true,isOther:false},
+    {id:'token',header:'Secret',question:'Token?',isSecret:true,isOther:false,required:false}
+  ]}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(approvals[0].nativeThreadId,'child-thread');
+  assert.deepEqual(approvals[0].questions,[
+    {id:'scope',header:'Scope',question:'Which areas?',options:[{label:'UI',description:'Desktop UI'}],multiSelect:true,isSecret:false,allowOther:false,required:true},
+    {id:'token',header:'Secret',question:'Token?',multiSelect:false,isSecret:true,allowOther:true,required:false}
+  ]);
+  await adapter.handle({method:'serverRequest/resolved',params:{threadId:'child-thread',requestId:'41'}});
+  await adapter.handle({method:'serverRequest/resolved',params:{threadId:'other-thread',requestId:41}});
+  assert.equal(adapter.externallyResolved.size,0);
+  await adapter.handle({method:'serverRequest/resolved',params:{threadId:'child-thread',requestId:41}});
+  finish({choice:'deny',answers:{},resolved:true});await pending;
+  assert.equal(writes.length,0);assert.deepEqual(events.at(-1),{type:'approvalResolved',data:{threadId:'child-thread',requestId:41}});
+  assert.equal(adapter.externallyResolved.size,0);assert.equal(adapter.pendingRequests.size,0);
+  adapter.process.write=originalWrite;
+  const initialize=(await f.messages()).find(message=>message.method==='initialize');
+  assert.equal(initialize.params.capabilities.experimentalApi,true);
+});
+
+test('Codex maps MCP form requirements and omits unanswered optional scalar values',async t=>{
+  const f=await fixture(t),approvals:any[]=[],writes:any[]=[];
+  const hooks:Hooks={token:'fixture',event(){},native(){},async approve(value){approvals.push(value);return{choice:'answer',answers:{level:{answers:['2']},enabled:{answers:[]},count:{answers:[]},note:{answers:['ready']},tags:{answers:['fast','safe']}}};}};
+  const adapter=new CodexAdapter(f.session,hooks);t.after(()=>adapter.close());await adapter.ready;
+  const originalWrite=adapter.process.write.bind(adapter.process);adapter.process.write=(message:any)=>writes.push(message);
+  await adapter.handle({id:'form-1',method:'mcpServer/elicitation/request',params:{threadId:'permission-thread',serverName:'fixture',mode:'form',message:'Configure',requestedSchema:{type:'object',required:['level'],properties:{
+    level:{type:'number',title:'Level',enum:[1,2]},enabled:{type:'boolean',title:'Enabled'},count:{type:'integer',title:'Count'},note:{type:'string',title:'Note'},tags:{type:'array',title:'Tags',items:{type:'string',enum:['fast','safe']}}
+  }}}});
+  const questions=approvals[0].questions;
+  assert.deepEqual(questions.map((q:any)=>[q.id,q.required,q.allowOther,q.multiSelect]),[['level',true,false,false],['enabled',false,false,false],['count',false,true,false],['note',false,true,false],['tags',false,false,true]]);
+  assert.deepEqual(questions[0].options,[{label:'1'},{label:'2'}]);
+  assert.deepEqual(writes,[{id:'form-1',result:{action:'accept',content:{level:2,note:'ready',tags:['fast','safe']}}}]);
+  adapter.process.write=originalWrite;
+});
+
+test('Codex presents safe MCP sign-in links for explicit approval and rejects other URL schemes',async t=>{
+  const f=await fixture(t),approvals:any[]=[],events:any[]=[],writes:any[]=[];
+  const adapter=new CodexAdapter(f.session,{token:'fixture',event:event=>events.push(event),native(){},async approve(value){approvals.push(value);return{choice:'allow'};}});t.after(()=>adapter.close());await adapter.ready;
+  const originalWrite=adapter.process.write.bind(adapter.process);adapter.process.write=(message:any)=>writes.push(message);
+  await adapter.handle({id:'url-safe',method:'mcpServer/elicitation/request',params:{threadId:'permission-thread',serverName:'accounts',mode:'url',message:'Sign in to continue',url:'https://example.com/login',elicitationId:'e-1'}});
+  await adapter.handle({id:'url-bad',method:'mcpServer/elicitation/request',params:{threadId:'permission-thread',serverName:'accounts',mode:'url',message:'Sign in',url:'javascript:alert(1)',elicitationId:'e-2'}});
+  await adapter.handle({id:'empty-form',method:'mcpServer/elicitation/request',params:{threadId:'permission-thread',serverName:'fixture',mode:'form',message:'Choose',requestedSchema:{type:'object',required:['choice'],properties:{choice:{type:'string',enum:[]}}}}});
+  assert.equal(approvals.length,1);assert.equal(approvals[0].kind,'question');assert.equal(approvals[0].url,'https://example.com/login');assert.deepEqual(approvals[0].choices,['allow','deny']);
+  assert.deepEqual(writes,[{id:'url-safe',result:{action:'accept'}},{id:'url-bad',result:{action:'decline'}},{id:'empty-form',result:{action:'decline'}}]);
+  assert.equal(events.some(event=>event.type==='message'&&/unsupported sign-in URL/.test(event.text)),true);
+  assert.equal(events.some(event=>event.type==='message'&&/form Cere cannot display/.test(event.text)),true);
+  adapter.process.write=originalWrite;
+});
+
+test('Codex emits subagent lifecycle while keeping child output out of the parent transcript', async t => {
+  const f=await fixture(t),events:any[]=[];
+  const hooks:Hooks={token:'fixture',event:event=>events.push(event),native(){},async approve(){return{choice:'deny'};}};
+  const adapter=new CodexAdapter(f.session,hooks);t.after(()=>adapter.close());await adapter.ready;
+  await adapter.handle({method:'thread/started',params:{thread:{id:'compact-1',parentThreadId:'permission-thread',status:{type:'active'},source:{subAgent:'compact'}}}});
+  await adapter.handle({method:'thread/status/changed',params:{threadId:'compact-1',status:{type:'idle'}}});
+  await adapter.handle({method:'thread/started',params:{thread:{id:'child-1',parentThreadId:'permission-thread',agentNickname:'Scout',status:{type:'active'},source:{subAgent:{thread_spawn:{parent_thread_id:'permission-thread',depth:1}}}}}});
+  await adapter.handle({method:'item/started',params:{threadId:'permission-thread',item:{id:'spawn',type:'collabAgentToolCall',tool:'spawnAgent',senderThreadId:'permission-thread',receiverThreadIds:['child-1'],agentsStates:{'child-1':{status:'running'}},prompt:'Inspect protocol',status:'completed'}}});
+  await adapter.handle({method:'item/agentMessage/delta',params:{threadId:'child-1',itemId:'child-message',delta:'private child progress'}});
+  await adapter.handle({method:'item/completed',params:{threadId:'child-1',item:{id:'child-message',type:'agentMessage',text:'child final report'}}});
+  await adapter.handle({method:'turn/completed',params:{threadId:'child-1',turn:{status:'completed'}}});
+  const childEvents=events.filter(event=>event.type==='agent'&&event.id==='child-1');
+  assert.equal(events.some(event=>event.type==='agent'&&event.id==='compact-1'),false);
+  assert.equal(events.some(event=>event.type==='activity'&&event.text==='compacting'),true);
+  assert.equal(childEvents[0].data.name,'Scout');assert.equal(childEvents.at(-1).data.status,'completed');
+  assert.equal(childEvents.some(event=>event.data.task==='Inspect protocol'),true);
+  assert.equal(events.some(event=>['delta','message','tool','complete'].includes(event.type)&&JSON.stringify(event).includes('child')),false);
+  assert.equal(events.some(event=>event.type==='activity'&&event.text==='delegating'),true);
+  await adapter.handle({method:'turn/started',params:{threadId:'child-1',turn:{id:'child-turn-2'}}});
+  assert.equal(events.filter(event=>event.type==='agent'&&event.id==='child-1').at(-1).data.status,'running');
+  const interrupted:any[]=[];const originalRequest=adapter.process.request.bind(adapter.process);
+  adapter.process.request=async(method:string,params:any)=>{interrupted.push({method,params});return{};};
+  await adapter.interrupt();adapter.process.request=originalRequest;
+  assert.deepEqual(interrupted,[{method:'turn/interrupt',params:{threadId:'child-1',turnId:'child-turn-2'}}]);
 });
 
 test('provider reasoning signals thinking without exposing private reasoning as tool activity', async t => {
@@ -87,8 +171,23 @@ test('Claude launches in bypass mode only when selected and disables its optiona
   assert.ok(first.includes('--dangerously-skip-permissions'));
   assert.equal(JSON.parse(first[first.indexOf('--settings') + 1]).sandbox.enabled, false);
   assert.ok(!second.includes('--dangerously-skip-permissions')); assert.ok(!second.includes('--settings'));
-  assert.equal(second[second.indexOf('--permission-mode') + 1], 'default');
+  assert.equal(second[second.indexOf('--permission-mode') + 1], 'manual');
   assert.equal(second[second.indexOf('--resume') + 1], 'claude-permission-thread');
+});
+
+test('Claude remote sessions use the enforceable restricted CLI boundary', async t => {
+  const f=await fixture(t);let verified=false;
+  const adapter=new ClaudeAdapter({...f.session,provider:'claude'},{token:'fixture',event(){},native(){},async approve(){return{choice:'deny'};},restrictive:true,policy:value=>{verified=value;},bypassCliPermissions:()=>true});
+  const image=join(f.directory,'uploaded.image');await writeFile(image,Buffer.from([137,80,78,71,13,10,26,10]));
+  t.after(()=>adapter.close());await adapter.send('remote request',[image]);await once(adapter.process!,'exit');
+  const args=(await f.messages()).find(m=>m.args).args;
+  assert.equal(verified,true);assert.ok(args.includes('--restricted'));assert.ok(args.includes('--strict-mcp-config'));
+  assert.equal(args[args.indexOf('--permission-mode')+1],'manual');
+  assert.ok(!args.includes('--dangerously-skip-permissions'));assert.ok(!args.includes('--settings'));
+  assert.ok(args.includes('--permission-prompt-tool'));assert.equal(args[args.indexOf('--permission-prompt-tool')+1],'mcp__cere__approve');
+  const mediaDirectory=args[args.indexOf('--add-dir')+1];assert.ok(mediaDirectory.endsWith('/media'));await assert.rejects(stat(mediaDirectory),{code:'ENOENT'});
+  assert.equal(claudeRestrictedHelp('flags --restricted --strict-mcp-config choices: "manual"'),true);
+  assert.equal(claudeRestrictedHelp('flags --strict-mcp-config choices: "manual"'),false);
 });
 
 test('Codex refreshes personality between turns while retaining thread, user input and configured instructions', async t => {
@@ -130,9 +229,52 @@ test('Claude appends the current personality on each resumed turn without replac
   const prompts=messages.filter(m=>m.personality),instructions=prompts.map(m=>m.personality);
   assert.ok(instructions[0].includes(defaultPersonality));assert.match(instructions[1],/Be quietly encouraging/);
   assert.ok(!instructions[1].includes(defaultPersonality));assert.match(instructions[2],/neutral voice/);
-  for(const a of args){assert.ok(!a.includes('--system-prompt'));assert.ok(!a.includes('--append-system-prompt'));assert.equal(a[a.indexOf('--permission-mode')+1],'default');}
+  for(const a of args){assert.ok(!a.includes('--system-prompt'));assert.ok(!a.includes('--append-system-prompt'));assert.equal(a[a.indexOf('--permission-mode')+1],'manual');}
   for(const prompt of prompts){assert.equal(prompt.mode,0o600);await assert.rejects(stat(prompt.path),{code:'ENOENT'});}
   assert.equal(args[1][args[1].indexOf('--resume')+1],'claude-permission-thread');
+});
+
+test('Claude tracks foreground and background agents without leaking forwarded child messages',async t=>{
+  const f=await fixture(t),events:any[]=[];
+  const hooks:Hooks={token:'fixture',event:event=>events.push(event),native(){},async approve(){}};
+  const adapter=new ClaudeAdapter({...f.session,provider:'claude'},hooks);t.after(()=>adapter.close());
+  await adapter.send('Delegate');const proc=adapter.process!;
+  proc.emit('message',{type:'assistant',parent_tool_use_id:null,message:{id:'root',content:[{type:'tool_use',id:'agent-tool',name:'Agent',input:{subagent_type:'researcher',description:'Investigate',run_in_background:true}}]}});
+  proc.emit('message',{type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'task-1',task_type:'local_agent',description:'Investigate'}]});
+  proc.emit('message',{type:'system',subtype:'task_started',task_id:'task-1',tool_use_id:'agent-tool',task_type:'local_agent',subagent_type:'researcher',description:'Investigate',prompt:'Read the sources',is_backgrounded:true});
+  proc.emit('message',{type:'user',parent_tool_use_id:null,message:{content:[{type:'tool_result',tool_use_id:'agent-tool',content:'Agent launched in background'}]}});
+  proc.emit('message',{type:'assistant',parent_tool_use_id:'agent-tool',message:{id:'child',content:[{type:'text',text:'child-only report'}]}});
+  proc.emit('message',{type:'tool_progress',tool_use_id:'child-tool',tool_name:'Read',parent_tool_use_id:'agent-tool',elapsed_time_seconds:2});
+  proc.emit('message',{type:'result',session_id:'claude-thread',is_error:false});
+  assert.equal(events.filter(event=>event.type==='agent'&&event.id==='agent-tool').at(-1).data.status,'running');
+  assert.equal(events.some(event=>event.type==='message'&&JSON.stringify(event).includes('child-only')),false);
+  assert.equal(events.some(event=>event.type==='activity'&&event.text==='waitingForAgents'),true);
+  proc.emit('message',{type:'system',subtype:'task_notification',task_id:'task-1',tool_use_id:'agent-tool',status:'completed',summary:'Research done'});
+  assert.equal(events.filter(event=>event.type==='agent'&&event.id==='agent-tool').at(-1).data.status,'completed');
+  assert.equal(events.filter(event=>event.type==='agent'&&event.id==='task-1').length,0);
+  proc.emit('message',{type:'assistant',parent_tool_use_id:null,message:{id:'root-2',content:[{type:'tool_use',id:'agent-failed',name:'Task',input:{subagent_type:'tester',description:'Run checks'}}]}});
+  proc.emit('message',{type:'user',parent_tool_use_id:null,tool_use_result:{result:'Compilation failed'},message:{content:[{type:'tool_result',tool_use_id:'agent-failed',is_error:true,content:[{type:'text',text:'exit code 1'}]}]}});
+  const failed=events.filter(event=>event.type==='agent'&&event.id==='agent-failed').at(-1);
+  assert.equal(failed.data.status,'failed');assert.match(failed.data.detail,/exit code 1/);
+  await once(proc,'exit');
+  const args=(await f.messages()).find(message=>message.args).args;assert.ok(args.includes('--forward-subagent-text'));
+});
+
+test('Claude uses task lifecycle as authority and interrupts unresolved tasks when its process exits',async t=>{
+  const f=await fixture(t),events:any[]=[];
+  const adapter=new ClaudeAdapter({...f.session,provider:'claude'},{token:'fixture',event:event=>events.push(event),native(){},async approve(){}});t.after(()=>adapter.close());
+  await adapter.send('Run background work');const proc=adapter.process!;
+  proc.emit('message',{type:'system',subtype:'task_started',task_id:'bash-task',task_type:'local_bash',description:'Build',is_backgrounded:true});
+  proc.emit('message',{type:'system',subtype:'task_progress',task_id:'bash-task',description:'Build',last_tool_name:'Bash',usage:{total_tokens:0,tool_uses:1,duration_ms:10}});
+  proc.emit('message',{type:'result',session_id:'claude-thread',is_error:false});
+  await once(proc,'exit');
+  const taskEvents=events.filter(event=>event.type==='agent'&&event.id==='bash-task');
+  assert.equal(taskEvents.some(event=>event.data.status==='running'),true);
+  assert.equal(taskEvents.at(-1).data.status,'interrupted');
+  assert.match(taskEvents.at(-1).data.detail,/process ended/i);
+  const errorIndex=events.findIndex(event=>event.type==='error'&&/background tasks/.test(event.text));
+  const interruptedIndex=events.findLastIndex(event=>event.type==='agent'&&event.id==='bash-task'&&event.data.status==='interrupted');
+  assert.ok(errorIndex>=0&&errorIndex<interruptedIndex);
 });
 
 test('terminal wrapper inherits the saved CLI bypass setting for both providers', async t => {

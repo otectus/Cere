@@ -1,8 +1,9 @@
 import net from "node:net";
-import { mkdir, chmod, lstat, unlink, realpath } from "node:fs/promises";
+import { chmod, lstat, unlink, realpath } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { z } from "zod";
-import { sameUserPeer } from "../peercred.ts";
+import { sameUserPeer, trustedServer } from "../peercred.ts";
+import { privateDir } from "../paths.ts";
 import { LiveObservationFactory, LiveWorkspaceState } from "./adapters/live.ts";
 import { inspectGitCheckout } from "./adapters/workspace.ts";
 import { parse } from "./contracts.ts";
@@ -41,10 +42,12 @@ const frame = z
       .strict(),
   })
   .strict();
+/** The service's fenced view of live state: writes after a collector restart are discarded. */
+export type LiveSink = Pick<LiveWorkspaceState, "apply" | "snapshot" | "markSourceUnknown">;
 export class CollectorRpc {
   server?: net.Server;
   socket: string;
-  live: LiveWorkspaceState;
+  live: LiveSink;
   policy: () => Promise<any>;
   sessions = new Map<
     string,
@@ -52,7 +55,7 @@ export class CollectorRpc {
   >();
   constructor(
     runtime: string,
-    live: LiveWorkspaceState,
+    live: LiveSink,
     policy: () => Promise<any>,
   ) {
     this.socket = join(runtime, "memory.sock");
@@ -60,18 +63,18 @@ export class CollectorRpc {
     this.policy = policy;
   }
   async start() {
-    const directory = join(this.socket, "..");
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await chmod(directory, 0o700);
+    // The same owner-private directory chain as the broker runtime.
+    privateDir(join(this.socket, ".."));
     try {
       const stat = await lstat(this.socket);
       if (!stat.isSocket() || stat.uid !== process.getuid?.())
         throw new Error("Unsafe collector socket");
-      const occupied = await new Promise<boolean>((resolve) => {
+      const occupied = await new Promise<boolean>((resolve, reject) => {
         const socket = net.createConnection(this.socket);
         socket.once("connect", () => {
+          const trusted = trustedServer(socket);
           socket.destroy();
-          resolve(true);
+          trusted ? resolve(true) : reject(new Error("Collector socket belongs to another user"));
         });
         socket.once("error", () => resolve(false));
       });

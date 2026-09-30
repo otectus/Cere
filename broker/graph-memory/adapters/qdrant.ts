@@ -115,17 +115,20 @@ export class QdrantVectorRepository implements VectorRepository {
     return parsed;
   }
 
-  async initialize(): Promise<void> { const health = await this.health(); if (!health.ok) throw new Error(health.detail); }
+  async initialize(signal?: AbortSignal): Promise<void> { const health = await this.health(signal); if (!health.ok) throw new Error(health.detail); }
 
-  private async ensureCollection(name: string): Promise<void> {
+  /** Setup honors the caller's deadline: every request carries it and no request starts after it expires. */
+  private async ensureCollection(name: string, signal?: AbortSignal): Promise<void> {
     if (this.prepared.has(name)) return;
+    signal?.throwIfAborted();
     let existing: any;
-    try { existing = await this.request(`/collections/${encodeURIComponent(name)}`); }
+    try { existing = await this.request(`/collections/${encodeURIComponent(name)}`, {}, signal); }
     catch (error) {
+      signal?.throwIfAborted();
       if (!String(error).includes('(404)')) throw error;
       await this.request(`/collections/${encodeURIComponent(name)}`, {
         method: 'PUT', body: JSON.stringify({ vectors: { size: this.config.dimension, distance: this.config.distance }, on_disk_payload: true }),
-      });
+      }, signal);
     }
     const vectors = existing?.result?.config?.params?.vectors;
     if (vectors && (Number(vectors.size) !== this.config.dimension || String(vectors.distance).toLowerCase() !== this.config.distance.toLowerCase())) {
@@ -136,8 +139,9 @@ export class QdrantVectorRepository implements VectorRepository {
       ['embedding_fingerprint', 'keyword'], ['generation', 'integer'], ['erasure_epoch', 'integer'], ['expires_at_us', 'integer'],
     ];
     for (const [field_name, field_schema] of indexes) {
-      try { await this.request(`/collections/${encodeURIComponent(name)}/index?wait=true`, { method: 'PUT', body: JSON.stringify({ field_name, field_schema }) }); }
-      catch (error) { if (!String(error).toLowerCase().includes('already exists')) throw error; }
+      signal?.throwIfAborted();
+      try { await this.request(`/collections/${encodeURIComponent(name)}/index?wait=true`, { method: 'PUT', body: JSON.stringify({ field_name, field_schema }) }, signal); }
+      catch (error) { signal?.throwIfAborted(); if (!String(error).toLowerCase().includes('already exists')) throw error; }
     }
     this.prepared.add(name);
   }
@@ -158,7 +162,7 @@ export class QdrantVectorRepository implements VectorRepository {
     if (request.vector.length !== this.config.dimension || request.vector.some(value => !Number.isFinite(value))) throw new TypeError('Query vector has the wrong dimension or a non-finite component');
     if (!request.scopeIds.length) return [];
     const collection = this.collection(request.generation, request.embeddingFingerprint);
-    await this.ensureCollection(collection);
+    await this.ensureCollection(collection, request.deadline);
     const must: any[] = [
       { key: 'owner_id', match: { value: request.ownerId } }, { key: 'scope_id', match: { any: request.scopeIds } },
       { key: 'embedding_fingerprint', match: { value: request.embeddingFingerprint } }, { key: 'generation', match: { value: request.generation } },
@@ -199,9 +203,9 @@ export class QdrantVectorRepository implements VectorRepository {
     return (response.result?.collections ?? []).map((entry: any) => String(entry.name)).filter((name: string) => name.startsWith(`${this.prefix}_`));
   }
 
-  async health(): Promise<BackendHealth> {
+  async health(signal?: AbortSignal): Promise<BackendHealth> {
     try {
-      const response = await this.request('/');
+      const response = await this.request('/', {}, signal);
       return { ok: true, detail: 'connected', version: String(response.version ?? response.result?.version ?? '') || undefined };
     } catch (error) { return { ok: false, detail: error instanceof Error ? error.message : 'connection failed' }; }
   }
