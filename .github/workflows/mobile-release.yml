@@ -24,6 +24,7 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
+          cmdline-tools-version: '16111833'
           packages: platform-tools
       - run: sdkmanager 'build-tools;36.0.0'
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
