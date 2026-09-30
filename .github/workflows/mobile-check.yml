@@ -41,6 +41,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
       - run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
       - run: ./gradlew --no-daemon :core:protocol:test :core:data:testDebugUnitTest :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
       - run: ./gradlew --no-daemon --no-configuration-cache -I ../../tools/mobile-sbom.gradle :app:mobileSbom
