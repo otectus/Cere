@@ -429,7 +429,7 @@ Item {
     // The same tools as the row below the composer, for pages too short to show it.
     CMenu {
         id:toolsMenu;objectName:"conversationToolsMenu"
-                CMenuItem { objectName:"menuModelOptions";text:"Model";visible:App.session.mode==="managed";enabled:!chat.busy&&App.connected;onTriggered:modelOptions.open() }
+        CMenuItem { objectName:"menuModelOptions";text:"Model";visible:App.session.mode==="managed";enabled:!chat.busy&&App.connected;onTriggered:modelOptions.open() }
         CMenuItem { objectName:"menuHandoff";text:"Handoff";onTriggered:handoffDialog.open() }
         CMenuItem { objectName:"menuInbox";text:"Inbox · "+(App.state.completions||[]).length;onTriggered:inbox.open() }
         CMenuItem { objectName:"menuMemoryReview";text:"Memory review";onTriggered:memoryReview.open() }

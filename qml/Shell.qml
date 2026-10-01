@@ -7,7 +7,8 @@ Rectangle {
     property int page: 0
     readonly property var tabs:[{label:"Chat",icon:"chat",page:0},{label:"Sessions",icon:"sessions",page:1},{label:"Projects",icon:"projects",page:4},{label:"Desktop",icon:"desktop",page:2},{label:"Settings",icon:"settings",page:3}]
     property real pageOffset: 0
-    readonly property bool animateNavigation: !expanded && !settings.reducedMotion && !settings.quiet
+    // Reduced motion, quiet mode and zero intensity keep page changes instant (Theme.duration is then 0).
+    readonly property bool animateNavigation: !expanded && Theme.duration(180) > 0
     onPageChanged: { pageSlide.stop();pageOffset=0;syncApprovals() }
     onAnimateNavigationChanged: if(!animateNavigation){pageSlide.stop();pageOffset=0}
     function openConversation() {
@@ -30,7 +31,7 @@ Rectangle {
         else if(target===4)Qt.callLater(()=>projectsPage.focusSearch())
     }
     function openFolder(id) { page=1;Qt.callLater(()=>sessionsPage.selectFolder(id)) }
-    NumberAnimation { id:pageSlide;target:shell;property:"pageOffset";to:0;duration:180;easing.type:Easing.OutCubic }
+    NumberAnimation { id:pageSlide;target:shell;property:"pageOffset";to:0;duration:Theme.duration(180);easing.type:Easing.OutCubic }
     property var settings: App.state.settings || ({})
     property var sessions: App.state.sessions || []
     property var approvals: App.state.approvals || []
