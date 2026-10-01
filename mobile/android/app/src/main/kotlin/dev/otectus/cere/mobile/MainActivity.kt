@@ -225,19 +225,21 @@ private fun AppShell(repository: CereRepository, state: MobileState, activity: F
 @Composable
 private fun SessionsScreen(repository: CereRepository, state: MobileState, select: (String) -> Unit, activity: FragmentActivity) {
     var query by remember { mutableStateOf("") }
+    var showArchived by rememberSaveable { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }; var transferSource by remember { mutableStateOf<Session?>(null) }
-    val sessions = state.sessions.filter { query.isBlank() || listOf(it.title, it.project.orEmpty(), it.provider).any { value -> value.contains(query, true) } }.sortedWith(compareBy<Session> { it.status != "waiting" }.thenByDescending { it.updated })
+    val sessions = state.sessions.filter { it.archived == showArchived && (query.isBlank() || listOf(it.title, it.project.orEmpty(), it.provider, it.folderName.orEmpty()).any { value -> value.contains(query, true) }) }.sortedWith(compareBy<Session> { it.status != "waiting" }.thenByDescending { it.pinned }.thenByDescending { it.updated })
     Box(Modifier.fillMaxSize()) {
       Column(Modifier.fillMaxSize()) {
         OutlinedTextField(query, { query = it }, leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Search sessions") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(16.dp))
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilterChip(!showArchived, { showArchived = false }, { Text("Conversations") }); FilterChip(showArchived, { showArchived = true }, { Text("Archived") }) }
         if (state.supports("sessions.history") && state.supports("sessions.import")) OutlinedButton({ showHistory = true }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Import desktop history") }
         if (sessions.isEmpty()) EmptyState(Icons.Default.List, if (state.connection is ConnectionState.Online) "No sessions in your approved scope" else "No cached sessions", "Create or connect to the desktop to begin.")
         else LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(sessions, key = { it.id }) { session -> ElevatedCard(onClick = { select(session.id) }, modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     ProviderMark(session.provider)
-                    Column(Modifier.padding(start = 14.dp).weight(1f)) { Text(session.title, fontWeight = FontWeight.SemiBold); Text(listOfNotNull(session.project?.substringAfterLast('/'), session.model).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Column(Modifier.padding(start = 14.dp).weight(1f)) { Text(session.title, fontWeight = FontWeight.SemiBold); if (session.pinned || session.unread || !session.folderName.isNullOrBlank()) Text(listOfNotNull(if (session.pinned) "Pinned" else null, if (session.unread) "Unread" else null, session.folderName).joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary); Text(listOfNotNull(session.project?.substringAfterLast('/'), session.model).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     Column(horizontalAlignment = Alignment.End) { StatusPill(sessionDisplayStatus(session, state.approvals.count { it.sessionId == session.id })); if (state.supports("sessions.handoffPreview") && state.supports("sessions.handoffCreate")) IconButton({ transferSource = session }) { Icon(Icons.Default.Share, "Hand off session") } }
                 }
             } }
@@ -346,16 +348,21 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
     val scope = rememberCoroutineScope(); val storedDraft = state.draft(session); var draft by rememberSaveable(session.id) { mutableStateOf(storedDraft.text) }; var activityOpen by rememberSaveable(session.id) { mutableStateOf(false) }; var error by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
     var activityLoading by remember(session.id) { mutableStateOf(false) }; var activityError by remember(session.id) { mutableStateOf<String?>(null) }; var activityRefresh by remember(session.id) { mutableIntStateOf(0) }
     var reviewOpen by rememberSaveable(session.id) { mutableStateOf(false) }; var sending by remember(session.id) { mutableStateOf(false) }; var loadingOlder by remember(session.id) { mutableStateOf(false) }
+    var attachmentReviewId by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
+    var showConversationSettings by rememberSaveable(session.id) { mutableStateOf(false) }
+    var webSearch by rememberSaveable(session.id) { mutableStateOf(false) }
+    val canSearchWeb = state.canSearchWeb(session)
+    LaunchedEffect(canSearchWeb) { if (!canSearchWeb) webSearch = false }
     val attachments = state.attachments.filter { it.sessionId == session.id }
     val activeAgents = session.agents.filter(Agent::isActive)
     val waitingApprovals = state.approvals.filter { it.sessionId == session.id }
     val busy = session.status in setOf("starting", "working", "waiting", "stopping") || activeAgents.isNotEmpty() || waitingApprovals.isNotEmpty()
-    val attachmentsReady = attachments.all { it.remoteAttachmentId != null && it.remoteStatus == "ready" }
-    val canCompose = session.canSend && session.mode == "managed" && session.draftIncluded && !busy && !sending && attachmentsReady && state.supports("sessions.send") && state.pendingCommands.none { it.sessionId == session.id && it.method == "sessions.send" }
-    fun imported(uri: android.net.Uri?) { if (uri != null) scope.launch { runCatching { repository.importImage(session.id, uri) }.onFailure { error = it.message } } }
+    val attachmentsReady = attachments.all { it.reviewedAt != null && it.remoteAttachmentId != null && it.remoteStatus == "ready" }
+    val canCompose = session.draftAttachmentCount == 0 && session.canSend && session.mode == "managed" && session.draftIncluded && !busy && !sending && attachmentsReady && state.supports("sessions.send") && state.pendingCommands.none { it.sessionId == session.id && it.method == "sessions.send" }
+    fun imported(uri: android.net.Uri?) { if (uri != null) scope.launch { runCatching { repository.importImage(session.id, uri) }.onSuccess { attachmentReviewId = it.id }.onFailure { error = it.message } } }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia(), ::imported)
     val files = rememberLauncherForActivityResult(ActivityResultContracts.GetContent(), ::imported)
-    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap -> if (bitmap != null) scope.launch { runCatching { repository.importCameraImage(session.id, bitmap) }.onFailure { error = it.message } } }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap -> if (bitmap != null) scope.launch { runCatching { repository.importCameraImage(session.id, bitmap) }.onSuccess { attachmentReviewId = it.id }.onFailure { error = it.message } } }
     fun finishUpload(local: LocalAttachment, initial: JsonObject?) { scope.launch { runCatching {
         val uploaded = repository.uploadAttachment(local.id, initial); val attachmentId = uploaded.getValue("attachmentId").jsonPrimitive.content
         val commit = repository.prepareAction("attachments.commit", buildJsonObject { put("attachmentId", attachmentId) })
@@ -378,7 +385,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         }
     }
     LaunchedEffect(draft, sending) {
-        if (sending || !session.draftIncluded || session.mode != "managed") return@LaunchedEffect
+        if (sending || session.draftAttachmentCount != 0 || !session.draftIncluded || session.mode != "managed") return@LaunchedEffect
         try {
             repository.saveLocalDraft(session.id, draft)
             delay(700)
@@ -397,6 +404,8 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         session.mode == "linked" -> "Linked terminal session · continue on the PC"
         !session.canSend -> "Sending is unavailable for this session. Check provider access on your PC."
         !session.draftIncluded -> "Loading desktop draft…"
+        session.draftAttachmentCount == null -> "Restart the updated Cere broker on your PC to sync desktop attachments. Your draft stays on this phone."
+        (session.draftAttachmentCount ?: 0) > 0 -> "${session.draftAttachmentCount} attachment(s) are in this desktop draft. Review and send or remove them on the PC first."
         storedDraft.conflict -> "Resolve the draft conflict before sending."
         sending -> "Sending your message…"
         !attachmentsReady -> "Upload or remove the images before sending."
@@ -418,7 +427,8 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                 activeAgents.size == 1 -> "1 subagent is working…"
                 activeAgents.size > 1 -> "${activeAgents.size} subagents are working…"
                 else -> null
-            }) { message -> MessageBubble(repository, state, message) }
+            }, sessionId = session.id, restoredPosition = state.scrollPositions[session.id],
+                onPositionChanged = repository::recordScrollPosition) { message -> MessageBubble(repository, state, message) }
         }
         if (waitingApprovals.isNotEmpty()) {
             TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text("${waitingApprovals.size} request(s) need your input · Review") }
@@ -429,20 +439,22 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         } }
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton({ activityOpen = true }, enabled = state.supports("activity.list") || activityItems.isNotEmpty() || session.agents.isNotEmpty()) { Icon(Icons.Default.List, null); Text(buildList { add("Activity"); if (activeAgents.isNotEmpty()) add("${activeAgents.size} agent${if (activeAgents.size == 1) "" else "s"} active"); else if (activityItems.isNotEmpty()) add(activityItems.size.toString()) }.joinToString(" · ")) }
+            if (!busy) TextButton({ showConversationSettings = true }) { Text("Conversation settings") }
             if (busy) OutlinedButton(onClick = { scope.launch { runCatching { repository.mutate("sessions.stop", buildJsonObject { put("sessionId", session.id) }) }.onFailure { error = it.message } } }, enabled = state.supports("sessions.stop") && session.status != "stopping") { Icon(Icons.Default.Clear, null); Text(if (session.status == "stopping") "Stopping…" else "Stop") }
         }
-        if (attachments.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(attachments, key = { it.id }) { attachment -> Surface(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(8.dp)) { Column(Modifier.widthIn(min = 150.dp).padding(10.dp)) { Text(attachment.displayName, style = MaterialTheme.typography.labelLarge); Text("${attachment.width}×${attachment.height} · ${attachment.size / 1024} KiB${if (attachment.transformed) " · private copy optimized" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Row { if (attachment.remoteStatus != "ready") TextButton({ upload(attachment) }, enabled = state.supports("attachments.begin") && state.supports("attachments.commit")) { Text(if (attachment.committedOffset > 0) "Resume" else "Upload") } else Text("Ready", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(12.dp)); IconButton({ remove(attachment) }) { Icon(Icons.Default.Delete, "Remove image") } } } } } }
-        if (state.supports("attachments.begin") && attachments.size < 4) Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) { TextButton({ picker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text("Photos") }; TextButton({ files.launch("image/*") }) { Text("Files") }; TextButton({ camera.launch(null) }) { Text("Camera") } }
+        if (attachments.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(attachments, key = { it.id }) { attachment -> Surface(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(8.dp)) { Column(Modifier.widthIn(min = 150.dp).padding(10.dp)) { Text(attachment.displayName, style = MaterialTheme.typography.labelLarge); Text("${attachment.width}×${attachment.height} · ${attachment.size / 1024} KiB${if (attachment.transformed) " · private copy optimized" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Row { if (attachment.reviewedAt == null) TextButton({ attachmentReviewId = attachment.id }) { Text("Review") } else if (attachment.remoteStatus != "ready") TextButton({ upload(attachment) }, enabled = state.supports("attachments.begin") && state.supports("attachments.commit")) { Text(if (attachment.committedOffset > 0) "Resume" else "Upload") } else Text("Ready", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(12.dp)); IconButton({ remove(attachment) }) { Icon(Icons.Default.Delete, "Remove image") } } } } } }
+        if (state.supports("attachments.begin") && attachments.size < 4) FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) { TextButton({ picker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text("Photo") }; TextButton({ files.launch("image/*") }) { Text("Screenshot or file") }; TextButton({ camera.launch(null) }) { Text("Camera") } }
+        if (canSearchWeb) FilterChip(webSearch, { webSearch = !webSearch }, { Text("Search the web") }, enabled = !sending && !busy, modifier = Modifier.padding(horizontal = 12.dp))
         sendHint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp)) }
         if (unknownSend != null) TextButton({ reviewingOutcome = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Review uncertain send") }
-        OutlinedTextField(draft, { if (it.length <= 100_000) { draft = it; repository.editDraft(session.id, it) } }, enabled = session.mode == "managed" && session.draftIncluded && !sending,
+        OutlinedTextField(draft, { if (it.length <= 100_000) { draft = it; repository.editDraft(session.id, it) } }, enabled = session.mode == "managed" && session.draftIncluded && (session.draftAttachmentCount ?: 0) == 0 && !sending,
             placeholder = { Text("Message Cere") }, minLines = 1, maxLines = 6, modifier = Modifier.fillMaxWidth().padding(12.dp), trailingIcon = {
                 IconButton(onClick = {
                     val sentText = draft; val sentAttachments = attachments.map { it.id }.toSet()
                     sending = true; error = null
                     scope.launch {
                         try {
-                            val action = repository.prepareSend(session.id, sentText)
+                            val action = repository.prepareSend(session.id, sentText, webSearch = webSearch)
                             repository.completeAction(action, repository.signAuthenticated(action))
                             repository.clearAcceptedDraft(session.id, sentText, sentAttachments)
                             if (draft == sentText) draft = ""
@@ -458,6 +470,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                 }, enabled = draft.isNotBlank() && canCompose && !storedDraft.conflict) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
             })
     }
+    if (showConversationSettings) ConversationSettingsSheet(repository, state, session, activity) { showConversationSettings = false }
     if (activityOpen) ActivityPanel(activityItems, activityLoading, activityError, { activityRefresh++ }, { activityOpen = false },
         agents = session.agents, canOpenAgent = { agent -> state.sessions.any { it.id == agent.id } },
         onOpenAgent = { agent -> activityOpen = false; selectSession(agent.id) }) { item -> ActivityRow(repository, state, item) }
@@ -472,6 +485,33 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
             if (waitingApprovals.isEmpty()) item { Text("All requests have been answered.") }
         }
     }
+    val reviewingAttachment = attachments.firstOrNull { it.id == attachmentReviewId }
+    if (reviewingAttachment != null) AttachmentReviewDialog(repository, reviewingAttachment,
+        onKeep = { scope.launch { repository.markAttachmentReviewed(reviewingAttachment.id); attachmentReviewId = null } },
+        onRemove = { scope.launch { repository.removeAttachment(reviewingAttachment.id); attachmentReviewId = null } },
+        onDismiss = { attachmentReviewId = null })
+}
+
+@Composable
+private fun AttachmentReviewDialog(repository: CereRepository, attachment: LocalAttachment, onKeep: () -> Unit, onRemove: () -> Unit, onDismiss: () -> Unit) {
+    var bitmap by remember(attachment.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var error by remember(attachment.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(attachment.id) {
+        runCatching { val bytes = repository.attachmentPreview(attachment.id); android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("The private image copy could not be decoded") }
+            .onSuccess { bitmap = it }
+            .onFailure { error = it.message }
+    }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Review image before upload") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Only the optimized private copy shown here will be uploaded after you choose Keep and then Upload.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            bitmap?.let { Image(it.asImageBitmap(), contentDescription = "Image selected for this message", modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
+            if (bitmap == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Text("${attachment.width}×${attachment.height} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall)
+        }
+    }, confirmButton = { Button(onKeep, enabled = bitmap != null) { Text("Keep for message") } }, dismissButton = {
+        Row { TextButton(onDismiss) { Text("Review later") }; TextButton(onRemove, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove") } }
+    })
 }
 
 @Composable private fun ActivityRow(repository: CereRepository, state: MobileState, item: Message) {
@@ -760,8 +800,11 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Text("Desktop policy", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
         item { OutlinedPanel(if (paused) "Actions paused" else "${permissions["profile"]?.jsonPrimitive?.contentOrNull ?: "Scoped"} access") { Text(if (paused) "The desktop is currently blocking remote actions." else "This phone can use only the capabilities negotiated at sign-in.", color = if (paused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant); if (categories.isNotEmpty()) Text("Categories · ${categories.joinToString()}", style = MaterialTheme.typography.bodySmall); if (caps.isNotEmpty()) Text("Capabilities · ${caps.joinToString()}", style = MaterialTheme.typography.bodySmall); if (!paused && state.supports("permissions.pause")) OutlinedButton({ scope.launch { runCatching { repository.mutate("permissions.pause", buildJsonObject {}) }.onSuccess { feedback = "Desktop actions paused" }.onFailure { error = it.message } } }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Pause desktop actions") } } }
+        if (state.supports("permissions.reduce") && state.supports("devices.self")) item {
+            PermissionReductionPanel(repository, state, { feedback = it }, { error = it })
+        }
         if (state.supports("settings.get")) item { Spacer(Modifier.height(4.dp)); Text("Assistant", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
-        if (state.supports("settings.get")) item { OutlinedPanel("Defaults") { if (settingsConflict) { Text("Desktop settings changed while you were editing. Your values are preserved.", color = MaterialTheme.colorScheme.tertiary); Row { TextButton({ applySettings(remoteSettings) }) { Text("Reload desktop") }; TextButton({ baselineRevision = remoteSettings["revision"]?.jsonPrimitive?.contentOrNull ?: baselineRevision; settingsConflict = false }) { Text("Keep mine") } } }; OutlinedTextField(personality, { personality = it.take(8000); settingsDirty = true }, label = { Text("Personality") }, minLines = 3, modifier = Modifier.fillMaxWidth()); OutlinedTextField(defaultModel, { defaultModel = it.take(512); settingsDirty = true }, label = { Text("Default Ollama model") }, singleLine = true, modifier = Modifier.fillMaxWidth()); Text("Web search provider", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("auto","duckduckgo","brave","mojeek","searxng").forEach { provider -> FilterChip(searchProvider == provider, { searchProvider = provider; settingsDirty = true }, { Text(provider) }) } }; if (state.supports("settings.patch")) Button({ scope.launch { runCatching { val action = repository.prepareAction("settings.patch", buildJsonObject { put("expectedRevision", baselineRevision); put("personality", personality); put("defaultModel", defaultModel); put("searchProvider", searchProvider) }); authenticate(activity, "Update assistant settings", action, repository, { value -> applySettings(value.jsonObject); feedback = "Settings updated" }, { error = it }) }.onFailure { error = it.message } } }, enabled = !loading && !settingsConflict && settingsDirty, modifier = Modifier.fillMaxWidth()) { Text("Review & save") } else Text("This device has read-only settings access.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+        if (state.supports("settings.get")) item { OutlinedPanel("Defaults") { if (settingsConflict) { Text("Desktop settings changed while you were editing. Your values are preserved.", color = MaterialTheme.colorScheme.tertiary); Row { TextButton({ applySettings(remoteSettings) }) { Text("Reload desktop") }; TextButton({ baselineRevision = remoteSettings["revision"]?.jsonPrimitive?.contentOrNull ?: baselineRevision; settingsConflict = false }) { Text("Keep mine") } } }; OutlinedTextField(personality, { personality = it.take(8000); settingsDirty = true }, label = { Text("Personality") }, minLines = 3, modifier = Modifier.fillMaxWidth()); if (!remoteSettings["ollamaHost"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) OutlinedTextField(defaultModel, { defaultModel = it.take(512); settingsDirty = true }, label = { Text("Default Ollama model") }, singleLine = true, modifier = Modifier.fillMaxWidth()); Text("Web search provider", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("auto","duckduckgo","brave","mojeek","searxng").forEach { provider -> FilterChip(searchProvider == provider, { searchProvider = provider; settingsDirty = true }, { Text(provider) }) } }; if (state.supports("settings.patch")) Button({ scope.launch { runCatching { val action = repository.prepareAction("settings.patch", assistantSettingsPatch(remoteSettings, baselineRevision, personality, defaultModel, searchProvider)); authenticate(activity, "Update assistant settings", action, repository, { value -> applySettings(value.jsonObject); feedback = "Settings updated" }, { error = it }) }.onFailure { error = it.message } } }, enabled = !loading && !settingsConflict && settingsDirty, modifier = Modifier.fillMaxWidth()) { Text("Review & save") } else Text("This device has read-only settings access.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         if (state.supports("memory.list") || state.supports("memory.retrieve")) item { OutlinedPanel("Project memory") { Text("Browse saved facts, conversation passages, assertions, episodes, and entities for an approved Ollama session.", color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ showMemory = true }) { Icon(Icons.Default.Star, null); Spacer(Modifier.width(8.dp)); Text("Open memory") } } }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         feedback?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }; error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
@@ -785,6 +828,75 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
         item { OutlinedButton({ confirmForget = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Forget this desktop") } }
     }
     if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text("Forget desktop?") }, text = { Text("This removes the encrypted cache and both phone keys. Pairing is required again.") }, confirmButton = { Button({ scope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Forget") } }, dismissButton = { TextButton({ confirmForget = false }) { Text("Cancel") } })
+}
+
+@Composable
+private fun PermissionReductionPanel(repository: CereRepository, state: MobileState, onFeedback: (String) -> Unit, onError: (String?) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var device by remember { mutableStateOf<JsonObject?>(null) }
+    var selectedCaps by remember { mutableStateOf(setOf<String>()) }
+    var selectedCategories by remember { mutableStateOf(setOf<String>()) }
+    var selectedScripts by remember { mutableStateOf(setOf<String>()) }
+    var selectedProjects by remember { mutableStateOf(setOf<String>()) }
+    var selectedHosts by remember { mutableStateOf(setOf<String>()) }
+    var review by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
+    val pending = state.pendingCommands.any { it.method == "permissions.reduce" }
+    val scopeVersion = device?.get("scopeVersion")?.jsonPrimitive?.contentOrNull
+    fun strings(key: String) = device?.get(key)?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
+    val caps = strings("caps"); val categories = strings("categories"); val scripts = strings("scriptIds"); val hosts = strings("ollamaHosts")
+    val projects = device?.get("projects")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }
+    LaunchedEffect(state.connection is ConnectionState.Online, pending) {
+        if (!state.supports("devices.self")) return@LaunchedEffect
+        loading = true
+        runCatching { repository.request("devices.self", buildJsonObject {}).jsonObject }
+            .onSuccess { value ->
+                device = value
+                selectedCaps = value["caps"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }.toSet()
+                selectedCategories = value["categories"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }.toSet()
+                selectedScripts = value["scriptIds"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }.toSet()
+                selectedProjects = value["projects"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.contentOrNull }.toSet()
+                selectedHosts = value["ollamaHosts"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }.toSet()
+            }.onFailure { onError(it.message) }
+        loading = false
+    }
+    val removedCaps = caps.filterNot { it in selectedCaps }; val removedCategories = categories.filterNot { it in selectedCategories }
+    val removedScripts = scripts.filterNot { it in selectedScripts }; val removedHosts = hosts.filterNot { it in selectedHosts }
+    val removedProjects = projects.filter { it["id"]?.jsonPrimitive?.contentOrNull !in selectedProjects }
+    val changed = removedCaps.isNotEmpty() || removedCategories.isNotEmpty() || removedScripts.isNotEmpty() || removedProjects.isNotEmpty() || removedHosts.isNotEmpty()
+    OutlinedPanel("Reduce this phone's access") {
+        Text("You can remove existing device and project grants here. Adding access still requires the desktop.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        fun toggle(value: String, values: Set<String>, update: (Set<String>) -> Unit) = update(if (value in values) values - value else values + value)
+        if (projects.isNotEmpty()) { Text("Projects", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { projects.forEach { project -> val id = project["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach; val name = project["name"]?.jsonPrimitive?.contentOrNull ?: project["path"]?.jsonPrimitive?.contentOrNull ?: id; FilterChip(id in selectedProjects, { toggle(id, selectedProjects) { selectedProjects = it } }, { Text(name) }, enabled = !pending) } } }
+        if (categories.isNotEmpty()) { Text("Action categories", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { categories.forEach { value -> FilterChip(value in selectedCategories, { toggle(value, selectedCategories) { selectedCategories = it } }, { Text(value) }, enabled = !pending) } } }
+        if (caps.isNotEmpty()) { Text("Capabilities", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { caps.forEach { value -> FilterChip(value in selectedCaps, { toggle(value, selectedCaps) { selectedCaps = it } }, { Text(value) }, enabled = !pending) } } }
+        if (scripts.isNotEmpty()) { Text("Scripts", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { scripts.forEach { value -> FilterChip(value in selectedScripts, { toggle(value, selectedScripts) { selectedScripts = it } }, { Text(value) }, enabled = !pending) } } }
+        if (hosts.isNotEmpty()) { Text("Ollama hosts", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { hosts.forEach { value -> FilterChip(value in selectedHosts, { toggle(value, selectedHosts) { selectedHosts = it } }, { Text(value) }, enabled = !pending) } } }
+        if (pending) Text("Waiting for the desktop to confirm the access reduction after reconnect…", color = MaterialTheme.colorScheme.tertiary)
+        Button({ review = true }, enabled = changed && scopeVersion != null && !pending && !loading) { Text("Review reduced access") }
+    }
+    if (review && scopeVersion != null) AlertDialog(onDismissRequest = { review = false }, title = { Text("Remove these grants?") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("This only removes access. Active remote work is stopped and this phone reconnects with the new scope.")
+            removedProjects.forEach { Text("Project · ${it["name"]?.jsonPrimitive?.contentOrNull ?: it["path"]?.jsonPrimitive?.contentOrNull ?: it["id"]?.jsonPrimitive?.contentOrNull}") }
+            removedCategories.forEach { Text("Category · $it") }; removedCaps.forEach { Text("Capability · $it") }
+            removedScripts.forEach { Text("Script · $it") }; removedHosts.forEach { Text("Ollama host · $it") }
+        }
+    }, confirmButton = { Button({
+        review = false
+        val params = buildJsonObject {
+            put("expectedScopeVersion", scopeVersion)
+            put("caps", JsonArray(selectedCaps.sorted().map(::JsonPrimitive)))
+            put("categories", JsonArray(selectedCategories.sorted().map(::JsonPrimitive)))
+            put("scriptIds", JsonArray(selectedScripts.sorted().map(::JsonPrimitive)))
+            put("projectIds", JsonArray(selectedProjects.sorted().map(::JsonPrimitive)))
+            put("ollamaHosts", JsonArray(selectedHosts.sorted().map(::JsonPrimitive)))
+        }
+        scope.launch { runCatching { repository.mutate("permissions.reduce", params) }
+            .onSuccess { onFeedback("Access reduced. Reconnecting with the new grants…") }
+            .onFailure { failure -> if (failure is CommandPendingException) onFeedback("Access reduction is pending desktop reconciliation…") else onError(failure.message) } }
+    }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Reduce access & reconnect") } }, dismissButton = { TextButton({ review = false }) { Text("Cancel") } })
 }
 
 @Composable private fun MemoryRow(row: JsonObject, manage: (() -> Unit)? = null) { OutlinedPanel(row["text"]?.jsonPrimitive?.contentOrNull ?: row["name"]?.jsonPrimitive?.contentOrNull ?: "Memory record") { val detail = listOfNotNull(row["kind"]?.jsonPrimitive?.contentOrNull, row["status"]?.jsonPrimitive?.contentOrNull, row["state"]?.jsonPrimitive?.contentOrNull, row["updated"]?.jsonPrimitive?.contentOrNull).joinToString(" · "); if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); val remaining = JsonObject(row.filterKeys { it !in setOf("id","text","name","kind","status","state","updated","revision") }); if (remaining.isNotEmpty()) StructuredObject(remaining); manage?.let { OutlinedButton(it) { Text("Inspect or forget") } } } }

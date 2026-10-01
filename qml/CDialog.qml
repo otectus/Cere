@@ -4,13 +4,19 @@ import QtQuick.Layouts
 Popup {
     id: dialog
     default property alias body: bodyColumn.data
+    property Component footerContent:null
+    readonly property real footerHeight:footerLoader.item?footerLoader.item.implicitHeight+14:0
     parent: Overlay.overlay
     anchors.centerIn: parent
     width: Math.min(520, parent ? parent.width-32 : 520)
-    implicitHeight: Math.min(bodyColumn.implicitHeight+48, parent ? parent.height-32 : 720)
+    implicitHeight: Math.min(bodyColumn.implicitHeight+48+footerHeight, parent ? parent.height-32 : 720)
     modal: true; dim: true; focus: true; padding: 24; margins: 16
+    bottomPadding:24+footerHeight
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    background: Rectangle { color: Theme.surface; radius: 16; border.color: "#36536a" }
+    background: Rectangle {
+        color: Theme.surface; radius: 16; border.color: "#36536a"
+        Loader { id:footerLoader;anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;anchors.margins:24;sourceComponent:dialog.footerContent }
+    }
     Overlay.modal: Rectangle { color: "#b304090f" }
     contentItem: ScrollView {
         id: viewport

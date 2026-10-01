@@ -23,7 +23,9 @@ await copy(amy.model, join(voicesDir, defaultVoice + '.onnx'));
 await copy(amy.config, join(voicesDir, defaultVoice + '.onnx.json'));
 const bundle = dirname(dirname(amy.model));
 for (const [source, target] of [['voices/MODEL_CARD', defaultVoice + '.MODEL_CARD'], ['NOTICES.md', defaultVoice + '.NOTICES.md'], ['licenses/MIMIC3-CC-BY-SA-4.0.txt', 'MIMIC3-CC-BY-SA-4.0.txt']] as const) await copy(join(bundle, source), join(voicesDir, target));
-const voices = await listVoices(overrideVoices ? [voicesDir] : voiceDirectories());
+// This Speech Dispatcher module invokes the Piper-only tts-synth wrapper.
+// Kokoro is played by its separate broker backend and must not be registered here.
+const voices = await listVoices(overrideVoices ? [voicesDir] : voiceDirectories(), null);
 if (!voices.some(v => v.id === defaultVoice)) throw new Error('Amy voice pair is incomplete');
 const shellQuote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
 const confQuote = (text: string) => '"' + text.replaceAll('\\', '\\\\').replaceAll('"', '\\"') + '"';

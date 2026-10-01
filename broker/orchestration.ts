@@ -33,7 +33,7 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
   const permitted = () => {
     signal.throwIfAborted();
     const parent = core.store.session(parentId);
-    if (parent.provider !== 'ollama' || !parent.ollama?.tools || !categoryEnabled(core.settingsFor(parentId), 'providers') || (parent.remote && !parent.remote.caps.includes('providers.execute'))) throw new Error('Provider orchestration is disabled in Cere settings');
+    if (!(parent.ollama?.tools || parent.api?.tools) || !categoryEnabled(core.settingsFor(parentId), 'providers') || (parent.remote && !parent.remote.caps.includes('providers.execute'))) throw new Error('Provider orchestration is disabled in Cere settings');
     return parent;
   };
   const parent = permitted();
@@ -73,6 +73,7 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
     child = core.updateSession(child.id, { parentId, remote:parent.remote ? structuredClone(parent.remote) : undefined, effectivePolicy:parent.remote ? 'unknown' : undefined });
   }
   permitted();
+  if(!parent.remote)await core.power.attachChild(parent.id,child.id);
   if (parent.remote && child.remote?.deviceId !== parent.remote.deviceId) {
     await core.disconnect(child.id);
     child = core.updateSession(child.id,{remote:structuredClone(parent.remote),effectivePolicy:'unknown'});

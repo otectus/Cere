@@ -28,6 +28,7 @@ data class LocalAttachment(
     val uploadId: String? = null,
     val committedOffset: Int = 0,
     val remoteStatus: String = "local",
+    val reviewedAt: Long? = null,
 )
 
 internal suspend fun decodePrivateImage(context: Context, sessionId: String, uri: Uri): Pair<LocalAttachment, ByteArray> = withContext(Dispatchers.IO) {

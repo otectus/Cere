@@ -1791,8 +1791,11 @@ export class Canonical {
     return { rows: result.rows, total: result.total, offset };
   }
   inspect(p: Row) {
-    strict(p, ["scope_id", "id", "known_revision", "world_at_us"]);
+    strict(p, ["scope_id", "id", "known_revision", "world_at_us", "model_route"]);
     this.scope(p.scope_id);
+    const route=p.model_route||"local";
+    if(route==="cloud"&&!this.policy.allow_cloud_memory)
+      fail("POLICY_DENIED","Cloud memory access requires explicit permission");
     if (
       this.one("SELECT target_id FROM tombstones WHERE target_id=?", p.id)
         .target_id
@@ -1865,6 +1868,22 @@ export class Canonical {
     if (!record.id && !record.version_id)
       fail("NOT_FOUND", "Memory record is not available in this scope");
     const ids = this.descendants([p.id]);
+    const evidence = record.version_id
+      ? this.support(record.version_id)
+      : this.all(
+          "SELECT * FROM evidence WHERE observation_id=? AND erased=0",
+          p.id,
+        );
+    if(route==="cloud") {
+      const linked=this.all(
+        "SELECT p.sensitivity FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE (a.id=? OR a.record_id=?) AND a.invalidated=0 AND p.erased=0",
+        p.id,p.id,
+      );
+      const sensitivities=[record,...history,...history.flatMap((v:Row)=>v.evidence||[]),...evidence,...linked]
+        .map((value:Row)=>value.sensitivity).filter(Boolean);
+      if(!sensitivities.length||sensitivities.includes("local_only"))
+        fail("POLICY_DENIED","This memory record is not eligible for a cloud consumer");
+    }
     return {
       record,
       history,
@@ -1873,12 +1892,7 @@ export class Canonical {
         p.id,
         p.id,
       ),
-      evidence: record.version_id
-        ? this.support(record.version_id)
-        : this.all(
-            "SELECT * FROM evidence WHERE observation_id=? AND erased=0",
-            p.id,
-          ),
+      evidence,
       events: record.thread_id
         ? this.all(
             "SELECT e.id,e.kind,e.actor,e.occurred_us,e.stream_sequence FROM events e JOIN episode_events m ON m.event_id=e.id WHERE m.episode_id=? AND e.erased=0 ORDER BY m.ordering",
@@ -3083,7 +3097,7 @@ export class Canonical {
     ).n;
     if (p.dry_run) return { backend: p.backend, records: count, dry_run: true };
     return this.tx((r) => {
-      const generation = String(r);
+      const generation = `${r}-${uuid()}`;
       this.insert("projection_state", {
         backend: p.backend,
         generation,
@@ -3177,7 +3191,9 @@ export class Canonical {
     const output = resolve(safeText(p.output, 4096));
     if (existsSync(output))
       fail("INVALID_ARGUMENT", "Backup output already exists");
-    await backup(this.db, output);
+    // Keep snapshot creation in the serialized worker. Consecutive asynchronous
+    // SQLite backups can stall worker promise delivery on supported Node versions.
+    this.db.prepare("VACUUM INTO ?").run(output);
     chmodSync(output, 0o600);
     const manifest = {
       schema_version: 1,

@@ -63,7 +63,7 @@ test('typed optional elicitation fields validate without inventing omitted answe
 });
 
 test('Claude AskUserQuestion round-trips multi-select and free text even under bypass',async t => {
-  const {core,session}=await setup(t,'claude');core.tokens.set('test-token',session.id);await core.updateSettings({bypassCliPermissions:true});
+  const {core,session}=await setup(t,'claude');core.updateSession(session.id,{status:'idle'});await core.power.start({sessionIds:[session.id],minutes:5,cli:true,computer:false});core.tokens.set('test-token',session.id);
   const questions=[{question:'Which checks?',header:'Checks',multiSelect:true,options:[{label:'Build',description:'Compile'},{label:'Tests',description:'Exercise behavior'}]},{question:'Additional context?',header:'Context',options:[]}];
   const pending=core.rpc('mcp.call',{token:'test-token',name:'approve',args:{tool_name:'AskUserQuestion',input:{questions}}});
   const request=core.snapshot().approvals[0];assert.equal(request.kind,'question');assert.equal(request.questions![0].multiSelect,true);

@@ -4,6 +4,7 @@ import type { Session, Settings } from './types.ts';
 export type RemoteExecution = {
   deviceId: string; projectId: string; scopeVersion: string; expiresAt: number;
   caps: string[]; categories: string[]; scriptIds: string[];
+  memoryHosts?: string[];
 };
 export function ordinarySettings(settings: Settings, execution?: RemoteExecution): Settings {
   if (!execution) return settings;

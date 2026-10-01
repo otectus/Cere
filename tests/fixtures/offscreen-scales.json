@@ -1,0 +1,11 @@
+{
+  "synchronousWindowSystemEvents": false,
+  "windowFrameMargins": false,
+  "screens": [
+    { "name": "Scale100", "x": 0, "y": 0, "width": 1920, "height": 1080, "logicalDpi": 96, "logicalBaseDpi": 96, "dpr": 1 },
+    { "name": "Scale125", "x": 1920, "y": 0, "width": 1920, "height": 1080, "logicalDpi": 120, "logicalBaseDpi": 96, "dpr": 1.25 },
+    { "name": "Scale150", "x": 3840, "y": 0, "width": 1920, "height": 1080, "logicalDpi": 144, "logicalBaseDpi": 96, "dpr": 1.5 },
+    { "name": "Scale200", "x": 5760, "y": 0, "width": 2560, "height": 1440, "logicalDpi": 192, "logicalBaseDpi": 96, "dpr": 2 },
+    { "name": "Short150", "x": 0, "y": 1080, "width": 1366, "height": 768, "logicalDpi": 144, "logicalBaseDpi": 96, "dpr": 1.5 }
+  ]
+}

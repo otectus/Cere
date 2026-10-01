@@ -11,15 +11,8 @@ Rectangle {
     border.color: "#2a4356"
     property bool playing: false
     property int step: 0
-    property var program: [
-        {motion:"idle", ms:6500, caption:"A moment to herself"},
-        {motion:"wave", ms:3400, caption:"Oh, there you are"},
-        {motion:"glassesAdjust", ms:3400, caption:"One tiny adjustment"},
-        {motion:"thinking", ms:4200, caption:"Give her a moment…"},
-        {motion:"speaking", ms:4200, caption:"She has a few thoughts"},
-        {motion:"hairTuck", ms:3300, caption:"That lock of hair again"},
-        {motion:"idle", ms:4000, caption:"Right here with you"}
-    ]
+    property var program: ((App.animations.idleProfiles || {})[preferences.idleEnergy || App.animations.defaultIdleProfile] || {}).preview || []
+    onProgramChanged: { playing = false; step = 0 }
     readonly property var preferences: App.state.settings || ({})
     readonly property bool allowed: !preferences.quiet && !preferences.reducedMotion && preferences.motionIntensity !== 0
     onAllowedChanged: if (!allowed) playing = false

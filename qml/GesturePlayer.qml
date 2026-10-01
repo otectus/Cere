@@ -31,6 +31,15 @@ Item {
     property bool ready: false
     property int renderedFrames: 0
     readonly property bool animating: frames.running
+    property string idleEnergy: settings.idleEnergy || App.animations.defaultIdleProfile
+    property string bodyMood: followAppMotion ? App.bodyMood : "neutral"
+    // Touch the singleton even when every conversation panel is closed.
+    readonly property var sharedMood: followAppMotion ? ConversationMood.forSession(App.moodSession) : null
+    function configureLife() {
+        if (ready) Motion.configure(clock, idleEnergy, bodyMood)
+    }
+    onIdleEnergyChanged: configureLife()
+    onBodyMoodChanged: configureLife()
     // Kept as a readable signal for UI diagnostics; rendering uses the rig itself.
     readonly property real breath: rig.breath || 0
 
@@ -45,6 +54,7 @@ Item {
         blinking = false
         sequence = (App.animations.clips || {})[motion] || {keys:[{pose:0,ms:1000}],loop:true}
         Motion.select(clock, sequence, App.animations, motion)
+        configureLife()
         advance(0)
     }
     function advance(seconds) {
@@ -111,6 +121,7 @@ Item {
         anchors.topMargin: 3; anchors.rightMargin: Math.max(4,parent.width * .07)
         unit: Math.max(.8,Math.min(1.5,player.width/192))
         snapshot: App.state
+        sharedMoods: player.followAppMotion ? App.conversationMoods : null
         connected: App.connected
         live: player.followAppMotion
         motion: player.motion

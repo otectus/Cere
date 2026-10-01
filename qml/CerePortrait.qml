@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
-import "PortraitMood.js" as Mood
 import "PortraitState.js" as State
 
 Rectangle {
@@ -23,6 +22,9 @@ Rectangle {
     property var speech: ({})
     property bool connected: true
     property bool listening: false
+    property bool speechMuted: false
+    property string actionText: speechMuted ? "Unmute speech" : "Mute speech"
+    signal activated()
     property url assetRoot: Qt.resolvedUrl("../assets/")
     readonly property string sessionId: session.id || ""
     readonly property real intensity: settings.motionIntensity === undefined ? .7 : Math.max(0, Math.min(1, settings.motionIntensity))
@@ -40,14 +42,20 @@ Rectangle {
     readonly property var frames: ({neutral:0, curious:1, thinking:2, happy:3, cheeky:4, skeptical:5,
         tender:6, concerned:7, surprised:8, focused:9, sleepy:10})
     readonly property int face: blinking ? 11 : (frames[expression] || 0)
-    property string mood: "neutral"
-    property real moodConfidence: 0
-    property string pendingMood: ""
-    property double pendingSince: 0
-    property string observedSignature: ""
-    property string liveMessageId: ""
-    property double liveMessageTime: 0
+    // Production supplies the host's shared source. Standalone previews/tests
+    // instantiate the same source component with explicit inputs.
+    property var moodSource: null
+    property var moodConfig: ({})
+    property string mood: moodSource ? moodSource.mood : localMood.item ? localMood.item.mood : "neutral"
+    readonly property real moodConfidence: moodSource ? moodSource.moodConfidence : localMood.item ? localMood.item.moodConfidence : 0
     property bool ready: false
+    Loader {
+        id: localMood; active: !portrait.moodSource
+        sourceComponent: MoodSource {
+            settings: portrait.settings; session: portrait.session; messages: portrait.messages
+            config: portrait.moodConfig; active: portrait.exposed && !!config.refreshMs
+        }
+    }
     property bool greeting: false
     property bool blinking: false
     property real phase: 0
@@ -60,45 +68,9 @@ Rectangle {
     property int loadedFaces: 0
     readonly property bool artworkReady: loadedFaces === 12
 
-    function scheduleMood() { if (ready && exposed && !moodDebounce.running) moodDebounce.start() }
-    function resetMood() {
-        mood = "neutral"; moodConfidence = 0; pendingMood = ""; pendingSince = 0
-        observedSignature = ""; liveMessageId = ""; liveMessageTime = 0
-        greeting = false; greetingTimer.stop()
-        scheduleMood()
-    }
-    function refreshMood() {
-        if (!cuesEnabled || !sessionId) { mood = "neutral"; moodConfidence = 0; return }
-        var now = Date.now(), sample = messages.slice(-32), newest = null
-        for (var i = sample.length - 1; i >= 0; --i) {
-            if (sample[i].sessionId !== sessionId) continue
-            if (sample[i].role === "user") break
-            if (sample[i].role === "assistant" && (!sample[i].kind || sample[i].kind === "text")) { newest = sample[i]; break }
-        }
-        if (newest) {
-            var signature = newest.id + ":" + newest.text.length + ":" + newest.text.slice(-256)
-            // Message.time is the START of a streamed reply. Keep new words fresh,
-            // but never revive a historical reply just because its panel opened.
-            if (signature !== observedSignature) {
-                if (session.status === "working" && session.activity === "speaking") {
-                    liveMessageId = newest.id; liveMessageTime = now
-                }
-                observedSignature = signature
-            }
-            if (newest.id === liveMessageId)
-                sample = sample.map(function(m) { return m.id === liveMessageId ? Object.assign({}, m, {time:liveMessageTime}) : m })
-        }
-        var result = Mood.analyze(sample, now, sessionId)
-        moodConfidence = result.confidence
-        // New turns clear immediately; competing stream cues need a short hold.
-        if (!result.messageId || result.mood === "neutral" || result.mood === mood) {
-            mood = result.mood; pendingMood = ""; return
-        }
-        if (mood === "neutral") { mood = result.mood; pendingMood = ""; return }
-        if (pendingMood !== result.mood) { pendingMood = result.mood; pendingSince = now }
-        else if (now - pendingSince >= 650) { mood = result.mood; pendingMood = "" }
-    }
+    function refreshMood() { if (localMood.item) localMood.item.refreshMood() }
     function acknowledge() {
+        activated()
         if (!animated) return
         greeting = true; greetingTimer.restart()
     }
@@ -106,23 +78,18 @@ Rectangle {
         phase = 0; driftX = 0; driftY = 0; tilt = 0; gazeX = 0; gazeY = 0
         blinking = false; greeting = false; greetingTimer.stop(); blinkEnd.stop()
     }
-    onMessagesChanged: scheduleMood()
-    onSessionIdChanged: if (ready) resetMood()
-    onCuesEnabledChanged: { resetMood(); scheduleMood() }
     onAnimatedChanged: if (ready && !animated) settle()
-    onExposedChanged: if (exposed) scheduleMood()
-    Component.onCompleted: { ready = true; refreshMood() }
+    onSessionIdChanged: { greeting = false; greetingTimer.stop() }
+    Component.onCompleted: ready = true
 
     Accessible.role: Accessible.Button
-    Accessible.name: description
-    Accessible.description: "Animated portrait. Activate to say hello."
+    Accessible.name: "Cere · " + actionText
+    Accessible.description: description + ". " + actionText
     Accessible.onPressAction: acknowledge()
     activeFocusOnTab: true
     Keys.onSpacePressed: acknowledge()
     Keys.onReturnPressed: acknowledge()
 
-    Timer { id: moodDebounce; interval: 160; onTriggered: portrait.refreshMood() }
-    Timer { interval: 750; repeat: true; running: portrait.exposed && portrait.cuesEnabled && portrait.sessionId.length > 0; onTriggered: portrait.refreshMood() }
     Timer { id: greetingTimer; interval: 1550; onTriggered: portrait.greeting = false }
     Timer {
         id: blinkClock
@@ -203,11 +170,18 @@ Rectangle {
             }
         }
     }
+    Rectangle {
+        visible:portrait.speechMuted
+        anchors.right:parent.right;anchors.bottom:parent.bottom
+        width:24;height:24;radius:12;color:Theme.surface
+        border.color:Theme.amber
+        CIcon { anchors.centerIn:parent;name:"muted";color:Theme.amber }
+    }
     MouseArea {
         id: pointer; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
         onClicked: portrait.acknowledge()
     }
     ToolTip.visible: pointer.containsMouse || activeFocus
     ToolTip.delay: 650
-    ToolTip.text: description
+    ToolTip.text: actionText
 }

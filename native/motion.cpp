@@ -3,7 +3,7 @@
 #include <QRegularExpression>
 
 MotionDirector::MotionDirector(const QVariantMap &catalog, quint32 seed)
-    :m_clips(catalog.value("clips").toMap()),m_random(seed) {
+    :m_clips(catalog.value("clips").toMap()),m_catalog(catalog),m_random(seed) {
     for(const auto &name:catalog.value("idlePool").toList())m_idlePool.append(name.toString());
 }
 QString MotionDirector::base() const {
@@ -29,6 +29,12 @@ void MotionDirector::choose(const QString &name,bool transient) {
 }
 void MotionDirector::setContext(Context context) {
     const QString previousBase=base();
+    const QString profile=m_catalog.value("idleProfiles").toMap().contains(context.idleEnergy)?context.idleEnergy:m_catalog.value("defaultIdleProfile","lively").toString();
+    if(m_profile!=profile){
+        m_profile=profile;m_bag.clear();m_idlePool.clear();
+        const auto pool=m_catalog.value("idleProfiles").toMap().value(profile).toMap().value("pool",m_catalog.value("idlePool")).toList();
+        for(const auto &name:pool)m_idlePool.append(name.toString());
+    }
     m_context=context;
     const QString next=base();
     // Muting, disappearing and dragging always interrupt. A transient can never
@@ -56,9 +62,29 @@ int MotionDirector::duration() const {
     return total;
 }
 bool MotionDirector::canIdle() const {
-    return base()=="idle"&&!m_context.reduced&&m_context.intensity>0&&!m_transient&&!m_context.panel&&!m_context.roaming;
+    const bool allowPanel=m_catalog.value("idleProfiles").toMap().value(m_profile).toMap().value("idleWhileReading").toBool();
+    return base()=="idle"&&!m_context.reduced&&m_context.intensity>0&&!m_transient&&
+        !m_context.interacting&&(!m_context.panel||allowPanel)&&!m_context.roaming;
 }
-int MotionDirector::nextIdleDelay(){return qRound((9000+int(m_random.bounded(9000)))/std::max(.35,m_context.intensity));}
+bool MotionDirector::reactMood(qint64 now) {
+    const auto key=m_context.moodSession+":"+m_context.mood;
+    if(key==m_observedMood)return false;
+    m_observedMood=key; // Consume even blocked/hidden changes; never queue them.
+    if(!m_context.moodReactive||!m_context.expressive||m_context.mood=="neutral"||
+       !m_context.visible||m_context.quiet||m_context.reduced||m_context.intensity<=0||
+       !m_context.connected||m_context.waiting||m_context.problem||m_context.busy||
+       m_context.dragging||m_context.roaming||m_context.listening)return false;
+    const auto config=m_catalog.value("bodyMoods").toMap();
+    if(m_lastMoodReaction>=0&&now-m_lastMoodReaction<config.value("reactionCooldownMs").toLongLong())return false;
+    const auto clip=config.value("moods").toMap().value(m_context.mood).toMap().value("reaction").toString();
+    if(clip.isEmpty()||!play(clip))return false;
+    m_lastMoodReaction=now;return true;
+}
+int MotionDirector::nextIdleDelay(){
+    const auto profile=m_catalog.value("idleProfiles").toMap().value(m_profile).toMap();
+    const int low=profile.value("minMs").toInt(),high=profile.value("maxMs").toInt();
+    return qRound((low+(high>low?int(m_random.bounded(high-low)):0))/std::max(.35,m_context.intensity));
+}
 bool MotionDirector::idle() {
     if(!canIdle()||m_idlePool.isEmpty())return false;
     if(m_bag.isEmpty()){
@@ -66,7 +92,20 @@ bool MotionDirector::idle() {
         for(int i=m_bag.size()-1;i>0;--i)m_bag.swapItemsAt(i,int(m_random.bounded(i+1)));
         if(m_bag.size()>1&&m_bag.last()==m_lastIdle)m_bag.swapItemsAt(0,m_bag.size()-1);
     }
-    const auto name=m_bag.takeLast();
+    int chosen=m_bag.size()-1;
+    if(m_context.expressive&&m_context.mood!="neutral"){
+        const auto config=m_catalog.value("bodyMoods").toMap();
+        const auto preferred=config.value("moods").toMap().value(m_context.mood).toMap().value("preferred").toList();
+        QVector<double> weights;double total=0;
+        for(const auto &name:m_bag){
+            const double weight=name==m_lastIdle&&m_bag.size()>1?0:
+                config.value(preferred.contains(name)?"preferredWeight":"defaultWeight",1).toDouble();
+            weights.append(weight);total+=weight;
+        }
+        double draw=m_random.generateDouble()*total;
+        for(int i=0;i<weights.size();++i)if((draw-=weights[i])<0){chosen=i;break;}
+    }
+    const auto name=m_bag.takeAt(chosen);
     if(!play(name))return false;
     m_lastIdle=name;return true;
 }

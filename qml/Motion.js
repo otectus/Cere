@@ -50,11 +50,31 @@ function random(state, lo, hi) {
 }
 
 function create(seed) {
-    return {time:0, elapsed:0, clip:null, catalog:{}, name:"", keyIndex:0, pose:0,
+    return {time:0, rhythmTime:0, elapsed:0, clip:null, catalog:{}, name:"", keyIndex:0, pose:0,
         springs:{}, config:{}, seed:seed === undefined ? 192071 : seed,
         entry:null, phase:"rest", nextBeat:1.6, beat:null, beatCount:0, lastBeat:-1,
         breathStart:0, inhale:1.8, exhale:2.9, breathPower:1,
-        blinkAt:-10, nextBlink:3.4, blinkDouble:false, blink:0}
+        blinkAt:-10, nextBlink:null, blinkDouble:false, blink:0, blinkTime:0, lastBlink:0,
+        energy:"", mood:"neutral", life:{}, micro:{}}
+}
+function configure(state, energy, mood) {
+    state.energy=energy || state.catalog.defaultIdleProfile
+    state.mood=mood || "neutral"
+    var profile=(state.catalog.idleProfiles || {})[state.energy] || {}
+    var idle=state.name === "idle" || (profile.pool || []).indexOf(state.name)>=0
+    state.idle=idle
+    var life=Object.assign({}, state.clip.life || {})
+    if (idle && state.name === "idle") life=Object.assign(life,profile.life || {})
+    else if (idle) Object.keys(profile.gestureLifeScale || {}).forEach(function(k) {
+        if (life[k] !== undefined) life[k]*=profile.gestureLifeScale[k]
+    })
+    var moodConfig=(((state.catalog.bodyMoods || {}).moods || {})[state.mood] || {})
+    var tint=moodConfig.lifeScale || {}
+    state.idlePose=state.name === "idle" ? moodConfig.idlePose : undefined
+    if (idle) Object.keys(tint).forEach(function(k) { life[k]=(life[k] === undefined ? 1 : life[k])*tint[k] })
+    state.life=life
+    state.micro=idle ? (profile.micro || state.catalog.microActing || {}) : (state.catalog.microActing || {})
+    if (!state.beatCount) state.nextBeat=state.micro.firstMs/1000
 }
 function transition(state, clip) {
     var duration = clip.entryMs || 0, from = state.pose, to = clip.keys[0].pose
@@ -88,6 +108,12 @@ function select(state, clip, catalog, name) {
         if (!state.springs[channel]) state.springs[channel]={value:0,velocity:0}
     })
     state.name=name || ""; state.entry=transition(state,clip)
+    configure(state,state.energy,state.mood)
+    state.authoredEyes=clip.keys.some(function(key) {
+        var joints=keyStance(state,key), rig=key.rig || {}
+        return !!(joints.eyeClose || joints.wink || rig.eyeClose || rig.wink)
+    })
+    if (state.nextBlink === null) state.nextBlink=state.catalog.blink.initialMs/1000
     // Leave every joint's current value and velocity intact during interruption.
 }
 function frameAt(clip, elapsed) {
@@ -124,9 +150,10 @@ function attention(state, enabled, hovered) {
         var kind = Math.floor(random(state, 0, 4))
         if (kind === state.lastBeat) kind = (kind+1)%4
         state.lastBeat = kind; state.beatCount++
-        state.beat = {kind:kind, start:t, duration:random(state, 2.5, 4.2),
+        var micro=state.micro, pace=state.life.pace || 1
+        state.beat = {kind:kind, start:t, duration:random(state, micro.durationMinMs, micro.durationMaxMs)/1000/pace,
             side:random(state, 0, 1) < .5 ? -1 : 1, strength:random(state, .7, 1)}
-        state.nextBeat = t + random(state, 4.5, 7.5)
+        state.nextBeat = t + random(state, micro.minMs, micro.maxMs)/1000/pace
     }
     var b = state.beat
     if (!b || !enabled || hovered) return {amount:0, side:0, kind:-1, label:"At ease"}
@@ -135,9 +162,9 @@ function attention(state, enabled, hovered) {
             label:["Looking around", "Shifting her weight", "A little shoulder roll", "An inquisitive glance"][b.kind]}
 }
 function breathing(state) {
-    var age = state.time-state.breathStart
+    var age = state.rhythmTime-state.breathStart
     if (age >= state.inhale+state.exhale) {
-        state.breathStart = state.time; age = 0
+        state.breathStart = state.rhythmTime; age = 0
         var config = state.catalog.breathing || {}
         state.inhale = random(state, (config.inhaleMinMs || 1500)/1000, (config.inhaleMaxMs || 2100)/1000)
         state.exhale = random(state, (config.exhaleMinMs || 2500)/1000, (config.exhaleMaxMs || 3500)/1000)
@@ -147,18 +174,19 @@ function breathing(state) {
         ? (1-Math.cos(Math.PI*age/state.inhale))*.5
         : (1+Math.cos(Math.PI*(age-state.inhale)/state.exhale))*.5)
 }
-function blink(state, enabled, still) {
+function blink(state, enabled, still, authored) {
     var config = state.catalog.blink || {}
     // Finish an eyelid motion already in progress when a gesture interrupts it.
     // Eligibility controls starting new blinks, not abruptly opening the eyes.
-    if (still) { state.blink = 0; state.blinkAt = -10; return }
-    if (enabled && state.time >= state.nextBlink) {
-        state.blinkAt = state.time
+    if (still || authored) { state.blink = 0; state.blinkAt = -10; return }
+    var now=state.blinkTime
+    if (enabled && now >= Math.min(state.nextBlink,state.lastBlink+config.maxGapMs/1000)) {
+        state.blinkAt = now; state.lastBlink=now
         if (!state.blinkDouble && random(state, 0, 1) < (config.doubleChance === undefined ? .16 : config.doubleChance)) {
-            state.nextBlink = state.time+.34; state.blinkDouble = true
-        } else { state.nextBlink = state.time+random(state, (config.minMs || 3100)/1000, (config.maxMs || 6200)/1000); state.blinkDouble = false }
+            state.nextBlink = now+config.doubleGapMs/1000; state.blinkDouble = true
+        } else { state.nextBlink = now+random(state, config.minMs/1000, config.maxMs/1000); state.blinkDouble = false }
     }
-    var age = state.time-state.blinkAt, close = (config.closeMs || 65)/1000
+    var age = now-state.blinkAt, close = (config.closeMs || 65)/1000
     var hold = (config.holdMs || 40)/1000, open = (config.openMs || 145)/1000
     state.blink = age < close ? smooth(age/close) : age < close+hold ? 1 : 1-smooth((age-close-hold)/open)
 }
@@ -166,15 +194,22 @@ function blink(state, enabled, still) {
 function sample(state, seconds, intensity, gazeX, gazeY, carryX, carryY, still, interaction) {
     seconds=isFinite(seconds) ? Math.max(0,seconds) : 0
     var dt=clamp(seconds,0,.05), info=interaction || {}
-    if (!still) { state.elapsed+=seconds*1000; state.time+=dt }
+    if (!still) {
+        state.elapsed+=seconds*1000; state.time+=dt; state.blinkTime+=seconds
+        state.rhythmTime+=dt*(state.idle ? state.life.pace || 1 : 1)
+    }
     var entryDuration=state.entry ? state.entry.duration : 0
     var entering=!still && state.entry && state.elapsed<entryDuration
     var frame=frameAt(entering ? state.entry : state.clip,
         still ? 0 : Math.max(0,state.elapsed-(entering ? 0 : entryDuration)))
+    if (!still && !entering && state.idlePose !== undefined) {
+        frame.key=Object.assign({},frame.key,{pose:state.idlePose})
+        frame.previous=Object.assign({},frame.previous,{pose:state.idlePose})
+    }
     state.keyIndex=entering ? 0 : frame.index; state.pose=frame.key.pose
     state.phase=still ? "still" : entering ? frame.key.phase : frame.key.phase || (state.clip.loop ? "living" : "gesture")
     var previous=keyStance(state,frame.previous), next=keyStance(state,frame.key)
-    var target={}, movement={}, result={}, t=state.time
+    var target={}, movement={}, result={}, t=state.rhythmTime
     Object.keys(state.config).forEach(function(channel) {
         var a=previous[channel] || 0, b=next[channel] || 0
         // Pose angles are anatomical targets, not amplitudes: reducing intensity
@@ -184,7 +219,7 @@ function sample(state, seconds, intensity, gazeX, gazeY, carryX, carryY, still, 
         var u=offset(frame.previous,channel), v=offset(frame.key,channel)
         movement[channel]=u+(v-u)*frame.progress
     })
-    var life=state.clip.life || {}, pace=life.pace || 1
+    var life=state.life || state.clip.life || {}, pace=state.idle ? 1 : life.pace || 1
     var presence=life.presence === undefined ? 1 : life.presence
     var breath=breathing(state), sway=Math.sin(t*.91)*.65+Math.sin(t*.37+1)*.35
     var idle=attention(state,!still && !entering && state.clip.loop && !life.stride && !state.clip.carry && life.autonomy!==0,info.hovered)
@@ -242,7 +277,10 @@ function sample(state, seconds, intensity, gazeX, gazeY, carryX, carryY, still, 
         else spring(s,value,dt,config.omega)
         result[channel]=s.value
     })
-    blink(state,!still && !entering && state.clip.loop && ((state.catalog.frames || [])[state.pose] || {}).blinkPose!==undefined,still)
+    var frames=state.catalog.frames || []
+    var eyesVisible=(frames[frame.key.pose] || {}).eyesVisible !== false
+        && (frames[frame.previous.pose] || {}).eyesVisible !== false
+    blink(state,eyesVisible,still,state.authoredEyes)
     result.eyeClose=Math.max(result.eyeClose || 0,state.blink)
     result.pose=state.pose; result.keyIndex=state.keyIndex; result.phase=state.phase
     result.beat=amount>.1 ? idle.label : "At ease"; result.blink=state.blink

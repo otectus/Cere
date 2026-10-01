@@ -137,8 +137,8 @@ test('remote Ollama distinguishes preflight failure, missing acknowledgement and
   await assert.rejects(adapter.send('No acknowledgement',[],{beforeAccept:()=>missing.push('authorized'),onDispatched:()=>missing.push('dispatched'),onAccepted:()=>missing.push('accepted'),onRejected:()=>missing.push('rejected')}),/Cannot reach Ollama/);
   assert.deepEqual(missing,['authorized','dispatched']);await until(()=>!adapter.task);
   const rejected:string[]=[];
-  await assert.rejects(adapter.send('Rejected',[],{beforeAccept:()=>rejected.push('authorized'),onDispatched:()=>rejected.push('dispatched'),onAccepted:()=>rejected.push('accepted'),onRejected:()=>rejected.push('rejected')}),/Ollama \(503\): busy/);
-  assert.deepEqual(rejected,['authorized','dispatched','rejected']);await until(()=>!adapter.task);
+  await assert.rejects(adapter.send('Rejected',[],{beforeAccept:()=>rejected.push('authorized'),onDispatched:()=>rejected.push('dispatched'),onAccepted:()=>rejected.push('accepted'),onRejected:()=>rejected.push('rejected')}),/Ollama \(503\): temporarily unavailable/);
+  assert.deepEqual(rejected,[...Array(4).fill(['authorized','dispatched']).flat(),'rejected']);assert.equal(f.requests.length,5);await until(()=>!adapter.task);
   const preflight:string[]=[];
   adapter.session={...s,model:'embed:latest'};
   await assert.rejects(adapter.send('Unsupported',[],{beforeAccept:()=>preflight.push('authorized'),onDispatched:()=>preflight.push('dispatched'),onAccepted:()=>preflight.push('accepted')}),/cannot chat/);
@@ -203,6 +203,18 @@ test('a personality edit during an Ollama tool round waits until the next user t
   assert.match(f.requests[2].messages[0].content,/New quiet voice/);
 });
 
+test('pinned Ollama prose settles once per response across tool rounds',async t=>{
+  const f=await fixture(t,(_b,res,index)=>index===0?reply(res,'Let me set that timer.',{tool_calls:[{function:{name:'timer_start',arguments:{minutes:60,label:'Test'}}}]}):reply(res,'Your timer is ready.'));
+  await f.core.updateSettings({profile:'scoped',categories:['timers']});
+  const s=await session(f,true),spoken:string[]=[];
+  await f.core.rpc('session.organize',{id:s.id,pinned:true});
+  f.core.speech.speak=text=>{spoken.push(text);return true;};
+  await f.core.send({id:s.id,text:'Set a timer'});await finished(f.core,s.id);
+  assert.deepEqual(spoken,['Let me set that timer.','Your timer is ready.']);
+  assert.deepEqual(f.core.companionReplies.map(reply=>reply.message.text),spoken);
+  assert.equal(f.core.completions[0].companion,true);
+});
+
 test('tool calls round-trip with context and disabled tools cannot execute',async t=>{
   const f=await fixture(t,(_b,res,index)=>index%2===0?reply(res,'',{tool_calls:[{function:{name:'timer_start',arguments:{minutes:60,label:'Test'}}}]}):reply(res,'Finished'));
   const s=await session(f,true);await f.core.updateSettings({categories:['timers']});
@@ -217,11 +229,13 @@ test('tool calls round-trip with context and disabled tools cannot execute',asyn
   assert.match(f.requests[3].messages.at(-1).content,/not offered/);
 });
 
-test('truncated streams and server errors become actionable errors without replay',async t=>{
+test('truncated streams fail without replay while transient HTTP failures recover automatically',async t=>{
   const f=await fixture(t,(_b,res,index)=>{if(index===0)res.end('{"message":{"content":"Partial"},"done":false}\n');else if(index===1){res.statusCode=503;res.end('{"error":"model unavailable"}');}else reply(res,'Recovered');});
   const s=await session(f);await f.core.send({id:s.id,text:'First'});await finished(f.core,s.id);assert.match(f.core.store.session(s.id).error||'',/disconnected/);
-  await f.core.send({id:s.id,text:'Second'});await finished(f.core,s.id);assert.match(f.core.store.session(s.id).error||'',/503.*unavailable/);
-  await f.core.send({id:s.id,text:'Third'});await finished(f.core,s.id);assert.equal(f.core.store.session(s.id).status,'idle');assert.equal(f.requests.length,3);
+  assert.equal(f.requests.length,1);
+  await f.core.send({id:s.id,text:'Second'});await finished(f.core,s.id);assert.equal(f.core.store.session(s.id).status,'idle');
+  assert.equal(f.requests.length,3);assert.deepEqual(f.requests[1],f.requests[2]);
+  await f.core.send({id:s.id,text:'Third'});await finished(f.core,s.id);assert.equal(f.core.store.session(s.id).status,'idle');assert.equal(f.requests.length,4);
 });
 
 test('Stop aborts a streaming request and a later turn can proceed',async t=>{
@@ -325,9 +339,11 @@ test('a connection change during creation cannot redirect the new session to ano
 test('CLI bypass enables delegation without desktop bypass or standing grants', async t => {
   const f = await fixture(t), parent = await session(f, true), sent: any[] = [];
   f.core.factory = (s, h) => ({ async send(text) { sent.push({ text, bypass: h.bypassCliPermissions?.() }); h.event({ type: 'complete' }); }, async interrupt() {}, async close() {} });
-  await f.core.updateSettings({ profile: 'manual', bypassComputerPermissions: true });
+  await f.core.updateSettings({ profile: 'manual' });
+  const desktopPower=await f.core.power.start({sessionIds:[parent.id],minutes:5,cli:false,computer:true});
   assert.ok(!f.core.toolsFor(parent.id).some(t => t.function.name === 'sessions_start'));
-  await f.core.updateSettings({ bypassComputerPermissions: false, bypassCliPermissions: true });
+  await f.core.power.end(desktopPower.id);f.core.updateSession(parent.id,{status:'idle'});
+  const cliPower=await f.core.power.start({sessionIds:[parent.id],minutes:5,cli:true,computer:false});
   assert.ok(f.core.toolsFor(parent.id).some(t => t.function.name === 'sessions_start'));
   assert.ok(!f.core.toolsFor(parent.id).some(t => t.function.name === 'timer_start'));
   const child = await f.core.callTool(parent.id, 'sessions_start', { provider: 'codex', prompt: 'Review only' }, new AbortController().signal);
@@ -335,6 +351,6 @@ test('CLI bypass enables delegation without desktop bypass or standing grants', 
   assert.equal(f.core.store.session(child.id).parentId, parent.id);
   assert.deepEqual(sent, [{ text: 'Review only', bypass: true }]);
   assert.equal(f.core.approvals.size, 0);
-  await f.core.updateSettings({ bypassCliPermissions: false });
+  await f.core.power.end(cliPower.id);
   await assert.rejects(f.core.callTool(parent.id, 'sessions_start', { provider: 'codex', prompt: 'Do not send' }, new AbortController().signal), /disabled/);
 });

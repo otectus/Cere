@@ -11,114 +11,128 @@
       "y": 0,
       "width": 320,
       "height": 336,
-      "blinkPose": 1,
-      "family": "rest"
+      "family": "rest",
+      "eyesVisible": true
     },
     {
       "x": 320,
       "y": 0,
       "width": 320,
       "height": 336,
-      "family": "rest"
+      "family": "rest",
+      "eyesVisible": false
     },
     {
       "x": 640,
       "y": 0,
       "width": 320,
       "height": 336,
-      "family": "rest"
+      "family": "rest",
+      "eyesVisible": true
     },
     {
       "x": 960,
       "y": 0,
       "width": 320,
       "height": 336,
-      "family": "rest"
+      "family": "rest",
+      "eyesVisible": true
     },
     {
       "x": 0,
       "y": 336,
       "width": 320,
       "height": 336,
-      "family": "wave"
+      "family": "wave",
+      "eyesVisible": true
     },
     {
       "x": 320,
       "y": 336,
       "width": 320,
       "height": 336,
-      "family": "wave"
+      "family": "wave",
+      "eyesVisible": true
     },
     {
       "x": 640,
       "y": 336,
       "width": 320,
       "height": 336,
-      "blinkPose": 7,
-      "family": "folded"
+      "family": "folded",
+      "eyesVisible": true
     },
     {
       "x": 960,
       "y": 336,
       "width": 320,
       "height": 336,
-      "family": "folded"
+      "family": "folded",
+      "eyesVisible": false
     },
     {
       "x": 0,
       "y": 672,
       "width": 320,
       "height": 336,
-      "family": "surprise"
+      "family": "surprise",
+      "eyesVisible": true
     },
     {
       "x": 320,
       "y": 672,
       "width": 320,
       "height": 336,
-      "family": "open"
+      "family": "open",
+      "eyesVisible": true
     },
     {
       "x": 640,
       "y": 672,
       "width": 320,
       "height": 336,
-      "family": "action"
+      "family": "action",
+      "eyesVisible": true
     },
     {
       "x": 960,
       "y": 672,
       "width": 320,
       "height": 336,
-      "family": "action"
+      "family": "action",
+      "eyesVisible": false
     },
     {
       "x": 0,
       "y": 1008,
       "width": 320,
       "height": 336,
-      "family": "action"
+      "family": "action",
+      "eyesVisible": true
     },
     {
       "x": 320,
       "y": 1008,
       "width": 320,
       "height": 336,
-      "family": "action"
+      "family": "action",
+      "eyesVisible": true
     },
     {
       "x": 640,
       "y": 1008,
       "width": 320,
       "height": 336,
-      "family": "action"
+      "family": "action",
+      "eyesVisible": true
     },
     {
       "x": 960,
       "y": 1008,
       "width": 320,
       "height": 336,
-      "family": "action"
+      "family": "action",
+      "eyesVisible": true
     },
     {
       "name": "skeptical",
@@ -129,7 +143,8 @@
       "y": 0,
       "width": 384,
       "height": 512,
-      "family": "folded"
+      "family": "folded",
+      "eyesVisible": true
     },
     {
       "name": "smug",
@@ -140,7 +155,8 @@
       "y": 0,
       "width": 384,
       "height": 512,
-      "family": "rest"
+      "family": "rest",
+      "eyesVisible": true
     },
     {
       "name": "disbelief",
@@ -151,7 +167,8 @@
       "y": 0,
       "width": 384,
       "height": 512,
-      "family": "surprise"
+      "family": "surprise",
+      "eyesVisible": true
     },
     {
       "name": "curious",
@@ -162,7 +179,8 @@
       "y": 0,
       "width": 384,
       "height": 512,
-      "family": "thoughtful"
+      "family": "thoughtful",
+      "eyesVisible": true
     },
     {
       "name": "cheeky",
@@ -173,7 +191,8 @@
       "y": 512,
       "width": 400,
       "height": 512,
-      "family": "soft"
+      "family": "soft",
+      "eyesVisible": true
     },
     {
       "name": "tender",
@@ -184,7 +203,8 @@
       "y": 512,
       "width": 368,
       "height": 512,
-      "family": "soft"
+      "family": "soft",
+      "eyesVisible": true
     },
     {
       "name": "explaining",
@@ -195,7 +215,8 @@
       "y": 512,
       "width": 384,
       "height": 512,
-      "family": "open"
+      "family": "open",
+      "eyesVisible": true
     },
     {
       "name": "triumph",
@@ -206,7 +227,8 @@
       "y": 512,
       "width": 384,
       "height": 512,
-      "family": "triumph"
+      "family": "triumph",
+      "eyesVisible": true
     },
     {
       "name": "release",
@@ -217,7 +239,8 @@
       "x": 0,
       "y": 0,
       "width": 384,
-      "height": 512
+      "height": 512,
+      "eyesVisible": true
     },
     {
       "name": "gather",
@@ -228,7 +251,8 @@
       "x": 384,
       "y": 0,
       "width": 384,
-      "height": 512
+      "height": 512,
+      "eyesVisible": true
     },
     {
       "name": "offer",
@@ -239,7 +263,8 @@
       "x": 768,
       "y": 0,
       "width": 384,
-      "height": 512
+      "height": 512,
+      "eyesVisible": true
     },
     {
       "name": "halfWave",
@@ -250,7 +275,8 @@
       "x": 1152,
       "y": 0,
       "width": 384,
-      "height": 512
+      "height": 512,
+      "eyesVisible": true
     },
     {
       "name": "adjustGlasses",
@@ -261,7 +287,8 @@
       "x": 0,
       "y": 512,
       "width": 384,
-      "height": 512
+      "height": 512,
+      "eyesVisible": false
     },
     {
       "name": "tuckHair",
@@ -272,7 +299,8 @@
       "x": 384,
       "y": 512,
       "width": 384,
-      "height": 512
+      "height": 512,
+      "eyesVisible": false
     },
     {
       "name": "softReset",
@@ -283,7 +311,8 @@
       "x": 768,
       "y": 512,
       "width": 384,
-      "height": 512
+      "height": 512,
+      "eyesVisible": true
     },
     {
       "name": "attentiveRest",
@@ -294,7 +323,8 @@
       "x": 1152,
       "y": 512,
       "width": 384,
-      "height": 512
+      "height": 512,
+      "eyesVisible": true
     }
   ],
   "idlePool": [
@@ -382,7 +412,7 @@
       ],
       "loop": true,
       "breath": true,
-      "symbol": "\u00b7\u00b7\u00b7",
+      "symbol": "···",
       "life": {
         "breath": 1.8,
         "sway": 0.55,
@@ -445,7 +475,7 @@
       ],
       "loop": true,
       "breath": true,
-      "symbol": "\u2026",
+      "symbol": "…",
       "life": {
         "breath": 1.55,
         "sway": 0.4,
@@ -1297,7 +1327,7 @@
           "ms": 410
         }
       ],
-      "symbol": "\u2713",
+      "symbol": "✓",
       "outcome": true,
       "life": {
         "breath": 1.45,
@@ -1404,7 +1434,7 @@
       ],
       "loop": true,
       "breath": true,
-      "symbol": "\u2026",
+      "symbol": "…",
       "life": {
         "breath": 2.05,
         "sway": 0.65,
@@ -1571,7 +1601,7 @@
           "phase": "rest"
         }
       ],
-      "symbol": "\u25f7",
+      "symbol": "◷",
       "life": {
         "breath": 1.45,
         "sway": 0.48,
@@ -1612,7 +1642,7 @@
         "presence": 0.7
       },
       "entryMs": 120,
-      "symbol": "\u2026"
+      "symbol": "…"
     },
     "success": {
       "label": "All done",
@@ -1653,7 +1683,7 @@
           "ms": 360
         }
       ],
-      "symbol": "\u2713",
+      "symbol": "✓",
       "outcome": true,
       "life": {
         "breath": 1.45,
@@ -1691,7 +1721,7 @@
           "ms": 380
         }
       ],
-      "symbol": "\u25c7",
+      "symbol": "◇",
       "life": {
         "breath": 1.45,
         "sway": 0.48,
@@ -1751,7 +1781,7 @@
           "ms": 500
         }
       ],
-      "symbol": "\u266a",
+      "symbol": "♪",
       "life": {
         "breath": 1.45,
         "head": 0.7,
@@ -1778,7 +1808,7 @@
           "ms": 450
         }
       ],
-      "symbol": "\u2194",
+      "symbol": "↔",
       "life": {
         "breath": 1.45,
         "sway": 0.48,
@@ -1821,7 +1851,7 @@
           "ms": 400
         }
       ],
-      "symbol": "\u2713",
+      "symbol": "✓",
       "life": {
         "breath": 1.45,
         "sway": 0.48,
@@ -2067,7 +2097,7 @@
       "entryMs": 560
     },
     "speaking": {
-      "label": "Speaking \u00b7 reply streaming",
+      "label": "Speaking · reply streaming",
       "priority": 40,
       "keys": [
         {
@@ -2151,7 +2181,7 @@
       "entryMs": 120
     },
     "skeptical": {
-      "label": "Skeptical \u00b7 really?",
+      "label": "Skeptical · really?",
       "priority": 42,
       "keys": [
         {
@@ -2498,7 +2528,7 @@
       "entryMs": 560
     },
     "interrupted": {
-      "label": "Stopped \u00b7 ready when you are",
+      "label": "Stopped · ready when you are",
       "priority": 60,
       "keys": [
         {
@@ -3394,6 +3424,490 @@
         "autonomy": 0,
         "presence": 0.85
       }
+    },
+    "paceInPlace": {
+      "label": "A few restless steps",
+      "priority": 5,
+      "entryMs": 560,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 400,
+          "phase": "prepare"
+        },
+        {
+          "pose": 12,
+          "ms": 550,
+          "phase": "step",
+          "rig": {
+            "hipX": -0.6,
+            "leftLeg": 8,
+            "rightLeg": -6,
+            "leftKnee": -9,
+            "rightKnee": 4
+          }
+        },
+        {
+          "pose": 13,
+          "ms": 450,
+          "phase": "pass",
+          "rig": {
+            "leftLeg": -4,
+            "rightLeg": 5,
+            "rightKnee": -7
+          }
+        },
+        {
+          "pose": 14,
+          "ms": 550,
+          "phase": "step",
+          "rig": {
+            "hipX": 0.6,
+            "leftLeg": -6,
+            "rightLeg": 8,
+            "leftKnee": 4,
+            "rightKnee": -9
+          }
+        },
+        {
+          "pose": 15,
+          "ms": 450,
+          "phase": "pass",
+          "rig": {
+            "leftLeg": 5,
+            "rightLeg": -4,
+            "leftKnee": -7
+          }
+        },
+        {
+          "pose": 30,
+          "ms": 450,
+          "phase": "release"
+        },
+        {
+          "pose": 0,
+          "ms": 650,
+          "phase": "settle"
+        }
+      ],
+      "life": {
+        "breath": 1.7,
+        "sway": 0.65,
+        "head": 0.85,
+        "hands": 0.45,
+        "autonomy": 0,
+        "presence": 1.05
+      }
+    },
+    "explainOpen": {
+      "label": "Let me put it this way",
+      "priority": 5,
+      "entryMs": 560,
+      "keys": [
+        {
+          "pose": 25,
+          "ms": 350,
+          "phase": "gather"
+        },
+        {
+          "pose": 26,
+          "ms": 500,
+          "phase": "offer"
+        },
+        {
+          "pose": 22,
+          "ms": 650,
+          "phase": "explain",
+          "rig": {
+            "headTilt": -1.2
+          },
+          "joints": {
+            "rightArm": 8,
+            "rightElbow": -88,
+            "rightHandOpen": 1
+          }
+        },
+        {
+          "pose": 26,
+          "ms": 650,
+          "phase": "answer",
+          "rig": {
+            "headTilt": 1.2
+          },
+          "joints": {
+            "rightArm": 10,
+            "rightElbow": -75,
+            "rightHandOpen": 1
+          }
+        },
+        {
+          "pose": 25,
+          "ms": 350,
+          "phase": "release"
+        },
+        {
+          "pose": 30,
+          "ms": 400,
+          "phase": "settle"
+        },
+        {
+          "pose": 0,
+          "ms": 650,
+          "phase": "settle"
+        }
+      ],
+      "life": {
+        "breath": 1.7,
+        "sway": 0.65,
+        "head": 0.85,
+        "hands": 0.45,
+        "autonomy": 0,
+        "presence": 1.05
+      }
+    },
+    "explainSweep": {
+      "label": "And another thing",
+      "priority": 5,
+      "entryMs": 560,
+      "keys": [
+        {
+          "pose": 25,
+          "ms": 350,
+          "phase": "gather"
+        },
+        {
+          "pose": 22,
+          "ms": 550,
+          "phase": "offer",
+          "rig": {
+            "leftElbow": 10,
+            "headTilt": -1
+          }
+        },
+        {
+          "pose": 22,
+          "ms": 650,
+          "phase": "sweep",
+          "rig": {
+            "leftArm": 10,
+            "leftElbow": -15,
+            "bodyTilt": 1
+          }
+        },
+        {
+          "pose": 26,
+          "ms": 550,
+          "phase": "answer",
+          "rig": {
+            "headTilt": 1.2
+          },
+          "joints": {
+            "rightArm": 2,
+            "rightElbow": -94,
+            "rightHandOpen": 1
+          }
+        },
+        {
+          "pose": 25,
+          "ms": 350,
+          "phase": "release"
+        },
+        {
+          "pose": 30,
+          "ms": 450,
+          "phase": "settle"
+        },
+        {
+          "pose": 0,
+          "ms": 650,
+          "phase": "settle"
+        }
+      ],
+      "life": {
+        "breath": 1.7,
+        "sway": 0.65,
+        "head": 0.85,
+        "hands": 0.45,
+        "autonomy": 0,
+        "presence": 1.05
+      }
+    },
+    "heelRock": {
+      "label": "Rocking on her heels",
+      "priority": 5,
+      "entryMs": 560,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 500,
+          "phase": "prepare"
+        },
+        {
+          "pose": 10,
+          "ms": 600,
+          "phase": "rock",
+          "joints": {
+            "hipDrop": 0.9,
+            "headY": 0.4,
+            "leftLeg": -2,
+            "rightLeg": 2,
+            "leftKnee": 3,
+            "rightKnee": -3
+          }
+        },
+        {
+          "pose": 0,
+          "ms": 650,
+          "phase": "rise",
+          "rig": {
+            "headY": -0.7,
+            "shoulderLeft": -0.4
+          }
+        },
+        {
+          "pose": 10,
+          "ms": 550,
+          "phase": "rock",
+          "joints": {
+            "hipDrop": 0.6,
+            "headY": 0.3,
+            "leftLeg": -1.5,
+            "rightLeg": 1.5,
+            "leftKnee": 2,
+            "rightKnee": -2
+          }
+        },
+        {
+          "pose": 0,
+          "ms": 650,
+          "phase": "settle"
+        }
+      ],
+      "life": {
+        "breath": 1.7,
+        "sway": 0.65,
+        "head": 0.85,
+        "hands": 0.45,
+        "autonomy": 0,
+        "presence": 1.05
+      }
+    },
+    "buoyantBounce": {
+      "label": "A little spark",
+      "priority": 5,
+      "entryMs": 560,
+      "keys": [
+        {
+          "pose": 30,
+          "ms": 350,
+          "phase": "prepare"
+        },
+        {
+          "pose": 10,
+          "ms": 300,
+          "phase": "dip",
+          "joints": {
+            "hipDrop": 1.2,
+            "headY": 0.7,
+            "leftLeg": -3,
+            "rightLeg": 3,
+            "leftKnee": 5,
+            "rightKnee": -5
+          },
+          "y": 0.6
+        },
+        {
+          "pose": 0,
+          "ms": 400,
+          "phase": "rise",
+          "rig": {
+            "headY": -0.8,
+            "breathLift": -0.5,
+            "leftElbow": -5,
+            "rightElbow": 5
+          },
+          "y": -2.5
+        },
+        {
+          "pose": 10,
+          "ms": 350,
+          "phase": "dip",
+          "joints": {
+            "hipDrop": 0.8,
+            "headY": 0.5,
+            "leftLeg": -2,
+            "rightLeg": 2,
+            "leftKnee": 3,
+            "rightKnee": -3
+          },
+          "y": 0.6
+        },
+        {
+          "pose": 0,
+          "ms": 450,
+          "phase": "rise",
+          "rig": {
+            "headY": -0.4
+          },
+          "y": -1.6
+        },
+        {
+          "pose": 0,
+          "ms": 650,
+          "phase": "settle"
+        }
+      ],
+      "life": {
+        "breath": 1.7,
+        "sway": 0.65,
+        "head": 0.85,
+        "hands": 0.45,
+        "autonomy": 0,
+        "presence": 1.05
+      }
+    },
+    "surveyTurn": {
+      "label": "Taking it all in",
+      "priority": 5,
+      "entryMs": 560,
+      "keys": [
+        {
+          "pose": 0,
+          "ms": 400,
+          "phase": "notice"
+        },
+        {
+          "pose": 2,
+          "ms": 750,
+          "phase": "look",
+          "rig": {
+            "bodyTilt": -1.1,
+            "hipX": -0.8,
+            "headTilt": -1.5,
+            "rightArm": -3
+          }
+        },
+        {
+          "pose": 2,
+          "ms": 750,
+          "phase": "hold"
+        },
+        {
+          "pose": 3,
+          "ms": 1000,
+          "phase": "turn",
+          "rig": {
+            "bodyTilt": 1.5,
+            "hipX": 0.7,
+            "headTilt": 1.5,
+            "leftArm": 3
+          }
+        },
+        {
+          "pose": 31,
+          "ms": 650,
+          "phase": "attend"
+        },
+        {
+          "pose": 24,
+          "ms": 400,
+          "phase": "release"
+        },
+        {
+          "pose": 0,
+          "ms": 650,
+          "phase": "settle"
+        }
+      ],
+      "life": {
+        "breath": 1.7,
+        "sway": 0.65,
+        "head": 0.85,
+        "hands": 0.45,
+        "autonomy": 0,
+        "presence": 1.05
+      }
+    },
+    "fullStretch": {
+      "label": "A long luxurious stretch",
+      "priority": 5,
+      "entryMs": 560,
+      "keys": [
+        {
+          "pose": 25,
+          "ms": 450,
+          "phase": "gather"
+        },
+        {
+          "pose": 27,
+          "ms": 550,
+          "phase": "lift"
+        },
+        {
+          "pose": 23,
+          "ms": 800,
+          "phase": "stretch",
+          "rig": {
+            "headTilt": 2,
+            "shoulderLeft": -1,
+            "shoulderRight": -1
+          },
+          "joints": {
+            "leftHandOpen": 1,
+            "rightHandOpen": 1,
+            "leftArm": 108,
+            "leftElbow": 72,
+            "rightArm": -103,
+            "rightElbow": -75
+          }
+        },
+        {
+          "pose": 23,
+          "ms": 1100,
+          "phase": "reach",
+          "rig": {
+            "headTilt": -1,
+            "bodyTilt": 0.9,
+            "headY": -0.6
+          },
+          "joints": {
+            "leftHandOpen": 1,
+            "rightHandOpen": 1,
+            "leftArm": 112,
+            "leftElbow": 70,
+            "rightArm": -108,
+            "rightElbow": -73
+          }
+        },
+        {
+          "pose": 27,
+          "ms": 750,
+          "phase": "lower"
+        },
+        {
+          "pose": 25,
+          "ms": 450,
+          "phase": "release"
+        },
+        {
+          "pose": 30,
+          "ms": 550,
+          "phase": "exhale"
+        },
+        {
+          "pose": 0,
+          "ms": 650,
+          "phase": "settle"
+        }
+      ],
+      "life": {
+        "breath": 1.7,
+        "sway": 0.65,
+        "head": 0.85,
+        "hands": 0.45,
+        "autonomy": 0,
+        "presence": 1.05
+      }
     }
   },
   "sourceFrames": [
@@ -3506,7 +4020,10 @@
     "closeMs": 65,
     "holdMs": 40,
     "openMs": 145,
-    "doubleChance": 0.16
+    "doubleChance": 0.16,
+    "initialMs": 3400,
+    "doubleGapMs": 340,
+    "maxGapMs": 8000
   },
   "transitionRoutes": {
     "rest:folded": [
@@ -3754,7 +4271,320 @@
     ],
     "gather:triumph": [
       25
+    ],
+    "action:rest": [
+      30
+    ],
+    "rest:action": [
+      30
     ]
   },
-  "rig": "cere-rig.json"
+  "rig": "cere-rig.json",
+  "idleProfiles": {
+    "calm": {
+      "idleWhileReading": false,
+      "minMs": 9000,
+      "maxMs": 18000,
+      "pool": [
+        "lookAround",
+        "headTilt",
+        "idleSmug",
+        "idleCurious",
+        "idleSoft",
+        "weightShift",
+        "shoulderRoll",
+        "ponder",
+        "deepBreath",
+        "glassesAdjust",
+        "hairTuck",
+        "attentiveRest",
+        "easySway",
+        "stretch"
+      ],
+      "life": {
+        "breath": 2.7,
+        "sway": 1.1,
+        "head": 1.6,
+        "hands": 0.9,
+        "autonomy": 1,
+        "presence": 1.2
+      },
+      "micro": {
+        "firstMs": 1600,
+        "minMs": 4500,
+        "maxMs": 7500,
+        "durationMinMs": 2500,
+        "durationMaxMs": 4200
+      },
+      "preview": [
+        {
+          "motion": "idle",
+          "ms": 6500,
+          "caption": "A moment to herself"
+        },
+        {
+          "motion": "wave",
+          "ms": 3400,
+          "caption": "Oh, there you are"
+        },
+        {
+          "motion": "glassesAdjust",
+          "ms": 3400,
+          "caption": "One tiny adjustment"
+        },
+        {
+          "motion": "thinking",
+          "ms": 4200,
+          "caption": "Give her a moment…"
+        },
+        {
+          "motion": "speaking",
+          "ms": 4200,
+          "caption": "She has a few thoughts"
+        },
+        {
+          "motion": "hairTuck",
+          "ms": 3300,
+          "caption": "That lock of hair again"
+        },
+        {
+          "motion": "idle",
+          "ms": 4000,
+          "caption": "Right here with you"
+        }
+      ]
+    },
+    "lively": {
+      "idleWhileReading": true,
+      "minMs": 3500,
+      "maxMs": 7000,
+      "pool": [
+        "lookAround",
+        "headTilt",
+        "idleSmug",
+        "idleCurious",
+        "idleSoft",
+        "weightShift",
+        "shoulderRoll",
+        "ponder",
+        "deepBreath",
+        "glassesAdjust",
+        "hairTuck",
+        "attentiveRest",
+        "easySway",
+        "stretch",
+        "paceInPlace",
+        "explainOpen",
+        "explainSweep",
+        "heelRock",
+        "buoyantBounce",
+        "surveyTurn",
+        "fullStretch"
+      ],
+      "life": {
+        "breath": 2.7,
+        "sway": 1.45,
+        "head": 2,
+        "hands": 1.25,
+        "autonomy": 1.25,
+        "presence": 1.5
+      },
+      "micro": {
+        "firstMs": 1600,
+        "minMs": 2800,
+        "maxMs": 4600,
+        "durationMinMs": 1900,
+        "durationMaxMs": 2900
+      },
+      "gestureLifeScale": {
+        "presence": 1.15,
+        "sway": 1.15,
+        "head": 1.15,
+        "hands": 1.15
+      },
+      "preview": [
+        {
+          "motion": "idle",
+          "ms": 6500,
+          "caption": "A little restless energy"
+        },
+        {
+          "motion": "paceInPlace",
+          "ms": 5000,
+          "caption": "A few steps, right here"
+        },
+        {
+          "motion": "explainOpen",
+          "ms": 5000,
+          "caption": "She has a few thoughts"
+        },
+        {
+          "motion": "buoyantBounce",
+          "ms": 4000,
+          "caption": "A little spark"
+        },
+        {
+          "motion": "surveyTurn",
+          "ms": 5500,
+          "caption": "Taking it all in"
+        },
+        {
+          "motion": "fullStretch",
+          "ms": 6500,
+          "caption": "A proper stretch"
+        },
+        {
+          "motion": "idle",
+          "ms": 4000,
+          "caption": "Right here with you"
+        }
+      ]
+    }
+  },
+  "defaultIdleProfile": "lively",
+  "microActing": {
+    "firstMs": 1600,
+    "minMs": 4500,
+    "maxMs": 7500,
+    "durationMinMs": 2500,
+    "durationMaxMs": 4200
+  },
+  "bodyMoods": {
+    "reactionCooldownMs": 6000,
+    "fallbackCooldownMs": 8000,
+    "holdMs": 650,
+    "debounceMs": 160,
+    "refreshMs": 750,
+    "staleMs": 90000,
+    "preferredWeight": 3,
+    "defaultWeight": 1,
+    "messageLimit": 32,
+    "moods": {
+      "neutral": {
+        "reaction": "",
+        "preferred": [],
+        "lifeScale": {},
+        "reason": "Neutral or ambiguous prose has no reliable body cue."
+      },
+      "curious": {
+        "reaction": "curious",
+        "preferred": [
+          "idleCurious",
+          "headTilt",
+          "surveyTurn"
+        ],
+        "lifeScale": {
+          "head": 1.15
+        }
+      },
+      "thinking": {
+        "reaction": "ponder",
+        "preferred": [
+          "ponder",
+          "glassesAdjust"
+        ],
+        "lifeScale": {
+          "hands": 0.8,
+          "sway": 0.8
+        }
+      },
+      "happy": {
+        "reaction": "buoyantBounce",
+        "preferred": [
+          "buoyantBounce",
+          "heelRock",
+          "easySway"
+        ],
+        "lifeScale": {
+          "presence": 1.15,
+          "sway": 1.15,
+          "hands": 1.15
+        }
+      },
+      "cheeky": {
+        "reaction": "cheeky",
+        "preferred": [
+          "idleSmug",
+          "explainSweep"
+        ],
+        "lifeScale": {
+          "head": 1.1,
+          "hands": 1.1
+        }
+      },
+      "skeptical": {
+        "reaction": "skeptical",
+        "preferred": [
+          "ponder",
+          "headTilt"
+        ],
+        "lifeScale": {
+          "sway": 0.75,
+          "hands": 0.75
+        }
+      },
+      "tender": {
+        "reaction": "tender",
+        "preferred": [
+          "idleSoft",
+          "attentiveRest",
+          "deepBreath"
+        ],
+        "lifeScale": {
+          "sway": 0.65,
+          "hands": 0.65
+        }
+      },
+      "concerned": {
+        "reaction": "attentiveRest",
+        "preferred": [
+          "attentiveRest",
+          "idleSoft",
+          "deepBreath"
+        ],
+        "lifeScale": {
+          "sway": 0.55,
+          "hands": 0.55,
+          "head": 0.75
+        },
+        "idlePose": 31
+      },
+      "surprised": {
+        "reaction": "doubleTake",
+        "preferred": [
+          "lookAround",
+          "headTilt"
+        ],
+        "lifeScale": {
+          "head": 1.1
+        }
+      },
+      "focused": {
+        "reaction": "glassesAdjust",
+        "preferred": [
+          "glassesAdjust",
+          "ponder",
+          "explainOpen"
+        ],
+        "lifeScale": {
+          "sway": 0.7,
+          "hands": 0.85
+        }
+      },
+      "sleepy": {
+        "reaction": "doze",
+        "preferred": [
+          "deepBreath",
+          "idleSoft",
+          "attentiveRest"
+        ],
+        "lifeScale": {
+          "pace": 0.7,
+          "sway": 0.6,
+          "head": 0.6,
+          "hands": 0.6
+        }
+      }
+    }
+  }
 }

@@ -10,7 +10,7 @@
 class MotionCheck : public QObject {
     Q_OBJECT
     QVariantMap catalog;
-    MotionDirector::Context visible() { MotionDirector::Context c;c.visible=true;return c; }
+    MotionDirector::Context visible() { MotionDirector::Context c;c.visible=true;c.idleEnergy="calm";return c; }
 private slots:
     void initTestCase() {
         QFile file(QString(CERE_SOURCE_DIR)+"/assets/motions.json");
@@ -123,6 +123,24 @@ private slots:
         QCOMPARE(d.name(),QString("runLeft"));QVERIFY(!d.idle());QVERIFY(!d.play("wave"));
         c.roaming=false;d.setContext(c);QVERIFY(d.idle());
     }
+    void livelyReadingAllowsGesturesButKeepsInteractionGuards() {
+        MotionDirector d(catalog,1);auto c=visible();c.panel=true;c.idleEnergy="lively";
+        d.setContext(c);QVERIFY(d.canIdle());QVERIFY(d.idle());QVERIFY(d.finish(d.revision()));
+        for(int guard=0;guard<11;++guard){
+            auto blocked=c;
+            if(guard==0)blocked.interacting=true;if(guard==1)blocked.listening=true;
+            if(guard==2)blocked.busy=true;if(guard==3)blocked.waiting=true;
+            if(guard==4)blocked.problem=true;if(guard==5)blocked.dragging=true;
+            if(guard==6)blocked.connected=false;if(guard==7)blocked.visible=false;
+            if(guard==8)blocked.quiet=true;if(guard==9)blocked.reduced=true;
+            if(guard==10)blocked.intensity=0;
+            d.setContext(blocked);QVERIFY(!d.canIdle());QVERIFY(!d.idle());
+        }
+        d.setContext(c);QVERIFY(d.canIdle());
+        c.idleEnergy="calm";d.setContext(c);QVERIFY(!d.canIdle());
+        c.panel=false;c.interacting=true;d.setContext(c);QVERIFY(!d.canIdle());
+        c.interacting=false;d.setContext(c);QVERIFY(d.canIdle());
+    }
     void staleCompletionCannotEndNewReaction() {
         MotionDirector d(catalog,1);d.setContext(visible());
         QVERIFY(d.play("wave"));auto old=d.revision();
@@ -154,6 +172,54 @@ private slots:
         QCOMPARE(MotionDirector::conversationalCue("I'm overwhelmed by this.",true),QString("tender"));
         for(const QString text:{QString("Success!"),QString("Done, it worked."),QString("I failed. Success was not possible."),QString("```\nYou absolute menace."),QString("> I'm here."),QString("{\"text\":\"Naturally.\"}"),QString("The log says: you absolute menace."),QString("Bonjour!")})
             QVERIFY2(MotionDirector::conversationalCue(text).isEmpty(),qPrintable(text));
+    }
+    void profilesUseAuthoredTimingAndCompleteBags(){
+        for(const auto &profile:QStringList{"calm","lively"}){
+            MotionDirector d(catalog,42);auto c=visible();c.idleEnergy=profile;d.setContext(c);
+            const auto data=catalog.value("idleProfiles").toMap().value(profile).toMap();
+            for(double intensity:{.1,.35,.7,1.}){
+                c.intensity=intensity;d.setContext(c);
+                for(int i=0;i<100;++i){const int delay=d.nextIdleDelay();
+                    QVERIFY(delay>=qRound(data.value("minMs").toInt()/std::max(.35,intensity)));
+                    QVERIFY(delay<=qRound(data.value("maxMs").toInt()/std::max(.35,intensity)));
+                }
+            }
+            QString previous;
+            for(const auto &mood:QStringList{"neutral","happy","concerned"}){
+                c.mood=mood;d.setContext(c);
+                for(int cycle=0;cycle<3;++cycle){QSet<QString> seen;
+                    for(int i=0;i<data.value("pool").toList().size();++i){
+                        QVERIFY(d.idle());QVERIFY(d.name()!=previous);previous=d.name();seen.insert(d.name());QVERIFY(d.finish(d.revision()));
+                    }
+                    QCOMPARE(seen.size(),data.value("pool").toList().size());
+                }
+            }
+        }
+    }
+    void moodReactionsAreSettledEventsNotQueuedWork(){
+        MotionDirector d(catalog,1);auto c=visible();c.moodSession="session";c.moodReactive=true;c.mood="curious";
+        d.setContext(c);QVERIFY(d.reactMood(0));QCOMPARE(d.name(),QString("curious"));d.finish(d.revision());
+        QVERIFY(!d.reactMood(7000)); // Same mood is not a new event.
+        c.mood="happy";d.setContext(c);QVERIFY(!d.reactMood(2000));
+        QVERIFY(!d.reactMood(7000)); // Cooldown never becomes a delayed queue.
+        c.mood="concerned";c.busy=true;d.setContext(c);QVERIFY(!d.reactMood(8000));
+        c.busy=false;d.setContext(c);QVERIFY(!d.reactMood(9000));
+        c.mood="sleepy";d.setContext(c);QVERIFY(d.reactMood(10000));QCOMPARE(d.name(),QString("doze"));
+        for(int guard=0;guard<10;++guard){
+            MotionDirector blocked(catalog,2);auto x=visible();x.mood="happy";x.moodSession="s";x.moodReactive=true;
+            if(guard==0)x.waiting=true;if(guard==1)x.problem=true;if(guard==2)x.connected=false;
+            if(guard==3)x.dragging=true;if(guard==4)x.visible=false;if(guard==5)x.quiet=true;
+            if(guard==6)x.reduced=true;if(guard==7)x.intensity=0;if(guard==8)x.expressive=false;if(guard==9)x.moodReactive=false;
+            blocked.setContext(x);QVERIFY(!blocked.reactMood(0));
+        }
+    }
+    void moodWeightBiasPreservesEveryBagMember(){
+        int matching=0;
+        for(int seed=0;seed<500;++seed){
+            MotionDirector d(catalog,seed);auto c=visible();c.idleEnergy="lively";c.mood="happy";d.setContext(c);
+            QVERIFY(d.idle());if(QStringList{"buoyantBounce","heelRock","easySway"}.contains(d.name()))matching++;
+        }
+        QVERIFY(matching>110); // Uniform selection would average 71/500.
     }
     void mouseFollowingIsSlowAndSettlesShortOfCursor(){
         MouseFollower f;f.reset({100,300});const QSizeF size(192,208);const QRectF screen(0,0,1920,1080);const QPointF cursor(900,500);

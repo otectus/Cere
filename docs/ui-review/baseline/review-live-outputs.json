@@ -1,0 +1,27 @@
+[
+    {
+        "check": "compact layer on DP-1 scale 1",
+        "detail": "[{\"address\":\"0x555cbad4c560\",\"alpha\":1,\"h\":860,\"namespace\":\"cere-panel\",\"pid\":3683856,\"w\":440,\"x\":1103,\"y\":-1040}]",
+        "ok": true
+    },
+    {
+        "check": "compact layer on eDP-1 scale 1",
+        "detail": "[{\"address\":\"0x555cbba563f0\",\"alpha\":1,\"h\":860,\"namespace\":\"cere-panel\",\"pid\":3683856,\"w\":440,\"x\":1103,\"y\":94}]",
+        "ok": true
+    },
+    {
+        "check": "compact layer on HDMI-A-1 scale 1",
+        "detail": "[{\"address\":\"0x555cbad4c560\",\"alpha\":1,\"h\":860,\"namespace\":\"cere-panel\",\"pid\":3683856,\"w\":440,\"x\":3023,\"y\":40}]",
+        "ok": true
+    },
+    {
+        "check": "compact layer on HEADLESS-2 scale 2",
+        "detail": "[{\"address\":\"0x555cbf1054d0\",\"alpha\":1,\"h\":668,\"namespace\":\"cere-panel\",\"pid\":3683856,\"w\":440,\"x\":4367,\"y\":40}]",
+        "ok": true
+    },
+    {
+        "check": "bubble layer beside pet on HEADLESS-2",
+        "detail": "[{\"address\":\"0x555cbcf3d7a0\",\"alpha\":1,\"h\":250,\"namespace\":\"cere-approval\",\"pid\":3683856,\"w\":392,\"x\":4427,\"y\":347}] pet [{\"address\":\"0x555cbad4c560\",\"alpha\":1,\"h\":208,\"namespace\":\"cere-pet\",\"pid\":3683856,\"w\":192,\"x\":4819,\"y\":410}]",
+        "ok": true
+    }
+]

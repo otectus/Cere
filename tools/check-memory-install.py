@@ -82,21 +82,29 @@ with tempfile.TemporaryDirectory(prefix='cere-install-check-') as temporary:
             assert health['sqlite']
             session = rpc('session.create', {'provider': 'ollama', 'model': 'fixture:latest', 'cwd': str(directory)})
             sid = session['id']
+            peers = [rpc('session.create', {'provider': provider, 'cwd': str(directory), 'trusted': True})
+                     for provider in ['codex', 'claude']]
             saved = rpc('memory.save', {'sessionId': sid, 'text': 'Synthetic project decision: use Ruff.'})
             listing = rpc('memory.list', {'sessionId': sid})
             assert listing['total'] == 1
             record = listing['rows'][0]['id']
+            for peer in peers:
+                assert any(row['id'] == record for row in rpc('memory.list', {'sessionId': peer['id']})['rows'])
+                assert any('Ruff' in row['text'] for row in cli('query', '--session', peer['id'], '--text', 'Ruff')['results'])
             packet = cli('query', '--session', sid, '--text', 'Ruff')
             assert any('Ruff' in row['text'] for row in packet['results'])
             preview = cli('forget-preview', '--session', sid, '--id', record)
             erased = cli('forget', '--session', sid, '--id', record, '--expected-revision', str(preview['revision']))
             assert erased['suppressed'] and not erased['purge_complete']
             assert not cli('query', '--session', sid, '--text', 'Ruff')['results']
+            for peer in peers:
+                assert not cli('query', '--session', peer['id'], '--text', 'Ruff')['results']
             status = cli('erasure-status', '--job', erased['job_id'])
             assert not status['purge_complete']
             print(json.dumps({'installed_broker': True, 'peer_credentials': True, 'cli': True,
                               'immediate_recall_without_projection': True, 'forget_revision_guard': True,
-                              'immediate_suppression': True, 'outage_purge_pending': True}))
+                              'immediate_suppression': True, 'outage_purge_pending': True,
+                              'cross_provider_scope': True, 'cross_provider_erasure': True}))
         finally:
             process.terminate()
             try:

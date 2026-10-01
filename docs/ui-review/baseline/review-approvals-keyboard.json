@@ -1,0 +1,82 @@
+[
+    {
+        "check": "six pending approvals",
+        "detail": "6",
+        "ok": true
+    },
+    {
+        "check": "workspace shows the last requester",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "compact tab chain from composer",
+        "detail": "TextArea:composer > TextArea:composer > TextArea:composer > TextArea:composer > TextArea:composer",
+        "ok": true
+    },
+    {
+        "check": "composer text after Tab",
+        "detail": "\t\t\t\t",
+        "ok": false
+    },
+    {
+        "check": "Enter on focused Allow does not approve",
+        "detail": "before=6 after=6",
+        "ok": true
+    },
+    {
+        "check": "Space on focused Allow approves",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "bubble has no default-focused control",
+        "detail": "QQuickRootItem:",
+        "ok": true
+    },
+    {
+        "check": "bubble is the active window",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "bubble first Tab target",
+        "detail": "TextArea:approvalBubble",
+        "ok": true
+    },
+    {
+        "check": "Enter in bubble does not approve",
+        "detail": "TextArea:approvalBubble",
+        "ok": true
+    },
+    {
+        "check": "rename dialog open",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Escape closes the dialog only",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Escape on Settings returns to Chat",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Escape on Chat hides the window",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Escape does not stop the running turn",
+        "detail": "waiting",
+        "ok": false
+    },
+    {
+        "check": "draft survives Escape",
+        "detail": "Escape keeps this draft",
+        "ok": true
+    }
+]

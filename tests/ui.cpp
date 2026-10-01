@@ -7,7 +7,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QImage>
+#include <QPainter>
 #include <QClipboard>
+#include <QMimeData>
 #include <QDesktopServices>
 #include <QQuickTextDocument>
 #include <QTextBlock>
@@ -23,6 +25,14 @@
 #include <QLocalSocket>
 #include <QSignalSpy>
 #include <memory>
+#include <QAccessible>
+#include <QJsonArray>
+#include <QRandomGenerator>
+#include <QWheelEvent>
+#include <QStandardPaths>
+#include "../native/placement.h"
+#include <QMutex>
+#include <signal.h>
 
 class UiCheck : public QObject {
     Q_OBJECT
@@ -33,6 +43,7 @@ class UiCheck : public QObject {
     QString sessionId;
     QUrl openedMessageLink;
     QQuickItem *item(const QString &name){
+        if(!window)return nullptr;
         std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem*root)->QQuickItem*{if(!root->isVisible())return nullptr;if(root->objectName()==name)return root;for(auto child:root->childItems())if(auto match=find(child))return match;return nullptr;};
         return find(window->contentItem());
     }
@@ -44,7 +55,7 @@ class UiCheck : public QObject {
         }
         QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());QTest::qWait(120);
     }
-    void capture(const QString &name){QDir().mkpath("/tmp/cere-ui-evidence");QVERIFY(window->grabWindow().save("/tmp/cere-ui-evidence/"+name+".png"));}
+    void capture(const QString &name){QVERIFY2(window,"no window to capture");QDir().mkpath("/tmp/cere-ui-evidence");QVERIFY(window->grabWindow().save("/tmp/cere-ui-evidence/"+name+".png"));}
     QJsonDocument hypr(const QStringList &args){QProcess p;p.start("hyprctl",args);if(!p.waitForFinished(2000))return {};return QJsonDocument::fromJson(p.readAllStandardOutput());}
     // Offscreen runs own a virtual pointer and never reach the live compositor.
     bool offscreen(){return qGuiApp->platformName()=="offscreen";}
@@ -110,14 +121,141 @@ private slots:
         QTRY_VERIFY(scroll->property("contentY").toDouble()>0);
         QVERIFY(search->mapToScene(QPointF()).y()>=0);
         search->setProperty("text","no-such-setting");QTRY_COMPARE(picker->property("count").toInt(),0);
-        search->setProperty("text","");QTRY_COMPARE(picker->property("count").toInt(),10);
+        search->setProperty("text","");QTRY_COMPARE(picker->property("count").toInt(),11);
         scroll->setProperty("contentY",0);click("tab_Chat");
+    }
+    void workspaceTelemetryControls(){
+        const QString root=data.path()+"/telemetry-project";QVERIFY(QDir().mkpath(root));
+        const auto configured=call("settings.update",{{"telemetry",QVariantMap{{"roots",QStringList{root}}}}});QVERIFY(!configured.contains("error"));
+        click("tab_Settings");auto scroll=item("settingsScroll");QVERIFY(scroll);scroll->setProperty("contentY",0);
+        QVERIFY(item("telemetryEnabled"));click("telemetryEnabled");
+        QTRY_COMPARE_WITH_TIMEOUT(app->state().value("telemetry").toMap().value("listener").toString(),QString("listening"),8000);
+        QTRY_COMPARE(app->state().value("telemetry").toMap().value("watcher").toString(),QString("watching"));
+        QProcess flood;QTimer heartbeat;heartbeat.setTimerType(Qt::PreciseTimer);heartbeat.setInterval(16);
+        QElapsedTimer frameClock;frameClock.start();qint64 lastFrame=0,maxFrameGap=0;int frames=0;
+        connect(&heartbeat,&QTimer::timeout,this,[&]{const auto now=frameClock.elapsed();maxFrameGap=std::max(maxFrameGap,now-lastFrame);lastFrame=now;frames++;});heartbeat.start();
+        flood.start("python3",{"-c","import pathlib,sys,time\np=pathlib.Path(sys.argv[1])/'src';p.mkdir(exist_ok=True)\nfor batch in range(8):\n for i in range(512):\n  t=p/(str(i)+'.tmp');t.write_text(str(batch));t.replace(p/(str(i)+'.txt'))\n time.sleep(.05)\n",root});
+        QTRY_COMPARE_WITH_TIMEOUT(flood.state(),QProcess::NotRunning,10000);QCOMPARE(flood.exitCode(),0);QTest::qWait(700);heartbeat.stop();
+        QVERIFY(frames>10);QVERIFY2(maxFrameGap<150,qPrintable(QString("UI heartbeat stalled for %1 ms").arg(maxFrameGap)));
+        qInfo("Telemetry flood UI heartbeat: %d frames, maximum gap %lld ms",frames,static_cast<long long>(maxFrameGap));
+        QVERIFY(item("telemetryCommands"));click("telemetryCommands");
+        QTRY_VERIFY(app->state().value("settings").toMap().value("telemetry").toMap().value("commands").toBool());
+        click("telemetryPause");QTRY_VERIFY(app->state().value("telemetry").toMap().value("paused").toBool());
+        click("telemetryClear");click("telemetryPause");QTRY_VERIFY(!app->state().value("telemetry").toMap().value("paused").toBool());
+        capture("workspace-telemetry");
+        QVERIFY(!call("settings.update",{{"telemetry",QVariantMap{{"enabled",false},{"commands",false},{"roots",QStringList{}}}}}).contains("error"));
+        click("tab_Chat");
+    }
+    void apiProviderSetup(){
+        click("tab_Settings");
+        for(const auto &provider:{"openai","anthropic","google"}){
+            auto key=item(QString("apiKey_")+provider);QVERIFY(key);
+            QCOMPARE(key->property("echoMode").toInt(),2); // Password; never populated from state.
+            QVERIFY(key->property("text").toString().isEmpty());
+            const auto saved=call("provider.credentials",{{"provider",provider},{"key","fixture-ui-key"}});
+            QVERIFY2(!saved.contains("error"),qPrintable(saved.value("error").toString()));
+        }
+        click("tab_Sessions");click("newSession");
+        auto provider=item("sessionProvider");QVERIFY(provider);QCOMPARE(provider->property("count").toInt(),7);
+        for(int index=4;index<7;index++){
+            provider->setProperty("currentIndex",index);QTest::qWait(50);
+            QVERIFY(item("sessionCustomModel"));QVERIFY(!item("sessionEffort"));
+            auto tools=item("sessionTools");QVERIFY(tools);QVERIFY(tools->isEnabled());
+        }
+        item("sessionTitle")->setProperty("text","API setup check");
+        item("sessionCustomModel")->setProperty("text","fixture-model");
+        auto open=item("sessionOpen");QVERIFY(open);QVERIFY(open->isEnabled());click("sessionOpen");
+        QTRY_COMPARE(app->session().value("provider").toString(),QString("google"));
+        QCOMPARE(app->session().value("model").toString(),QString("fixture-model"));
+        for(const auto &name:{"openai","anthropic","google"})call("provider.credentials",{{"provider",name},{"key",""}});
+        click("tab_Chat");
+        const auto originalId=app->selectedId();
+        item("composer")->setProperty("text","Keep this API draft");
+        click("ollamaModelOptions");QTRY_VERIFY(item("conversationCustomModel"));
+        QVERIFY(!item("conversationEffort"));
+        item("conversationCustomModel")->setProperty("text","another-api-model");
+        QTRY_VERIFY(item("ollamaSessionSave")->isEnabled());click("ollamaSessionSave");
+        QTRY_COMPARE(app->session().value("model").toString(),QString("another-api-model"));
+        QCOMPARE(app->selectedId(),originalId);
+        QCOMPARE(item("composer")->property("text").toString(),QString("Keep this API draft"));
+    }
+    void conversationModelSwitching(){
+        const auto created=call("session.create",{{"provider","codex"},{"model","fixture-model"},{"effort","high"},{"cwd",data.path()},{"trusted",true}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        app->select(created.value("id").toString());click("tab_Chat");
+        QVERIFY(!call("session.send",{{"id",app->selectedId()},{"text","completion-model-switch"}}).contains("error"));
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QTRY_VERIFY(app->transcript()->rowCount()>1);
+        const auto rows=app->transcript()->rowCount();const auto nativeId=app->session().value("nativeId").toString();
+        QVERIFY(!nativeId.isEmpty());
+        item("composer")->setProperty("text","My next message");
+        click("ollamaModelOptions");auto picker=item("ollamaSessionModel");QVERIFY(picker);
+        QTRY_COMPARE(picker->property("count").toInt(),3);
+        QCOMPARE(item("conversationEffort")->property("currentValue").toString(),QString("high"));
+        picker->setProperty("currentIndex",2);QVERIFY(QMetaObject::invokeMethod(picker,"activated",Q_ARG(int,2)));
+        QCOMPARE(item("conversationEffort")->property("currentValue").toString(),QString());
+        QCOMPARE(item("conversationEffort")->property("count").toInt(),2);
+        item("conversationEffort")->setProperty("currentIndex",1);
+        capture("conversation-model-switch");click("ollamaSessionSave");
+        QTRY_COMPARE(app->session().value("model").toString(),QString("fixture-fast"));
+        QCOMPARE(app->session().value("effort").toString(),QString("low"));
+        QCOMPARE(app->session().value("nativeId").toString(),nativeId);
+        QCOMPARE(app->transcript()->rowCount(),rows);
+        QCOMPARE(item("composer")->property("text").toString(),QString("My next message"));
+        QVERIFY(!call("session.send",{{"id",app->selectedId()},{"text","completion-new-model"}}).contains("error"));
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QTRY_VERIFY(app->transcript()->rowCount()>rows);
+    }
+    void providerSpeechSwitches(){
+        click("tab_Settings");const auto original=app->state().value("settings").toMap().value("speechProviders");
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"speechProviders",original}});click("tab_Chat");});
+        QTRY_VERIFY(item("speechProvider_codex"));QVERIFY(item("speechProvider_ollama"));QVERIFY(item("speechProvider_google"));
+        click("speechProvider_codex");
+        QTRY_VERIFY(!app->state().value("settings").toMap().value("speechProviders").toMap().value("codex").toBool());
+        QVERIFY(item("speechProvider_claude")->property("checked").toBool());
+        capture("speech-provider-switches");
+        click("speechProvider_codex");QTRY_VERIFY(app->state().value("settings").toMap().value("speechProviders").toMap().value("codex").toBool());
+    }
+    void elevenLabsSettings(){
+        click("tab_Settings");
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"ttsProvider",original.value("ttsProvider")},{"elevenlabs",original.value("elevenlabs")}});call("elevenlabs.credentials",{{"key",""}});click("tab_Chat");});
+        QVERIFY(!call("settings.update",{{"ttsProvider","elevenlabs"}}).contains("error"));
+        QTRY_VERIFY(item("elevenLabsSettings"));QVERIFY(!item("speechVoice"));
+        QTRY_VERIFY(item("elevenApiKey"));QCOMPARE(item("elevenApiKey")->property("echoMode").toInt(),2);
+        QVERIFY(!call("elevenlabs.credentials",{{"key","fixture-eleven-key"}}).contains("error"));
+        QVERIFY(!call("settings.update",{{"elevenlabs",QVariantMap{{"voiceId","fixture-voice"},{"modelId","eleven_flash_v2_5"},{"allowCloud",true}}}}).contains("error"));
+        QTRY_COMPARE(item("elevenVoiceId")->property("text").toString(),QString("fixture-voice"));
+        QVERIFY(item("elevenCloudConsent")->property("checked").toBool());
+        click("elevenVoiceId");capture("elevenlabs-settings");
+        QVERIFY(!call("settings.update",{{"ttsProvider","local"}}).contains("error"));
+        QTRY_VERIFY(item("speechVoice"));QVERIFY(!item("elevenLabsSettings"));
+    }
+    void indexTtsSettings(){
+        click("tab_Settings");
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"ttsProvider",original.value("ttsProvider")},{"indextts",original.value("indextts")}});click("tab_Chat");});
+        QVERIFY(!call("settings.update",{{"ttsProvider","indextts"},{"indextts",QVariantMap{{"modelDir",data.path()+"/missing-index-model"},{"profileId",""}}}}).contains("error"));
+        QTRY_VERIFY(item("indexTtsSettings"));
+        auto panel=item("indexTtsSettings");
+        QTRY_VERIFY(item("indexVoiceName"));
+        QVERIFY(!item("speechVoice"));
+        QVariantMap caps{{"languages",QStringList{"en","zh"}},{"emotionModes",QStringList{"same-as-speaker","vector"}},{"durationControl",false}};
+        panel->setProperty("caps",caps);QTest::qWait(100);QVERIFY(!item("indexDuration"));
+        caps["durationControl"]=true;caps["languages"]=QStringList{"zh","en","ja","es","ar"};panel->setProperty("caps",caps);
+        QTRY_VERIFY(item("indexDuration"));
+        item("indexVoiceName")->setProperty("text","Fixture voice");
+        QCOMPARE(item("indexVoiceName")->property("text").toString(),QString("Fixture voice"));
+        click("indexVoiceName");capture("indextts-voice-profile");
+        click("ttsProvider");QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(100);capture("indextts-settings");
+        QVERIFY(!call("settings.update",{{"ttsProvider","local"}}).contains("error"));
+        QTRY_VERIFY(item("speechVoice"));QVERIFY(!item("indexTtsSettings"));
     }
     void voiceSettings(){
         click("tab_Settings");
         auto enabled=item("speechEnabled"),voice=item("speechVoice");QVERIFY(enabled&&voice);
         const auto original=app->state().value("settings").toMap();
-        const auto restore=qScopeGuard([&]{call("settings.update",{{"speechEnabled",original.value("speechEnabled")},{"voice",original.value("voice")}});click("tab_Chat");});
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"speechEnabled",original.value("speechEnabled")},{"voice",original.value("voice")},{"speechRate",original.value("speechRate")},{"speechPitch",original.value("speechPitch")},{"speechVolume",original.value("speechVolume")}});click("tab_Chat");});
         QCOMPARE(voice->property("displayText").toString(),QString("en_US-amy-medium"));
         QTRY_VERIFY(voice->property("count").toInt()>0);
         QVERIFY(QMetaObject::invokeMethod(enabled,"toggle"));
@@ -126,6 +264,32 @@ private slots:
         QVERIFY(!call("tts.test").contains("error"));
         QVERIFY(!call("tts.stop").contains("error"));
         QVERIFY(item("ttsTest")&&item("ttsStop")&&item("ttsStatus"));
+        auto pitch=item("speechPitch"),rate=item("speechRate"),volume=item("speechVolume");QVERIFY(pitch&&rate&&volume);
+        click("speechPitch");QTest::keyClick(window,Qt::Key_Right);
+        QTRY_COMPARE(app->state().value("settings").toMap().value("speechPitch").toDouble(),.5);
+        click("speechRate");QTest::keyClick(window,Qt::Key_End);
+        QTRY_COMPARE(app->state().value("settings").toMap().value("speechRate").toDouble(),2.);
+        click("speechVolume");QTest::keyClick(window,Qt::Key_Home);
+        QTRY_COMPARE(app->state().value("settings").toMap().value("speechVolume").toDouble(),0.);
+        QVERIFY(item("ttsStatus")->property("text").toString().contains("muted"));
+        click("resetVoiceTuning");
+        QTRY_COMPARE(app->state().value("settings").toMap().value("speechPitch").toDouble(),0.);
+        QTRY_COMPARE(pitch->property("value").toDouble(),0.);
+        QTRY_COMPARE(rate->property("value").toDouble(),1.);
+        QTRY_COMPARE(volume->property("value").toDouble(),1.);
+        QCOMPARE(app->state().value("settings").toMap().value("voice"),original.value("voice"));
+        // A continuous pointer drag writes one setting update on release.
+        click("speechPitch");
+        const auto revision=app->state().value("settingsRevision");
+        const auto start=pitch->mapToScene(QPointF(pitch->width()/2,pitch->height()/2)).toPoint();
+        const auto end=pitch->mapToScene(QPointF(pitch->width()*.7,pitch->height()/2)).toPoint();
+        QTest::mousePress(window,Qt::LeftButton,Qt::NoModifier,start);
+        QTest::mouseMove(window,end);QTest::qWait(100);
+        QCOMPARE(app->state().value("settingsRevision"),revision);
+        QTest::mouseRelease(window,Qt::LeftButton,Qt::NoModifier,end);
+        QTRY_VERIFY(app->state().value("settings").toMap().value("speechPitch").toDouble()>0.);
+        QTRY_COMPARE(app->state().value("settingsRevision").toString().toLongLong(),revision.toString().toLongLong()+1);
+        QVERIFY(item("ttsTest")->isEnabled());
         auto scroll=item("settingsScroll");QVERIFY(scroll);
         scroll->setProperty("contentY",voice->mapToItem(scroll,QPointF()).y()+scroll->property("contentY").toDouble()-170);
         QTest::qWait(100);capture("voice-settings");
@@ -265,21 +429,20 @@ Unicode: café ✦ 日本語
         model->upsert({{"id","markdown"},{"role","assistant"},{"text","A short response after a wide table."}});
         QTRY_COMPARE(body->width(),horizontal->width());
     }
-    void permissionBypassSettings(){
-        click("tab_Settings");
-        const auto restore=qScopeGuard([&]{app->rpc("settings.update",{{"bypassCliPermissions",false},{"bypassComputerPermissions",false}});click("tab_Chat");});
-        QTRY_VERIFY(item("bypassCliPermissions"));
-        click("bypassCliPermissions");
-        QTRY_VERIFY(app->state().value("settings").toMap().value("bypassCliPermissions").toBool());
-        QVERIFY(!app->state().value("settings").toMap().value("bypassComputerPermissions").toBool());
-        click("bypassComputerPermissions");
-        QTRY_VERIFY(app->state().value("settings").toMap().value("bypassComputerPermissions").toBool());
-        capture("permission-bypass-settings");
-        click("bypassCliPermissions");
-        QTRY_VERIFY(!app->state().value("settings").toMap().value("bypassCliPermissions").toBool());
-        QVERIFY(app->state().value("settings").toMap().value("bypassComputerPermissions").toBool());
-        click("bypassComputerPermissions");
-        QTRY_VERIFY(!app->state().value("settings").toMap().value("bypassComputerPermissions").toBool());
+    void permissionPowerSession(){
+        const auto created=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Power permissions check"}});
+        QVERIFY(!created.contains("error"));app->select(created.value("id").toString());
+        click("shellPermissionCenter");QTRY_VERIFY(item("powerCliAccess"));
+        click("powerCliAccess");QTRY_VERIFY(item("startPower")->isEnabled());click("startPower");
+        QTRY_COMPARE(app->state().value("power").toList().size(),1);
+        const auto lease=app->state().value("power").toList().first().toMap();
+        QCOMPARE(lease.value("state").toString(),QString("active"));
+        QVERIFY(!app->state().value("settings").toMap().value("bypassCliPermissions").toBool());
+        capture("permission-power-session");
+        QVERIFY(!call("power.end",{{"id",lease.value("id")}}).contains("error"));
+        QTRY_COMPARE(app->state().value("power").toList().first().toMap().value("state").toString(),QString("ended"));
+        for(auto w:qGuiApp->allWindows())for(auto center:w->findChildren<QObject*>("permissionCenter"))if(center->property("opened").toBool())QVERIFY(QMetaObject::invokeMethod(center,"close"));
+        click("tab_Chat");
     }
     void projectAndDraft(){
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","UI integration test"}});
@@ -300,7 +463,7 @@ Unicode: café ✦ 日本語
         QTest::qWait(100);capture("ollama-settings");
         click("tab_Sessions");click("newSession");
         auto provider=item("sessionProvider");QVERIFY(provider);
-        QCOMPARE(provider->property("count").toInt(),3);
+        QCOMPARE(provider->property("count").toInt(),7);
         provider->setProperty("currentIndex",2);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,2)));
         QTRY_COMPARE(item("sessionModel")->property("count").toInt(),3);
         QCOMPARE(item("sessionModel")->property("currentValue").toString(),QString());
@@ -328,7 +491,7 @@ Unicode: café ✦ 日本語
         QVERIFY(!item("ollamaSessionTools")->isEnabled());capture("ollama-model-options");
         click("ollamaSessionSave");QTRY_COMPARE(app->session().value("model").toString(),QString("fixture-plain:latest"));
         QCOMPARE(app->state().value("settings").toMap().value("ollama").toMap().value("model").toString(),QString("fixture-chat:latest"));
-        click("chatHandoff");QCOMPARE(item("handoffProvider")->property("count").toInt(),2);
+        click("chatHandoff");QCOMPARE(item("handoffProvider")->property("count").toInt(),6);
         QVERIFY(item("handoffTrust"));QVERIFY(!item("handoffCreate")->isEnabled());
         item("handoffTrust")->setProperty("checked",true);click("handoffCreate");
         QTRY_COMPARE(app->session().value("provider").toString(),QString("codex"));
@@ -376,7 +539,7 @@ Unicode: café ✦ 日本語
     }
     void questionsAndAgentActivity(){
         click("tab_Chat");
-        app->rpc("settings.update",{{"bypassCliPermissions",false},{"quiet",true},{"reducedMotion",true}});
+        app->rpc("settings.update",{{"bypassCliPermissions",false},{"quiet",true},{"reducedMotion",true},{"memory",QVariantMap{{"enabled",false}}}});
         const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Question and agent checks"}});
         QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
@@ -534,6 +697,7 @@ Unicode: café ✦ 日本語
             panel.show();panel.requestActivate();QTest::qWait(200);
             click("tab_Sessions");
             // Clicking the already-selected session must navigate too.
+            capture(QString("compact-before-select-%1").arg(size.width()));
             click("session_"+second);
             QCOMPARE(shell->property("page").toInt(),0);
             QTRY_COMPARE(shell->property("pageOffset").toDouble(),0.);
@@ -966,6 +1130,74 @@ Unicode: café ✦ 日本語
         QVERIFY(!stage->property("playing").toBool());
         capture("presence-settings-preview");
     }
+    void livelyGesturesWhileReadingAnOpenConversation(){
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",original);restoreWorkspace();});
+        call("settings.update",{{"topmost",false},{"hidden",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"idleEnergy","lively"}});
+        const auto id=call("session.create",{{"provider","ollama"},{"model","fixture-plain:latest"},{"cwd",data.path()},{"title","Reading idle regression"}}).value("id").toString();
+        QVERIFY(!id.isEmpty());QTRY_COMPARE(app->selectedId(),id);
+        restoreWorkspace();click("tab_Chat");
+        auto composer=item("composer"),chat=item("chatView");QVERIFY(composer&&chat);
+        composer->setProperty("text",QString());composer->forceActiveFocus();
+        app->setPetInteracting(false);
+        QTRY_VERIFY(composer->hasActiveFocus());QTRY_VERIFY(!chat->property("listening").toBool());
+        const auto pool=app->animations().value("idleProfiles").toMap().value("lively").toMap().value("pool").toList();
+        QTRY_VERIFY_WITH_TIMEOUT(pool.contains(app->motion()),15000);
+        QVERIFY(window->isVisible()); // The real timer fired with the conversation still open.
+        composer->setProperty("text",QString("A draft in progress"));
+        QTRY_VERIFY(chat->property("listening").toBool());QTRY_COMPARE(app->motion(),QString("listening"));
+        composer->setProperty("text",QString());
+        QTRY_VERIFY(!chat->property("listening").toBool());QTRY_COMPARE(app->motion(),QString("idle"));
+        call("settings.update",{{"idleEnergy","calm"}});
+        QTRY_VERIFY(chat->property("listening").toBool());QTRY_COMPARE(app->motion(),QString("listening"));
+    }
+    void livelyPreviewAndSharedMood(){
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",original);restoreWorkspace();});
+        QVERIFY(!call("settings.update",{{"topmost",false},{"hidden",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"idleEnergy","lively"}}).contains("error"));
+        restoreWorkspace();click("tab_Settings");
+        QVERIFY(item("idleEnergy"));auto stage=item("motionStage");QVERIFY(stage);
+        auto actor=stage->findChild<QQuickItem*>("motionStagePlayer");QVERIFY(actor);
+        click("playMotionShowcase");
+        auto scroll=item("settingsScroll");QVERIFY(scroll);
+        scroll->setProperty("contentY",scroll->property("contentY").toDouble()+stage->mapToItem(scroll,QPointF()).y()-20);
+        QTest::qWait(100);
+        const auto profiles=app->animations().value("idleProfiles").toMap();
+        auto names=profiles.value("lively").toMap().value("pool").toList();
+        for(const auto &old:profiles.value("calm").toMap().value("pool").toList())names.removeAll(old);
+        QImage sheet(208*8,249*names.size(),QImage::Format_ARGB32);sheet.fill(QColor("#152331"));QPainter painter(&sheet);
+        int row=0;
+        for(const auto &entry:names){
+            const auto name=entry.toString();const auto clip=app->animations().value("clips").toMap().value(name).toMap();
+            int duration=clip.value("entryMs").toInt();for(const auto &key:clip.value("keys").toList())duration+=key.toMap().value("ms").toInt();
+            stage->setProperty("playing",false);
+            stage->setProperty("program",QVariantList{QVariantMap{{"motion",name},{"ms",duration+1000},{"caption",clip.value("label")}}});
+            QVERIFY(QMetaObject::invokeMethod(stage,"start"));QTRY_VERIFY(actor->property("animating").toBool());
+            painter.setPen(Qt::white);painter.drawText(4,row*249+17,name);
+            for(int frame=0;frame<8;++frame){QTest::qWait(duration/8);
+                const auto image=window->grabWindow().copy(actor->mapRectToScene(actor->boundingRect()).toRect());
+                QVERIFY(!image.isNull());
+                const auto rig=actor->property("rig").value<QJSValue>().toVariant().toMap();
+                for(auto it=rig.cbegin();it!=rig.cend();++it)if(it.value().metaType().id()==QMetaType::Double)QVERIFY2(std::isfinite(it.value().toDouble()),qPrintable(name+"/"+it.key()));
+                int blue=0;for(int y=0;y<image.height();++y)for(int x=0;x<image.width();++x){const auto pixel=image.pixelColor(x,y);if(pixel.blue()>160&&pixel.blue()>pixel.red()*1.5)++blue;}
+                if(blue<1000)qWarning()<<name<<frame<<"missing artwork"<<rig<<"shift"<<actor->property("shiftX")<<actor->property("shiftY")<<"clock"<<actor->property("clock");
+                QVERIFY2(blue>1000,qPrintable(name+" frame "+QString::number(frame)+" must retain visible hair"));
+                painter.drawImage(QRect(frame*208,row*249+24,208,225),image);
+            }
+            ++row;
+        }
+        painter.end();QDir().mkpath("/tmp/cere-motion-evidence");QVERIFY(sheet.save("/tmp/cere-motion-evidence/preview.png"));
+        stage->setProperty("playing",false);
+        // Both the portrait and body consume the exact host-published settled mood.
+        const auto id=call("session.create",{{"provider","ollama"},{"model","fixture-plain:latest"},{"cwd",data.path()},{"title","Shared mood"}}).value("id").toString();
+        QVERIFY(!id.isEmpty());QTRY_COMPARE(app->selectedId(),id);click("tab_Settings");
+        QTRY_VERIFY(app->moodSourceEnabled());
+        app->setConversationMood(id,{{"mood","concerned"},{"moodConfidence",.8},{"reactive",true},{"messageId","test"}});
+        QTRY_COMPARE(app->bodyMood(),QString("concerned"));
+        auto portrait=item("cerePortrait");QVERIFY(portrait);QTRY_COMPARE(portrait->property("mood").toString(),QString("concerned"));
+        QVERIFY(!call("settings.update",{{"expressiveCues",false}}).contains("error"));
+        QTRY_COMPARE(app->bodyMood(),QString("neutral"));QTRY_COMPARE(portrait->property("expression").toString(),QString("neutral"));
+    }
     void expressiveActing(){
         const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Expressive acting fixture"}});
@@ -1034,7 +1266,7 @@ Unicode: café ✦ 日本語
         }
         QTRY_COMPARE(app->motion(),QString("thinking"));
         QTRY_COMPARE(app->motion(),QString("working"));
-        QTRY_COMPARE(app->motion(),QString("cheeky"));
+        QTRY_COMPARE(app->motion(),QString("speaking")); // Settled tone cannot replace busy activity.
         const auto afterCue=player->property("keyIndex").toInt();QTest::qWait(500);
         QVERIFY(player->property("keyIndex").toInt()>=afterCue);
         QTRY_COMPARE(app->motion(),QString("celebrate"));QTest::qWait(360);QVERIFY(capturePet("success"));
@@ -1131,7 +1363,7 @@ Unicode: café ✦ 日本語
         QVERIFY(item("policyFish")->property("checked").toBool());QVERIFY(!item("policyHistory")->property("checked").toBool());
         // A failed policy load keeps every control disabled and submits nothing.
         QObject *inspector=nullptr;
-        for(auto w:qGuiApp->allWindows())if(!inspector)inspector=w->findChild<QObject*>("graphMemoryInspector");
+        for(auto w:qGuiApp->allWindows())for(auto candidate:w->findChildren<QObject*>("graphMemoryInspector"))if(candidate->property("opened").toBool())inspector=candidate;
         QVERIFY(inspector);
         inspector->setProperty("sessionId","missing-session");
         QVERIFY(QMetaObject::invokeMethod(inspector,"loadPolicy"));
@@ -1278,6 +1510,68 @@ Unicode: café ✦ 日本語
         call("ui.panel",{{"owner","overlay"},{"visible",false}});
         for(const auto &entry:app->state().value("completions").toList())call("completion.dismiss",{{"id",entry.toMap().value("id")}});
     }
+    void pinnedConversationBubbles(){
+        const auto originalSettings=app->state().value("settings").toMap();
+        QString first,second;
+        const auto restore=qScopeGuard([&]{
+            for(const auto &id:{first,second})if(!id.isEmpty())call("session.organize",{{"id",id},{"pinned",false}});
+            for(const auto &entry:app->state().value("completions").toList())call("completion.dismiss",{{"id",entry.toMap().value("id")}});
+            call("settings.update",{{"hidden",originalSettings.value("hidden")},{"topmost",originalSettings.value("topmost")},{"quiet",originalSettings.value("quiet")}});
+            restoreWorkspace();
+        });
+        QVERIFY(!call("settings.update",{{"topmost",false},{"hidden",false},{"quiet",true}}).contains("error"));
+        for(const auto &entry:app->state().value("completions").toList())call("completion.dismiss",{{"id",entry.toMap().value("id")}});
+        first=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Pinned project"}}).value("id").toString();
+        second=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Another pinned project"}}).value("id").toString();
+        QVERIFY(!first.isEmpty()&&!second.isEmpty());
+        call("session.organize",{{"id",first},{"pinned",true}});
+        auto replies=[&]{return app->state().value("companionReplies").toList();};
+        auto workspace=window;
+        // The expanded conversation stays open while another conversation speaks.
+        movePointer(QPoint(0,0));
+        QVERIFY(!call("session.send",{{"id",first},{"text","completion-first"}}).contains("error"));
+        QTRY_COMPARE(replies().size(),2);
+        QTRY_VERIFY((window=titled("Cere Approval")));
+        QTRY_VERIFY(item("companionRequester"));
+        QCOMPARE(item("companionRequester")->property("text").toString(),QString("Pinned project"));
+        QVERIFY(workspace->isVisible());QCOMPARE(app->selectedId(),second);
+        QVERIFY(window->flags().testFlag(Qt::WindowDoesNotAcceptFocus));
+        auto bubble=qobject_cast<QQuickView*>(window)->rootObject();QVERIFY(bubble);
+        QTRY_COMPARE(bubble->property("currentReply").toMap().value("id"),replies().last().toMap().value("id"));
+        QVERIFY(!item("completionOpen"));QVERIFY(!item("companionStopSpeaking"));
+        capture("pinned-conversation");
+        click("companionPrevious");
+        const auto reading=bubble->property("currentReply").toMap().value("id");
+        QCOMPARE(reading,replies().first().toMap().value("id"));
+        // Browsing an older reply holds it in place while new replies arrive.
+        call("session.organize",{{"id",second},{"pinned",true}});
+        call("session.send",{{"id",second},{"text","completion-second"}});
+        QTRY_COMPARE(replies().size(),4);
+        QCOMPARE(bubble->property("currentReply").toMap().value("id"),reading);
+        click("companionNext");click("companionNext");click("companionNext");
+        QTRY_COMPARE(item("companionRequester")->property("text").toString(),QString("Another pinned project"));
+        const auto shown=bubble->property("currentReply").toMap();
+        QCOMPARE(shown.value("id"),replies().last().toMap().value("id"));
+        // Hovering a current reply also preserves the reader's place.
+        call("session.send",{{"id",second},{"text","completion-second"}});
+        QTRY_COMPARE(replies().size(),6);
+        QCOMPARE(bubble->property("currentReply").toMap().value("id"),shown.value("id"));
+        QTest::mouseMove(window,QPoint(-20,-20));movePointer(QPoint(0,0));
+        QTRY_COMPARE(bubble->property("currentReply").toMap().value("id"),replies().last().toMap().value("id"));
+        // Hidden avatar and drag suppression do not lose the reply queue.
+        call("settings.update",{{"hidden",true}});QTRY_VERIFY(!titled("Cere Approval"));
+        call("settings.update",{{"hidden",false}});QTRY_VERIFY((window=titled("Cere Approval")));
+        app->beginDrag(40,40);QTRY_VERIFY(!titled("Cere Approval"));app->endDrag();
+        QTRY_VERIFY((window=titled("Cere Approval")));
+        call("session.organize",{{"id",second},{"pinned",false}});
+        QTRY_COMPARE(replies().size(),2);
+        click("companionOpen");
+        QTRY_COMPARE(app->selectedId(),first);
+        QTRY_COMPARE(replies().size(),1);
+        QTRY_VERIFY((window=titled("Cere Approval")));
+        click("companionDismiss");QTRY_VERIFY(replies().isEmpty());
+        app->closePanel();QTRY_VERIFY(!titled("Cere Approval"));
+    }
     void completionBubbles(){
         const auto restore=qScopeGuard([&]{
             for(const auto &entry:app->state().value("completions").toList())call("completion.dismiss",{{"id",entry.toMap().value("id")}});
@@ -1332,6 +1626,223 @@ Unicode: café ✦ 日本語
         QVERIFY(item("completionOpen"));
     }
     // F-021: drafts stay coherent across compact and expanded composers.
+    void compactProjectsAndEnterToSend(){
+        auto original=window;
+        const auto restore=qScopeGuard([&]{window=original;original->show();});
+        original->hide();
+        const QString cwd=data.path()+"/projects-ui";QVERIFY(QDir().mkpath(cwd));
+        QQuickView panel;panel.setResizeMode(QQuickView::SizeRootObjectToView);
+        panel.rootContext()->setContextProperty("App",app.get());
+        panel.setSource(QUrl::fromLocalFile(QString(CERE_SOURCE_DIR)+"/qml/Panel.qml"));
+        QCOMPARE(panel.status(),QQuickView::Ready);window=&panel;
+        panel.resize(440,860);panel.show();panel.requestActivate();QTest::qWait(200);
+        for(const auto name:{"Chat","Sessions","Projects","Desktop","Settings"}){
+            auto tab=item(QString("tab_")+name);QVERIFY(tab);QCOMPARE(tab->property("text").toString(),QString());QCOMPARE(tab->property("help").toString(),QString(name));
+        }
+        click("tab_Projects");QTRY_VERIFY(item("projectSearch"));
+        click("addProject");QTRY_VERIFY(item("sessionTitle"));
+        item("sessionTitle")->setProperty("text","Projects UI");item("sessionProjectPath")->setProperty("text",cwd);
+        click("projectFavorite");click("sessionTrust");
+        auto model=item("sessionModel"),effort=item("sessionEffort");QVERIFY(model&&effort);
+        QTRY_VERIFY(model->property("count").toInt()>=3);
+        model->setProperty("currentIndex",1);QVERIFY(QMetaObject::invokeMethod(model,"activated",Q_ARG(int,1)));QTest::qWait(100);
+        effort->setProperty("currentIndex",2);QVERIFY(QMetaObject::invokeMethod(effort,"activated",Q_ARG(int,2)));
+        QVERIFY(item("sessionOpen")->isEnabled());click("sessionOpen");QTest::qWait(500);capture("projects-save-check");
+        QTRY_VERIFY2(!item("sessionTitle"),qPrintable(item("newSessionError")?item("newSessionError")->property("text").toString():QString("Project settings stayed open")));
+        item("projectSearch")->setProperty("text","Projects UI");QTRY_VERIFY(item("projectNew_0"));
+        for(const QSize size:{QSize(440,860),QSize(360,560)}){
+            panel.setMinimumSize(size);panel.setMaximumSize(size);panel.resize(size);QTest::qWait(150);
+            auto settings=item("projectSettings_0"),plus=item("projectNew_0"),row=item("projectOpen_0");QVERIFY(settings&&plus&&row);
+            QCOMPARE(settings->width(),settings->height());QCOMPARE(plus->width(),plus->height());
+            QVERIFY(settings->mapToScene(QPointF()).x()<plus->mapToScene(QPointF()).x());
+            QVERIFY(row->width()>140);QVERIFY(plus->mapToScene(QPointF(plus->width(),0)).x()<panel.width());
+            capture(QString("projects-%1x%2").arg(size.width()).arg(size.height()));
+        }
+        click("projectSettings_0");QTRY_VERIFY(item("sessionTitle"));
+        QCOMPARE(item("sessionTitle")->property("text").toString(),QString("Projects UI"));
+        QVERIFY(item("sessionProjectPath")->property("readOnly").toBool());
+        QTRY_COMPARE(item("sessionModel")->property("currentValue").toString(),QString("fixture-model"));
+        QTRY_COMPARE(item("sessionEffort")->property("currentValue").toString(),QString("high"));
+        QVERIFY(item("projectFavorite")->property("checked").toBool());QVERIFY(item("sessionTrust")->property("checked").toBool());
+        capture("project-defaults-360x560");QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(100);
+        click("projectNew_0");QTRY_VERIFY(item("projectSessionName"));QVERIFY(!item("sessionProvider"));
+        item("projectSessionName")->setProperty("text","Quick project task");item("projectSessionName")->forceActiveFocus();
+        capture("project-quick-session-360x560");QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(app->session().value("title").toString(),QString("Quick project task"));
+        QCOMPARE(app->session().value("cwd").toString(),cwd);QCOMPARE(app->session().value("model").toString(),QString("fixture-model"));QCOMPARE(app->session().value("effort").toString(),QString("high"));
+        QTRY_VERIFY(item("composer"));auto composer=item("composer");
+        composer->forceActiveFocus();for(const auto ch:QByteArray("completion-first line"))QTest::keyClick(window,ch);QTest::keyClick(window,Qt::Key_Return,Qt::ShiftModifier);for(const auto ch:QByteArray("Second line"))QTest::keyClick(window,ch);
+        QCOMPARE(composer->property("text").toString(),QString("completion-first line\nSecond line"));QCOMPARE(app->messages().size(),0);
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);
+        QCOMPARE(app->messages().first().toMap().value("text").toString(),QString("completion-first line\nSecond line"));
+        QTRY_COMPARE(composer->property("text").toString(),QString());
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        const auto messageCount=app->messages().size();QTest::keyClick(window,Qt::Key_Return);QTest::qWait(100);QCOMPARE(app->messages().size(),messageCount);
+        click("tab_Projects");QTRY_VERIFY(item("projectOpen_0"));click("projectOpen_0");QTRY_VERIFY(item("sessionFilter"));
+        QVERIFY(item("sessionFilter")->property("currentText").toString().contains("projects-ui"));
+        panel.hide();
+    }
+    void compactComposerClipboard(){
+        auto original=window;
+        const auto restore=qScopeGuard([&]{window=original;original->show();QGuiApplication::clipboard()->clear();});
+        original->hide();
+        const auto created=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","A little more room to talk"}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        QQuickView panel;panel.setResizeMode(QQuickView::SizeRootObjectToView);
+        panel.rootContext()->setContextProperty("App",app.get());
+        panel.setSource(QUrl::fromLocalFile(QString(CERE_SOURCE_DIR)+"/qml/Panel.qml"));
+        QCOMPARE(panel.status(),QQuickView::Ready);window=&panel;
+        for(const QSize size:{QSize(440,860),QSize(360,560)}){
+            panel.setMinimumSize(size);panel.setMaximumSize(size);panel.resize(size);panel.show();panel.requestActivate();QTest::qWait(200);
+            auto search=item("openCommandPalette"),expand=item("expandWindow"),mic=item("voiceRecord"),send=item("sendMessage");
+            QVERIFY(search&&expand&&mic&&send);QCOMPARE(search->width(),search->height());QCOMPARE(mic->width(),mic->height());
+            QVERIFY(search->mapToScene(QPointF()).x()<expand->mapToScene(QPointF()).x());
+            QCOMPARE(search->mapToScene(QPointF()).y(),expand->mapToScene(QPointF()).y());
+            QVERIFY(mic->mapToScene(QPointF()).x()<send->mapToScene(QPointF()).x());
+            QCOMPARE(mic->mapToScene(QPointF()).y(),send->mapToScene(QPointF()).y());
+            QVERIFY(!item("openWorkflows"));
+            auto card=item("composerCard"),row=item("conversationTools"),area=item("conversationArea");QVERIFY(card&&row&&area);
+            QVERIFY(row->mapToScene(QPointF()).y()>=card->mapToScene(QPointF(0,card->height())).y());
+            QVERIFY(row->mapToScene(QPointF(0,row->height())).y()<panel.height());QVERIFY(area->height()>24);
+            if(size.width()==440){
+                QCOMPARE(item("chatHandoff")->mapToScene(QPointF()).y(),item("contextDrawerButton")->mapToScene(QPointF()).y());
+                capture("compact-clean-composer");
+            }
+            click("openCommandPalette");QTRY_VERIFY(item("commandPaletteSearch"));
+            QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(100);
+        }
+        panel.setMinimumSize({440,860});panel.setMaximumSize({440,860});panel.resize(440,860);QTest::qWait(100);
+        auto composer=item("composer");QVERIFY(composer);composer->setProperty("text","Replace this");composer->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);QGuiApplication::clipboard()->setText("Pasted at the selection");
+        QTest::keyClick(window,Qt::Key_V,Qt::ControlModifier);
+        QTRY_COMPARE(composer->property("text").toString(),QString("Pasted at the selection"));
+        QImage screenshot(32,24,QImage::Format_ARGB32);screenshot.fill(QColor("#5dd8ff"));
+        auto browserImage=new QMimeData;browserImage->setImageData(screenshot);browserImage->setUrls({QUrl("https://example.com/source.png")});QGuiApplication::clipboard()->setMimeData(browserImage);
+        QTest::keyClick(window,Qt::Key_V,Qt::ControlModifier);
+        QTRY_COMPARE_WITH_TIMEOUT(app->session().value("draftAttachments").toList().size(),1,5000);
+        auto asset=app->session().value("draftAttachments").toList().first().toMap();QCOMPARE(asset.value("kind").toString(),QString("image"));QVERIFY(QFile::exists(asset.value("path").toString()));
+        QList<QUrl> urls;
+        for(const auto name:{"pasted one.txt","pasted-two.md"}){const auto path=data.path()+"/"+name;QFile f(path);QVERIFY(f.open(QIODevice::WriteOnly));f.write("Clipboard file reference");f.close();urls.append(QUrl::fromLocalFile(path));}
+        auto files=new QMimeData;files->setUrls(urls);QGuiApplication::clipboard()->setMimeData(files);click("pasteClipboard");
+        QTRY_COMPARE_WITH_TIMEOUT(app->session().value("draftAttachments").toList().size(),3,5000);
+        QTest::qWait(900);QCOMPARE(app->session().value("draftAttachments").toList().size(),3);
+        QCOMPARE(composer->property("text").toString(),QString("Pasted at the selection"));
+        QVERIFY(!item("draftConflict"));capture("compact-pasted-attachments");
+        auto remote=new QMimeData;remote->setUrls({QUrl("https://example.com/not-a-local-file")});QGuiApplication::clipboard()->setMimeData(remote);click("pasteClipboard");
+        QCOMPARE(app->session().value("draftAttachments").toList().size(),3);QVERIFY(!item("chatView")->property("attachmentError").toString().isEmpty());
+        auto copied=new QMimeData;copied->setData("x-special/gnome-copied-files",("copy\n"+urls.first().toString(QUrl::FullyEncoded)).toUtf8());QGuiApplication::clipboard()->setMimeData(copied);
+        const auto decoded=app->clipboardContent();QVERIFY(decoded.value("handled").toBool());QVERIFY(decoded.value("error").toString().isEmpty());QCOMPARE(decoded.value("paths").toStringList(),QStringList{urls.first().toLocalFile()});
+        // The UI invokes transcription and gives a useful setup error without opening a microphone.
+        click("voiceRecord");QTRY_VERIFY(item("voiceInputStatus"));
+        QVERIFY(item("voiceInputStatus")->property("text").toString().contains("Settings"));
+        QCOMPARE(app->state().value("transcription").toMap().value("state").toString(),QString("unavailable"));
+        panel.hide();
+    }
+    void persistentPermissionSwitches(){
+        click("tab_Settings");
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"bypassCliPermissions",original.value("bypassCliPermissions")},{"bypassComputerPermissions",original.value("bypassComputerPermissions")}});click("tab_Chat");});
+        QVERIFY(!call("settings.update",{{"bypassCliPermissions",false},{"bypassComputerPermissions",false}}).contains("error"));
+        click("bypassCliPermissions");QTRY_VERIFY(app->state().value("settings").toMap().value("bypassCliPermissions").toBool());
+        click("bypassComputerPermissions");QTRY_VERIFY(app->state().value("settings").toMap().value("bypassComputerPermissions").toBool());
+        click("bypassCliPermissions");QTRY_VERIFY(!app->state().value("settings").toMap().value("bypassCliPermissions").toBool());
+        click("bypassComputerPermissions");QTRY_VERIFY(!app->state().value("settings").toMap().value("bypassComputerPermissions").toBool());
+    }
+    void foldersAttachmentsAndPalette(){
+        restoreWorkspace();click("tab_Chat");const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Organized project draft"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto id=app->selectedId();
+        click("tab_Sessions");click("createFolder");
+        item("folderName")->setProperty("text","Roadmap folder");click("saveFolder");
+        QTRY_VERIFY(!app->state().value("folders").toList().isEmpty());
+        const auto folder=app->state().value("folders").toList().first().toMap();
+        QVERIFY(!call("session.organize",{{"id",id},{"folderId",folder.value("id")},{"pinned",true}}).contains("error"));
+        click("tab_Chat");QTRY_VERIFY(item("composer"));
+        item("composer")->setProperty("text","A draft with an attachment");
+        const auto path=data.path()+"/draft-reference.txt";QFile file(path);QVERIFY(file.open(QIODevice::WriteOnly));file.write("Reference content kept with the draft.");file.close();
+        app->attachImage(path);
+        QTRY_COMPARE_WITH_TIMEOUT(app->session().value("draftAttachments").toList().size(),1,5000);
+        const auto asset=app->session().value("draftAttachments").toList().first().toMap();
+        QVERIFY(item("attachmentChip_"+asset.value("id").toString()));
+        click("contextDrawerButton");QTRY_VERIFY(item("closeContextDrawer"));capture("context-drawer");click("closeContextDrawer");
+        app->closePanel();restoreWorkspace();QTRY_COMPARE(app->session().value("draftAttachments").toList().size(),1);
+        QCOMPARE(item("composer")->property("text").toString(),QString("A draft with an attachment"));
+        QTest::keyClick(window,Qt::Key_K,Qt::ControlModifier);QTRY_VERIFY(item("commandPaletteSearch"));
+        item("commandPaletteSearch")->setProperty("text","Organized project draft");QTest::qWait(150);
+        QVERIFY(item("command_session_"+QString(id).replace('-','_'))||item("command_session_"+id));
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(100);
+        const auto removed=call("folders.delete",{{"id",folder.value("id")},{"expectedRevision",folder.value("revision")}});QVERIFY(!removed.contains("error"));
+        QTRY_VERIFY(app->session().value("folderId").isNull());QCOMPARE(app->session().value("pinned").toBool(),true);
+    }
+    void sessionContextActions(){
+        restoreWorkspace();window->resize(1040,780);click("tab_Sessions");
+        const auto folder=call("folders.save",{{"name","Context menu folder"}});QVERIFY(!folder.contains("error"));
+        const auto target=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Context target"}}).value("id").toString();
+        const auto current=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Keep current conversation"}}).value("id").toString();
+        QVERIFY(!target.isEmpty()&&!current.isEmpty());app->select(current);
+        auto session=[&]{for(const auto &entry:app->state().value("sessions").toList())if(entry.toMap().value("id")==target)return entry.toMap();return QVariantMap{};};
+        auto row=[&](const QString &viewport)->QQuickItem*{
+            auto root=item(viewport);if(!root)return nullptr;
+            std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem *node)->QQuickItem*{
+                if(node->isVisible()&&node->objectName()=="session_"+target)return node;
+                for(auto child:node->childItems())if(auto found=find(child))return found;return nullptr;
+            };return find(root);
+        };
+        auto openMenu=[&](const QString &viewport){
+            QTest::qWait(180); // Let the prior dialog close and the catalog refresh settle.
+            auto control=row(viewport);QVERIFY(control);
+            // ListView can shift originY below zero after moving a renamed row.
+            // Its own positioning API accounts for that; clamping contentY to zero does not.
+            const int index=control->parentItem()->property("index").toInt();
+            QVERIFY(QMetaObject::invokeMethod(item(viewport),"positionViewAtIndex",Q_ARG(int,index),Q_ARG(int,1)));
+            QTest::qWait(80);control=row(viewport);QVERIFY(control);
+            QTest::mouseClick(window,Qt::RightButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());
+            QTest::qWait(80);capture("context-open-"+viewport);
+            QTRY_VERIFY(item("sessionContextRename"));QCOMPARE(app->selectedId(),current);
+        };
+        for(const QString viewport:{QString("sidebarSessionList"),QString("sessionList")}){
+            click(viewport=="sidebarSessionList"?"tab_Chat":"tab_Sessions");
+            QTRY_VERIFY(row(viewport));openMenu(viewport);capture("session-context-menu-"+viewport);click("sessionContextRename");
+            QTRY_VERIFY(item("sessionContextTitle"));const auto title="Renamed from "+viewport;
+            item("sessionContextTitle")->setProperty("text",title);click("sessionContextSaveTitle");
+            QTRY_COMPARE(session().value("title").toString(),title);QCOMPARE(app->selectedId(),current);
+            openMenu(viewport);
+            QTRY_VERIFY(item("sessionContextFolderMenuItem"));click("sessionContextFolderMenuItem");
+            const auto folderItem="sessionContextFolder_"+folder.value("id").toString();
+            QTRY_VERIFY(item(folderItem));click(folderItem);QTRY_COMPARE(session().value("folderId"),folder.value("id"));
+            openMenu(viewport);click("sessionContextUnfile");QTRY_VERIFY(session().value("folderId").isNull());
+            QTest::qWait(180);auto control=row(viewport);QVERIFY(control);control->forceActiveFocus();QTest::keyClick(window,Qt::Key_F10,Qt::ShiftModifier);
+            QTRY_VERIFY(item("sessionContextPin"));click("sessionContextPin");QTRY_VERIFY(session().value("pinned").toBool());
+            openMenu(viewport);QCOMPARE(item("sessionContextPin")->property("text").toString(),QString("Unpin"));click("sessionContextPin");QTRY_VERIFY(!session().value("pinned").toBool());
+            QCOMPARE(app->selectedId(),current);
+        }
+        openMenu("sessionList");click("sessionContextArchive");QTRY_VERIFY(session().value("archived").toBool());
+        auto filter=item("sessionFilter");QVERIFY(filter);filter->setProperty("currentIndex",5);QVERIFY(QMetaObject::invokeMethod(filter,"activated",Q_ARG(int,5)));
+        QTRY_VERIFY(row("sessionList"));openMenu("sessionList");QCOMPARE(item("sessionContextArchive")->property("text").toString(),QString("Unarchive"));click("sessionContextArchive");
+        QTRY_VERIFY(!session().value("archived").toBool());filter->setProperty("currentIndex",0);QVERIFY(QMetaObject::invokeMethod(filter,"activated",Q_ARG(int,0)));
+        QTRY_VERIFY(row("sessionList"));auto control=row("sessionList");QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());
+        QTRY_COMPARE(app->selectedId(),target);QTRY_VERIFY(item("composer"));
+        QVERIFY(!call("folders.delete",{{"id",folder.value("id")},{"expectedRevision",folder.value("revision")}}).contains("error"));
+    }
+    void projectCapsulesAndRecipeReview(){
+        const auto source=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Workflow check"}});
+        QVERIFY(!source.contains("error"));app->select(source.value("id").toString());
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");QTRY_VERIFY(item("capsuleGoal"));
+        item("capsuleGoal")->setProperty("text","Keep the release reviewable");click("saveCapsule");
+        QTRY_COMPARE(call("capsules.get",{{"sessionId",source.value("id")}}).value("goal").toString(),QString("Keep the release reviewable"));
+        click("resumeCapsule");QTRY_VERIFY(app->selectedId()!=source.value("id").toString());
+        QTRY_VERIFY(item("composer"));QTRY_VERIFY(item("composer")->property("text").toString().contains("Keep the release reviewable"));
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");click("workflowTab1");QTRY_VERIFY(item("recipePicker"));
+        const auto recipes=call("recipes.list").value("recipes").toList();int index=-1;
+        for(int i=0;i<recipes.size();++i)if(recipes[i].toMap().value("id")=="diagnose-crash")index=i;
+        QVERIFY(index>=0);item("recipePicker")->setProperty("currentIndex",index);QVERIFY(QMetaObject::invokeMethod(item("recipePicker"),"activated",Q_ARG(int,index)));
+        QTRY_VERIFY(item("recipeInput_error"));QString input;for(int i=0;i<40;++i)input+=QString("Crash evidence line %1\n").arg(i);
+        item("recipeInput_error")->setProperty("text",input);click("prepareRecipe");QTRY_VERIFY(item("completeRecipePrompt"));
+        QTRY_VERIFY(item("completeRecipePrompt")->property("text").toString().contains("Crash evidence line 39"));
+        const auto before=app->selectedId();click("createRecipeDraft");QTRY_VERIFY(app->selectedId()!=before);
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));QTRY_VERIFY(item("composer")->property("text").toString().contains("Crash evidence line 39"));
+    }
     void draftsStayCoherentAcrossComposers(){
         const auto restore=qScopeGuard([&]{app->rpc("settings.update",{{"topmost",true}});restoreWorkspace();});
         click("tab_Chat");const auto previous=app->selectedId();
@@ -1511,6 +2022,471 @@ Unicode: café ✦ 日本語
         QCOMPARE(received.count("settings.update"),saves);QCOMPARE(received.count("session.create"),creates); // Nothing is replayed.
         QCOMPARE(outcomes(saving),1);QCOMPARE(outcomes(creating),1);
         view.hide();
+    }
+private:
+    // ---- UI/UX review scenarios: evidence for docs/ui-review/REVIEW.md ----
+    QJsonArray reviewNotes;
+    QString longSession,richMessageId;
+    void note(const QString &check,bool ok,const QString &detail=QString()){
+        reviewNotes.append(QJsonObject{{"check",check},{"ok",ok},{"detail",detail}});
+        qInfo().noquote()<<(ok?"REVIEW ok  ":"REVIEW FAIL")<<check<<(detail.isEmpty()?"":"· "+detail);
+    }
+    void saveNotes(const QString &name){QDir().mkpath("/tmp/cere-ui-evidence");QFile f("/tmp/cere-ui-evidence/"+name+".json");if(f.open(QIODevice::WriteOnly))f.write(QJsonDocument(reviewNotes).toJson());reviewNotes=QJsonArray();}
+    bool waitFor(const std::function<bool()> &condition,int timeout=5000){QElapsedTimer clock;clock.start();while(!condition()){if(clock.elapsed()>timeout)return false;QTest::qWait(20);}return true;}
+    QString focusName(){
+        auto focused=window?window->activeFocusItem():nullptr;if(!focused)return "none";
+        QString name=focused->objectName();for(auto p=focused->parentItem();name.isEmpty()&&p;p=p->parentItem())name=p->objectName();
+        return QString(focused->metaObject()->className()).section('_',0,0)+":"+name;
+    }
+    QString topMessageId(){
+        auto list=item("messageList");if(!list)return QString();
+        int index=-1;QMetaObject::invokeMethod(list,"indexAt",Q_RETURN_ARG(int,index),Q_ARG(double,12.),Q_ARG(double,list->property("contentY").toDouble()+12.));
+        if(index<0)return QString();
+        return app->transcript()->data(app->transcript()->index(index,0),Qt::UserRole+1).toMap().value("id").toString();
+    }
+    QQuickWindow *reviewCompact(){app->closePanel();app->togglePanel();QQuickWindow *panel=nullptr;waitFor([&]{return (panel=titled("Cere Panel"))!=nullptr;},8000);window=panel;QTest::qWait(150);return panel;}
+    QQuickWindow *reviewWorkspace(){window=nullptr;app->expand();QQuickWindow *w=nullptr;waitFor([&]{return (w=titled("Cere"))!=nullptr;},8000);window=w;QTest::qWait(150);return w;}
+    QString createSession(const QString &provider,const QString &title,const QString &model=QString()){
+        QVariantMap params{{"provider",provider},{"cwd",data.path()},{"trusted",true},{"title",title}};
+        if(!model.isEmpty())params["model"]=model;
+        const auto created=call("session.create",params);
+        if(created.contains("error"))note("create session "+title.left(30),false,created.value("error").toString());
+        return created.value("id").toString();
+    }
+    QStringList visibleWindows(){QStringList names;for(auto w:qGuiApp->allWindows())if(w->isVisible()&&(w->title()=="Cere"||w->title()=="Cere Panel"||w->title()=="Cere Approval"))names<<w->title();names.sort();return names;}
+private slots:
+    void reviewEmptyStates(){
+        note("fresh state has no sessions",app->state().value("sessions").toList().isEmpty(),QString::number(app->state().value("sessions").toList().size()));
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true},{"roaming",false}});QTest::qWait(300);
+        reviewWorkspace();window->resize(1040,780);QTest::qWait(250);capture("review-empty-workspace-chat");
+        click("tab_Sessions");QTest::qWait(200);capture("review-empty-workspace-sessions");
+        click("tab_Desktop");QTest::qWait(700);capture("review-empty-workspace-desktop");
+        click("tab_Chat");
+        reviewCompact();QTest::qWait(200);capture("review-empty-compact-chat");
+        note("compact initial focus",true,focusName());
+        click("tab_Sessions");QTest::qWait(200);capture("review-empty-compact-sessions");
+        click("tab_Chat");
+        // Ollama unreachable: the new-session dialog has no models to offer.
+        const auto ollama=app->state().value("settings").toMap().value("ollama").toMap();
+        call("settings.update",{{"ollama",QVariantMap{{"host","http://127.0.0.1:9"}}}});
+        auto dialog=window->contentItem()->findChild<QObject*>("createSessionDialog");
+        if(dialog){
+            QMetaObject::invokeMethod(dialog,"open");QTest::qWait(200);
+            if(auto provider=item("sessionProvider")){provider->setProperty("currentIndex",2);QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,2));}
+            QTest::qWait(2000);capture("review-empty-compact-new-session-ollama-unreachable");
+            note("ollama unreachable error shown",item("newSessionError")!=nullptr,item("newSessionError")?item("newSessionError")->property("text").toString():"no error text");
+            QMetaObject::invokeMethod(dialog,"close");
+        }else note("createSessionDialog found",false);
+        call("settings.update",{{"ollama",ollama}});
+        reviewWorkspace();saveNotes("review-empty-states");
+    }
+    void reviewLongContent(){
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true},{"webSearch",QVariantMap{{"enabled",true}}}});
+        reviewWorkspace();click("tab_Chat");
+        longSession=createSession("ollama","Long conversation · "+QString(80,'x'),"fixture-chat:latest");
+        if(longSession.isEmpty()){saveNotes("review-long-content");return;}
+        QElapsedTimer clock;clock.start();int turns=0;
+        for(;turns<110&&clock.elapsed()<150000;++turns){
+            const auto sent=call("session.send",{{"id",longSession},{"text",QString("Turn %1: ").arg(turns+1)+QString("Please keep the explanation short. ").repeated(1+turns%4)}});
+            if(sent.contains("error")){note("long session send",false,sent.value("error").toString());break;}
+            if(!waitFor([&]{return app->session().value("status").toString()=="idle";},8000)){note("long session turn idle",false,QString::number(turns));break;}
+        }
+        note("200+ messages created",app->messages().size()>=200,QString("messages=%1 turns=%2 ms=%3").arg(app->messages().size()).arg(turns).arg(clock.elapsed()));
+        const auto other=createSession("codex","Rich reply");
+        app->select(longSession);waitFor([&]{return app->messages().size()>=100;},8000);QTest::qWait(500);
+        note("transcript loaded after reselect",app->messages().size()>=200,QString("messages=%1 hasOlder=%2").arg(app->messages().size()).arg(app->hasOlderMessages()));
+        capture("review-long-session-workspace");
+        reviewCompact();waitFor([&]{return item("messageList")!=nullptr;});QTest::qWait(400);capture("review-long-session-compact");
+        reviewWorkspace();
+        QImage picture(320,180,QImage::Format_ARGB32);picture.fill(QColor("#49dfff"));const auto imagePath=data.path()+"/review-image.png";picture.save(imagePath);
+        app->select(other);waitFor([&]{return app->selectedId()==other;});
+        call("session.send",{{"id",other},{"text","completion-rich:"+imagePath}});
+        waitFor([&]{return app->session().value("status").toString()=="idle"&&app->messages().size()>=2;},10000);QTest::qWait(500);
+        for(const auto &m:app->messages())if(m.toMap().value("role")=="assistant"&&m.toMap().value("text").toString().contains("Review fixture"))richMessageId=m.toMap().value("id").toString();
+        note("rich reply persisted",!richMessageId.isEmpty());
+        auto inspect=[&](const QString &label){
+            auto viewport=item("messageViewport_"+richMessageId),body=item("messageBody_"+richMessageId);
+            if(!viewport||!body){note(label+" rich message visible",false);return;}
+            const double content=viewport->property("contentWidth").toDouble();
+            note(label+" rich message width",true,QString("viewport=%1 content=%2 body=%3 overflow=%4").arg(viewport->width()).arg(content).arg(body->width()).arg(content>viewport->width()+1));
+        };
+        window->resize(1040,780);QTest::qWait(400);inspect("workspace 1040");capture("review-rich-reply-workspace-1040");
+        window->resize(720,580);QTest::qWait(500);inspect("workspace 720");capture("review-rich-reply-workspace-720");
+        window->resize(1040,780);QTest::qWait(300);
+        reviewCompact();waitFor([&]{return item("messageBody_"+richMessageId)!=nullptr;});QTest::qWait(400);inspect("compact 440");capture("review-rich-reply-compact");
+        reviewWorkspace();saveNotes("review-long-content");
+    }
+    void reviewApprovalsAndKeyboard(){
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
+        reviewWorkspace();click("tab_Chat");
+        QStringList sessions;for(int i=0;i<3;++i)sessions<<createSession("codex",QString("Approval requester %1 · ").arg(i+1)+QString(60,'y'));
+        auto requests=[&]{return app->state().value("approvals").toList();};
+        for(const auto &id:sessions)call("session.send",{{"id",id},{"text","multiple"}});
+        waitFor([&]{return requests().size()>=6;},10000);
+        note("six pending approvals",requests().size()==6,QString::number(requests().size()));
+        app->select(sessions.first());QTest::qWait(500);
+        window->resize(1040,780);QTest::qWait(300);capture("review-approvals-workspace");
+        if(!requests().isEmpty())note("workspace shows the last requester",count("approvalRequester_"+requests().last().toMap().value("id").toString())==1);
+        reviewCompact();QTest::qWait(400);capture("review-approvals-compact");
+        auto composer=item("composer");if(composer)composer->forceActiveFocus();
+        QStringList chain;const QString first=focusName();
+        for(int i=0;i<60;++i){QTest::keyClick(window,Qt::Key_Tab);QTest::qWait(15);const auto name=focusName();chain<<name;if(name==first&&i>2)break;}
+        note("compact tab chain from composer",true,first+" > "+chain.join(" > "));
+        note("composer text after Tab",composer&&composer->property("text").toString().isEmpty(),composer?composer->property("text").toString():"missing");
+        if(composer)composer->setProperty("text","");
+        if(!requests().isEmpty()){
+            const auto allowId=requests().first().toMap().value("id").toString();
+            if(auto allow=item("approval_"+allowId+"_allow")){
+                allow->forceActiveFocus();QTest::qWait(50);
+                const int before=requests().size();
+                QTest::keyClick(window,Qt::Key_Return);QTest::qWait(600);
+                note("Enter on focused Allow does not approve",requests().size()==before,QString("before=%1 after=%2").arg(before).arg(requests().size()));
+                const int afterEnter=requests().size();
+                QTest::keyClick(window,Qt::Key_Space);
+                note("Space on focused Allow approves",waitFor([&]{return requests().size()==afterEnter-1;},4000));
+            }else note("allow button present in compact",false);
+        }
+        app->closePanel();QQuickWindow *bubble=nullptr;waitFor([&]{return (bubble=titled("Cere Approval"))!=nullptr;},5000);
+        if(bubble){
+            window=bubble;QTest::qWait(500);capture("review-approvals-bubble");
+            note("bubble has no default-focused control",!bubble->activeFocusItem()||bubble->activeFocusItem()==bubble->contentItem(),focusName());
+            note("bubble is the active window",bubble->isActive());
+            QTest::keyClick(window,Qt::Key_Tab);QTest::qWait(30);note("bubble first Tab target",true,focusName());
+            const int before=requests().size();QTest::keyClick(window,Qt::Key_Return);QTest::qWait(500);
+            note("Enter in bubble does not approve",requests().size()==before,focusName());
+        }else note("bubble appeared",false);
+        reviewWorkspace();
+        app->select(sessions[1]);QTest::qWait(400);
+        composer=item("composer");if(composer){composer->setProperty("text","Escape keeps this draft");composer->forceActiveFocus();}
+        click("renameSession");QTest::qWait(150);note("rename dialog open",item("renameSessionTitle")!=nullptr);
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(200);
+        note("Escape closes the dialog only",item("renameSessionTitle")==nullptr&&window->isVisible());
+        click("tab_Settings");QTest::qWait(150);QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(200);
+        note("Escape on Settings returns to Chat",item("composer")!=nullptr);
+        call("session.send",{{"id",sessions[1]},{"text","acting"}});waitFor([&]{return app->session().value("status").toString()=="working";},4000);
+        if(auto c=item("composer"))c->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(300);
+        note("Escape on Chat hides the window",!window->isVisible());
+        note("Escape does not stop the running turn",app->session().value("status").toString()=="working",app->session().value("status").toString());
+        reviewWorkspace();
+        note("draft survives Escape",item("composer")&&item("composer")->property("text").toString()=="Escape keeps this draft",item("composer")?item("composer")->property("text").toString():"missing");
+        waitFor([&]{return app->session().value("status").toString()=="idle";},8000);
+        if(auto c=item("composer"))c->setProperty("text","");
+        reviewCompact();QTest::qWait(300);capture("review-long-title-compact");
+        if(auto title=item("chatView")){Q_UNUSED(title);}
+        reviewWorkspace();
+        for(const auto &r:requests())call("approval.answer",{{"id",r.toMap().value("id")},{"choice","deny"}});
+        waitFor([&]{return requests().isEmpty();},8000);
+        saveNotes("review-approvals-keyboard");
+    }
+    void reviewTransitions(){
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true},{"webSearch",QVariantMap{{"enabled",true}}}});
+        reviewWorkspace();click("tab_Chat");
+        if(longSession.isEmpty())longSession=createSession("ollama","Transition session","fixture-chat:latest");
+        const auto approvalSession=createSession("codex","Approval during transitions");
+        call("session.send",{{"id",approvalSession},{"text","approval"}});waitFor([&]{return !app->state().value("approvals").toList().isEmpty();},8000);
+        app->select(longSession);waitFor([&]{return app->messages().size()>=2;},8000);QTest::qWait(500);
+        const QString text="Draft kept across surfaces";
+        auto composer=item("composer");if(!composer){note("composer present",false);saveNotes("review-transitions");return;}
+        composer->setProperty("text",text);composer->forceActiveFocus();
+        QMetaObject::invokeMethod(composer,"select",Q_ARG(int,6),Q_ARG(int,10));
+        const auto path=data.path()+"/transition-note.txt";{QFile f(path);f.open(QIODevice::WriteOnly);f.write("kept");}
+        app->attachImage(path);note("attachment imported",waitFor([&]{return item("chatView")&&item("chatView")->property("attachments").toList().size()==1;},5000));
+        if(auto web=item("searchThisTurn"))web->setProperty("checked",true);else note("web toggle visible",false);
+        if(auto list=item("messageList")){list->setProperty("contentY",std::max(0.,list->property("contentHeight").toDouble()-list->height())*0.5);QTest::qWait(300);}
+        QString anchor=topMessageId();for(int i=0;i<10&&anchor.isEmpty();++i){QTest::qWait(100);anchor=topMessageId();}
+        note("scroll anchor recorded",!anchor.isEmpty(),anchor);
+        QTest::qWait(900); // let the debounced draft save finish before the first transition
+        auto snapshot=[&](const QString &surface,int cycle){
+            auto c=item("composer"),chat=item("chatView"),web=item("searchThisTurn");
+            const auto approvals=app->state().value("approvals").toList();
+            const QString top=topMessageId();
+            QJsonObject s{{"surface",surface},{"cycle",cycle},{"text",c?c->property("text").toString():"missing"},
+                {"cursor",c?c->property("cursorPosition").toInt():-1},{"selectionStart",c?c->property("selectionStart").toInt():-1},{"selectionEnd",c?c->property("selectionEnd").toInt():-1},
+                {"attachments",chat?int(chat->property("attachments").toList().size()):-1},{"web",web?web->property("checked").toBool():false},{"webVisible",web!=nullptr},
+                {"topMessage",top},{"anchorKept",top==anchor},{"focus",focusName()},
+                {"approvalCards",approvals.isEmpty()?-1:count("approvalRequester_"+approvals.first().toMap().value("id").toString())},
+                {"bubbleVisible",titled("Cere Approval")!=nullptr},{"windows",visibleWindows().join("+")},{"status",app->session().value("status").toString()}};
+            reviewNotes.append(s);qInfo().noquote()<<"REVIEW transition"<<QJsonDocument(s).toJson(QJsonDocument::Compact);
+        };
+        snapshot("workspace-initial",0);
+        auto loaded=[&]{auto c=item("composer");return c&&c->property("text").toString()==text;};
+        for(int cycle=1;cycle<=10;++cycle){
+            reviewCompact();waitFor(loaded,3000);QTest::qWait(300);
+            if(cycle==1)capture("review-transition-compact");
+            snapshot("compact",cycle);
+            if(cycle==7){
+                click("tab_Sessions");QTest::qWait(200);
+                if(auto row=item("session_"+longSession)){QTest::mouseClick(window,Qt::RightButton,Qt::NoModifier,row->mapToScene(QPointF(row->width()/2,row->height()/2)).toPoint());QTest::qWait(200);auto menu=window->contentItem()->findChild<QObject*>("sessionContextMenu");note("session menu open before expand",menu&&menu->property("visible").toBool());}
+                else note("session row found for menu",false);
+            }
+            reviewWorkspace();waitFor(loaded,3000);QTest::qWait(300);
+            if(cycle==1)capture("review-transition-workspace");
+            snapshot("workspace",cycle);
+        }
+        note("transition cycles complete",true);
+        if(auto c=item("composer"))c->setProperty("text","");
+        if(auto chat=item("chatView"))chat->setProperty("attachments",QVariantList{});
+        QTest::qWait(900);
+        // Mid-stream: a reply is streaming, the user types the next message, then switches surfaces twice.
+        const auto streamSession=createSession("codex","Streaming during transitions");
+        call("session.send",{{"id",streamSession},{"text","activity"}});waitFor([&]{return app->activityCount()>=3;},8000);
+        app->select(streamSession);QTest::qWait(400);
+        if(auto toggle=item("activityToggle")){QMetaObject::invokeMethod(toggle,"clicked");QTest::qWait(200);}
+        note("activity panel expanded before transition",item("activityPanel")&&item("activityPanel")->property("expanded").toBool());
+        call("session.send",{{"id",streamSession},{"text","acting"}});waitFor([&]{return app->session().value("status").toString()=="working";},4000);
+        if(auto c=item("composer")){c->setProperty("text","typed while streaming");c->forceActiveFocus();}
+        QTest::qWait(700);
+        auto streamSnapshot=[&](const QString &surface){
+            auto c=item("composer"),panel=item("activityPanel");
+            QJsonObject s{{"surface",surface},{"cycle",-1},{"text",c?c->property("text").toString():"missing"},{"status",app->session().value("status").toString()},{"stopVisible",item("stopMessage")!=nullptr},{"activityExpanded",panel?panel->property("expanded").toBool():false},{"focus",focusName()},{"windows",visibleWindows().join("+")}};
+            reviewNotes.append(s);qInfo().noquote()<<"REVIEW streaming transition"<<QJsonDocument(s).toJson(QJsonDocument::Compact);
+        };
+        reviewCompact();waitFor([&]{auto c=item("composer");return c&&c->property("text").toString()=="typed while streaming";},3000);QTest::qWait(200);streamSnapshot("compact");capture("review-streaming-transition-compact");
+        reviewWorkspace();waitFor([&]{auto c=item("composer");return c&&c->property("text").toString()=="typed while streaming";},3000);QTest::qWait(200);streamSnapshot("workspace");capture("review-streaming-transition-workspace");
+        waitFor([&]{return app->session().value("status").toString()=="idle";},10000);
+        if(auto c=item("composer"))c->setProperty("text","");
+        for(const auto &r:app->state().value("approvals").toList())call("approval.answer",{{"id",r.toMap().value("id")},{"choice","deny"}});
+        saveNotes("review-transitions");
+    }
+    void reviewResponsiveness(){
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
+        reviewWorkspace();click("tab_Chat");
+        if(longSession.isEmpty()){note("long session available",false);saveNotes("review-responsiveness");return;}
+        app->select(longSession);waitFor([&]{return app->messages().size()>=100;},8000);QTest::qWait(600);
+        QMutex guard;QVector<qint64> frames;QElapsedTimer clock;clock.start();
+        const auto connection=connect(window,&QQuickWindow::frameSwapped,this,[&]{QMutexLocker lock(&guard);frames.append(clock.nsecsElapsed()/1000);},Qt::DirectConnection);
+        auto stats=[&](const QString &phase,qint64 fromUs,qint64 toUs){
+            QVector<qint64> gaps;qint64 previous=-1;{QMutexLocker lock(&guard);for(auto t:frames){if(t<fromUs||t>toUs)continue;if(previous>=0)gaps.append(t-previous);previous=t;}}
+            std::sort(gaps.begin(),gaps.end());
+            auto pct=[&](double p)->double{return gaps.isEmpty()?0.:gaps[std::min(gaps.size()-1,qsizetype(p*gaps.size()))]/1000.;};
+            int slow=0;for(auto g:gaps)if(g>33000)++slow;
+            QJsonObject s{{"phase",phase},{"frames",qint64(gaps.size()+1)},{"p50ms",pct(.5)},{"p95ms",pct(.95)},{"maxms",gaps.isEmpty()?0.:gaps.last()/1000.},{"over33ms",slow},{"durationMs",(toUs-fromUs)/1000.}};
+            reviewNotes.append(s);qInfo().noquote()<<"REVIEW frames"<<QJsonDocument(s).toJson(QJsonDocument::Compact);
+        };
+        auto model=static_cast<TranscriptModel*>(static_cast<QSortFilterProxyModel*>(app->transcript())->sourceModel());
+        auto last=app->messages().last().toMap();QString text;
+        const qint64 streamStart=clock.nsecsElapsed()/1000;
+        for(int i=0;i<200;++i){text+="Streaming token group "+QString::number(i)+(i%9==8?"\n\n":" ");last["text"]=text;last["revision"]=QString::number(100000+i);model->upsert(last);QTest::qWait(16);}
+        QTest::qWait(120);stats("streaming-200-revisions",streamStart,clock.nsecsElapsed()/1000);
+        auto list=item("messageList");
+        if(list){
+            const double height=list->property("contentHeight").toDouble();
+            const qint64 scrollStart=clock.nsecsElapsed()/1000;
+            for(int i=0;i<=120;++i){list->setProperty("contentY",std::max(0.,height-list->height())*(1-i/120.));QTest::qWait(16);}
+            QTest::qWait(120);stats("scrolling-120-steps",scrollStart,clock.nsecsElapsed()/1000);
+            const qint64 flickStart=clock.nsecsElapsed()/1000;QMetaObject::invokeMethod(list,"flick",Q_ARG(double,0.),Q_ARG(double,-6000.));QTest::qWait(1500);stats("flick-to-end",flickStart,clock.nsecsElapsed()/1000);
+        }else note("message list present",false);
+        const qint64 resizeStart=clock.nsecsElapsed()/1000;
+        for(int i=0;i<=40;++i){window->resize(720+i*20,580+i*10);QTest::qWait(25);}
+        QTest::qWait(200);stats("resizing-40-steps",resizeStart,clock.nsecsElapsed()/1000);
+        window->resize(1040,780);QTest::qWait(400);
+        auto composer=item("composer");QVector<double> latency;
+        if(composer){
+            composer->setProperty("text","");composer->forceActiveFocus();
+            for(int i=0;i<30;++i){
+                const qint64 t0=clock.nsecsElapsed()/1000;QTest::keyClick(window,'a'+(i%26));
+                qint64 next=-1;QElapsedTimer wait;wait.start();
+                while(next<0&&wait.elapsed()<500){QTest::qWait(1);QMutexLocker lock(&guard);for(auto it=frames.crbegin();it!=frames.crend();++it){if(*it<=t0)break;next=*it;}}
+                if(next>0)latency.append((next-t0)/1000.);QTest::qWait(30);
+            }
+            composer->setProperty("text","");
+        }
+        std::sort(latency.begin(),latency.end());
+        QJsonObject l{{"phase","key-to-frame"},{"samples",qint64(latency.size())},{"p50ms",latency.isEmpty()?0.:latency[latency.size()/2]},{"p95ms",latency.isEmpty()?0.:latency[std::min(latency.size()-1,qsizetype(.95*latency.size()))]},{"maxms",latency.isEmpty()?0.:latency.last()}};
+        reviewNotes.append(l);qInfo().noquote()<<"REVIEW latency"<<QJsonDocument(l).toJson(QJsonDocument::Compact);
+        disconnect(connection);
+        app->select(QString());app->select(longSession); // discard the synthetic revisions by reloading the stored transcript
+        saveNotes("review-responsiveness");
+    }
+    void reviewAccessibilityInventory(){
+        QAccessible::setActive(true);
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
+        reviewWorkspace();click("tab_Chat");
+        if(!longSession.isEmpty()){app->select(longSession);QTest::qWait(500);}
+        auto inventory=[&](const QString &surface){
+            QJsonArray rows;int small=0,unnamed=0,total=0;
+            std::function<void(QQuickItem*)> walk=[&](QQuickItem *node){
+                if(!node->isVisible()||node->width()<=0)return;
+                const QByteArray type=node->metaObject()->className();
+                const bool control=type.startsWith("CButton_")||type.startsWith("CActionRow_")||type.startsWith("CField_")||type.startsWith("CComboBox_")||type.startsWith("CSpinBox_")||type.startsWith("CCheckBox_")||type.startsWith("CSlider_")||type.startsWith("CScrollBar_")||type.startsWith("CerePortrait_")||type.startsWith("VoiceInput_")||type.startsWith("QQuickTextArea")||type.startsWith("QQuickTextField")||type.startsWith("QQuickScrollBar")||type.startsWith("QQuickCheckBox")||type.startsWith("QQuickButton")||type.startsWith("QQuickSlider")||type.startsWith("QQuickSpinBox")||type.startsWith("QQuickComboBox");
+                if(control){
+                    ++total;QString name;int role=0;
+                    if(auto iface=QAccessible::queryAccessibleInterface(node)){name=iface->text(QAccessible::Name);role=int(iface->role());}
+                    const bool tiny=node->width()<24||node->height()<24;if(tiny)++small;if(name.trimmed().isEmpty())++unnamed;
+                    rows.append(QJsonObject{{"type",QString(type).section('_',0,0)},{"objectName",node->objectName()},{"name",name},{"role",role},{"w",node->width()},{"h",node->height()},{"focusable",node->activeFocusOnTab()},{"tiny",tiny}});
+                    if(!type.startsWith("QQuickScrollBar")&&!type.startsWith("CScrollBar_"))return; // inner labels are not separate targets
+                }
+                for(auto child:node->childItems())walk(child);
+            };
+            walk(window->contentItem());
+            QJsonObject s{{"surface",surface},{"controls",total},{"unnamed",unnamed},{"under24px",small},{"rows",rows}};
+            reviewNotes.append(s);qInfo().noquote()<<"REVIEW a11y"<<surface<<"controls"<<total<<"unnamed"<<unnamed<<"under24"<<small;
+        };
+        inventory("workspace-chat");click("tab_Desktop");QTest::qWait(600);inventory("workspace-desktop");click("tab_Settings");QTest::qWait(300);inventory("workspace-settings");click("tab_Sessions");QTest::qWait(300);inventory("workspace-sessions");click("tab_Chat");
+        reviewCompact();QTest::qWait(300);inventory("compact-chat");click("tab_Desktop");QTest::qWait(600);inventory("compact-desktop");click("tab_Chat");
+        reviewWorkspace();saveNotes("review-accessibility");
+    }
+    void reviewLiveOutputs(){
+        if(!qGuiApp->platformName().startsWith("wayland"))QSKIP("Layer-shell surfaces need the live compositor");
+        app->closePanel();
+        app->rpc("settings.update",{{"topmost",true},{"hidden",false},{"roaming",false},{"quiet",true},{"reducedMotion",true}});QTest::qWait(1000);
+        const auto session=createSession("codex","Layer surfaces");
+        auto layerOn=[&](const QString &output,const QString &ns){
+            QJsonArray found;const auto layers=hypr({"-j","layers"}).object();
+            for(const auto level:layers.value(output).toObject().value("levels").toObject())for(const auto layer:level.toArray())if(layer.toObject().value("namespace").toString()==ns)found.append(layer);
+            return found;
+        };
+        auto crop=[&](const QJsonObject &layer,const QString &file){
+            if(layer.isEmpty())return;QProcess grim;grim.start("grim",{"-g",QString("%1,%2 %3x%4").arg(layer.value("x").toInt()-8).arg(layer.value("y").toInt()-8).arg(layer.value("w").toInt()+16).arg(layer.value("h").toInt()+16),"/tmp/cere-ui-evidence/"+file+".png"});grim.waitForFinished(5000);
+        };
+        for(auto screen:qGuiApp->screens()){
+            app->rpc("settings.update",{{"position",QVariantMap{{"output",screen->name()},{"x",.9},{"y",.8}}}});QTest::qWait(700);
+            app->rpc("ui.toggle");QTest::qWait(1500);
+            const auto panels=layerOn(screen->name(),"cere-panel");
+            note("compact layer on "+screen->name()+" scale "+QString::number(screen->devicePixelRatio()),!panels.isEmpty(),QJsonDocument(panels).toJson(QJsonDocument::Compact));
+            if(!panels.isEmpty())crop(panels.last().toObject(),"review-live-compact-"+screen->name());
+            app->rpc("ui.toggle");QTest::qWait(700);
+        }
+        call("session.send",{{"id",session},{"text","approval"}});waitFor([&]{return !app->state().value("approvals").toList().isEmpty();},8000);QTest::qWait(1500);
+        const auto last=qGuiApp->screens().last();
+        const auto bubbles=layerOn(last->name(),"cere-approval"),pets=layerOn(last->name(),"cere-pet");
+        note("bubble layer beside pet on "+last->name(),!bubbles.isEmpty(),QJsonDocument(bubbles).toJson(QJsonDocument::Compact)+" pet "+QJsonDocument(pets).toJson(QJsonDocument::Compact));
+        if(!bubbles.isEmpty()&&!pets.isEmpty()){
+            const auto b=bubbles.last().toObject(),p=pets.last().toObject();
+            const int x=std::min(b.value("x").toInt(),p.value("x").toInt()),y=std::min(b.value("y").toInt(),p.value("y").toInt());
+            const int r=std::max(b.value("x").toInt()+b.value("w").toInt(),p.value("x").toInt()+p.value("w").toInt()),d=std::max(b.value("y").toInt()+b.value("h").toInt(),p.value("y").toInt()+p.value("h").toInt());
+            crop(QJsonObject{{"x",x},{"y",y},{"w",r-x},{"h",d-y}},"review-live-bubble-"+last->name());
+        }
+        for(const auto &r:app->state().value("approvals").toList())call("approval.answer",{{"id",r.toMap().value("id")},{"choice","deny"}});
+        app->rpc("settings.update",{{"topmost",false}});QTest::qWait(600);
+        saveNotes("review-live-outputs");
+    }
+    void reviewSurfacesAtScale(){
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
+        QQuickWindow *original=window;
+        if(!longSession.isEmpty()){app->select(longSession);QTest::qWait(400);}
+        for(auto screen:qGuiApp->screens()){
+            const auto g=screen->availableGeometry();
+            for(const QString file:{"Panel.qml","Workspace.qml"}){
+                QQuickView view;view.setResizeMode(QQuickView::SizeRootObjectToView);view.rootContext()->setContextProperty("App",app.get());
+                view.setScreen(screen);view.setSource(QUrl::fromLocalFile(QString(CERE_SOURCE_DIR)+"/qml/"+file));
+                const QRect rect=file=="Panel.qml"?Placement::compactPanel(g,QPoint(g.right()-200,g.bottom()-220),QSize(192,208),QSize(440,860)):QRect(g.topLeft()+QPoint(40,40),QSize(std::min(1040,g.width()-80),std::min(780,g.height()-80)));
+                view.setGeometry(rect);view.show();window=&view;QTest::qWait(500);
+                const QString tag=QString("review-scale-%1-dpr%2-%3").arg(screen->name()).arg(screen->devicePixelRatio()).arg(file=="Panel.qml"?"compact":"workspace");
+                capture(tag);
+                int outside=0;std::function<void(QQuickItem*)> bounds=[&](QQuickItem *node){if(!node->isVisible())return;const QByteArray type=node->metaObject()->className();if(type.startsWith("CButton_")||type.startsWith("CField_")||type.startsWith("CComboBox_")||type.startsWith("CCheckBox_")){const auto p=node->mapToItem(view.rootObject(),QPointF());if(p.x()<-1||p.x()+node->width()>view.width()+1)++outside;}for(auto c:node->childItems())bounds(c);};
+                bounds(view.rootObject());
+                auto tools=item("conversationTools"),card=item("composerCard"),area=item("conversationArea");
+                const double toolsBottom=tools?tools->mapToScene(QPointF(0,tools->height())).y():-1,cardBottom=card?card->mapToScene(QPointF(0,card->height())).y():-1;
+                note(tag,outside==0&&(!tools||toolsBottom<=view.height()+1),QString("size=%1x%2 dpr=%3 controlsOutsideX=%4 toolsBottom=%5 composerBottom=%6 conversationHeight=%7").arg(view.width()).arg(view.height()).arg(view.devicePixelRatio()).arg(outside).arg(toolsBottom).arg(cardBottom).arg(area?area->height():-1));
+                if(file=="Workspace.qml"){view.resize(720,580);QTest::qWait(400);capture(tag+"-min");outside=0;bounds(view.rootObject());note(tag+"-min",outside==0,QString("controlsOutsideX=%1").arg(outside));}
+                view.hide();
+            }
+        }
+        window=original;saveNotes("review-scales");
+    }
+    void reviewWorkflows(){
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true},{"webSearch",QVariantMap{{"enabled",true}}}});
+        reviewWorkspace();click("tab_Chat");
+        // Compose and send with an attachment and Web search on.
+        const auto chatSession=createSession("ollama","Workflow · compose","fixture-chat:latest");
+        app->select(chatSession);QTest::qWait(400);
+        const auto noteFile=data.path()+"/workflow-note.txt";{QFile f(noteFile);f.open(QIODevice::WriteOnly);f.write("Workflow attachment");}
+        app->attachImage(noteFile);note("workflow attachment imported",waitFor([&]{return item("chatView")&&item("chatView")->property("attachments").toList().size()==1;},5000));
+        if(auto web=item("searchThisTurn"))web->setProperty("checked",true);
+        if(auto c=item("composer")){c->setProperty("text","Send this with the attachment and web search");c->forceActiveFocus();}
+        QTest::qWait(800);capture("review-workflow-compose-workspace");
+        reviewCompact();waitFor([&]{auto c=item("composer");return c&&!c->property("text").toString().isEmpty();},3000);QTest::qWait(300);capture("review-workflow-compose-compact");
+        const int before=app->messages().size();
+        if(auto send=item("sendMessage")){note("send enabled with draft",send->isEnabled());QMetaObject::invokeMethod(send,"clicked");}else note("send button present",false);
+        note("message sent from compact",waitFor([&]{return app->messages().size()>=before+2;},10000),QString::number(app->messages().size()));
+        waitFor([&]{return app->session().value("status").toString()=="idle";},8000);QTest::qWait(300);
+        note("composer cleared after send",item("composer")&&item("composer")->property("text").toString().isEmpty());
+        note("attachments cleared after send",item("chatView")&&item("chatView")->property("attachments").toList().isEmpty());
+        note("web toggle reset after send",!item("searchThisTurn")||!item("searchThisTurn")->property("checked").toBool());
+        capture("review-workflow-sent-compact");
+        // Attachment limits: eight files accepted, the ninth refused; a 19.5 MiB image accepted, a 21 MiB file refused.
+        for(int i=0;i<9;++i){const auto path=data.path()+QString("/limit-%1.txt").arg(i);QFile f(path);f.open(QIODevice::WriteOnly);f.write("limit");f.close();app->attachImage(path);QTest::qWait(250);}
+        waitFor([&]{return item("chatView")&&item("chatView")->property("attachments").toList().size()>=8;},8000);QTest::qWait(400);
+        note("eight attachments accepted, ninth refused",item("chatView")&&item("chatView")->property("attachments").toList().size()==8,item("chatView")?QString("count=%1 error=%2").arg(item("chatView")->property("attachments").toList().size()).arg(item("chatView")->property("attachmentError").toString()):"missing");
+        capture("review-workflow-attachment-limit-compact");
+        if(auto chat=item("chatView"))chat->setProperty("attachments",QVariantList{});
+        note("cleared attachments persisted",waitFor([&]{return app->session().value("draftAttachments").toList().isEmpty();},5000));
+        QImage big(2200,2200,QImage::Format_ARGB32);{QRandomGenerator *rng=QRandomGenerator::global();for(int y=0;y<big.height();++y){auto line=reinterpret_cast<quint32*>(big.scanLine(y));for(int x=0;x<big.width();++x)line[x]=rng->generate()|0xff000000;}}
+        const auto bigPath=data.path()+"/near-limit.png";big.save(bigPath);const qint64 bigSize=QFileInfo(bigPath).size();
+        app->attachImage(bigPath);
+        const bool bigAccepted=waitFor([&]{return item("chatView")&&item("chatView")->property("attachments").toList().size()==1;},15000);
+        note("near-limit image attachment",bigAccepted==(bigSize<=20*1024*1024),QString("bytes=%1 accepted=%2 error=%3").arg(bigSize).arg(bigAccepted).arg(item("chatView")?item("chatView")->property("attachmentError").toString():""));
+        const auto overPath=data.path()+"/over-limit.bin";{QFile f(overPath);f.open(QIODevice::WriteOnly);f.resize(21*1024*1024);}
+        const int countBefore=item("chatView")?item("chatView")->property("attachments").toList().size():-1;
+        app->attachImage(overPath);QTest::qWait(1500);
+        note("over-limit file refused",item("chatView")&&item("chatView")->property("attachments").toList().size()==countBefore&&item("chatView")->property("attachmentError").toString().contains("20 MiB"),item("chatView")?item("chatView")->property("attachmentError").toString():"");
+        capture("review-workflow-attachment-error-compact");
+        if(auto chat=item("chatView"))chat->setProperty("attachments",QVariantList{});
+        reviewWorkspace();
+        // Stop mid-stream, then a provider error.
+        const auto codexSession=createSession("codex","Workflow · stop and error");
+        app->select(codexSession);QTest::qWait(300);
+        call("session.send",{{"id",codexSession},{"text","acting"}});waitFor([&]{return app->session().value("status").toString()=="working";},4000);QTest::qWait(300);
+        if(auto stop=item("stopMessage")){QMetaObject::invokeMethod(stop,"clicked");}else note("stop button visible while working",false);
+        note("stop interrupts the turn",waitFor([&]{return app->session().value("status").toString()=="interrupted";},6000),app->session().value("status").toString());
+        QTest::qWait(300);capture("review-workflow-interrupted-workspace");
+        reviewCompact();QTest::qWait(300);capture("review-workflow-interrupted-compact");reviewWorkspace();
+        call("session.send",{{"id",codexSession},{"text","acting-error"}});
+        note("provider error state",waitFor([&]{return app->session().value("status").toString()=="error";},6000),app->session().value("status").toString()+" · "+app->session().value("error").toString());
+        QTest::qWait(400);capture("review-workflow-error-workspace");
+        reviewCompact();QTest::qWait(300);capture("review-workflow-error-compact");
+        note("error banner in compact",!app->session().value("error").toString().isEmpty());
+        // Handoff from the compact panel.
+        click("chatHandoff");QTest::qWait(300);note("handoff dialog open",item("handoffCreate")!=nullptr);capture("review-workflow-handoff-compact");
+        if(auto trust=item("handoffTrust")){trust->setProperty("checked",true);}
+        if(auto create=item("handoffCreate")){note("handoff create enabled",create->isEnabled());const auto previous=app->selectedId();QMetaObject::invokeMethod(create,"clicked");
+            note("handoff session created with draft",waitFor([&]{return app->selectedId()!=previous&&item("composer")&&item("composer")->property("text").toString().startsWith("Continue this work");},8000),item("composer")?item("composer")->property("text").toString().left(60):"");
+            QTest::qWait(300);capture("review-workflow-handoff-draft-compact");
+            if(auto c=item("composer"))c->setProperty("text","");}
+        // Change a setting and run a desktop control from the compact panel.
+        click("tab_Settings");QTest::qWait(300);
+        if(auto scroll=item("settingsScroll")){if(auto control=item("motionIntensity")){scroll->setProperty("contentY",control->mapToItem(scroll,QPointF()).y()+scroll->property("contentY").toDouble()-120);QTest::qWait(150);}}
+        capture("review-workflow-settings-compact");
+        const bool reducedBefore=app->state().value("settings").toMap().value("reducedMotion").toBool();
+        click("reducedMotion");note("setting toggled from compact",waitFor([&]{return app->state().value("settings").toMap().value("reducedMotion").toBool()!=reducedBefore;},4000));
+        click("reducedMotion");waitFor([&]{return app->state().value("settings").toMap().value("reducedMotion").toBool()==reducedBefore;},4000);
+        click("tab_Desktop");QTest::qWait(600);
+        if(auto search=item("desktopSearch"))search->setProperty("text","timer");QTest::qWait(200);
+        if(auto minutes=item("timerMinutes"))minutes->setProperty("value",1);
+        click("startTimer");note("timer started from compact",waitFor([&]{return !app->state().value("timers").toList().isEmpty();},5000));
+        QTest::qWait(300);capture("review-workflow-desktop-feedback-compact");
+        for(const auto &t:app->state().value("timers").toList())call("timer.cancel",{{"id",t.toMap().value("id")}});
+        if(auto search=item("desktopSearch"))search->setProperty("text","");
+        click("tab_Chat");reviewWorkspace();
+        saveNotes("review-workflows");
+    }
+    void reviewBrokerDisconnectMidTurn(){
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});QTest::qWait(800);
+        reviewWorkspace();
+        if(!window){note("workspace window after expand",false,"titled(\"Cere\") not found; windows: "+visibleWindows().join("+"));app->togglePanel();QTest::qWait(500);reviewWorkspace();}
+        if(!window){saveNotes("review-broker-disconnect");QSKIP("no workspace window");}
+        click("tab_Chat");
+        const auto session=createSession("codex","Broker restart mid-turn");
+        call("session.send",{{"id",session},{"text","acting"}});
+        waitFor([&]{return app->session().value("status").toString()=="working";},5000);QTest::qWait(1700);
+        capture("review-midstream-workspace");
+        reviewCompact();QTest::qWait(400);capture("review-midstream-compact");reviewWorkspace();
+        QFile pidFile(data.path()+"/runtime/broker.pid");pidFile.open(QIODevice::ReadOnly);const int pid=pidFile.readAll().trimmed().toInt();
+        note("isolated broker pid found",pid>1,QString::number(pid));
+        if(pid>1)::kill(pid,SIGTERM);
+        note("ui noticed the disconnect",waitFor([&]{return !app->connected();},8000));
+        QTest::qWait(800);capture("review-broker-disconnected-workspace");
+        note("composer state while disconnected",true,item("composer")?QString("enabled=%1").arg(item("composer")->isEnabled()):"missing");
+        note("send disabled while disconnected",!item("sendMessage")||!item("sendMessage")->isEnabled());
+        reviewCompact();QTest::qWait(500);capture("review-broker-disconnected-compact");reviewWorkspace();
+        QProcess broker;broker.setProgram(QStandardPaths::findExecutable("node"));broker.setArguments({QString(CERE_SOURCE_DIR)+"/broker/main.ts"});broker.setStandardOutputFile(QProcess::nullDevice());broker.setStandardErrorFile(QProcess::nullDevice());broker.startDetached();
+        note("ui reconnected",waitFor([&]{return app->connected();},25000));
+        waitFor([&]{return app->session().value("status").toString()!="working";},10000);QTest::qWait(800);
+        note("turn status after restart",true,app->session().value("status").toString()+" · warning: "+app->state().value("recoveryWarning").toString()+" · error: "+app->session().value("error").toString());
+        capture("review-broker-reconnected-workspace");
+        saveNotes("review-broker-disconnect");
     }
     void cleanupTestCase(){
         QString runtime=data.path()+"/runtime";

@@ -56,6 +56,7 @@ async function ollama(t: any) {
   f.host = 'http://127.0.0.1:' + (server.address() as any).port;
   const store = new Store(directory); store.set('settings', { ollama: { host: f.host, model: 'chat' } });
   f.core = new Core(store);
+  t.mock.method(f.core.memory.service, 'vectorRepo', async () => { throw new Error('No external vector projection in this fixture'); });
   await f.core.refreshProviderModels('ollama');
   t.after(async () => { await f.core.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await rm(directory, { recursive: true, force: true }); });
   return f;
@@ -205,7 +206,11 @@ test('F-030 vector purge needs only Qdrant, never the embedding model', async t 
     let text = ''; for await (const chunk of req) text += chunk;
     if (req.url === '/') res.end('{"version":"fixture"}');
     else if (req.url === '/collections') res.end(JSON.stringify({ result: { collections: [{ name: 'cere_fingerprint0_1_abc' }] } }));
-    else if (req.url?.includes('/points/delete')) { deleted.push(JSON.parse(text).filter.must[0].match.value); res.end('{"status":"ok"}'); }
+    else if (req.url?.includes('/points/delete')) {
+      const match = JSON.parse(text).filter.must[0].match;
+      deleted.push(...(match.any || [match.value]));
+      res.end('{"status":"ok"}');
+    }
     else { res.statusCode = 404; res.end('{}'); }
   });
   await new Promise<void>(resolve => qdrant.listen(0, '127.0.0.1', resolve));

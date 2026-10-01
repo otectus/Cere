@@ -8,6 +8,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReconciliationTest {
+    @Test fun privateCacheRoundTripKeepsScrollAnchorAndRequiresLegacyAttachmentsToBeReviewed() {
+        val cached = CachedState(scrollPositions = mapOf("s" to SessionScrollPosition("s", "message", 4, 31, false)))
+        val restored = WireCodec.json.decodeFromString(CachedState.serializer(), WireCodec.json.encodeToString(CachedState.serializer(), cached))
+        assertEquals("message", restored.scrollPositions.getValue("s").anchorMessageId)
+        assertEquals(31, restored.scrollPositions.getValue("s").offset)
+        val legacy = """{"id":"00000000-0000-0000-0000-000000000001","sessionId":"s","displayName":"old","mime":"image/jpeg","size":1,"sha256":"hash","width":1,"height":1,"transformed":false}"""
+        assertNull(WireCodec.json.decodeFromString(LocalAttachment.serializer(), legacy).reviewedAt)
+    }
+
     private fun session(id: String, draft: String, revision: String) = Session(id, "ollama", id, status = "idle", draft = draft, draftRevision = revision)
     private fun snapshot(vararg sessions: Session, messages: List<Message> = emptyList()) = SyncSnapshot("cursor", sessions.toList(), messages = messages)
 

@@ -198,8 +198,30 @@ export class QdrantVectorRepository implements VectorRepository {
     });
   }
 
-  private async collections(): Promise<string[]> {
-    const response = await this.request('/collections');
+  /** Delete many canonical artifacts with one indexed filter per bounded chunk/collection. */
+  async deleteByArtifacts(
+    artifactIds: readonly string[],
+    maximumErasureEpoch?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const ids = [...new Set(artifactIds)];
+    if (!ids.length) return;
+    if (ids.some(id => !id || id.length > 512 || /[\0\r\n]/u.test(id)))
+      throw new TypeError('Artifact IDs must be nonempty bounded single-line strings');
+    const names = await this.collections(signal);
+    for (let offset = 0; offset < ids.length; offset += 256) {
+      const must: any[] = [{ key: 'artifact_id', match: { any: ids.slice(offset, offset + 256) } }];
+      if (maximumErasureEpoch !== undefined)
+        must.push({ key: 'erasure_epoch', range: { lte: maximumErasureEpoch } });
+      for (const name of names)
+        await this.request(`/collections/${encodeURIComponent(name)}/points/delete?wait=true`, {
+          method: 'POST', body: JSON.stringify({ filter: { must } }),
+        }, signal);
+    }
+  }
+
+  private async collections(signal?: AbortSignal): Promise<string[]> {
+    const response = await this.request('/collections', {}, signal);
     return (response.result?.collections ?? []).map((entry: any) => String(entry.name)).filter((name: string) => name.startsWith(`${this.prefix}_`));
   }
 

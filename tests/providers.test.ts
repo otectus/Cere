@@ -304,3 +304,18 @@ test('terminal wrapper inherits the saved CLI bypass setting for both providers'
     assert.ok(args.includes('--fixture'));
   }
 });
+
+
+test('Codex revalidates automatic approval immediately before writing native permissions', async t => {
+  const f=await fixture(t),writes:any[]=[];let valid=true;
+  const hooks:Hooks={token:'fixture',event(){},native(){},async approve(){return{choice:'allow',automatic:true};},automaticApprovalValid:()=>valid};
+  const adapter=new CodexAdapter(f.session,hooks);t.after(()=>adapter.close());await adapter.ready;
+  const original=adapter.process.write.bind(adapter.process);adapter.process.write=(value:any)=>writes.push(value);
+  const pending=adapter.handle({id:501,method:'item/commandExecution/requestApproval',params:{command:'printf test'}});valid=false;await pending;
+  assert.equal(writes.at(-1).result.decision,'decline');
+  valid=true;
+  const permissions=adapter.handle({id:502,method:'item/permissions/requestApproval',params:{permissions:{network:true}}});valid=false;await permissions;
+  assert.deepEqual(writes.at(-1).result.permissions,{});
+  valid=true;await adapter.handle({id:503,method:'item/commandExecution/requestApproval',params:{command:'printf test'}});
+  assert.equal(writes.at(-1).result.decision,'accept');adapter.process.write=original;
+});

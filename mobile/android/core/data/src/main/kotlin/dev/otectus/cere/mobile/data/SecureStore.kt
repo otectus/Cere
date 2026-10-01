@@ -34,6 +34,7 @@ data class CachedState(
     val selectedSessionId: String? = null,
     val attachments: List<LocalAttachment> = emptyList(),
     val cacheEpoch: String? = null,
+    val scrollPositions: Map<String, SessionScrollPosition> = emptyMap(),
 )
 
 class PrivateCacheUnavailableException(cause: Throwable) : IllegalStateException("Private cache is unavailable. Unlock the phone and retry.", cause)

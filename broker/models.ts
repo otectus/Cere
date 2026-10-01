@@ -4,6 +4,8 @@ import { RpcProcess } from './wire.ts';
 import { ollamaModels } from './ollama.ts';
 import { providerExecutable } from './providers.ts';
 import type { ModelOption, Provider } from './types.ts';
+import { exec } from './desktop.ts';
+import { antigravityModels } from './antigravity.ts';
 
 function text(value: unknown) { return typeof value === 'string' ? value.trim() : ''; }
 function effort(value: unknown) {
@@ -84,5 +86,7 @@ async function claudeModels(command: string): Promise<ModelOption[]> {
 export function discoverProviderModels(provider: Provider, command?: string) {
   if (provider === 'ollama') return ollamaModels(command || process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
   if (provider === 'codex') return codexModels(command || providerExecutable('codex'));
-  return claudeModels(command || providerExecutable('claude'));
+  if (provider === 'claude') return claudeModels(command || providerExecutable('claude'));
+  if (provider === 'antigravity') return exec(command || providerExecutable('antigravity'), ['models'], {timeout:20000}).then(result=>antigravityModels(result.stdout));
+  throw new Error('API model discovery requires provider credentials');
 }

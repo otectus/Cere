@@ -1,0 +1,32 @@
+[
+    {
+        "check": "200+ messages created",
+        "detail": "messages=220 turns=110 ms=8145",
+        "ok": true
+    },
+    {
+        "check": "transcript loaded after reselect",
+        "detail": "messages=220 hasOlder=0",
+        "ok": true
+    },
+    {
+        "check": "rich reply persisted",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "workspace 1040 rich message width",
+        "detail": "viewport=700 content=1308.16 body=1309 overflow=1",
+        "ok": true
+    },
+    {
+        "check": "workspace 720 rich message width",
+        "detail": "viewport=648 content=1308.16 body=1309 overflow=1",
+        "ok": true
+    },
+    {
+        "check": "compact 440 rich message width",
+        "detail": "viewport=366 content=1308.16 body=1309 overflow=1",
+        "ok": true
+    }
+]

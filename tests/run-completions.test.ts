@@ -97,5 +97,7 @@ test('long responses and queues are bounded without losing the stored reply', as
     await core.send({id:session.id, text:'Another turn'});
     core.event(session.id, {type:'complete'});
   }
-  assert.equal(core.completions.length, 20);
+  assert.equal(core.completions.length, 25);
+  assert.equal(core.store.get<any[]>('completionInbox',[]).length,25);
+  assert.ok(!JSON.stringify(core.store.get('completionInbox',[])).includes('Long answer'));
 });

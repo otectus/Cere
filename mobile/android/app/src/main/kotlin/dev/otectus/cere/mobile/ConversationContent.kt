@@ -11,23 +11,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import dev.otectus.cere.mobile.data.SessionScrollPosition
 import dev.otectus.cere.mobile.protocol.Agent
 import dev.otectus.cere.mobile.protocol.Message
 import dev.otectus.cere.mobile.protocol.isConversationMessage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+internal fun restoredScrollIndex(position: SessionScrollPosition?, messages: List<Message>, hasOlder: Boolean): Int {
+    if (position == null || position.following) return 0
+    val conversation = messages.filter(Message::isConversationMessage)
+    val anchored = position.anchorMessageId?.let { id -> conversation.indexOfFirst { it.id == id }.takeIf { it >= 0 } }
+    val raw = anchored?.plus(if (hasOlder) 1 else 0) ?: position.itemIndex
+    return raw.coerceIn(0, conversation.size + if (hasOlder) 1 else 0)
+}
 
 @Composable
 internal fun ConversationTimeline(
     messages: List<Message>, busy: Boolean, status: String,
     modifier: Modifier = Modifier, hasOlder: Boolean = false, loadingOlder: Boolean = false,
-    onLoadOlder: () -> Unit = {}, statusText: String? = null, messageContent: @Composable (Message) -> Unit,
+    onLoadOlder: () -> Unit = {}, statusText: String? = null,
+    sessionId: String = "", restoredPosition: SessionScrollPosition? = null,
+    onPositionChanged: (SessionScrollPosition) -> Unit = {},
+    messageContent: @Composable (Message) -> Unit,
 ) {
     val conversation = messages.filter(Message::isConversationMessage)
-    val list = rememberLazyListState()
+    val initialIndex = restoredScrollIndex(restoredPosition, conversation, hasOlder)
+    val list = remember(sessionId) { LazyListState(initialIndex, restoredPosition?.offset?.coerceAtLeast(0) ?: 0) }
     val scope = rememberCoroutineScope()
-    var follow by remember { mutableStateOf(true) }
+    var follow by remember(sessionId) { mutableStateOf(restoredPosition?.following ?: true) }
     // Only user scrolling changes follow mode; a new streaming row may briefly
     // make canScrollForward true before the automatic scroll catches up.
     LaunchedEffect(list) {
@@ -40,6 +55,22 @@ internal fun ConversationTimeline(
             val expectedItems = conversation.size + (if (hasOlder) 1 else 0) + (if (conversation.isEmpty()) 1 else 0) + 1
             snapshotFlow { list.layoutInfo.totalItemsCount }.first { it == expectedItems }
             list.scrollToItem(expectedItems - 1)
+        }
+    }
+    LaunchedEffect(sessionId, list, conversation) {
+        snapshotFlow {
+            if (list.isScrollInProgress) null else Triple(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset, follow)
+        }.distinctUntilChanged().collectLatest { position ->
+            if (position == null || sessionId.isBlank()) return@collectLatest
+            delay(250)
+            val visibleKey = list.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? String
+            onPositionChanged(SessionScrollPosition(
+                sessionId = sessionId,
+                anchorMessageId = visibleKey?.takeIf { key -> conversation.any { it.id == key } },
+                itemIndex = position.first,
+                offset = position.second,
+                following = position.third,
+            ))
         }
     }
     Box(modifier.fillMaxWidth()) {

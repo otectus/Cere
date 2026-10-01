@@ -57,7 +57,7 @@ async function heldAction(t: any) {
   const script = { id: 'mark', name: 'Mark', executable: '/bin/sh', args: ['-c', 'printf x >> "$0"', log], cwd: dir, timeout: 5000 };
   const executions = async () => (await readFile(log, 'utf8').catch(() => '')).length;
   const run = async (settings: any, change?: () => Promise<unknown>, manual = false) => {
-    held = false; await core.updateSettings({ scripts: [script], ...settings });
+    held = false;const {bypassCliPermissions,...ordinary}=settings;await core.updateSettings({scripts:[script],...ordinary});if(bypassCliPermissions)await core.power.start({sessionIds:[session.id],minutes:5,cli:true,computer:false});
     const action = core.action('script.run', { id: 'mark' }, session.id);
     if (manual) { await until(() => core.approvals.size === 1); core.answer({ id: core.snapshot().approvals[0].id, choice: 'allow' }); }
     await until(() => held);
@@ -74,7 +74,7 @@ test('F-001 revoking automatic authority while an action awaits bookkeeping prev
   await assert.rejects(f.run({ profile: 'broad', categories: ['scripts'], grants: grant() }, () => f.core.updateSettings({ grants: [] })), /revoked/);
   await assert.rejects(f.run({ profile: 'broad', categories: ['scripts'], grants: [{ category: 'scripts', cwd: f.dir, expires: Date.now() + 300 }] }, () => new Promise(r => setTimeout(r, 400))), /revoked/);
   await assert.rejects(f.run({ profile: 'broad', categories: ['scripts'], grants: grant() }, () => f.core.updateSettings({ profile: 'scoped' })), /revoked/);
-  await assert.rejects(f.run({ profile: 'scoped', categories: ['scripts'], grants: [], bypassCliPermissions: true }, () => f.core.updateSettings({ bypassCliPermissions: false })), /revoked/);
+  await assert.rejects(f.run({ profile: 'scoped', categories: ['scripts'], grants: [], bypassCliPermissions: true }, () => f.core.power.end(f.core.power.snapshot().find(p=>p.state==='active')!.id)), /revoked|Power access ended/);
   assert.equal(f.core.approvals.size, 0, 'no allow response was requested or invented');
   assert.equal(await f.executions(), 0);
   // A still-valid grant and an explicit allow each execute exactly once.
@@ -185,7 +185,8 @@ test('F-007 Stop cancels an MCP-originated saved script in flight', async t => {
   const core = new Core(new Store(join(f.dir, 'state')), () => ({ async send() {}, async interrupt() {}, async close() {} }));
   t.after(() => core.close());
   const session = await core.create({ provider: 'codex', cwd: f.dir, trusted: true });
-  await core.updateSettings({ bypassCliPermissions: true, scripts: [{ id: 'long', name: 'Long', executable: join(f.dir, 'sleeper'), args: [], cwd: f.dir, timeout: 600000 }] });
+  await core.updateSettings({ scripts: [{ id: 'long', name: 'Long', executable: join(f.dir, 'sleeper'), args: [], cwd: f.dir, timeout: 600000 }] });
+  await core.power.start({sessionIds:[session.id],minutes:5,cli:true,computer:false});
   core.tokens.set('mcp', session.id);
   await core.send({ id: session.id, text: 'run the script' });
   const call = core.rpc('mcp.call', { token: 'mcp', name: 'script.run', args: { id: 'long' } });

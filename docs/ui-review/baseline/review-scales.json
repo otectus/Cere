@@ -1,0 +1,77 @@
+[
+    {
+        "check": "review-scale-Scale100-dpr1-compact",
+        "detail": "size=440x860 dpr=1 controlsOutsideX=0 toolsBottom=760 composerBottom=718 conversationHeight=343",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale100-dpr1-workspace",
+        "detail": "size=1040x780 dpr=1 controlsOutsideX=0 toolsBottom=659 composerBottom=617 conversationHeight=368",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale100-dpr1-workspace-min",
+        "detail": "controlsOutsideX=0",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale125-dpr1.5625-compact",
+        "detail": "size=440x812 dpr=1.25 controlsOutsideX=0 toolsBottom=712 composerBottom=670 conversationHeight=295",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale125-dpr1.5625-workspace",
+        "detail": "size=1040x780 dpr=1.25 controlsOutsideX=0 toolsBottom=659 composerBottom=617 conversationHeight=368",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale125-dpr1.5625-workspace-min",
+        "detail": "controlsOutsideX=0",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale150-dpr2.25-compact",
+        "detail": "size=440x668 dpr=1.5 controlsOutsideX=0 toolsBottom=613 composerBottom=575 conversationHeight=216",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale150-dpr2.25-workspace",
+        "detail": "size=1040x640 dpr=1.5 controlsOutsideX=0 toolsBottom=570 composerBottom=528 conversationHeight=279",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale150-dpr2.25-workspace-min",
+        "detail": "controlsOutsideX=0",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale200-dpr4-compact",
+        "detail": "size=440x668 dpr=2 controlsOutsideX=0 toolsBottom=613 composerBottom=575 conversationHeight=216",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale200-dpr4-workspace",
+        "detail": "size=1040x640 dpr=2 controlsOutsideX=0 toolsBottom=570 composerBottom=528 conversationHeight=279",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Scale200-dpr4-workspace-min",
+        "detail": "controlsOutsideX=0",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Short150-dpr2.25-compact",
+        "detail": "size=440x460 dpr=1.5 controlsOutsideX=0 toolsBottom=421 composerBottom=383 conversationHeight=24",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Short150-dpr2.25-workspace",
+        "detail": "size=831x432 dpr=1.5 controlsOutsideX=0 toolsBottom=420 composerBottom=382 conversationHeight=24",
+        "ok": true
+    },
+    {
+        "check": "review-scale-Short150-dpr2.25-workspace-min",
+        "detail": "controlsOutsideX=0",
+        "ok": true
+    }
+]

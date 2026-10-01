@@ -1,0 +1,4240 @@
+[
+    {
+        "controls": 42,
+        "rows": [
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Chat",
+                "objectName": "tab_Chat",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Sessions",
+                "objectName": "tab_Sessions",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Projects",
+                "objectName": "tab_Projects",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Desktop",
+                "objectName": "tab_Desktop",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Settings",
+                "objectName": "tab_Settings",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "New session",
+                "objectName": "sidebarNewSession",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Search Cere",
+                "objectName": "sidebarCommandPalette",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Project workflows",
+                "objectName": "sidebarWorkflows",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Find a session",
+                "objectName": "sidebarSessionSearch",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Handoff · Workflow · stop and error, claude, idle",
+                "objectName": "session_74842a4a-2c58-4708-acba-358f2ccceb7e",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Workflow · stop and error, codex, error",
+                "objectName": "session_1757de78-cbf5-4cc0-b3f2-7d00e3f41f94",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Workflow · compose, ollama, idle",
+                "objectName": "session_a696939a-d29a-4840-b6cb-2eaa45f3cf3f",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Streaming during transitions, codex, idle",
+                "objectName": "session_2e11b84e-0587-4297-9a3d-8cc3730e7c95",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Approval during transitions, codex, idle",
+                "objectName": "session_caaa6c13-11a1-4618-9ffe-a5c107777c53",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": false,
+                "h": 48,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Import terminal session",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Hide window",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 56
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Rename session",
+                "objectName": "renameSession",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 56
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:b5df45df-4cb9-4aa0-90ab-2512f8bb96e1",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:b5df45df-4cb9-4aa0-90ab-2512f8bb96e1",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:61aa6c07-4780-481e-990f-bf150078c293",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:61aa6c07-4780-481e-990f-bf150078c293",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_c1d2c31b-1b24-4d4f-aed3-97833bd9c640",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_c1d2c31b-1b24-4d4f-aed3-97833bd9c640",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:d0374c2b-e2f3-4317-85ad-1397463d7367",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:d0374c2b-e2f3-4317-85ad-1397463d7367",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:86a25add-1ea1-49c2-bea1-b479c38143d8",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:86a25add-1ea1-49c2-bea1-b479c38143d8",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_81e5e4ed-c416-4fca-bf8d-be43d60ecf87",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_81e5e4ed-c416-4fca-bf8d-be43d60ecf87",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:cf7beb5d-da79-4874-a566-c8712d5528a6",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:cf7beb5d-da79-4874-a566-c8712d5528a6",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_f1c32c79-da25-4e31-a8bd-73b5c569d335",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_f1c32c79-da25-4e31-a8bd-73b5c569d335",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": false,
+                "h": 419,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": false,
+                "h": 44,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Attach a file",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 96
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Paste",
+                "objectName": "pasteClipboard",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 63
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Search web for this message",
+                "objectName": "searchThisTurn",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 347
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Voice input",
+                "objectName": "voiceRecord",
+                "role": 43,
+                "tiny": false,
+                "type": "VoiceInput",
+                "w": 40
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Send",
+                "objectName": "sendMessage",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 40
+            },
+            {
+                "focusable": true,
+                "h": 30,
+                "name": "Permissions",
+                "objectName": "shellPermissionCenter",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 103
+            }
+        ],
+        "surface": "workspace-chat",
+        "under24px": 3,
+        "unnamed": 3
+    },
+    {
+        "controls": 68,
+        "rows": [
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Chat",
+                "objectName": "tab_Chat",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Sessions",
+                "objectName": "tab_Sessions",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Projects",
+                "objectName": "tab_Projects",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Desktop",
+                "objectName": "tab_Desktop",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Settings",
+                "objectName": "tab_Settings",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "New session",
+                "objectName": "sidebarNewSession",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Search Cere",
+                "objectName": "sidebarCommandPalette",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Project workflows",
+                "objectName": "sidebarWorkflows",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Find a session",
+                "objectName": "sidebarSessionSearch",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Handoff · Workflow · stop and error, claude, idle",
+                "objectName": "session_74842a4a-2c58-4708-acba-358f2ccceb7e",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Workflow · stop and error, codex, error",
+                "objectName": "session_1757de78-cbf5-4cc0-b3f2-7d00e3f41f94",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Workflow · compose, ollama, idle",
+                "objectName": "session_a696939a-d29a-4840-b6cb-2eaa45f3cf3f",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Streaming during transitions, codex, idle",
+                "objectName": "session_2e11b84e-0587-4297-9a3d-8cc3730e7c95",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Approval during transitions, codex, idle",
+                "objectName": "session_caaa6c13-11a1-4618-9ffe-a5c107777c53",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": false,
+                "h": 48,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Import terminal session",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Hide window",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 56
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Offline tools",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 103
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Refresh",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 76
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Search desktop actions",
+                "objectName": "desktopSearch",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 744
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "All",
+                "objectName": "desktopFilter_0",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 182
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Controls",
+                "objectName": "desktopFilter_1",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 183
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Apps",
+                "objectName": "desktopFilter_2",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 182
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Windows",
+                "objectName": "desktopFilter_3",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 182
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Capture in Satty",
+                "objectName": "captureRegion",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 227
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Open folder",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 226
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Open file",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 227
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Output volume",
+                "objectName": "desktopVolume",
+                "role": 51,
+                "tiny": false,
+                "type": "CSlider",
+                "w": 631
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Mute",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 60
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Previous",
+                "objectName": "media_Previous",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Play",
+                "objectName": "media_PlayPause",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Next",
+                "objectName": "media_Next",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Stop",
+                "objectName": "media_Stop",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 344
+            },
+            {
+                "focusable": false,
+                "h": 40,
+                "name": "Timer duration in minutes",
+                "objectName": "timerMinutes",
+                "role": 52,
+                "tiny": false,
+                "type": "CSpinBox",
+                "w": 128
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Timer reminder",
+                "objectName": "timerLabel",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Start timer",
+                "objectName": "startTimer",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 696
+            },
+            {
+                "focusable": false,
+                "h": 40,
+                "name": "Destination workspace",
+                "objectName": "workspaceNumber",
+                "role": 52,
+                "tiny": false,
+                "type": "CSpinBox",
+                "w": 128
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Switch",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 70
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Spotify Premium",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 626
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "otectus/MCAKingdoms: Ultima Kingdoms recognizes settlements, assigns each one a permanent name and kingdom, and keeps that identity stable across restarts and datapack changes. Villages become part of Serenum, Lunari, Madera, Anemosia, or Yew according to their biome and structure style when first discovered. - Google Chrome",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 626
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Cere",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 626
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Watch Sparks of Tomorrow (Nijusseiki Denki Mokuroku: Eureka Evrika) | EP 12 — Mozilla Firefox",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 626
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "New Tab - Google Chrome",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 626
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Cere Pet",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 626
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Cere",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 626
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Alacritty",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Alastor",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Anime Nexus",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Archer",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Ark",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Avahi SSH Server Browser",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Avahi VNC Server Browser",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Avahi Zeroconf Browser",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "btop++",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Btrfs Assistant",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Cachy-Update",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "CachyOS Hello",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 344
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Show more applications (72 remaining)",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Manage scripts",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 123
+            },
+            {
+                "focusable": false,
+                "h": 415,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 30,
+                "name": "Permissions",
+                "objectName": "shellPermissionCenter",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 103
+            }
+        ],
+        "surface": "workspace-desktop",
+        "under24px": 2,
+        "unnamed": 2
+    },
+    {
+        "controls": 154,
+        "rows": [
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Chat",
+                "objectName": "tab_Chat",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Sessions",
+                "objectName": "tab_Sessions",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Projects",
+                "objectName": "tab_Projects",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Desktop",
+                "objectName": "tab_Desktop",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Settings",
+                "objectName": "tab_Settings",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "New session",
+                "objectName": "sidebarNewSession",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Search Cere",
+                "objectName": "sidebarCommandPalette",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Project workflows",
+                "objectName": "sidebarWorkflows",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Find a session",
+                "objectName": "sidebarSessionSearch",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Handoff · Workflow · stop and error, claude, idle",
+                "objectName": "session_74842a4a-2c58-4708-acba-358f2ccceb7e",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Workflow · stop and error, codex, error",
+                "objectName": "session_1757de78-cbf5-4cc0-b3f2-7d00e3f41f94",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Workflow · compose, ollama, idle",
+                "objectName": "session_a696939a-d29a-4840-b6cb-2eaa45f3cf3f",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Streaming during transitions, codex, idle",
+                "objectName": "session_2e11b84e-0587-4297-9a3d-8cc3730e7c95",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": true,
+                "h": 72,
+                "name": "Approval during transitions, codex, idle",
+                "objectName": "session_caaa6c13-11a1-4618-9ffe-a5c107777c53",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 206
+            },
+            {
+                "focusable": false,
+                "h": 48,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Import terminal session",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Hide window",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 56
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Backup",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 74
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Health",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 68
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Find a settings section",
+                "objectName": "settingsSearch",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 368
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Jump to settings section",
+                "objectName": "settingsSectionPicker",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 368
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Enable workspace telemetry",
+                "objectName": "telemetryEnabled",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Add workspace…",
+                "objectName": "telemetryAddWorkspace",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 136
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Save ignore patterns",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 156
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Include command text (secrets are redacted)",
+                "objectName": "telemetryCommands",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Include stderr from explicit cere-run commands",
+                "objectName": "telemetryOutput",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Pause",
+                "objectName": "telemetryPause",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 66
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Clear",
+                "objectName": "telemetryClear",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Desktop profile",
+                "objectName": "",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 200
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Interface size",
+                "objectName": "",
+                "role": 51,
+                "tiny": false,
+                "type": "CSlider",
+                "w": 393
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Save monitor home",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 147
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Go home",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 84
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Dock left",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 83
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Dock right",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 92
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Always on top",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Character size",
+                "objectName": "",
+                "role": 51,
+                "tiny": false,
+                "type": "CSlider",
+                "w": 571
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Roaming · gently follow the mouse",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Start Cere at login",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": false,
+                "h": 44,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Save personality",
+                "objectName": "personalitySave",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 232
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Discard changes",
+                "objectName": "personalityDiscard",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 232
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Restore default",
+                "objectName": "personalityReset",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Read replies aloud",
+                "objectName": "speechEnabled",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Codex",
+                "objectName": "speechProvider_codex",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 200
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Claude Code",
+                "objectName": "speechProvider_claude",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 200
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Ollama",
+                "objectName": "speechProvider_ollama",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 200
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "AntiGravity",
+                "objectName": "speechProvider_antigravity",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 200
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "OpenAI API",
+                "objectName": "speechProvider_openai",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 200
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Claude API",
+                "objectName": "speechProvider_anthropic",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 200
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Google AI API",
+                "objectName": "speechProvider_google",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 200
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Speech provider",
+                "objectName": "ttsProvider",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Cere speaking voice",
+                "objectName": "speechVoice",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Speaking speed",
+                "objectName": "speechRate",
+                "role": 51,
+                "tiny": false,
+                "type": "CSlider",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Pitch · lower / higher",
+                "objectName": "speechPitch",
+                "role": 51,
+                "tiny": false,
+                "type": "CSlider",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Cere’s volume",
+                "objectName": "speechVolume",
+                "role": 51,
+                "tiny": false,
+                "type": "CSlider",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Reset voice adjustments",
+                "objectName": "resetVoiceTuning",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 178
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Read a brief opening instead of the full response",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Test voice",
+                "objectName": "ttsTest",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 190
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Stop speaking",
+                "objectName": "ttsStop",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 242
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Refresh voices",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 248
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "whisper.cpp executable path",
+                "objectName": "whisperExecutable",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "whisper.cpp model path",
+                "objectName": "whisperModel",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Save local voice-input paths",
+                "objectName": "saveTranscription",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 203
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Refresh",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 76
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Disable remote access now",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 197
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Enable paired devices",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 164
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Desktop name for pairing",
+                "objectName": "",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "LAN or WireGuard bind addresses",
+                "objectName": "",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Prepare offline pairing QR",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 187
+            },
+            {
+                "focusable": false,
+                "h": 44,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Verify phone response",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 168
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Approved project paths separated by semicolons",
+                "objectName": "",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "chat.read",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 346
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "chat.write",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 345
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "approvals.answer",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 346
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "providers.execute",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 345
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "approvals.provider",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 346
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "desktop.control",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 345
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "settings.write",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 346
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "memory.read",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 345
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "memory.write",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 346
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "web",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 345
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "attachments.write",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 346
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "capture.preview",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 345
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "apps",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 229
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "files",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 228
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "windows",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 229
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "audio",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 229
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "media",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 228
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "capture",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 229
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "timers",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 229
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "scripts",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 228
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "providers",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 229
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Allowed script IDs",
+                "objectName": "",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "All six words match the phone",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Confirm pairing and enable gateway",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 251
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "I will pair all phones again",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Reset gateway identity",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 168
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Quiet mode",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Reduce motion",
+                "objectName": "reducedMotion",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Motion intensity",
+                "objectName": "motionIntensity",
+                "role": 51,
+                "tiny": false,
+                "type": "CSlider",
+                "w": 569
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Idle energy",
+                "objectName": "idleEnergy",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 523
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Spend a moment with Cere",
+                "objectName": "playMotionShowcase",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 195
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Respond to conversational tone",
+                "objectName": "expressiveCues",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Choose Cere’s expression",
+                "objectName": "animationPicker",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 614
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Preview",
+                "objectName": "previewAnimation",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 77
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Say hello",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 85
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "A knowing nod",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 120
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Try to behave",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 113
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Stretch",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 73
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Adjust glasses",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 118
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Tuck her hair",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 109
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Who, me?",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 90
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "A little drama",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 110
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Find the rhythm",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 125
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Hide Cere",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 90
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Skip CLI permission prompts",
+                "objectName": "bypassCliPermissions",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Skip computer permission prompts",
+                "objectName": "bypassComputerPermissions",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Permission Center and power sessions",
+                "objectName": "openPermissionCenter",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Desktop assistance profile",
+                "objectName": "",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Applications",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Files and folders",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Windows and workspaces",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Volume and mute",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Media playback",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Screen captures",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Timers",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Saved scripts",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Provider orchestration",
+                "objectName": "",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 342
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Pause AI actions",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Add script",
+                "objectName": "addScript",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 92
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Ollama server URL",
+                "objectName": "ollamaHost",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 611
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Connect",
+                "objectName": "ollamaConnect",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 80
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Refresh",
+                "objectName": "ollamaModelsRefresh",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 76
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Default Ollama model",
+                "objectName": "ollamaDefaultModel",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "",
+                "objectName": "apiKey_openai",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Save key",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 264
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Connect / refresh",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 427
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "",
+                "objectName": "apiKey_anthropic",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Save key",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 264
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Connect / refresh",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 427
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "",
+                "objectName": "apiKey_google",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Save key",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 264
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Connect / refresh",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 427
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Enable web search",
+                "objectName": "webSearchEnabled",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Search provider",
+                "objectName": "webSearchProvider",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 627
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Apply",
+                "objectName": "webSearchSave",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 64
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Remember and recall conversations",
+                "objectName": "memoryEnabled",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 696
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Manage project memory",
+                "objectName": "manageMemories",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 179
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Copy Hyprland shortcut",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 176
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Quit · keep sessions running",
+                "objectName": "quitKeepSessions",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 377
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Stop sessions and quit",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 311
+            },
+            {
+                "focusable": false,
+                "h": 563,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 30,
+                "name": "Permissions",
+                "objectName": "shellPermissionCenter",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 103
+            }
+        ],
+        "surface": "workspace-settings",
+        "under24px": 4,
+        "unnamed": 7
+    },
+    {
+        "controls": 44,
+        "rows": [
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Chat",
+                "objectName": "tab_Chat",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Sessions",
+                "objectName": "tab_Sessions",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Projects",
+                "objectName": "tab_Projects",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Desktop",
+                "objectName": "tab_Desktop",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Settings",
+                "objectName": "tab_Settings",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "New session",
+                "objectName": "sidebarNewSession",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Search Cere",
+                "objectName": "sidebarCommandPalette",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Project workflows",
+                "objectName": "sidebarWorkflows",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 216
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Hide window",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 56
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "New session",
+                "objectName": "newSession",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 135
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Find a session",
+                "objectName": "sessionSearch",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 744
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Filter sessions",
+                "objectName": "sessionFilter",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 612
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "New folder",
+                "objectName": "createFolder",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 124
+            },
+            {
+                "focusable": true,
+                "h": 76,
+                "name": "Handoff · Workflow · stop and error, claude, idle",
+                "objectName": "session_74842a4a-2c58-4708-acba-358f2ccceb7e",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 734
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Pin",
+                "objectName": "pinSession_74842a4a-2c58-4708-acba-358f2ccceb7e",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 48
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Move Handoff · Workflow · stop and error to folder",
+                "objectName": "moveSession_74842a4a-2c58-4708-acba-358f2ccceb7e",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 599
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Archive",
+                "objectName": "archiveSession_74842a4a-2c58-4708-acba-358f2ccceb7e",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 75
+            },
+            {
+                "focusable": true,
+                "h": 76,
+                "name": "Workflow · stop and error, codex, error",
+                "objectName": "session_1757de78-cbf5-4cc0-b3f2-7d00e3f41f94",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 734
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Pin",
+                "objectName": "pinSession_1757de78-cbf5-4cc0-b3f2-7d00e3f41f94",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 48
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Move Workflow · stop and error to folder",
+                "objectName": "moveSession_1757de78-cbf5-4cc0-b3f2-7d00e3f41f94",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 599
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Archive",
+                "objectName": "archiveSession_1757de78-cbf5-4cc0-b3f2-7d00e3f41f94",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 75
+            },
+            {
+                "focusable": true,
+                "h": 76,
+                "name": "Workflow · compose, ollama, idle",
+                "objectName": "session_a696939a-d29a-4840-b6cb-2eaa45f3cf3f",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 734
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Pin",
+                "objectName": "pinSession_a696939a-d29a-4840-b6cb-2eaa45f3cf3f",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 48
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Move Workflow · compose to folder",
+                "objectName": "moveSession_a696939a-d29a-4840-b6cb-2eaa45f3cf3f",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 599
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Archive",
+                "objectName": "archiveSession_a696939a-d29a-4840-b6cb-2eaa45f3cf3f",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 75
+            },
+            {
+                "focusable": true,
+                "h": 76,
+                "name": "Streaming during transitions, codex, idle",
+                "objectName": "session_2e11b84e-0587-4297-9a3d-8cc3730e7c95",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 734
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Pin",
+                "objectName": "pinSession_2e11b84e-0587-4297-9a3d-8cc3730e7c95",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 48
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Move Streaming during transitions to folder",
+                "objectName": "moveSession_2e11b84e-0587-4297-9a3d-8cc3730e7c95",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 599
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Archive",
+                "objectName": "archiveSession_2e11b84e-0587-4297-9a3d-8cc3730e7c95",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 75
+            },
+            {
+                "focusable": true,
+                "h": 76,
+                "name": "Approval during transitions, codex, idle",
+                "objectName": "session_caaa6c13-11a1-4618-9ffe-a5c107777c53",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 734
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Pin",
+                "objectName": "pinSession_caaa6c13-11a1-4618-9ffe-a5c107777c53",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 48
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Move Approval during transitions to folder",
+                "objectName": "moveSession_caaa6c13-11a1-4618-9ffe-a5c107777c53",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 599
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Archive",
+                "objectName": "archiveSession_caaa6c13-11a1-4618-9ffe-a5c107777c53",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 75
+            },
+            {
+                "focusable": true,
+                "h": 76,
+                "name": "Long conversation · xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, ollama, idle",
+                "objectName": "session_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 734
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Pin",
+                "objectName": "pinSession_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 48
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Move Long conversation · xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx to folder",
+                "objectName": "moveSession_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 599
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Archive",
+                "objectName": "archiveSession_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 75
+            },
+            {
+                "focusable": true,
+                "h": 76,
+                "name": "Approval requester 3 · yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy, codex, idle",
+                "objectName": "session_ece33e8d-b816-4a48-97b5-8dc150fa3dd0",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 734
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Pin",
+                "objectName": "pinSession_ece33e8d-b816-4a48-97b5-8dc150fa3dd0",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 48
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Move Approval requester 3 · yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy to folder",
+                "objectName": "moveSession_ece33e8d-b816-4a48-97b5-8dc150fa3dd0",
+                "role": 46,
+                "tiny": false,
+                "type": "CComboBox",
+                "w": 599
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Archive",
+                "objectName": "archiveSession_ece33e8d-b816-4a48-97b5-8dc150fa3dd0",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 75
+            },
+            {
+                "focusable": false,
+                "h": 436,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Import terminal session",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 744
+            },
+            {
+                "focusable": true,
+                "h": 30,
+                "name": "Permissions",
+                "objectName": "shellPermissionCenter",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 103
+            }
+        ],
+        "surface": "workspace-sessions",
+        "under24px": 1,
+        "unnamed": 1
+    },
+    {
+        "controls": 53,
+        "rows": [
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Search Cere",
+                "objectName": "openCommandPalette",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 40
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Expand",
+                "objectName": "expandWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 102
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Chat",
+                "objectName": "tab_Chat",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 180
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Sessions",
+                "objectName": "tab_Sessions",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 179
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Projects",
+                "objectName": "tab_Projects",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 180
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Desktop",
+                "objectName": "tab_Desktop",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 179
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Settings",
+                "objectName": "tab_Settings",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 180
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Back to sessions",
+                "objectName": "backToSessions",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 56
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Rename session",
+                "objectName": "renameSession",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 56
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_162db286-f6a2-4149-a466-fa55f7ee6f26",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_162db286-f6a2-4149-a466-fa55f7ee6f26",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:787f127c-b0b9-41f2-abd4-3f73ff789f60",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:787f127c-b0b9-41f2-abd4-3f73ff789f60",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_c079c4de-700b-466a-90c8-5581a48d2f35",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_c079c4de-700b-466a-90c8-5581a48d2f35",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:ad9a433d-cbef-47c4-a7c2-70104d3f2da1",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:ad9a433d-cbef-47c4-a7c2-70104d3f2da1",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_3625164c-7a76-497c-888f-9ae2d4e647a7",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_3625164c-7a76-497c-888f-9ae2d4e647a7",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_6db0d186-0900-41d8-9a6c-c7b34e62e918",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_6db0d186-0900-41d8-9a6c-c7b34e62e918",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:f8386eef-a66b-4f97-80f5-d9483d505770",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:f8386eef-a66b-4f97-80f5-d9483d505770",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_84aa6b96-995e-49e0-a1f5-8a88436e26aa",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_84aa6b96-995e-49e0-a1f5-8a88436e26aa",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:68238319-7825-48e2-8732-3a8e6ecdecbb",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:68238319-7825-48e2-8732-3a8e6ecdecbb",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_b8a28617-e119-44b6-be94-a2d945fa02e5",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_b8a28617-e119-44b6-be94-a2d945fa02e5",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:e5787a6b-b6e3-4f28-8e8f-bfa124521517",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:e5787a6b-b6e3-4f28-8e8f-bfa124521517",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_29a7837d-ead0-422a-9102-f79dfa293cc9",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_29a7837d-ead0-422a-9102-f79dfa293cc9",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:86a25add-1ea1-49c2-bea1-b479c38143d8",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:86a25add-1ea1-49c2-bea1-b479c38143d8",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_81e5e4ed-c416-4fca-bf8d-be43d60ecf87",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_81e5e4ed-c416-4fca-bf8d-be43d60ecf87",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:cf7beb5d-da79-4874-a566-c8712d5528a6",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:cf7beb5d-da79-4874-a566-c8712d5528a6",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_f1c32c79-da25-4e31-a8bd-73b5c569d335",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_f1c32c79-da25-4e31-a8bd-73b5c569d335",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:61aa6c07-4780-481e-990f-bf150078c293",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_24c28cb6-d607-4dda-9c0a-7cf8081cd5b5:61aa6c07-4780-481e-990f-bf150078c293",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Copy",
+                "objectName": "copyMessage_6107fee6-3f47-4151-a50b-4651bec17c55",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 61
+            },
+            {
+                "focusable": true,
+                "h": 28,
+                "name": "Message actions",
+                "objectName": "messageActions_6107fee6-3f47-4151-a50b-4651bec17c55",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 41
+            },
+            {
+                "focusable": false,
+                "h": 553,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": false,
+                "h": 44,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Attach a file",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 96
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Paste",
+                "objectName": "pasteClipboard",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 63
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Search web for this message",
+                "objectName": "searchThisTurn",
+                "role": 44,
+                "tiny": false,
+                "type": "CCheckBox",
+                "w": 516
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Voice input",
+                "objectName": "voiceRecord",
+                "role": 43,
+                "tiny": false,
+                "type": "VoiceInput",
+                "w": 40
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Send",
+                "objectName": "sendMessage",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 40
+            },
+            {
+                "focusable": true,
+                "h": 30,
+                "name": "Permissions",
+                "objectName": "shellPermissionCenter",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 103
+            }
+        ],
+        "surface": "compact-chat",
+        "under24px": 2,
+        "unnamed": 2
+    },
+    {
+        "controls": 58,
+        "rows": [
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Search Cere",
+                "objectName": "openCommandPalette",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 40
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Expand",
+                "objectName": "expandWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 102
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Chat",
+                "objectName": "tab_Chat",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 79
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Sessions",
+                "objectName": "tab_Sessions",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 79
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Projects",
+                "objectName": "tab_Projects",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 78
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Desktop",
+                "objectName": "tab_Desktop",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 79
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Settings",
+                "objectName": "tab_Settings",
+                "role": 37,
+                "tiny": false,
+                "type": "CButton",
+                "w": 79
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Offline tools",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 103
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Refresh",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 76
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Search desktop actions",
+                "objectName": "desktopSearch",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 410
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "All",
+                "objectName": "desktopFilter_0",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 99
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Controls",
+                "objectName": "desktopFilter_1",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 99
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Apps",
+                "objectName": "desktopFilter_2",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 98
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Windows",
+                "objectName": "desktopFilter_3",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 99
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Capture in Satty",
+                "objectName": "captureRegion",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Open folder",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Open file",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 32,
+                "name": "Output volume",
+                "objectName": "desktopVolume",
+                "role": 51,
+                "tiny": false,
+                "type": "CSlider",
+                "w": 297
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Mute",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 60
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Previous",
+                "objectName": "media_Previous",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 177
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Play",
+                "objectName": "media_PlayPause",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 177
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Next",
+                "objectName": "media_Next",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 177
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Stop",
+                "objectName": "media_Stop",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 177
+            },
+            {
+                "focusable": false,
+                "h": 40,
+                "name": "Timer duration in minutes",
+                "objectName": "timerMinutes",
+                "role": 52,
+                "tiny": false,
+                "type": "CSpinBox",
+                "w": 128
+            },
+            {
+                "focusable": true,
+                "h": 42,
+                "name": "Timer reminder",
+                "objectName": "timerLabel",
+                "role": 42,
+                "tiny": false,
+                "type": "CField",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Start timer",
+                "objectName": "startTimer",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 362
+            },
+            {
+                "focusable": false,
+                "h": 40,
+                "name": "Destination workspace",
+                "objectName": "workspaceNumber",
+                "role": 52,
+                "tiny": false,
+                "type": "CSpinBox",
+                "w": 128
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Switch",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 70
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Spotify Premium",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 292
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "otectus/MCAKingdoms: Ultima Kingdoms recognizes settlements, assigns each one a permanent name and kingdom, and keeps that identity stable across restarts and datapack changes. Villages become part of Serenum, Lunari, Madera, Anemosia, or Yew according to their biome and structure style when first discovered. - Google Chrome",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 292
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Cere",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 292
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Watch Sparks of Tomorrow (Nijusseiki Denki Mokuroku: Eureka Evrika) | EP 12 — Mozilla Firefox",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 292
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "New Tab - Google Chrome",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 292
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Cere Pet",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 292
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Cere Panel",
+                "objectName": "desktopWindow",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 292
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Move",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 62
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Alacritty",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Alastor",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Anime Nexus",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Archer",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Ark",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Avahi SSH Server Browser",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Avahi VNC Server Browser",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Avahi Zeroconf Browser",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "btop++",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Btrfs Assistant",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "Cachy-Update",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 66,
+                "name": "CachyOS Hello",
+                "objectName": "desktopApplication",
+                "role": 43,
+                "tiny": false,
+                "type": "CActionRow",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Show more applications (72 remaining)",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 362
+            },
+            {
+                "focusable": true,
+                "h": 40,
+                "name": "Manage scripts",
+                "objectName": "",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 123
+            },
+            {
+                "focusable": false,
+                "h": 384,
+                "name": "",
+                "objectName": "",
+                "role": 3,
+                "tiny": true,
+                "type": "CScrollBar",
+                "w": 10
+            },
+            {
+                "focusable": true,
+                "h": 30,
+                "name": "Permissions",
+                "objectName": "shellPermissionCenter",
+                "role": 43,
+                "tiny": false,
+                "type": "CButton",
+                "w": 103
+            }
+        ],
+        "surface": "compact-desktop",
+        "under24px": 1,
+        "unnamed": 1
+    }
+]

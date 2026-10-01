@@ -39,3 +39,14 @@ and eSpeak data are unmodified.
 
 Installed/system Piper overrides (including the GPL-3.0 OHF engine) have their
 own distributions and notices; they are not relicensed by Cere.
+
+## Optional IndexTTS
+
+IndexTTS is downloaded only after license review. Its source/checkpoint provenance
+and auxiliary model revisions/checksums are in `indextts-manifest.json`. Upstream
+commit: `d9e41aac89fd00b3d71497fddb287b7f24613712`. The bilibili Model Use License
+Agreement and separate DISCLAIMER apply; commercial use is conditional, including
+reference-voice authorization and the license's organization-size thresholds.
+See the pinned upstream LICENSE/DISCLAIMER and `docs/tts.md` before use.
+Auxiliary model cards/notices are retained with the downloaded files. This optional
+runtime does not change the licenses of the bundled Piper engine or voices.

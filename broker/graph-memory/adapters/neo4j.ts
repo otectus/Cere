@@ -228,7 +228,7 @@ export class Neo4jGraphRepository implements GraphRepository {
       request.deadline?.throwIfAborted();
       const response=await this.driver.executeQuery(`
         UNWIND $seeds AS seedId
-        MATCH (seed:MemoryNode {id:seedId,generation:$generation,deleted:false})
+        MATCH (seed:MemoryNode {key:toString($generation) + ':' + seedId,deleted:false})
         WHERE seed.scope_id IN $scopes
         CALL (seed) {
           MATCH (seed)-[rel:MEMORY_LINK]-(node:MemoryNode)

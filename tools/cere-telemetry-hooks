@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Idempotently install/remove a sourced hook block. Does not enable telemetry."""
+import argparse
+import os
+from pathlib import Path
+import shlex
+
+parser = argparse.ArgumentParser()
+parser.add_argument('action', choices=['install', 'uninstall'])
+parser.add_argument('shell', choices=['fish', 'bash', 'zsh'])
+parser.add_argument('--rc', type=Path)
+args = parser.parse_args()
+config = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))
+rc = args.rc or {'fish': config/'fish/config.fish', 'bash': Path.home()/'.bashrc', 'zsh': Path(os.environ.get('ZDOTDIR', Path.home()))/'.zshrc'}[args.shell]
+root = Path(__file__).resolve().parent.parent
+integration = root/'shell'/('cere.'+args.shell)
+if not integration.exists():
+    integration = root/'share/cere/shell'/('cere.'+args.shell)
+start, end = '# >>> Cere workspace telemetry >>>', '# <<< Cere workspace telemetry <<<'
+text = rc.read_text() if rc.exists() else ''
+while start in text:
+    left, rest = text.split(start, 1)
+    if end not in rest:
+        raise SystemExit('Unterminated Cere block; refusing to edit this rc file.')
+    _, right = rest.split(end, 1)
+    text = left + right.removeprefix('\n')
+if args.action == 'install':
+    if not integration.is_file():
+        raise SystemExit('Cere integration file is missing.')
+    text = text.rstrip('\n') + '\n' + start + '\nsource ' + shlex.quote(str(integration)) + '\n' + end + '\n'
+rc.parent.mkdir(parents=True, exist_ok=True)
+if not rc.exists() or rc.read_text() != text:
+    rc.write_text(text)
+print('Hook %sed. Open a new shell. Socket cleanup belongs to Cere shutdown; never remove a live socket.' % args.action)

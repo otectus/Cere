@@ -18,9 +18,10 @@ export const methods:Record<string,z.ZodType>={
   'sessions.send':z.strictObject({sessionId,text:z.string().min(1).max(100000),attachments:z.array(uuid).max(4).default([]),webSearch:z.boolean().default(false),expectedDraftRevision:revision,expectedConfigRevision:revision}),
   'sessions.stop':z.strictObject({sessionId}),'sessions.disconnect':z.strictObject({sessionId}),
   'sessions.rename':z.strictObject({sessionId,title:z.string().min(1).max(100),expectedRevision:revision}),
+  'sessions.organize':z.strictObject({sessionId,expectedRevision:revision,pinned:z.boolean().optional(),archived:z.boolean().optional()}).refine(p=>p.pinned!==undefined||p.archived!==undefined,'Choose a session organization change'),
   'drafts.get':z.strictObject({sessionId}),'drafts.put':z.strictObject({sessionId,text:z.string().max(100000),expectedRevision:revision}),
   'providers.models':z.strictObject({provider,sessionId:sessionId.optional()}),
-  'sessions.configure':z.strictObject({sessionId,model:z.string().max(512),tools:z.boolean(),expectedConfigRevision:revision}),
+  'sessions.configure':z.strictObject({sessionId,model:z.string().max(512),effort:z.string().max(32).optional(),tools:z.boolean(),expectedConfigRevision:revision}),
   'approvals.list':empty,'approvals.get':z.strictObject({approvalId:uuid}),
   'approvals.answer':z.strictObject({approvalId:uuid,revision,digest:hash,choice:z.enum(['allow','deny','answer','cancel']),answers:z.record(z.string().max(150),z.strictObject({answers:z.array(z.string().max(100000)).max(32)})).default({}),imageDigest:hash.optional()}),
   'approvals.preview':z.strictObject({approvalId:uuid,revision,digest:hash}),
@@ -31,7 +32,8 @@ export const methods:Record<string,z.ZodType>={
   'attachments.read':z.strictObject({readId:uuid,offset:z.number().int().min(0),length:z.number().int().min(1).max(256*1024)}),
   'commands.challenge':z.strictObject({method:z.string().max(64),paramsDigest:hash,commandId:uuid}),
   'commands.status':z.strictObject({commandId:uuid}),'activity.list':z.strictObject({sessionId,limit:z.number().int().min(1).max(100).default(100)}),
-  'permissions.get':empty,'permissions.pause':empty,'devices.self':empty,'devices.selfRevoke':empty,
+  'permissions.get':empty,'permissions.pause':empty,
+  'permissions.reduce':z.strictObject({expectedScopeVersion:revision,caps:z.array(z.string().max(64)).max(32).optional(),categories:z.array(z.string().max(64)).max(32).optional(),scriptIds:z.array(z.string().max(200)).max(100).optional(),projectIds:z.array(uuid).max(32).optional(),ollamaHosts:z.array(z.string().max(4096)).max(32).optional(),expiresAt:z.number().int().positive().optional()}),'devices.self':empty,'devices.selfRevoke':empty,
   'desktop.status':z.strictObject({projectId}),'desktop.apps':z.strictObject({projectId}),'desktop.windows':z.strictObject({projectId}),
   'desktop.execute':z.strictObject({projectId,action:z.string().max(64),args:z.record(z.string(),z.unknown()),definitionDigest:hash.optional()}),
   'timers.cancel':z.strictObject({projectId,timerId:uuid}),
@@ -45,12 +47,12 @@ export const methods:Record<string,z.ZodType>={
   'memory.clear':z.strictObject({sessionId,confirmProjectId:projectId,selection:z.string().regex(/^[0-9a-f]{64}$/),expectedRevision:memoryRevision}),
   'memory.erasureStatus':z.strictObject({sessionId,jobId:uuid}),
 };
-export const mutations=new Set(['sessions.create','sessions.send','sessions.stop','sessions.disconnect','sessions.rename','drafts.put','sessions.configure','sessions.handoffCreate','sessions.import','approvals.answer','permissions.pause','devices.selfRevoke','desktop.execute','timers.cancel','settings.patch','memory.save','memory.forget','memory.clear','attachments.begin','attachments.commit','attachments.abort']);
-const defensive=new Set(['sessions.stop','sessions.disconnect','sessions.rename','drafts.put','permissions.pause','devices.selfRevoke','attachments.abort']);
+export const mutations=new Set(['sessions.create','sessions.send','sessions.stop','sessions.disconnect','sessions.rename','sessions.organize','drafts.put','sessions.configure','sessions.handoffCreate','sessions.import','approvals.answer','permissions.pause','permissions.reduce','devices.selfRevoke','desktop.execute','timers.cancel','settings.patch','memory.save','memory.forget','memory.clear','attachments.begin','attachments.commit','attachments.abort']);
+const defensive=new Set(['sessions.stop','sessions.disconnect','sessions.rename','sessions.organize','drafts.put','permissions.pause','permissions.reduce','devices.selfRevoke','attachments.abort']);
 export function needsProof(method:string,params:any) { return mutations.has(method) && !defensive.has(method) && !(method==='approvals.answer'&&['deny','cancel'].includes(params.choice)); }
 export function availableOperations(caps:string[]) {
   return Object.keys(methods).filter(method=>{
-    const cap=method==='attachments.read'?'capture.preview':method.startsWith('attachments.')?'attachments.write':method==='approvals.preview'?'capture.preview':method.startsWith('approvals.')?'approvals.answer':method.startsWith('desktop.')||method.startsWith('timers.')?'desktop.control':['memory.save','memory.forget','memory.clear','memory.forgetPreview'].includes(method)?'memory.write':method.startsWith('memory.')?'memory.read':method==='settings.patch'?'settings.write':method==='sessions.history'?'providers.execute':['sessions.create','sessions.send','sessions.configure','sessions.rename','sessions.disconnect','sessions.handoffCreate','sessions.import','drafts.put'].includes(method)?'chat.write':'chat.read';
-    return ['devices.self','devices.selfRevoke','permissions.pause','commands.status','commands.challenge'].includes(method)||caps.includes(cap);
+    const cap=method==='attachments.read'?'capture.preview':method.startsWith('attachments.')?'attachments.write':method==='approvals.preview'?'capture.preview':method.startsWith('approvals.')?'approvals.answer':method.startsWith('desktop.')||method.startsWith('timers.')?'desktop.control':['memory.save','memory.forget','memory.clear','memory.forgetPreview'].includes(method)?'memory.write':method.startsWith('memory.')?'memory.read':method==='settings.patch'?'settings.write':method==='sessions.history'?'providers.execute':['sessions.create','sessions.send','sessions.configure','sessions.rename','sessions.organize','sessions.disconnect','sessions.handoffCreate','sessions.import','drafts.put'].includes(method)?'chat.write':'chat.read';
+    return ['devices.self','devices.selfRevoke','permissions.pause','permissions.reduce','commands.status','commands.challenge'].includes(method)||caps.includes(cap);
   });
 }

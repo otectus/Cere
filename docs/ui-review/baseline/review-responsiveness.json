@@ -1,0 +1,45 @@
+[
+    {
+        "durationMs": 3799.813,
+        "frames": 200,
+        "maxms": 29.61,
+        "over33ms": 0,
+        "p50ms": 18.308,
+        "p95ms": 25.568,
+        "phase": "streaming-200-revisions"
+    },
+    {
+        "durationMs": 2211.35,
+        "frames": 120,
+        "maxms": 37.531,
+        "over33ms": 1,
+        "p50ms": 16.583,
+        "p95ms": 27.083,
+        "phase": "scrolling-120-steps"
+    },
+    {
+        "durationMs": 1500.332,
+        "frames": 90,
+        "maxms": 30.833,
+        "over33ms": 0,
+        "p50ms": 19.3,
+        "p95ms": 25.174,
+        "phase": "flick-to-end"
+    },
+    {
+        "durationMs": 1522.946,
+        "frames": 81,
+        "maxms": 20.408,
+        "over33ms": 0,
+        "p50ms": 16.665,
+        "p95ms": 20.168,
+        "phase": "resizing-40-steps"
+    },
+    {
+        "maxms": 8.875,
+        "p50ms": 1.251,
+        "p95ms": 2.118,
+        "phase": "key-to-frame",
+        "samples": 30
+    }
+]

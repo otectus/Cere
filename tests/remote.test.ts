@@ -158,7 +158,7 @@ test('remote Ollama model refresh recovers transient desktop availability withou
   const patched=await client.action('settings.patch',{expectedRevision:snapshot.settings.revision,defaultModel:'recovered'},f);assert.equal(patched.result.defaultModel,'recovered');
 });
 test('signed sends bind exact bytes, deduplicate after lost ACK, preserve CAS drafts, and ignore desktop bypasses',async t=>{
-  const f=await fixture(t),client=await connect(t,f);await f.core.updateSettings({bypassCliPermissions:true,bypassComputerPermissions:true,profile:'manual',categories:[]});
+  const f=await fixture(t),client=await connect(t,f);await f.core.updateSettings({profile:'manual',categories:[]});const local=await f.core.create({provider:'codex',cwd:f.directory,trusted:true});await f.core.power.start({sessionIds:[local.id],minutes:5,cli:true,computer:true});
   const created=await client.action('sessions.create',{provider:'codex',projectId:f.device.projects[0].id,tools:false},f);assert.ok(created.result,JSON.stringify(created));
   let session=created.result;
   const draft=await client.request('drafts.put',{sessionId:session.id,text:'Original draft',expectedRevision:'0'},randomUUID());assert.equal(draft.result.revision,'1');
@@ -172,7 +172,7 @@ test('signed sends bind exact bytes, deduplicate after lost ACK, preserve CAS dr
   assert.equal(f.hooks.get(session.id)!.bypassCliPermissions!(),false);assert.equal(f.hooks.get(session.id)!.restrictive,true);
   await assert.rejects(f.core.action('audio.mute',{},session.id),/disabled/);
   const pending=f.core.approval(session.id,{kind:'provider',title:'Exact command',detail:'printf safe',choices:['allow','deny']});
-  await f.core.updateSettings({bypassCliPermissions:true});assert.equal(f.core.approvals.size,1);
+  const otherLocal=await f.core.create({provider:'codex',cwd:f.directory,trusted:true});await f.core.power.start({sessionIds:[otherLocal.id],minutes:5,cli:true,computer:false});assert.equal(f.core.approvals.size,1);
   const approval=(await client.request('approvals.list')).result[0];assert.equal(approval.canAnswer,true);
   const answered=await client.action('approvals.answer',{approvalId:approval.id,revision:approval.revision,digest:approval.digest,choice:'allow',answers:{}},f);assert.equal(answered.result,true);assert.equal((await pending).choice,'allow');
   const staleAnswer=await client.action('approvals.answer',{approvalId:approval.id,revision:approval.revision,digest:approval.digest,choice:'allow',answers:{}},f);assert.equal(staleAnswer.error.code,'APPROVAL_GONE');
@@ -229,11 +229,65 @@ test('action signatures cannot be transplanted to different parameters or comman
 });
 test('remote parser rejects extra fields and unsafe IDs; accepted operations become unknown after restart',async t=>{
   assert.throws(()=>methods['sessions.create'].parse({provider:'codex',projectId:randomUUID(),trusted:true,cwd:'/'}));
+  assert.throws(()=>methods['sessions.organize'].parse({sessionId:randomUUID(),expectedRevision:'0'}));
+  assert.throws(()=>methods['sessions.organize'].parse({sessionId:randomUUID(),expectedRevision:'0',pinned:true,folderId:randomUUID()}));
+  assert.deepEqual((methods['sessions.configure'].parse({sessionId:randomUUID(),model:'codex-next',effort:'high',tools:false,expectedConfigRevision:'0'}) as any).effort,'high');
   assert.throws(()=>methods['desktop.execute'].parse({projectId:randomUUID(),action:'script.run',args:{},role:'ui'}));
   const directory=await mkdtemp(join(tmpdir(),'cere-mobile-ledger-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const store=new Store(directory),remote=new RemoteStore(store),device=randomUUID(),id=randomUUID();
   remote.accept(device,id,'desktop.execute',{action:'audio.mute'});store.close();
   const reopened=new Store(directory),registry=new RemoteStore(reopened);try{assert.equal(registry.status(device,id).status,'unknown');assert.throws(()=>registry.prior(device,id,'desktop.execute',{action:'other'}),/command ID/);}finally{reopened.close();}
+});
+
+test('session metadata is scoped, CAS-organized, and desktop draft attachments block mobile edits and sends',async t=>{
+  const f=await fixture(t),client=await connect(t,f),session=(await client.action('sessions.create',{provider:'codex',projectId:f.device.projects[0].id,tools:false},f)).result;
+  const folder=f.core.organization.dispatch('folders.save',{name:'Phone work'});
+  const attachment={id:randomUUID(),path:join(f.directory,'desktop-draft.png'),name:'desktop-draft.png',mime:'image/png',kind:'image' as const,size:12,sha256:'fixture'};
+  f.core.updateSession(session.id,{folderId:folder.id,unread:true,readAt:1234,draft:'Desktop draft',draftAttachments:[attachment]});
+  let dto=(await client.request('sessions.get',{sessionId:session.id})).result;
+  assert.deepEqual({pinned:dto.pinned,archived:dto.archived,unread:dto.unread,readAt:dto.readAt,folderName:dto.folderName,draftAttachmentCount:dto.draftAttachmentCount,canConfigure:dto.canConfigure},{pinned:false,archived:false,unread:true,readAt:1234,folderName:'Phone work',draftAttachmentCount:1,canConfigure:true});
+  const noChange=await client.request('sessions.organize',{sessionId:session.id,expectedRevision:dto.revision,pinned:false},randomUUID());assert.equal(noChange.error.code,'INVALID_ARGUMENT');
+  const organized=await client.request('sessions.organize',{sessionId:session.id,expectedRevision:dto.revision,pinned:true,archived:true},randomUUID());assert.equal(organized.result.pinned,true);assert.equal(organized.result.archived,true);
+  const stale=await client.request('sessions.organize',{sessionId:session.id,expectedRevision:dto.revision,archived:false},randomUUID());assert.equal(stale.error.code,'REVISION_CONFLICT');
+  dto=(await client.request('sessions.get',{sessionId:session.id})).result;
+  const edit=await client.request('drafts.put',{sessionId:session.id,text:'Phone overwrite',expectedRevision:dto.draftRevision},randomUUID());assert.equal(edit.error.code,'REVISION_CONFLICT');
+  const unchanged=await client.request('drafts.put',{sessionId:session.id,text:'Desktop draft',expectedRevision:dto.draftRevision},randomUUID());assert.equal(unchanged.result.text,'Desktop draft');
+  dto=(await client.request('sessions.get',{sessionId:session.id})).result;
+  const sent=await client.action('sessions.send',{sessionId:session.id,text:'Do not dispatch',attachments:[],webSearch:false,expectedDraftRevision:dto.draftRevision,expectedConfigRevision:dto.configRevision},f);
+  assert.equal(sent.error.code,'REVISION_CONFLICT');assert.equal(f.sends(),0);assert.equal(f.core.store.session(session.id).status,'idle');assert.equal(f.core.store.session(session.id).draftAttachments?.length,1);
+});
+
+test('native remote session configuration is explicit, revision-bound, and reauthorized',async t=>{
+  const f=await fixture(t),client=await connect(t,f);
+  f.core.capabilities.codex={available:true,modelsStatus:'ready',remoteRestricted:true,models:[{id:'codex-next',displayName:'Codex Next',description:'Fixture',efforts:[{id:'high',displayName:'High'}],defaultEffort:'high',isDefault:false}]};
+  const local=await f.core.create({provider:'codex',cwd:f.directory,trusted:true});let localDto=(await client.request('sessions.get',{sessionId:local.id})).result;
+  assert.equal(localDto.canConfigure,false);
+  const localDenied=await client.action('sessions.configure',{sessionId:local.id,model:'codex-next',effort:'high',tools:false,expectedConfigRevision:localDto.configRevision},f);
+  assert.equal(localDenied.error.code,'PROVIDER_POLICY_UNSAFE');assert.equal(f.core.store.session(local.id).model,'');
+  const session=(await client.action('sessions.create',{provider:'codex',projectId:f.device.projects[0].id,tools:false},f)).result;
+  assert.equal(session.canConfigure,true);
+  const other=await f.core.create({provider:'codex',cwd:f.directory,trusted:true},undefined,{remote:{...f.core.store.session(session.id).remote!,deviceId:randomUUID()},effectivePolicy:'unknown'}),otherDto=(await client.request('sessions.get',{sessionId:other.id})).result;
+  assert.equal(otherDto.canConfigure,false);
+  const otherDenied=await client.action('sessions.configure',{sessionId:other.id,model:'codex-next',effort:'high',tools:false,expectedConfigRevision:otherDto.configRevision},f);
+  assert.equal(otherDenied.error.code,'PROVIDER_POLICY_UNSAFE');assert.equal(f.core.store.session(other.id).model,'');
+  await assert.rejects(f.core.configureSession({id:session.id,model:'codex-next',effort:'high',tools:false,expectedConfigRevision:session.configRevision}),/Detach this conversation/);
+  const configured=await client.action('sessions.configure',{sessionId:session.id,model:'codex-next',effort:'high',tools:false,expectedConfigRevision:session.configRevision},f);
+  assert.equal(configured.result.model,'codex-next');assert.equal(configured.result.effort,'high');assert.equal(configured.result.canConfigure,true);
+  const stale=await client.action('sessions.configure',{sessionId:session.id,model:'',tools:false,expectedConfigRevision:session.configRevision},f);assert.equal(stale.error.code,'REVISION_CONFLICT');
+  f.core.updateSession(session.id,{status:'working'});const active=(await client.request('sessions.get',{sessionId:session.id})).result;assert.equal(active.canConfigure,false);
+  for(const status of ['error','interrupted','disconnected'] as const){
+    f.core.updateSession(session.id,{status});assert.equal((await client.request('sessions.get',{sessionId:session.id})).result.canConfigure,true);
+  }
+  f.core.updateSession(session.id,{status:'idle',agents:[{id:randomUUID(),name:'Active worker',status:'running',updated:Date.now()}]});
+  assert.equal((await client.request('sessions.get',{sessionId:session.id})).result.canConfigure,false);
+  f.core.updateSession(session.id,{agents:[]});
+  f.core.updateSession(session.id,{status:'idle'});const current=f.core.store.session(session.id);let loading=false,release!:(models:any[])=>void;
+  f.core.capabilities.codex={...f.core.capabilities.codex,modelsStatus:'loading'};
+  f.core.modelLoader=async()=>{loading=true;return new Promise(resolve=>{release=resolve;});};
+  const changing=client.action('sessions.configure',{sessionId:session.id,model:'codex-later',effort:'',tools:false,expectedConfigRevision:current.configRevision},f);
+  for(let n=0;n<100&&!loading;n++)await new Promise(resolve=>setTimeout(resolve,2));assert.equal(loading,true);
+  f.gateway.registry.saveDevice({...f.device,scopeVersion:'2'});release([{id:'codex-later',displayName:'Codex Later',description:'Fixture',efforts:[],defaultEffort:'',isDefault:false}]);
+  const revoked=await changing;assert.equal(revoked.error.code,'SCOPE_CHANGED');assert.equal(f.core.store.session(session.id).model,'codex-next');
 });
 
 test('oversized Unicode/control transcripts page and round-trip without oversized frames or full-history reads',async t=>{
@@ -339,4 +393,14 @@ test('remote graph work is bounded inside the canonical worker before inspection
   const scope=c.registerScope({key:'mobile-test',label:'Fixture'}).id,preview=await c.call('mobile_forget_preview',{scope_id:scope});assert.equal(preview.count,0);
   c.db.exec('BEGIN');for(let n=0;n<2049;n++)c.run('INSERT INTO lineage VALUES (?,?,?,?)','derived-'+n,'root','test',1);c.db.exec('COMMIT');
   await assert.rejects(c.call('mobile_forget_preview',{scope_id:scope}),{code:'LIMIT_EXCEEDED'});await assert.rejects(c.call('mobile_inspect',{scope_id:scope,id:randomUUID()}),{code:'LIMIT_EXCEEDED'});
+});
+test('mobile permission reduction is revision-bound, subset-only and immediately revokes prior authority',async t=>{
+  const f=await fixture(t),client=await connect(t,f),original=f.gateway.registry.live(f.device.id)!;
+  assert.ok((await client.request('devices.self',{})).result.projects.length);
+  const expansion=await client.request('permissions.reduce',{expectedScopeVersion:original.scopeVersion,caps:[...original.caps,'unknown.capability']},randomUUID());assert.equal(expansion.error.code,'SCOPE_DENIED');
+  const stale=await client.request('permissions.reduce',{expectedScopeVersion:'0',caps:[]},randomUUID());assert.equal(stale.error.code,'REVISION_CONFLICT');
+  const result=await client.request('permissions.reduce',{expectedScopeVersion:original.scopeVersion,caps:['chat.read'],categories:[],scriptIds:[],projectIds:[],ollamaHosts:[]},randomUUID());
+  assert.equal(result.result.reconnectRequired,true);assert.notEqual(result.result.scopeVersion,original.scopeVersion);
+  assert.deepEqual(f.gateway.registry.live(f.device.id)!.caps,['chat.read']);assert.equal(f.gateway.registry.live(f.device.id)!.projects.length,0);
+  assert.throws(()=>f.gateway.router.current(original),/changed/i);
 });

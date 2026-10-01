@@ -7,6 +7,12 @@ Item {
     width: 180
     height: 180
     visible: true
+    property var moodConfig: ({})
+    Component.onCompleted: {
+        var request=new XMLHttpRequest()
+        request.open("GET",Qt.resolvedUrl("../../assets/motions.json"),false);request.send()
+        moodConfig=JSON.parse(request.responseText).bodyMoods
+    }
     Item { id: host; anchors.fill: parent }
 
     TestCase {
@@ -18,6 +24,7 @@ Item {
     Component {
         id: portraitComponent
         Cere.CerePortrait {
+            moodConfig: scene.moodConfig
             width: 96
             height: 96
             settings: ({ motionIntensity: .7, expressiveCues: true })
@@ -89,6 +96,25 @@ Item {
         compare(portrait.mood, "curious")
     }
 
+    Component {
+        id: sourceComponent
+        Cere.MoodSource { active: true; config: scene.moodConfig; session: ({id:"alpha",status:"idle"}) }
+    }
+    function test_shared_source_holds_competing_stream_moods_and_clears_new_turns() {
+        var source=createTemporaryObject(sourceComponent,host)
+        var first=make({moodSource:source}), second=make({moodSource:source})
+        function reply(text) { return [{id:"stream",sessionId:"alpha",role:"assistant",text:text,time:Date.now()}] }
+        source.messages=reply("I'm curious; tell me more.");source.refreshMood()
+        compare(first.mood,"curious");compare(second.mood,"curious")
+        source.messages=reply("I'm concerned; please be careful.");source.refreshMood()
+        compare(first.mood,"curious");compare(source.pendingMood,"concerned")
+        source.pendingSince=Date.now()-scene.moodConfig.holdMs-1;source.refreshMood()
+        compare(first.mood,"concerned");compare(second.mood,"concerned")
+        source.messages=[{id:"user",sessionId:"alpha",role:"user",text:"Next",time:Date.now()}];source.refreshMood()
+        compare(first.mood,"neutral");compare(second.mood,"neutral")
+        source.active=false
+        compare(source.mood,"neutral")
+    }
     function test_reduced_quiet_zero_and_hidden_stop_animation() {
         var portrait = make()
         tryVerify(function() { return portrait.renderedFrames > 2 }, 3000)

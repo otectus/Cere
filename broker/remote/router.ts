@@ -23,6 +23,7 @@ export class Router {
   actions=new Map<string,{deviceId:string;controller:AbortController;check:()=>void}>();
   media:MediaStore;
   parity:Parity;
+  scopeReduced?:(id:string)=>void;
   constructor(core:Core,registry:RemoteStore,revoke:(id:string)=>Promise<void>) {this.core=core;this.registry=registry;this.revoke=revoke;this.media=new MediaStore(this);this.parity=new Parity(this);}
   abortActions(deviceId?:string) {for(const action of this.actions.values())if(!deviceId||action.deviceId===deviceId)action.controller.abort(remoteError('AUTH_REVOKED','Remote action authority revoked.'));}
   recheckActions() {for(const action of this.actions.values())try{action.check();}catch(error){action.controller.abort(error);}}
@@ -36,6 +37,7 @@ export class Router {
   require(device:Device,cap:string) {this.current(device);if(!device.caps.includes(cap))throw remoteError('SCOPE_DENIED','This device is not granted '+cap);}
   ollamaAllowed(device:Device,host:string) {let wanted:string;try{wanted=ollamaHost(host);}catch{return false;}return (device.ollamaHosts||[]).some(value=>{try{return ollamaHost(value)===wanted;}catch{return false;}});}
   providerAccess(device:Device,id:string,p:any) {
+    if(!['ollama','codex','claude'].includes(id))return {remoteExecution:false,remoteUnavailableReason:'This provider is currently available on the desktop only.'};
     if(id==='ollama'&&!this.ollamaAllowed(device,this.core.settings.ollama.host))return {remoteExecution:false,remoteUnavailableReason:'This device is not granted the desktop Ollama server. Update device access on the desktop.'};
     if(id!=='ollama'&&!device.caps.includes('providers.execute'))return {remoteExecution:false,remoteUnavailableReason:'Native provider execution is not granted to this device.'};
     if(id==='claude'&&p.remoteRestricted!==true)return {remoteExecution:false,remoteUnavailableReason:'Update Claude Code to a version with restricted mode before using it remotely.'};
@@ -43,19 +45,27 @@ export class Router {
     return p.available===true?{remoteExecution}:{remoteExecution,remoteUnavailableReason:id==='ollama'?'Ollama is unavailable on the desktop. Refresh models after checking the configured server.':'Provider is unavailable on the desktop.'};
   }
   project(device:Device,id:string):Project {this.current(device);const p=device.projects.find(p=>p.id===id);if(!p)throw remoteError('SCOPE_DENIED','Project is not granted to this device.');return p;}
-  inScope(device:Device,s:Session) {return device.projects.some(p=>p.path===s.cwd)&&(s.provider!=='ollama'||this.ollamaAllowed(device,s.ollama?.host||''));}
+  inScope(device:Device,s:Session) {return !s.temporary&&device.projects.some(p=>p.path===s.cwd)&&(s.provider!=='ollama'||this.ollamaAllowed(device,s.ollama?.host||''));}
   session(device:Device,id:string) {
     this.require(device,'chat.read');
     const s=this.core.store.sessions().find(s=>s.id===id&&this.inScope(device,s));
     if(!s)throw remoteError('SCOPE_DENIED','Session is not available to this device.');return s;
   }
-  execution(device:Device,project?:Project):RemoteExecution {return {deviceId:device.id,projectId:project?.id||'',scopeVersion:device.scopeVersion,expiresAt:device.expiresAt,caps:[...device.caps],categories:[...device.categories],scriptIds:[...device.scriptIds]};}
+  execution(device:Device,project?:Project):RemoteExecution {return {deviceId:device.id,projectId:project?.id||'',scopeVersion:device.scopeVersion,expiresAt:device.expiresAt,caps:[...device.caps],categories:[...device.categories],scriptIds:[...device.scriptIds],memoryHosts:[...device.ollamaHosts||[]]};}
   sessionDto(device:Device,s:Session,includeDraft=true) {
     const p=device.projects.find(p=>p.path===s.cwd)!;
-    const restrictedProvider=s.provider!=='claude'||this.core.capabilities.claude?.remoteRestricted===true;
+    const restrictedProvider=['ollama','codex','claude'].includes(s.provider)&&(s.provider!=='claude'||this.core.capabilities.claude?.remoteRestricted===true);
+    const folder=s.folderId?this.core.store.folders().find(folder=>folder.id===s.folderId):undefined,draftAttachmentCount=s.draftAttachments?.length||0;
     return {id:s.id,provider:s.provider,title:s.title.slice(0,100),projectId:p.id,project:p.path,mode:s.mode,status:s.status,model:s.model,effort:s.effort||'',draft:includeDraft?s.draft:'',draftIncluded:includeDraft,draftRevision:s.draftRevision||'0',configRevision:s.configRevision||'0',revision:s.revision||'0',turnId:s.turnId,remoteRestricted:!!s.remote,
       canSend:restrictedProvider&&device.caps.includes('chat.write')&&(s.provider==='ollama'||device.caps.includes('providers.execute'))&&s.mode==='managed'&&(!s.remote||s.remote.deviceId===device.id),
+      canConfigure:this.canConfigure(device,s),pinned:!!s.pinned,archived:!!s.archived,unread:!!s.unread,readAt:s.readAt??0,folderId:s.folderId??null,folderName:folder?.name??null,draftAttachmentCount,draftAttachmentHint:draftAttachmentCount?`${draftAttachmentCount} desktop draft attachment${draftAttachmentCount===1?' is':'s are'} waiting. Review or send from the desktop.`:null,
       updated:s.updated,activity:s.activity,agents:(s.agents || []).map(a=>({...a,task:a.task?.slice(0,1000),detail:a.detail?.slice(0,2000)})),parentId:s.parentId,tools:s.ollama?.tools||false,ollamaHost:s.provider==='ollama'?s.ollama?.host:undefined,error:s.error?'The desktop provider reported an error. Review Activity.':undefined};
+  }
+  canConfigure(device:Device,s:Session) {
+    const supported=s.provider==='ollama'?this.ollamaAllowed(device,s.ollama?.host||''):s.provider==='codex'||s.provider==='claude'&&this.core.capabilities.claude?.remoteRestricted===true;
+    const activeAgents=s.agents?.some(agent=>['starting','running','waiting'].includes(agent.status));
+    const awaitingApproval=[...this.core.approvals.values()].some(approval=>approval.value.sessionId===s.id);
+    return supported&&device.caps.includes('chat.write')&&(s.provider==='ollama'||device.caps.includes('providers.execute')&&!this.core.settings.paused)&&s.mode==='managed'&&!busy(s)&&!activeAgents&&!awaitingApproval&&s.remote?.deviceId===device.id;
   }
   approval(device:Device,id:string) {
     this.require(device,'approvals.answer');const a=this.core.approvals.get(id)?.value;
@@ -107,6 +117,9 @@ export class Router {
     return {project,settings};
   }
   async dispatch(device:Device,method:string,p:any,commandId?:string):Promise<any> {
+    return this.core.withMutation(()=>this.dispatchInner(device,method,p,commandId));
+  }
+  private async dispatchInner(device:Device,method:string,p:any,commandId?:string):Promise<any> {
     this.current(device);
     switch(method) {
       case 'sync.open':return this.snapshot(device,p.selectedSessionId);
@@ -153,8 +166,15 @@ export class Router {
         if((s.revision||'0')!==p.expectedRevision)throw remoteError('REVISION_CONFLICT','Session changed. Review its current title.');
         return this.sessionDto(device,this.core.updateSession(s.id,{title:p.title}));
       }
+      case 'sessions.organize': {
+        this.require(device,'chat.write');const s=this.session(device,p.sessionId);
+        if((s.revision||'0')!==p.expectedRevision)throw remoteError('REVISION_CONFLICT','Session changed. Review its organization.');
+        if((p.pinned===undefined||p.pinned===!!s.pinned)&&(p.archived===undefined||p.archived===!!s.archived))throw remoteError('INVALID_ARGUMENT','Choose a session organization change.');
+        const organized=await this.core.rpc('session.organize',{id:s.id,expectedRevision:p.expectedRevision,...(p.pinned===undefined?{}:{pinned:p.pinned}),...(p.archived===undefined?{}:{archived:p.archived})});
+        return this.sessionDto(device,organized);
+      }
       case 'drafts.get': {const s=this.session(device,p.sessionId);return {text:s.draft,revision:s.draftRevision||'0'};}
-      case 'drafts.put': {this.require(device,'chat.write');this.session(device,p.sessionId);const s=this.core.draft(p.sessionId,p.text,p.expectedRevision);return {text:s.draft,revision:s.draftRevision||'0'};}
+      case 'drafts.put': {this.require(device,'chat.write');const current=this.session(device,p.sessionId);if(current.draftAttachments?.length&&p.text!==current.draft)throw remoteError('REVISION_CONFLICT','This desktop draft has attachments. Edit it from the desktop or remove those attachments first.');const s=this.core.draft(p.sessionId,p.text,p.expectedRevision);return {text:s.draft,revision:s.draftRevision||'0'};}
       case 'providers.models': {
         this.require(device,'chat.read');const session=p.sessionId?this.session(device,p.sessionId):undefined;
         if(session&&session.provider!==p.provider)throw remoteError('INVALID_ARGUMENT','Choose this session’s provider.');
@@ -166,8 +186,10 @@ export class Router {
       }
       case 'sessions.configure': {
         this.require(device,'chat.write');const s=this.session(device,p.sessionId);
+        if(!this.canConfigure(device,s))throw remoteError('PROVIDER_POLICY_UNSAFE','This session cannot be configured from this device while it is active, detached, or outside restricted provider policy.');
         if((s.configRevision||'0')!==p.expectedConfigRevision)throw remoteError('REVISION_CONFLICT','Session configuration changed.');
-        return this.sessionDto(device,await this.core.configureSession({id:s.id,model:p.model,tools:p.tools,trusted:true},()=>{this.current(device);if((this.core.store.session(s.id).configRevision||'0')!==p.expectedConfigRevision)throw remoteError('REVISION_CONFLICT','Session configuration changed.');}));
+        const project=device.projects.find(project=>project.path===s.cwd)!,execution=this.execution(device,project);
+        return this.sessionDto(device,await this.core.configureSession({id:s.id,model:p.model,effort:p.effort,tools:p.tools,trusted:true,expectedConfigRevision:p.expectedConfigRevision},()=>{this.current(device);const current=this.session(device,s.id);if(!this.canConfigure(device,current))throw remoteError('AUTH_REVOKED','Remote configuration authority changed.');if((current.configRevision||'0')!==p.expectedConfigRevision)throw remoteError('REVISION_CONFLICT','Session configuration changed.');},execution));
       }
       case 'approvals.list':return this.snapshot(device).approvals;
       case 'approvals.get':return this.approvalDto(device,this.approval(device,p.approvalId).a);
@@ -199,7 +221,18 @@ export class Router {
       case 'activity.list':this.session(device,p.sessionId);return mobilePage(this.core.store,p.sessionId,undefined,p.limit,true).items;
       case 'permissions.get':return this.permissions(device);
       case 'permissions.pause':await this.core.updateSettings({paused:true});return true;
-      case 'devices.self':return {id:device.id,name:device.name,expiresAt:device.expiresAt,scopeVersion:device.scopeVersion,caps:device.caps};
+      case 'devices.self':return {id:device.id,name:device.name,expiresAt:device.expiresAt,scopeVersion:device.scopeVersion,caps:device.caps,categories:device.categories,scriptIds:device.scriptIds,projects:device.projects,ollamaHosts:device.ollamaHosts};
+      case 'permissions.reduce': {
+        const current=this.current(device);if(p.expectedScopeVersion!==current.scopeVersion)throw remoteError('REVISION_CONFLICT','Device access changed. Review it again.');
+        const subset=(requested:unknown,granted:string[])=>{if(requested===undefined)return [...granted];if(!Array.isArray(requested)||requested.some(v=>typeof v!=='string'||!granted.includes(v)))throw remoteError('SCOPE_DENIED','Mobile permission changes can only remove existing access.');return [...new Set(requested)] as string[];};
+        const projectIds=subset(p.projectIds,current.projects.map(project=>project.id));
+        const next={...current,caps:subset(p.caps,current.caps),categories:subset(p.categories,current.categories),scriptIds:subset(p.scriptIds,current.scriptIds),projects:current.projects.filter(project=>projectIds.includes(project.id)),ollamaHosts:subset(p.ollamaHosts,current.ollamaHosts||[]),expiresAt:p.expiresAt??current.expiresAt,scopeVersion:String(BigInt(current.scopeVersion)+1n)};
+        if(!Number.isSafeInteger(next.expiresAt)||next.expiresAt<=Date.now()||next.expiresAt>current.expiresAt)throw remoteError('SCOPE_DENIED','Expiry can only be shortened.');
+        this.registry.saveDevice(next);this.abortActions(device.id);
+        this.registry.audit({deviceId:device.id,operation:'permissions.reduce',decision:'reduced',scopeVersion:next.scopeVersion});
+        setImmediate(()=>this.scopeReduced?.(device.id));
+        return{scopeVersion:next.scopeVersion,reconnectRequired:true,caps:next.caps,categories:next.categories,scriptIds:next.scriptIds,projectIds:next.projects.map(project=>project.id),ollamaHosts:next.ollamaHosts,expiresAt:next.expiresAt};
+      }
       case 'devices.selfRevoke':setImmediate(()=>void this.revoke(device.id));return true;
       case 'settings.get':this.require(device,'chat.read');return this.settings(device);
       case 'settings.patch': {

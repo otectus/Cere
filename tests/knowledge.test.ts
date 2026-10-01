@@ -44,9 +44,13 @@ async function fixture(t: any) {
   });
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));f.host='http://127.0.0.1:'+(server.address() as any).port;
   const store=new Store(directory);store.set('settings',{ollama:{host:f.host,model:'chat'}});f.core=new Core(store);
+  isolateVectorProjection(t, f.core);
   await f.core.refreshProviderModels('ollama');
   t.after(async()=>{await f.core.close();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await rm(directory,{recursive:true,force:true});});
   return f;
+}
+function isolateVectorProjection(t: any, core: Core) {
+  t.mock.method(core.memory.service, 'vectorRepo', async () => { throw new Error('No external vector projection in this fixture'); });
 }
 async function session(f: Awaited<ReturnType<typeof fixture>>, model='chat', cwd=f.directory) { return f.core.create({provider:'ollama',model,cwd}); }
 
@@ -109,12 +113,62 @@ test('semantic graph memory survives restart, crosses conversations, and stays w
   const saved=await f.core.memory.save(s,'Coffee should be served without sugar.');
   await f.core.memory.save(s,'Bananas are ripe fruit.');
   let result=await f.core.memory.recall(s,'Which caffeine drink do I prefer?',signal());assert.equal(result.mode,'semantic');assert.ok(result.results.some((r:any)=>r.text.includes('espresso')));assert.ok(!result.results.some((r:any)=>r.text.includes('Bananas')));
-  await f.core.close();f.core=new Core(new Store(f.directory));const next=await session(f);
+  await f.core.close();f.core=new Core(new Store(f.directory));isolateVectorProjection(t, f.core);const next=await session(f);
   result=await f.core.memory.recall(next,'My morning drink',signal());assert.ok(result.results.some((r:any)=>r.id===saved.id));
   await mkdir(join(f.directory,'other'));const other=await session(f,'chat',join(f.directory,'other'));
   assert.equal((await f.core.memory.recall(other,'coffee',signal())).results.length,0);
   assert.equal((await f.core.memory.list({...s,ollama:{host:f.host+'/other',tools:false}})).total,0);
   await assert.rejects(f.core.memory.save(other,'changed',saved.id),/no longer exists/);await assert.rejects(f.core.memory.forget(other,saved.id),/scope/);
+});
+
+for (const stage of ['initialize', 'query'] as const) {
+  test(`canonical semantic recall survives a vector projection ${stage} timeout`, async t => {
+    const f = await fixture(t), s = await session(f);
+    await f.core.updateSettings({ memory: { enabled: true } });
+    const saved = await f.core.memory.save(s, 'Espresso is my preferred drink.');
+    let reached = false;
+    const stall = async (guard: AbortSignal) => {
+      reached = true;
+      guard.throwIfAborted();
+      await new Promise((_, reject) => {
+        guard.addEventListener('abort', () => reject(guard.reason), { once: true });
+        // AbortSignal.timeout does not keep the event loop alive.
+        const timer = setTimeout(() => reject(new Error('Projection did not receive a deadline')), 2000);
+        guard.addEventListener('abort', () => clearTimeout(timer), { once: true });
+      });
+    };
+    t.mock.method(f.core.memory.service, 'vectorRepo', async (_fingerprint: string, _dimension: number, guard: AbortSignal) => {
+      if (stage === 'initialize') await stall(guard);
+      return { query: async (request: any) => { await stall(request.deadline); return []; } };
+    });
+    // No query words occur in the saved text: keyword fallback cannot satisfy this assertion.
+    const result = await f.core.memory.recall(s, 'caffeine', signal());
+    assert.ok(reached, 'the optional projection was attempted');
+    assert.equal(result.mode, 'semantic');
+    assert.ok(result.results.some((r: any) => r.id === saved.id));
+    assert.ok(result.coverage.includes('semantic_projection_unavailable'));
+    assert.ok(result.coverage.includes('deadline_partial'));
+  });
+}
+
+test('an empty projection preserves local hits, but erasure during projection lookup removes them', async t => {
+  const f = await fixture(t), s = await session(f);
+  await f.core.updateSettings({ memory: { enabled: true } });
+  const saved = await f.core.memory.save(s, 'Espresso is my preferred drink.');
+  let erase = false;
+  t.mock.method(f.core.memory.service, 'vectorRepo', async () => ({
+    query: async () => {
+      if (erase) await f.core.memory.forget(s, saved.id);
+      return [];
+    },
+  }));
+  const result = await f.core.memory.recall(s, 'caffeine', signal());
+  assert.equal(result.mode, 'semantic');
+  assert.ok(result.results.some((r: any) => r.id === saved.id));
+  erase = true;
+  const forgotten = await f.core.memory.recall(s, 'caffeine', signal());
+  assert.equal(forgotten.results.length, 0);
+  assert.equal(forgotten.evidence.length, 0);
 });
 
 test('embedding outages preserve canonical memory; model and digest changes use separate spaces',async t=>{

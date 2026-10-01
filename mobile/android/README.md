@@ -2,6 +2,8 @@
 
 Cere Mobile is a native Android client for a paired Cere desktop broker. It does not run providers, desktop tools, or memory databases on the phone. The app uses the negotiated operation list from the authenticated broker welcome frame to decide which controls exist.
 
+Current source is **0.1.1 / versionCode 1001**. Desktop compatibility changes and their current build, installation and runtime status are recorded in [TESTING.md](../../docs/mobile/TESTING.md#desktop-compatibility-update-011--1001-2026-09-30). The earlier device results and artifact hashes below describe previous builds; 0.1.1 still needs phone installation and physical validation.
+
 ## What is implemented
 
 - Offline two-way pairing by manual `cere-pair://v1/…` import or CameraX/ZXing QR scan, signed response text and QR output, and the six-word comparison from the protocol SAS list.

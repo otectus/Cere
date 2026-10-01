@@ -97,7 +97,7 @@ async function dispatch(lua: string, legacy: string[], signal?: AbortSignal, aut
 /** A started process can act before its acknowledgement is lost or it exits. */
 async function effect<T>(operation:Promise<T>):Promise<T> {
   try { return await operation; }
-  catch(error:any) { if(['ENOENT','EACCES'].includes(error?.code))throw error;throw Object.assign(new Error(error?.message||'Action completion could not be confirmed.'),{code:'OUTCOME_UNKNOWN'}); }
+  catch(error:any) { if(['ENOENT','EACCES'].includes(error?.code))throw error;throw Object.assign(new Error(error?.message||'Action completion could not be confirmed.'),{code:'OUTCOME_UNKNOWN',...(Number.isInteger(error?.code)&&!error.killed&&!error.signal?{observedExitCode:error.code}:{})}); }
 }
 export async function audioStatus() {
   try {
@@ -202,7 +202,7 @@ export async function desktopAction(name: string, args: any, settings: Settings,
       if (!script) throw new Error('Script no longer exists');
       authorize?.();signal?.throwIfAborted();
       const result = await effect(exec(script.executable, script.args, { cwd: script.cwd, timeout: script.timeout, signal, maxBuffer: 1024 * 1024 }));
-      return { stdout: result.stdout, stderr: result.stderr };
+      return { stdout: result.stdout, stderr: result.stderr, exitCode:0 };
     }
     default: throw new Error('Action is handled by the broker');
   }

@@ -2,6 +2,40 @@
 
 This is a development implementation of the mobile plan, not a claim that every roadmap phase or external-release gate is complete. Unsupported operations are omitted from capability negotiation. Use the matching broker; a desktop without this gateway cannot pair.
 
+## Desktop compatibility update (0.1.1 / 1001, 2026-09-30)
+
+Android now shows desktop pin/archive/unread/folder state, filters archived conversations, and offers revision-bound rename, pin and archive controls. A conversation settings dialog supports model/effort changes for phone-owned Codex/Claude/Ollama sessions and Ollama tool settings. The broker rechecks ownership, scope, revision, busy state, active agents and pending approvals; configuration cannot elevate an unbound desktop conversation's tool authority. API providers and AntiGravity retain their explicit desktop-only execution policy.
+
+Per-turn web search is available for granted Ollama conversations when enabled on the desktop. Personality/search settings can be saved without an Ollama-host grant. Desktop attachment drafts are identified and blocked from phone overwrite/send until reviewed on the PC. An older broker that does not report attachment state requires a restart before phone sends; local edits remain on the phone. The app reports its installed version in the handshake.
+
+Validation run from the current source:
+
+- `ANDROID_HOME=$PWD/.android-sdk GRADLE_USER_HOME=/tmp/cere-android-gradle JAVA_HOME=/usr/lib/jvm/java-17-openjdk ./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:lintRelease :app:assembleRelease` — passed, **33 unit tests**, both lint variants and debug/test/unsigned R8 release APKs. Log: `/tmp/cere-mobile-compat-final-android.log`.
+- `CERE_TTS_DISABLED=1 node --test tests/remote.test.ts` — **26/26 passed**, including ownership/CAS, async revocation and attachment refusal. `npm run typecheck` and `node tools/mobile-contract.ts --check` passed. Log: `/tmp/cere-mobile-compat-remote.log`.
+- `CERE_TTS_DISABLED=1 node --test tests/session-models.test.ts tests/core.test.ts tests/interactions.test.ts tests/run-completions.test.ts` — **50/50 passed**. Log: `/tmp/cere-mobile-compat-core.log`.
+- Independent review identified and corrected a local-session tools authority issue before final validation.
+
+The existing Pixel 10 Pro pairing reconnected to the running desktop after its disabled gateway was enabled and an administrator-authenticated UFW rule allowed `192.168.1.218 → 192.168.1.204:8443` on `wlan0`. The phone subsequently disconnected from USB **before installation**. Version 0.1.1 has **not yet been installed or instrumented on the phone**. The debug APK is `mobile/android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `dab7f54ed09e729fe2870f41bc91dc9b2c8fb86f86e5ebb9f16b9de57da408b7`.
+
+Matching broker files are staged under `~/.local/share/cere`; the previous files are backed up in `/tmp/cere-mobile-compat-runtime-backup`. Activation requires restarting `cere-broker.service` after this agent turn because the broker owns the current provider process. Remaining delivery checks: reconnect/unlock the phone, restart the broker, install the debug and instrumentation APKs with `adb install -r`, then run `UsbPairingSetupTest#verifyExistingPairing`, `ConversationContentTest`, and the explicitly invoked `ConnectedDesktopTest`. The latter accepts `cereExpectedDesktopId` and an optional `cereSmokeSessionId` for an unused, tools-disabled Ollama conversation whose title starts with `Cere mobile validation `; it checks scoped reads, an actual phone-signed send/reply, organization round-trip and reconnect. These physical and live-provider checks have not been run for 0.1.1. Existing roadmap and hardware limitations below remain.
+
+## Session continuity, reduced grants, and attachment review (2026-09-30)
+
+Conversation reading positions are now stored per session in the encrypted private cache. The saved record uses a stable message ID plus its pixel offset, so switching conversations, process recreation, and loading an older page restore the same reading anchor. Sessions still in follow mode return to the newest message. Scope reconciliation removes positions for sessions the phone can no longer access.
+
+Settings can reduce this phone's current capabilities, action categories, scripts, projects, and Ollama hosts when the broker negotiates `permissions.reduce`. The form starts with the authoritative `devices.self` grants, allows only subsets, shows every removal before submission, and binds the request to `expectedScopeVersion`. The durable command ledger handles a disconnect during the scope change; the UI stays pending until reconnect and command reconciliation. Access can only be added from the desktop.
+
+Photo Picker images, camera photos, shared images, and screenshots or image files selected through Android's document UI remain encrypted locally and must be reviewed from the exact optimized private copy before upload is enabled. Upload and send enforce the reviewed marker in the repository as well as the UI. The attachment still uses the existing bounded `attachments.begin` / binary chunks / `attachments.commit` pipeline.
+
+Focused automated checks cover stable-anchor restoration, bounded fallback when an anchor was forgotten, encrypted-cache round trips, and migration of existing attachments to an unreviewed state. Hardware validation still needs to exercise session switching and process recreation, each capture source and rejection path, TalkBack labels, and a real scope reduction that disconnects and reconnects the phone.
+
+Validation for this change:
+
+- `./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest`: passed; **29/29 unit tests**, debug lint, the debug APK, and the instrumentation APK all completed. Lint report: `mobile/android/app/build/reports/lint-results-debug.html`.
+- `./gradlew :app:lintRelease :app:assembleRelease`: passed, including R8. Log: `/tmp/cere-mobile-parity-release.log`; lint report: `mobile/android/app/build/reports/lint-results-release.html`.
+- `node tools/mobile-contract.ts --check`: passed with the negotiated `permissions.reduce` contract.
+- `adb devices -l` reported no attached device. Instrumentation, physical capture sources, TalkBack, process-death restoration, and live permission-reduction reconnect were not run for this change.
+
 ## Mobile refinement and connection diagnosis (2026-09-29)
 
 The owner's failed mobile Ollama sends were confirmed in the installed broker's command ledger as `REVISION_CONFLICT`, interleaved with successful `drafts.put` operations. The phone now serializes draft saves before signing, preserves newer typing during acknowledgements, and prevents delayed snapshots/session hydration from rolling draft revisions backward. The broker reports send acceptance only after provider acceptance; preflight failures preserve the draft, and post-dispatch uncertainty is retained without replay.
@@ -58,8 +92,8 @@ IDs refer to [`MOBILE_PLAN.md`](../../mobile/MOBILE_PLAN.md). “Implemented” 
 | F09–F10 | Single-use stopped-Codex history import and linked-session read-only restrictions implemented. Claude historical import is withheld. |
 | F11 | Linked-terminal focus shortcut is not implemented. |
 | F12–F16 | Reviewed handoff draft, rename/disconnect, streaming/status, Stop and conflict-preserving drafts implemented. |
-| F17 | Native list/follow behavior is present; durable per-session pixel/scroll-anchor parity is not complete. |
-| F18–F20 | Four-image encrypted drafts/upload, selectable CommonMark, code copy and horizontally scrolling tables implemented. Remote image display is tap-to-open; task syntax remains selectable text. |
+| F17 | Native list/follow behavior and encrypted per-session message-anchor/pixel-offset restoration are implemented. |
+| F18–F20 | Four-image encrypted drafts/upload with exact local preview before upload, selectable CommonMark, code copy and horizontally scrolling tables implemented. Remote image display is tap-to-open; task syntax remains selectable text. |
 | F21–F22 | Safe tapped HTTP(S) links and literal Activity implemented. Mail links and specialized desktop-file link actions are not exposed. |
 | F23–F28 | Global Inbox, digest/revision-bound approvals, typed supported question/forms and deny/Stop for unsupported forms implemented. Oversized or unsafe proposals require desktop review. |
 | F29–F30 | Claude positive approvals require a remotely owned restricted session and the provider approval grant. Saved capture preview/consent works for immutable Ollama inputs; native image Allow is withheld. |
@@ -68,7 +102,7 @@ IDs refer to [`MOBILE_PLAN.md`](../../mobile/MOBILE_PLAN.md). “Implemented” 
 | F43–F44 | Initiating capture jobs and phone crop/annotation are not implemented. Existing saved approval previews are available as above. |
 | F45–F46 | Approved immutable scripts can run; adding/editing executables stays desktop-only by design. |
 | F47–F49 | Delegated work inherits remote restrictions; ordinary permission summaries and Ollama behavior remain broker-owned. Unsafe native providers are withheld. |
-| F50–F56 | No remote privilege expansion/bypass/token exposure. Pause and self-revoke implemented. Individual category/grant reduction UI is not complete; desktop edits/revocation work. |
+| F50–F56 | No remote privilege expansion/bypass/token exposure. Pause, self-revoke, and revision-bound subset reduction for device/project grants are implemented; adding grants remains desktop-only. |
 | F57–F64 | Personality/default-model revision editing, one-shot search and existing broker research controls implemented. Server/credential/private-endpoint edits stay desktop-only. Dedicated search-provider Settings UI is incomplete. |
 | F65–F69 | Scoped browse/recall, saved-note create/edit and source records implemented. Existing desktop collectors/retrieval remain authoritative. |
 | F70–F74 | Full temporal claim/witness/correction/conflict/identity/episode forms are not implemented. Generic graph/admin forwarding is deliberately unavailable. |
@@ -83,7 +117,8 @@ Architecture adaptations: AES-GCM Keystore-encrypted bounded file cache instead 
 
 ## External release gates still required
 
-- Owner-device biometric enrollment/invalidation, locked-start/unlock and locked-screen receipt, reboot/profile behavior, camera/SAF and process-killed upload recovery. Pairing authentication, cold-launch key retention and granted API 37 local-network access passed as recorded above.
+- Owner-device biometric enrollment/invalidation, locked-start/unlock and locked-screen receipt, reboot/profile behavior, camera/Photo Picker/SAF attachment review and process-killed upload recovery. Pairing authentication, cold-launch key retention and granted API 37 local-network access passed as recorded above.
+- Per-session scroll restoration across process death and older-page insertion, TalkBack review of capture and permission controls, and an actual grant reduction followed by command-ledger reconciliation and reconnect.
 - Mobile-data WireGuard reconnect, screen-off/doze notifications and measured latency/battery behavior; no-Play validation on the owner's installed OS.
 - Real harmless Codex/Ollama approval workflows, simultaneous phone/desktop choices, and provider-policy failure behavior. Never test a real effect by replaying an unknown command.
 - Isolated real Hyprland/MPRIS/window/timer/script operations with state restoration; implementation of unported plan features before claiming full parity.

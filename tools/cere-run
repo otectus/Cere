@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Linux telemetry helper. Silent failures; no files, transcripts or output logs."""
+import collections
+import datetime
+import json
+import os
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import re
+
+def safe_line(raw, overflow=False):
+    if overflow:
+        return '[line omitted: exceeds capture limit]'
+    value = raw.decode('utf-8', 'replace')
+    value = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', value)
+    value = re.sub(r'''(?i)(\b\w*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential)\w*\s*=\s*|--[\w-]*(?:password|passwd|secret|token|api[_-]?key|credential)[\w-]*(?:=|\s+))(?:"(?:\\.|[^"\\\r\n])*"?|'(?:\\.|[^'\\\r\n])*'?|[^\s;]+)''', r'\1[REDACTED]', value)
+    value = re.sub(r'(?i)(authorization\s*:\s*).*', r'\1[REDACTED]', value)
+    value = re.sub(r'\b(?:(?:AKIA|ASIA)[A-Z0-9]{16}|gh[pousr]_[\w]+|github_pat_[\w]+|xox[baprs]-[\w-]+|eyJ[\w-]+\.[\w-]+\.[\w-]+)\b', '[REDACTED]', value)
+    value = re.sub(r'(?i)([a-z][a-z0-9+.-]*://)[^\s/]*@', r'\1[REDACTED]@', value)
+    encoded = value.encode('utf-16-le')
+    return value if len(encoded)<=1024 else encoded[:1022].decode('utf-16-le','ignore')+'…'
+
+def address():
+    runtime = os.environ.get('XDG_RUNTIME_DIR')
+    return os.path.join(runtime, 'cere', 'telemetry.sock') if runtime else '/tmp/cere-%s/telemetry.sock' % os.getuid()
+
+def report(session, seq, pid, cwd, status, command, lines=None):
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(.2)
+            client.connect(address())
+            if struct.unpack('3i', client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != os.getuid():
+                return
+            # Capture policy comes from the backend, never a stale rc preference.
+            policy = b''
+            while b'\n' not in policy and len(policy) < 1024:
+                part = client.recv(1024)
+                if not part:
+                    return
+                policy += part
+            policy = json.loads(policy.split(b'\n')[0])
+            if not policy.get('enabled'):
+                return
+            common = dict(v=1, session=session, seq=int(seq), pid=int(pid), hook_version=1,
+                          ts=datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'))
+            event = dict(common, type='command', cwd=cwd, status=int(status))
+            if policy.get('commands') and command and len(command) <= 8192:
+                event['cmd'] = command
+            events = [event]
+            if lines is not None and policy.get('output'):
+                events.append(dict(common, type='output', seq=int(seq)+1, cmd_seq=int(seq), lines=lines))
+            for event in events:
+                encoded = (json.dumps(event, ensure_ascii=False) + '\n').encode()
+                if len(encoded) <= 16385:
+                    client.sendall(encoded)
+    except (OSError, ValueError, TypeError):
+        pass
+
+def run(args):
+    session, seq, pid, cwd, *command = args
+    if not command:
+        return 2
+    ring = collections.deque(maxlen=5)
+    try:
+        child = subprocess.Popen(command, stderr=subprocess.PIPE)
+    except OSError:
+        return 127
+    def forward(sig, _frame):
+        try:
+            child.send_signal(sig)
+        except ProcessLookupError:
+            pass
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, forward)
+    # Drain continuously in bounded chunks; an unterminated stderr line cannot grow memory.
+    pending = bytearray(); overflow = False
+    while True:
+        chunk = child.stderr.read1(4096)
+        if not chunk:
+            break
+        try:
+            os.write(2, chunk)
+        except OSError:
+            pass
+        for byte in chunk:
+            if byte == 10:
+                ring.append(safe_line(pending, overflow)); pending.clear(); overflow = False
+            elif len(pending) < 2048:
+                pending.append(byte)
+            else:
+                overflow = True
+    if pending:
+        ring.append(safe_line(pending, overflow))
+    status = child.wait()
+    status = status if status >= 0 else 128-status
+    # Reporting is detached from prompt latency, even after a wrapped command.
+    if os.fork() == 0:
+        try:
+            os.setsid()
+            null = os.open(os.devnull, os.O_RDWR)
+            for descriptor in (0, 1, 2):
+                os.dup2(null, descriptor)
+            if null > 2:
+                os.close(null)
+            report(session, seq, pid, cwd, status, ' '.join(command), list(ring))
+        finally:
+            os._exit(0)
+    return status
+
+if __name__ == '__main__':
+    try:
+        if len(sys.argv) > 1 and sys.argv[1] == '--run':
+            sys.exit(run(sys.argv[2:]))
+        if len(sys.argv) == 8:
+            report(*sys.argv[1:7])
+    except (OSError, ValueError, TypeError):
+        pass

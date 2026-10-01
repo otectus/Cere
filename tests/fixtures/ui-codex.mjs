@@ -54,6 +54,15 @@ createInterface({input:process.stdin}).on('line',line=>{
       },500));
       actingTimers.push(setTimeout(()=>event('item/completed',{threadId:'fixture-child',item:{id:'child-reply',type:'agentMessage',text:'Reviewed the question UI.'}}),4000));
       actingTimers.push(setTimeout(()=>event('turn/completed',{threadId:'fixture-child',turn:{id:'child-turn',status:'completed'}}),8000));
+    }else if(prompt.startsWith('completion-rich')){
+      // UI review fixture: a long reply with fenced code, nested lists, a wide table, an image, long URLs and paths.
+      const image=prompt.includes(':')?prompt.slice(prompt.indexOf(':')+1):'';
+      const code=Array.from({length:60},(_,i)=>`export function reviewFixtureLine${i}(value: number): number { return value * ${i} + Math.round(Math.sqrt(${i} + 1)); } // trailing comment that widens the line`).join('\n');
+      const table='| '+Array.from({length:12},(_,i)=>`Column ${i} heading`).join(' | ')+' |\n|'+' --- |'.repeat(12)+'\n'+Array.from({length:6},(_,r)=>'| '+Array.from({length:12},(_,c)=>`row ${r} cell ${c} with longer text`).join(' | ')+' |').join('\n');
+      const lists=Array.from({length:4},(_,i)=>`- Level one item ${i}\n  - Level two item with a sentence that wraps across the available width of the message card.\n    - Level three item\n      1. Ordered inside unordered\n      2. Second ordered item`).join('\n');
+      const text='# Review fixture: long reply\n\nThis reply exercises sustained reading in both surfaces.\n\n## Code\n\n```ts\n'+code+'\n```\n\n## Lists\n\n'+lists+'\n\n## Table\n\n'+table+'\n\n## Links and paths\n\nhttps://example.com/review/'+'segment-'.repeat(40)+'end\n\n/home/otectus/Projects/'+'very-long-directory-name/'.repeat(10)+'file.ts\n\n'+(image?'![Fixture image](file://'+image+')\n\n':'')+'Closing paragraph after the long content.';
+      event('item/completed',{item:{id:`reply-${turn}`,type:'agentMessage',phase:'final_answer',text}});
+      event('turn/completed',{turn:{id:`turn-${turn}`,status:'completed'}});
     }else if(prompt.startsWith('completion-')){
       event('item/completed',{item:{id:`comment-${turn}`,type:'agentMessage',phase:'commentary',text:'Still working.'}});
       event('item/completed',{item:{id:`tool-${turn}`,type:'commandExecution',aggregatedOutput:'A tool trace, not the final answer.'}});

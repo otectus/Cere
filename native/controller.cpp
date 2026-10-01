@@ -15,6 +15,7 @@
 #include <QFile>
 #include <QScreen>
 #include <QClipboard>
+#include <QMimeData>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QMenu>
@@ -27,6 +28,7 @@
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QFileInfo>
+#include <QUuid>
 #include <algorithm>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -196,6 +198,17 @@ void Controller::openCompletion(const QString &completionId){
         return;
     }
 }
+void Controller::openCompanionReply(const QString &replyId){
+    for(const auto &entry:m_state.value("companionReplies").toList()){
+        const auto reply=entry.toMap();
+        if(reply.value("id").toString()!=replyId)continue;
+        select(reply.value("sessionId").toString());
+        restorePanel();
+        if(m_panel&&m_panel->rootObject())m_panel->rootObject()->setProperty("page",0);
+        rpc("companion.dismiss",{{"id",replyId}});
+        return;
+    }
+}
 int Controller::rpc(const QString &method,const QVariantMap &params){
     if(!connected()){notify("Cere is reconnecting to her session broker.");return -1;}
     const int id=++m_sequence;m_requests[id]=method;
@@ -292,7 +305,7 @@ void Controller::receive(){
                 else if(kind=="approval")playMotion("approval");
                 else if(kind=="error")playMotion("error");
                 else if(kind=="timer")playMotion("timer");
-                if(m_tray&&!m_state.value("settings").toMap().value("quiet").toBool())m_tray->showMessage("Cere",params.value("text").toString(),QSystemTrayIcon::Information,5000);
+                if(m_tray&&(kind=="approval"||!m_state.value("settings").toMap().value("quiet").toBool()))m_tray->showMessage("Cere",params.value("text").toString(),QSystemTrayIcon::Information,5000);
             }
             if(method=="ui"){
                 QString command=params.value("command").toString();bool top=m_state.value("settings").toMap().value("topmost",true).toBool();
@@ -301,6 +314,7 @@ void Controller::receive(){
                 if(command=="animate"&&top==m_overlay)playMotion(params.value("name").toString());
                 if(command=="attention"){
                     m_attention[params.value("owner").toString()]=params;
+                    if(params.contains("mood")&&params.value("owner").toString()==moodOwner())receiveMood(params.value("sessionId").toString(),params.value("mood").toMap());
                     m_state["attention"]=m_attention;emit stateChanged();
                     refreshMotion();
                 }
@@ -326,6 +340,8 @@ void Controller::applyState(const QVariantMap &state){
     if(draftsChanged)emit questionDraftsChanged();
     if(m_tray){QStringList names;for(const auto &device:state.value("remote").toMap().value("connected").toList())names<<device.toMap().value("name").toString();m_tray->setToolTip(names.isEmpty()?"Cere · your desktop companion":"Cere · Remote connected: "+names.join(", "));}
     m_attention=state.value("attention").toMap();
+    const auto moodAttention=m_attention.value(moodOwner()).toMap();
+    if(moodAttention.contains("mood"))receiveMood(moodAttention.value("sessionId").toString(),moodAttention.value("mood").toMap());
     if(m_selected.isEmpty()&&!state.value("sessions").toList().isEmpty())select(state.value("sessions").toList().first().toMap().value("id").toString());
     emit stateChanged();syncPet();
     refreshMotion();
@@ -500,6 +516,26 @@ void Controller::publishAttention(){
     const bool visible=m_panel&&m_panel->isVisible()&&m_panel->visibility()!=QWindow::Minimized;
     rpc("ui.attention",{{"owner",m_overlay?"overlay":"ui"},{"sessionId",m_selected},{"listening",m_listening&&visible}});
 }
+void Controller::saveHomePosition(){
+    if(!m_screen||!m_pet)return;
+    auto homes=m_state.value("settings").toMap().value("homePositions").toMap();
+    const auto g=m_screen->geometry();
+    homes.insert(m_screen->name(),QVariantMap{{"x",std::clamp(double(m_petPosition.x()-g.x())/std::max(1,g.width()-m_pet->width()),0.,1.)},{"y",std::clamp(double(m_petPosition.y()-g.y())/std::max(1,g.height()-m_pet->height()),0.,1.)}});
+    rpc("settings.update",{{"homePositions",homes}});notify("Home position saved for this monitor.");
+}
+void Controller::goHomePosition(){
+    auto screen=qGuiApp->screenAt(cursorPosition());if(!screen)screen=m_screen;if(!screen)return;
+    const auto homes=m_state.value("settings").toMap().value("homePositions").toMap();
+    if(!homes.contains(screen->name())){notify("Save a home position on this monitor first.");return;}
+    auto p=homes.value(screen->name()).toMap();p.insert("output",screen->name());
+    rpc("settings.update",{{"position",p},{"roaming",false},{"hidden",false}});
+}
+void Controller::dockPet(const QString &edge){
+    if(!m_screen||!m_pet||(edge!="left"&&edge!="right"))return;
+    const auto g=m_screen->availableGeometry();
+    stopRoaming(false);rpc("settings.update",{{"roaming",false}});
+    placePet(QPoint(edge=="left"?g.left():g.right()-m_pet->width()+1,std::clamp(m_petPosition.y(),g.top(),std::max(g.top(),g.bottom()-m_pet->height()+1))),m_screen,true);
+}
 void Controller::resizePet(qreal factor){rpc("settings.update",{{"scale",std::clamp(factor,.5,3.)}});}
 void Controller::togglePanel(){
     if(m_panel&&m_panel->isVisible()){closePanel();return;}
@@ -507,17 +543,21 @@ void Controller::togglePanel(){
     m_expanded=false;if(!m_panel)m_panel=view("Panel.qml",m_overlay,"Cere Panel");
     stopRoaming(true);
     // One placement rectangle sizes and positions the panel, so short outputs stay valid.
-    m_panel->resize(Placement::compactPanel(m_screen?m_screen->availableGeometry():QRect(0,0,464,772),m_petPosition,m_pet?m_pet->size():QSize(192,208)).size());positionPanel();m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");
+    m_panel->resize(Placement::compactPanel(m_screen?m_screen->availableGeometry():QRect(0,0,464,912),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860)).size());positionPanel();m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");
 }
-void Controller::positionPanel(){if(!m_panel||m_expanded||!m_screen)return;auto g=m_screen->geometry();const auto rect=Placement::compactPanel(m_screen->availableGeometry(),m_petPosition,m_pet?m_pet->size():QSize(192,208));if(m_panel->size()!=rect.size())m_panel->resize(rect.size());const int x=rect.x(),y=rect.y();m_panel->setScreen(m_screen);
+void Controller::positionPanel(){if(!m_panel||m_expanded||!m_screen)return;auto g=m_screen->geometry();const auto rect=Placement::compactPanel(m_screen->availableGeometry(),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860));if(m_panel->size()!=rect.size())m_panel->resize(rect.size());const int x=rect.x(),y=rect.y();m_panel->setScreen(m_screen);
     if(m_overlay&&qGuiApp->platformName().startsWith("wayland")){auto shell=LayerShellQt::Window::get(m_panel);shell->setScreen(m_screen);shell->setDesiredSize(m_panel->size());shell->setMargins({x-g.x(),y-g.y(),0,0});}else m_panel->setPosition(x,y);
 }
 void Controller::syncApprovalBubble(){
     const auto panels=m_state.value("panels").toMap();
     const bool ownPanel=m_panel&&m_panel->isVisible()&&m_panel->visibility()!=QWindow::Minimized;
+    const bool panelVisible=ownPanel||panels.value(m_overlay?"ui":"overlay").toBool();
+    const bool hasReplies=!m_state.value("companionReplies").toList().isEmpty();
+    const auto completions=m_state.value("completions").toList();
+    const bool hasCompletion=std::any_of(completions.cbegin(),completions.cend(),[](const QVariant &v){return !v.toMap().value("companion").toBool();});
+    const bool hasApprovals=!m_state.value("approvals").toList().isEmpty();
     const bool show=connected()&&m_pet&&m_pet->isVisible()&&!m_dragging
-        &&!ownPanel&&!panels.value(m_overlay?"ui":"overlay").toBool()
-        &&(!m_state.value("approvals").toList().isEmpty()||!m_state.value("completions").toList().isEmpty());
+        &&(hasReplies||(!panelVisible&&(hasApprovals||hasCompletion)));
     if(!show){if(m_bubble)m_bubble->hide();return;}
     if(!m_bubble){
         m_bubble=view("ApprovalBubble.qml",m_overlay,"Cere Approval");
@@ -529,6 +569,10 @@ void Controller::syncApprovalBubble(){
         });
         if(m_bubble->rootObject())connect(m_bubble->rootObject(),&QQuickItem::implicitHeightChanged,this,&Controller::positionApprovalBubble);
     }
+    // Passive replies must not take the keyboard from the user's current app.
+    // Layer-shell already uses on-demand focus with activate-on-show disabled.
+    if(!m_overlay||!qGuiApp->platformName().startsWith("wayland"))
+        m_bubble->setFlag(Qt::WindowDoesNotAcceptFocus,!(hasApprovals&&!panelVisible));
     positionApprovalBubble();
     if(!m_bubble->isVisible()||m_bubble->visibility()==QWindow::Minimized){
         m_bubble->showNormal();
@@ -586,6 +630,79 @@ void Controller::openMessageLink(const QString &link,const QString &directory){
     const auto scheme=url.scheme().toLower();
     if(url.isValid()&&(scheme=="https"||scheme=="http"||scheme=="mailto"||(scheme=="file"&&url.isLocalFile())))QDesktopServices::openUrl(url);
 }
+QString Controller::clipboardText() const { return QGuiApplication::clipboard()->text().left(100000); }
+QVariantMap Controller::clipboardContent(){
+    QVariantMap result{{"paths",QVariantList{}},{"text",QString()},{"error",QString()},{"handled",false}};
+    const QMimeData *mime=QGuiApplication::clipboard()->mimeData();
+    if(!mime)return result;
+
+    QList<QUrl> urls=mime->urls();
+    bool hasFilePayload=mime->hasUrls();
+    // GNOME/Nemo and older KDE file managers may advertise their file list in a
+    // desktop-specific format instead of exposing it through QMimeData::urls().
+    if(urls.isEmpty())for(const auto &format:{QByteArray("x-special/gnome-copied-files"),QByteArray("application/x-kde4-urilist")}){
+        if(!mime->hasFormat(format))continue;
+        hasFilePayload=true;
+        const auto lines=mime->data(format).split('\n');
+        for(auto line:lines){
+            line=line.trimmed();
+            if(line.isEmpty()||line.startsWith('#')||line=="copy"||line=="cut")continue;
+            urls.append(QUrl::fromEncoded(line));
+        }
+        if(!urls.isEmpty())break;
+    }
+    // Browsers can include the source URL alongside copied image pixels.
+    // Prefer those pixels when the URL is remote; local file lists retain names.
+    const bool localFiles=!urls.isEmpty()&&std::all_of(urls.cbegin(),urls.cend(),[](const QUrl &url){return url.isValid()&&url.isLocalFile()&&(url.host().isEmpty()||url.host().compare("localhost",Qt::CaseInsensitive)==0);});
+    if(hasFilePayload&&(!mime->hasImage()||localFiles)){
+        result["handled"]=true;
+        if(urls.isEmpty()){result["error"]="The copied file list is empty or unavailable.";return result;}
+        QVariantList paths;QSet<QString> seen;
+        for(const auto &url:urls){
+            if(!url.isValid()||!url.isLocalFile()||(!url.host().isEmpty()&&url.host().compare("localhost",Qt::CaseInsensitive)!=0)){
+                result["error"]="Only local files can be pasted into a chat.";return result;
+            }
+            const QFileInfo info(url.toLocalFile());
+            const QString path=info.canonicalFilePath();
+            if(path.isEmpty()||!info.exists()){result["error"]="A copied file is no longer available.";return result;}
+            if(!info.isFile()){result["error"]="Only files can be pasted into a chat.";return result;}
+            if(!info.isReadable()){result["error"]="A copied file cannot be read.";return result;}
+            if(path.size()>4096){result["error"]="A copied file path is too long.";return result;}
+            if(!seen.contains(path)){seen.insert(path);paths.append(path);}
+            if(paths.size()>8){result["error"]="Paste up to eight files at a time.";return result;}
+        }
+        result["paths"]=paths;
+        return result;
+    }
+
+    if(mime->hasImage()){
+        result["handled"]=true;
+        const QImage image=qvariant_cast<QImage>(mime->imageData());
+        if(image.isNull()){result["error"]="The clipboard image could not be read.";return result;}
+        if(qint64(image.width())*qint64(image.height())>40000000){result["error"]="The clipboard image is too large to attach.";return result;}
+        const QString runtime=runtimePath();
+        if(!QFileInfo(runtime).isDir()||!privateRuntime(runtime)){result["error"]="Cere's private runtime directory is unavailable.";return result;}
+        const QString directory=runtime+"/clipboard";
+        if(!QDir().mkpath(directory)||!QFile::setPermissions(directory,QFileDevice::ReadOwner|QFileDevice::WriteOwner|QFileDevice::ExeOwner)){
+            result["error"]="Cere could not prepare the clipboard image.";return result;
+        }
+        const QString path=directory+"/"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".png";
+        QSaveFile file(path);file.setDirectWriteFallback(false);
+        if(!file.open(QIODevice::WriteOnly)||!file.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner)||!image.save(&file,"PNG")||!file.commit()){
+            file.cancelWriting();result["error"]="Cere could not save the clipboard image.";return result;
+        }
+        QFile::setPermissions(path,QFileDevice::ReadOwner|QFileDevice::WriteOwner);
+        if(QFileInfo(path).size()>20*1024*1024){QFile::remove(path);result["error"]="The clipboard image is larger than 20 MiB.";return result;}
+        result["paths"]=QVariantList{path};
+        // attachments.import copies the file into durable private storage. Retain
+        // this handoff path long enough for the asynchronous broker request.
+        QTimer::singleShot(5*60*1000,this,[path]{QFile::remove(path);});
+        return result;
+    }
+
+    result["text"]=mime->text().left(100000);
+    return result;
+}
 QString Controller::chooseFolder(){return QFileDialog::getExistingDirectory(nullptr,"Choose a trusted project folder",QDir::homePath());}
 QString Controller::chooseImage(){return QFileDialog::getOpenFileName(nullptr,"Attach an image",QDir::homePath(),"Images (*.png *.jpg *.jpeg *.webp)");}
 QString Controller::chooseFile(){return QFileDialog::getOpenFileName(nullptr,"Open a local file",QDir::homePath());}
@@ -598,17 +715,29 @@ void Controller::refreshMotion(){
     context.visible=m_pet&&m_pet->isVisible()&&!settings.value("hidden").toBool()&&settings.value("topmost",true).toBool()==m_overlay;
     context.quiet=settings.value("quiet").toBool();context.reduced=settings.value("reducedMotion").toBool();
     context.intensity=settings.value("motionIntensity",.7).toDouble();
+    context.idleEnergy=settings.value("idleEnergy",m_animations.value("defaultIdleProfile")).toString();
+    if(context.idleEnergy!=m_director.context().idleEnergy)m_idleTimer.stop();
     context.connected=connected();context.dragging=m_dragging;
     context.waiting=!m_state.value("approvals").toList().isEmpty();
     const auto panels=m_state.value("panels").toMap();
-    context.panel=m_petInteracting||(m_panel&&m_panel->isVisible())||(m_bubble&&m_bubble->isVisible())||panels.value(m_overlay?"ui":"overlay").toBool();
+    context.interacting=m_petInteracting;
+    context.panel=(m_panel&&m_panel->isVisible())||(m_bubble&&m_bubble->isVisible())||panels.value(m_overlay?"ui":"overlay").toBool();
     for(const auto &s:m_state.value("sessions").toList())
         if(QStringList{"working","starting","stopping"}.contains(s.toMap().value("status").toString()))context.busy=true;
     const auto focus=actingSession();
+    const auto mood=m_conversationMoods.value(focus).toMap();
+    context.moodSession=focus;context.mood=mood.value("mood","neutral").toString();
+    // Selecting an old conversation may restore its expression, never replay
+    // the reaction that accompanied that reply when it was live.
+    context.moodReactive=mood.value("reactive").toBool()&&focus==m_director.context().moodSession;
+    context.expressive=settings.value("expressiveCues",true).toBool();
     for(const auto &entry:m_state.value("sessions").toList()){
         const auto s=entry.toMap();if(s.value("id").toString()!=focus)continue;
         if(QStringList{"working","starting"}.contains(s.value("status").toString()))context.activity=s.value("activity","thinking").toString();
         context.problem=s.value("status").toString()=="error";
+        // Session-level attention states can outlive the broker connection or
+        // the transient status clip. They still exclude conversational acting.
+        if(QStringList{"waiting","interrupted","disconnected"}.contains(s.value("status").toString()))context.expressive=false;
     }
     const bool ownPanel=m_panel&&m_panel->isVisible()&&m_panel->visibility()!=QWindow::Minimized;
     const auto other=m_attention.value(m_overlay?"ui":"overlay").toMap();
@@ -617,7 +746,7 @@ void Controller::refreshMotion(){
     if(paused!=m_motionPaused){
         m_motionPaused=paused;m_followClock.start();m_settleClock.start();emit motionDynamicsChanged();
     }
-    const bool canFollow=context.visible&&context.connected&&!context.quiet&&!context.reduced&&context.intensity>0&&!context.waiting&&!context.busy&&!context.dragging&&!context.panel&&settings.value("roaming").toBool();
+    const bool canFollow=context.visible&&context.connected&&!context.quiet&&!context.reduced&&context.intensity>0&&!context.waiting&&!context.busy&&!context.dragging&&!context.panel&&!context.interacting&&settings.value("roaming").toBool();
     if(!canFollow){
         m_roamTimer.stop();
     }
@@ -627,7 +756,8 @@ void Controller::refreshMotion(){
     }
     context.roaming=m_roamStep;context.roamLeft=m_roamLeft;
     if(!context.visible||!context.connected||context.quiet||context.reduced||context.intensity<=0||context.busy||context.waiting||context.problem||context.dragging)m_successTimer.stop();
-    m_director.setContext(context);publishMotion();
+    m_director.setContext(context);m_director.reactMood(m_reactionClock.elapsed());publishMotion();
+    emit moodContextChanged();
     if(canFollow&&!m_roamTimer.isActive())m_roamTimer.start();
 }
 QString Controller::actingSession() const {
@@ -644,6 +774,34 @@ QString Controller::actingSession() const {
     }
     return m_selected;
 }
+QString Controller::moodOwner() const {
+    const auto panels=m_state.value("panels").toMap();
+    return panels.value("ui").toBool()?"ui":panels.value("overlay").toBool()?"overlay":
+        m_state.value("settings").toMap().value("topmost",true).toBool()?"overlay":"ui";
+}
+bool Controller::moodSourceEnabled() const {
+    if(!connected()||!m_state.value("settings").toMap().value("expressiveCues",true).toBool())return false;
+    const auto panels=m_state.value("panels").toMap();const auto owner=moodOwner();
+    return owner==(m_overlay?"overlay":"ui")&&
+        (panels.value(owner).toBool()||m_director.context().visible);
+}
+QString Controller::bodyMood() const {
+    const auto c=m_director.context();
+    return c.expressive&&c.visible&&!c.quiet&&!c.reduced&&c.intensity>0&&c.connected&&
+        !c.waiting&&!c.problem&&!c.busy&&!c.dragging&&!c.roaming?c.mood:QString("neutral");
+}
+void Controller::receiveMood(const QString &sessionId,const QVariantMap &sample){
+    if(sessionId.isEmpty()||!m_animations.value("bodyMoods").toMap().value("moods").toMap().contains(sample.value("mood").toString()))return;
+    if(m_conversationMoods.value(sessionId).toMap()==sample)return;
+    m_conversationMoods[sessionId]=sample;emit conversationMoodsChanged();
+}
+void Controller::setConversationMood(const QString &sessionId,const QVariantMap &sample){
+    if(!moodSourceEnabled()||sessionId!=actingSession())return;
+    if(m_conversationMoods.value(sessionId).toMap()==sample)return;
+    receiveMood(sessionId,sample);refreshMotion();
+    rpc("ui.attention",{{"owner",m_overlay?"overlay":"ui"},{"sessionId",sessionId},
+        {"listening",m_listening},{"mood",sample}});
+}
 void Controller::observeConversation(const QVariantMap &message){
     emit conversationMessage(message);
     const auto sid=message.value("sessionId").toString(),id=message.value("id").toString();
@@ -651,6 +809,10 @@ void Controller::observeConversation(const QVariantMap &message){
     if(sid!=actingSession()||(role!="user"&&role!="assistant")||m_cuedMessages.value(sid)==id)return;
     const auto settings=m_state.value("settings").toMap();
     if(!settings.value("expressiveCues",true).toBool())return;
+    // Assistant prose belongs to the shared settled classifier, even when it
+    // returns neutral. Opening cues remain a fallback if that source is absent,
+    // and still provide the narrow user-support cue.
+    if(role=="assistant"&&m_sharedMoodReady)return;
     const auto cue=MotionDirector::conversationalCue(message.value("text").toString(),role=="user");
     if(role=="user")m_tenderSession=cue=="tender"?sid:QString();
     if(cue.isEmpty())return;
@@ -659,9 +821,9 @@ void Controller::observeConversation(const QVariantMap &message){
     if(m_cuedMessages.size()>128)m_cuedMessages.clear();
     m_cuedMessages[sid]=id;
     const auto context=m_director.context();
-    if(!context.visible||context.quiet||context.reduced||context.intensity<=0||context.waiting||context.problem)return;
+    if(!context.visible||context.quiet||context.reduced||context.intensity<=0||context.waiting||context.problem||context.busy)return;
     const auto now=m_reactionClock.elapsed();
-    if(m_lastReaction.contains("conversation")&&now-m_lastReaction.value("conversation")<8000)return;
+    if(m_lastReaction.contains("conversation")&&now-m_lastReaction.value("conversation")<m_animations.value("bodyMoods").toMap().value("fallbackCooldownMs").toInt())return;
     m_lastReaction["conversation"]=now;
     playMotion(cue);
 }

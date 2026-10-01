@@ -12,8 +12,11 @@ const changes=net.createConnection(socketPath()),changeLines=new JsonLines();
 changes.setEncoding('utf8');changes.on('error',()=>{});
 changes.on('connect',()=>{let trusted=false;try{trusted=trustedServer(changes);}catch{}if(!trusted){changes.destroy();return;}changes.write(JSON.stringify({id:'watch',method:'subscribe',params:{role:'mcp'}})+'\n');});
 changes.on('data',chunk=>{try{changeLines.push(String(chunk),m=>{
-  const settings=(m.method==='state'?m.params:m.id==='watch'?m.result:null)?.settings;
-  if(!settings)return;const signature=JSON.stringify([settings.profile,settings.paused,settings.categories,settings.bypassCliPermissions,settings.bypassComputerPermissions]);
+  const state=m.method==='state'?m.params:m.id==='watch'?m.result:null, settings=state?.settings;
+  if(!settings)return;
+  const sessions=(state.sessions||[]).filter((s:any)=>!process.env.CERE_SESSION_ID||s.id===process.env.CERE_SESSION_ID)
+    .map((s:any)=>[s.id,s.provider,s.remote,s.temporary]).sort((a:any,b:any)=>String(a[0]).localeCompare(String(b[0])));
+  const signature=JSON.stringify([settings.profile,settings.paused,settings.categories,settings.bypassCliPermissions,settings.bypassComputerPermissions,settings.memory,settings.ollama?.host,sessions,state.power,state.remote]);
   if(initialized&&lastTools&&lastTools!==signature)respond({method:'notifications/tools/list_changed'});lastTools=signature;
 });}catch{changes.destroy();}});
 async function handle(m: any) {

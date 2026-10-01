@@ -18,6 +18,8 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
+#include <QJSEngine>
+#include <QDir>
 
 #include <algorithm>
 #include <cmath>
@@ -500,6 +502,49 @@ bool productionRenderChecks(const QUrl &source, const QVariantMap &definition)
     return ok;
 }
 
+bool motionRenderChecks(const QString &root,const QUrl &source,const QVariantMap &definition)
+{
+    QFile file(root+"/assets/motions.json"),script(root+"/qml/Motion.js");
+    if(!file.open(QIODevice::ReadOnly)||!script.open(QIODevice::ReadOnly))return false;
+    auto catalog=QJsonDocument::fromJson(file.readAll()).object().toVariantMap();catalog["puppet"]=definition;
+    QJSEngine engine;QString code=QString::fromUtf8(script.readAll());code.remove(".pragma library");
+    if(!check(!engine.evaluate(code).isError(),"motion sampler must load"))return false;
+    auto global=engine.globalObject();const auto jsCatalog=engine.toScriptValue(catalog);
+    const auto profiles=catalog.value("idleProfiles").toMap();const auto calm=profiles.value("calm").toMap().value("pool").toList();
+    auto lively=profiles.value("lively").toMap().value("pool").toList();
+    for(const auto &name:calm)lively.removeAll(name);
+    QQuickWindow window;window.setColor(Qt::transparent);window.resize(192,208);
+    QQuickItem artwork(window.contentItem());artwork.setSize({192,208});
+    AvatarPuppet puppet(&artwork);puppet.setSize({192,208});puppet.setSource(source);puppet.setDefinition(definition);
+    QImage sheet(192*8,232*lively.size(),QImage::Format_ARGB32);sheet.fill(QColor("#152331"));QPainter painter(&sheet);
+    bool ok=true;int row=0;
+    for(const auto &entry:lively){
+        const auto name=entry.toString();const auto clip=catalog.value("clips").toMap().value(name).toMap();
+        double duration=clip.value("entryMs").toDouble();for(const auto &key:clip.value("keys").toList())duration+=key.toMap().value("ms").toDouble();
+        auto state=global.property("create").call({19});
+        global.property("select").call({state,engine.toScriptValue(clip),jsCatalog,name});
+        painter.setPen(Qt::white);painter.drawText(4,row*232+17,name);
+        int tick=0;
+        for(int frame=0;frame<8;++frame){
+            const int until=qRound(duration/1000*120*(frame+1)/8);QJSValue sample;
+            while(tick++<until)sample=global.property("sample").call({state,1.0/120,.7,0,0,0,0,false});
+            --tick;
+            ok &= check(!sample.isError(),"new clip sample must succeed");
+            artwork.setY(sample.property("y").toNumber());
+            puppet.setPose(sample.toVariant().toMap());const auto rendered=synchronizedGrab(window);
+            ok &= check(!rendered.isNull(),"each new clip must render throughout its timeline");
+            int opaque=0;for(int y=0;y<rendered.height();++y)for(int x=0;x<rendered.width();++x)opaque+=qAlpha(rendered.pixel(x,y))>200;
+            ok &= check(opaque>3000,"new clip artwork must remain visible in every captured frame");
+            painter.drawImage(frame*192,row*232+24,rendered);
+        }
+        ++row;
+    }
+    painter.end();QDir().mkpath("/tmp/cere-motion-evidence");
+    const auto backend=window.rendererInterface()->graphicsApi()==QSGRendererInterface::Software?"software":"opengl";
+    ok &= check(sheet.save(QString("/tmp/cere-motion-evidence/clips-%1.png").arg(backend)),"new clip contact sheet must save");
+    window.hide();return ok;
+}
+
 bool malformedChecks(const QUrl &source)
 {
     bool ok = true;
@@ -640,6 +685,7 @@ int main(int argc, char **argv)
             root, &productionDefinition, &productionSource);
     ok &= productionOk;
     if (productionOk)
-        ok &= productionRenderChecks(productionSource, productionDefinition);
+        ok &= productionRenderChecks(productionSource, productionDefinition)
+            && motionRenderChecks(root,productionSource,productionDefinition);
     return ok ? 0 : 1;
 }

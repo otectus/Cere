@@ -1,7 +1,10 @@
+import { providerIds } from './provider-catalog.ts';
+import { defaultElevenConfig, type ElevenConfig } from './elevenlabs.ts';
 import { defaultPersonality } from './personality.ts';
 import type { RemoteExecution } from './execution.ts';
+import { defaultIndexConfig, type IndexConfig } from './indextts-config.ts';
 
-export type Provider = 'codex' | 'claude' | 'ollama';
+export type Provider = typeof import('./provider-catalog.ts').providerIds[number];
 export type EffortOption = { id: string; displayName: string; description?: string };
 export type ModelOption = {
   id: string; displayName: string; description: string; efforts: EffortOption[];
@@ -20,25 +23,39 @@ export type Session = {
   mode: 'managed' | 'linked' | 'historical'; status: Status; created: number; updated: number;
   draft: string; scroll: number; model: string; effort?: string; error?: string; activity?: SessionActivity;
   ollama?: { host: string; tools: boolean }; parentId?: string;
+  api?: { tools: boolean };
   revision?: string; draftRevision?: string; configRevision?: string; turnId?: string;
   remote?: RemoteExecution; effectivePolicy?: 'restricted' | 'unknown';
   agents?: AgentActivity[];
+  folderId?: string; pinned?: boolean; archived?: boolean; readAt?: number; unread?:boolean;
+  draftAttachments?: Attachment[];
+  temporary?: boolean;
 };
+export type Attachment = { id: string; path: string; name: string; mime: string; kind: 'image' | 'text'; size: number; sha256: string };
+export type SessionFolder = { id: string; name: string; revision: string; created: number; updated: number };
+export type ProjectDefaults = { provider: Provider; model: string; effort: string; tools: boolean; trusted: boolean; temporary: boolean };
+export type Project = { cwd: string; name: string; revision: string; updated: number; favorite: boolean; defaults: ProjectDefaults };
 export type Source = { title: string; url: string };
 export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string };
 export type RunCompletion = {
   id: string; sessionId: string; turnId?: string; title: string; provider: Provider; cwd: string; time: number;
   message: Message & { truncated?: boolean };
+  companion?: boolean;
+  verification?: 'not-run' | 'passed' | 'failed' | 'inconclusive';
+  evidence?: { label: string; path?: string; command?: string; exitCode?: number; observedAt: number }[];
 };
 export type SearchProvider = 'auto' | 'duckduckgo' | 'brave' | 'mojeek' | 'searxng';
 export type Settings = {
+  telemetry: import('./telemetry/protocol.ts').TelemetryConfig;
   personality: string;
-  voice: string; speechEnabled: boolean;
+  ttsProvider:'local'|'indextts'|'elevenlabs'; indextts:IndexConfig; elevenlabs:ElevenConfig;
+  voice: string; speechEnabled: boolean; speechProviders:Record<Provider,boolean>; speechRate:number; speechPitch:number; speechVolume:number; speechBrief:boolean; transcription:{executable:string;model:string};
   ollama: { host: string; model: string };
   webSearch: { enabled: boolean; provider: SearchProvider; searxngUrl: string };
   memory: { enabled: boolean; model: string; extractionModel?: string; allowCloudMemory?: boolean; allowCloudExtraction?: boolean };
+  desktopProfile: 'normal'|'focus'|'gaming'|'presentation'; interfaceScale:number; homePositions:Record<string,{x:number;y:number}>;
   topmost: boolean; scale: number; roaming: boolean; quiet: boolean; reducedMotion: boolean;
-  motionIntensity: number; expressiveCues: boolean;
+  motionIntensity: number; expressiveCues: boolean; idleEnergy: 'calm' | 'lively';
   hidden: boolean; profile: 'manual' | 'scoped' | 'broad'; paused: boolean;
   bypassCliPermissions: boolean; bypassComputerPermissions: boolean;
   categories: string[]; grants: { category: string; cwd: string; expires: number }[];
@@ -79,12 +96,15 @@ export interface Adapter {
   close(): Promise<void>;
 }
 export const defaultSettings: Settings = {
+  telemetry: { enabled:false, roots:[], ignores:[], commands:false, output:false },
   personality: defaultPersonality,
-  voice: 'en_US-amy-medium', speechEnabled: true,
+  ttsProvider:'local', indextts:structuredClone(defaultIndexConfig), elevenlabs:structuredClone(defaultElevenConfig),
+  voice: 'en_US-amy-medium', speechEnabled: true, speechProviders:Object.fromEntries(providerIds.map(id=>[id,true])) as Record<Provider,boolean>, speechRate:1, speechPitch:0, speechVolume:1, speechBrief:false, transcription:{executable:'',model:''},
   ollama: { host: 'http://127.0.0.1:11434', model: '' },
   webSearch: { enabled: false, provider: 'auto', searxngUrl: '' },
   memory: { enabled: false, model: 'nomic-embed-text' },
-  topmost: true, scale: 1, roaming: false, quiet: false, reducedMotion: false, motionIntensity: .7, expressiveCues: true, hidden: false,
+  desktopProfile: 'normal', interfaceScale:1, homePositions:{},
+  topmost: true, scale: 1, roaming: false, quiet: false, reducedMotion: false, motionIntensity: .7, expressiveCues: true, idleEnergy: 'lively', hidden: false,
   profile: 'scoped', paused: false, bypassCliPermissions: false, bypassComputerPermissions: false, categories: [], grants: [],
   position: { output: '', x: 0.86, y: 0.78 }, roamArea: { left: 0.05, right: 0.95, top: 0.5, bottom: 0.95 },
   onboarding: true, scripts: [],

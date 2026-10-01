@@ -17,6 +17,9 @@ Rectangle {
     property bool listening: false
     property real unit: 1
     property var cues: ({})
+    // When supplied by the host, consume its settled mood instead of classifying
+    // a second time. Standalone badge previews retain their explicit observe API.
+    property var sharedMoods: null
     property double now: Date.now()
     property int variant: 0
     property var mirror: null
@@ -24,14 +27,14 @@ Rectangle {
     readonly property bool exposed: visible && Window.window !== null && Window.window.visible && Window.window.visibility !== Window.Minimized
     readonly property bool animated: exposed && !mirror && !settings.quiet && !settings.reducedMotion && settings.motionIntensity !== 0
     readonly property var emotion: mirror ? mirror.emotion : Faces.resolve({state:snapshot, connected:connected, live:live,
-        motion:motion, cues:cues, now:now, selectedId:selectedId, hovered:hovered, panelOpen:panelOpen, listening:listening})
+        motion:motion, cues:sharedMoods || cues, now:now, selectedId:selectedId, hovered:hovered, panelOpen:panelOpen, listening:listening})
     readonly property string glyph: mirror ? mirror.glyph : Faces.glyph(emotion, variant)
     readonly property string description: emotion.label + (emotion.sessionTitle ? " · " + emotion.sessionTitle : "")
     readonly property color accent: emotion.tone === "danger" ? "#ff9eae" : emotion.tone === "attention" ? "#ffd385"
         : emotion.tone === "success" ? "#82dccc" : emotion.tone === "warm" ? "#f1bbdf" : "#49dfff"
 
     function observe(message) {
-        if (!live || mirror || settings.expressiveCues === false || !message.sessionId) return
+        if (sharedMoods || !live || mirror || settings.expressiveCues === false || !message.sessionId) return
         if (message.role !== "user" && (message.role !== "assistant" || (message.kind && message.kind !== "text"))) return
         var time = Date.now(), next = Object.assign({}, cues)
         // Only live prose contributes tone; code and quotations use the portrait's

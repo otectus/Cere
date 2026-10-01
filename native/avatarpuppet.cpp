@@ -616,5 +616,8 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         }
         renderPart.opacity->setOpacity(opacity);
     }
+    // Joint-only updates must invalidate the software scene graph even after
+    // the containing QQuickItem's entry translation has stopped changing.
+    root->markDirty(QSGNode::DirtyForceUpdate);
     return root;
 }

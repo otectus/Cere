@@ -192,99 +192,177 @@ test('database files are private and a broker restart never replays work',async 
   assert.equal((await stat(join(directory,'cere.sqlite'))).mode&0o777,0o600);
 });
 
-test('permission bypasses default off, validate strictly and persist independently', async t => {
-  const { core, directory } = await setup(t);
+test('permission bypasses default off, validate strictly, and survive broker restart', async t => {
+  const { core, directory, session } = await setup(t);
   assert.equal(core.settings.bypassCliPermissions, false);
   assert.equal(core.settings.bypassComputerPermissions, false);
   for (const key of ['bypassCliPermissions', 'bypassComputerPermissions']) {
     for (const value of ['true', 1, null]) await assert.rejects(core.updateSettings({ [key]: value }), /Invalid/);
   }
-  await core.updateSettings({ bypassCliPermissions: true });
-  const reopened = new Store(directory);
+  await core.updateSettings({ bypassCliPermissions: true, bypassComputerPermissions: true });
+  assert.equal(core.settingsFor(session.id).bypassCliPermissions, true);
+  assert.equal(core.settingsFor(session.id).bypassComputerPermissions, true);
+  const inspection=await core.rpc('permissions.inspect',{sessionId:session.id});
+  assert.deepEqual(inspection.persistent,{cli:true,computer:true});
+  assert.equal(inspection.effective[0].cli,true);assert.equal(inspection.effective[0].computer,true);
+  core.remoteAuthority=()=>true;
+  const remote=await core.create({provider:'codex',cwd:directory,trusted:true},undefined,{remote:{deviceId:'device',projectId:'project',scopeVersion:'1',expiresAt:Date.now()+60_000,caps:['providers.execute'],categories:[],scriptIds:[]},effectivePolicy:'unknown'});
+  assert.equal(core.settingsFor(remote.id).bypassCliPermissions,false);
+  assert.equal(core.settingsFor(remote.id).bypassComputerPermissions,false);
+  const remoteInspection=await core.rpc('permissions.inspect',{sessionId:remote.id});
+  assert.equal(remoteInspection.effective[0].cli,false);assert.equal(remoteInspection.effective[0].computer,false);
+  const restarted = new Core(new Store(directory));
   try {
-    assert.equal(reopened.settings().bypassCliPermissions, true);
-    assert.equal(reopened.settings().bypassComputerPermissions, false);
-  } finally { reopened.close(); }
+    assert.equal(restarted.settings.bypassCliPermissions, true);
+    assert.equal(restarted.settings.bypassComputerPermissions, true);
+    assert.equal(restarted.settingsFor(session.id).bypassCliPermissions, true);
+    assert.equal(restarted.settingsFor(session.id).bypassComputerPermissions, true);
+  } finally { await restarted.close(); }
 });
 
-test('each bypass accepts only its pending permissions and never answers questions', async t => {
+test('CLI and computer switches approve only their permission classes and never answer questions', async t => {
   const { core, session } = await setup(t);
-  const pending = new Map<string, Promise<any>>();
-  for (const kind of ['provider', 'permissions', 'cli', 'desktop', 'image', 'unknown', 'question']) {
-    pending.set(kind, core.approval(session.id, { kind, title: kind, detail: '', choices: kind === 'question' ? ['answer'] : ['allow', 'deny'] }));
-  }
+  const cli = core.approval(session.id, { kind: 'provider', title: 'Command', detail: '', choices: ['allow', 'deny'] });
+  const computer = core.approval(session.id, { kind: 'desktop', title: 'Window action', detail: '', choices: ['allow', 'deny'] });
+  const question = core.approval(session.id, { kind: 'question', title: 'Choose', detail: '', choices: ['answer', 'deny'], questions: [{id:'choice',question:'Which option?',required:true}] });
   await core.updateSettings({ bypassCliPermissions: true });
-  for (const kind of ['provider', 'permissions', 'cli']) assert.equal((await pending.get(kind)).choice, 'allow');
-  assert.deepEqual(core.snapshot().approvals.map(a => a.kind), ['desktop', 'image', 'unknown', 'question']);
+  const cliAnswer=await cli;assert.equal(cliAnswer.choice,'allow');assert.equal(cliAnswer.automatic,true);
+  assert.deepEqual(core.snapshot().approvals.map(a => a.kind), ['desktop', 'question']);
   await core.updateSettings({ bypassComputerPermissions: true });
-  for (const kind of ['desktop', 'image']) assert.equal((await pending.get(kind)).choice, 'allow');
-  assert.deepEqual(core.snapshot().approvals.map(a => a.kind), ['unknown', 'question']);
-  for (const kind of ['provider', 'permissions', 'cli', 'desktop', 'image']) {
-    assert.equal((await core.approval(session.id, { kind, title: kind, detail: '', choices: ['allow', 'deny'] })).choice, 'allow');
-  }
-  core.cancelApprovals(session.id);
-  await Promise.all(pending.values());
-  await core.updateSettings({ bypassCliPermissions: false });
-  const manual = core.approval(session.id, { kind: 'provider', title: 'Manual again', detail: '', choices: ['allow', 'deny'] });
-  assert.equal(core.approvals.size, 1);
-  core.cancelApprovals(session.id); assert.equal((await manual).choice, 'deny');
+  assert.equal((await computer).choice, 'allow');
+  assert.deepEqual(core.snapshot().approvals.map(a => a.kind), ['question']);
+  assert.equal((await core.approval(session.id, { kind:'permissions', title:'More access', detail:'', choices:['allow','deny'] })).automatic, true);
+  assert.equal((await core.approval(session.id, { kind:'image', title:'Share capture', detail:'', choices:['allow','deny'] })).automatic, true);
+  core.answer({ id:core.snapshot().approvals[0].id, choice:'deny' });
+  assert.equal((await question).choice, 'deny');
+
+  await core.updateSettings({ bypassCliPermissions:false, bypassComputerPermissions:false });
+  const manual = core.approval(session.id, {kind:'provider',title:'Manual again',detail:'',choices:['allow','deny']});
+  assert.equal(core.approvals.size,1);
+  core.answer({id:core.snapshot().approvals[0].id,choice:'deny'});
+  assert.equal((await manual).choice,'deny');
 });
 
-test('CLI and computer bypass expose independent tools and preserve pause, validation and revocation', async t => {
+test('starting power never resolves existing requests, while later matching requests use the lease', async t => {
+  const { core, session } = await setup(t);
+  const pendingCli = core.approval(session.id, { kind: 'cli', title: 'Existing CLI request', detail: '', choices: ['allow', 'deny'] });
+  const pendingQuestion = core.approval(session.id, { kind: 'question', title: 'Existing question', detail: '', choices: ['answer', 'deny'] });
+  // Model the provider returning to idle while its two UI requests remain queued.
+  core.updateSession(session.id, { status: 'idle' });
+  await core.rpc('power.start', { sessionIds: [session.id], minutes: 5, cli: true, computer: false });
+  assert.deepEqual(core.snapshot().approvals.map(a => a.kind), ['cli', 'question']);
+  const later = await core.approval(session.id, { kind: 'provider', title: 'Lease-scoped request', detail: '', choices: ['allow', 'deny'] });
+  assert.equal(later.choice, 'allow'); assert.equal(later.automatic, true);
+  for (const approval of core.snapshot().approvals) core.answer({ id: approval.id, choice: 'deny' });
+  assert.equal((await pendingCli).choice, 'deny'); assert.equal((await pendingQuestion).choice, 'deny');
+});
+
+test('power is selected-session-only and exposes independent CLI and computer access', async t => {
   const { core, session, directory } = await setup(t);
+  const other = await core.create({ provider: 'codex', cwd: directory, trusted: true });
   core.tokens.set('fixture', session.id);
-  await core.updateSettings({ profile: 'manual', bypassComputerPermissions: true, scripts: [{ id: 'hello', name: 'Hello', executable: '/usr/bin/printf', args: ['bypass test'], cwd: directory, timeout: 1000 }] });
+  await core.updateSettings({ profile: 'manual', scripts: [{ id: 'hello', name: 'Hello', executable: '/usr/bin/printf', args: ['power test'], cwd: directory, timeout: 1000 }] });
+  const computerLease = await core.rpc('power.start', { sessionIds: [session.id], minutes: 5, cli: false, computer: true });
+  assert.equal(core.settingsFor(session.id).bypassComputerPermissions, true);
+  assert.equal(core.settingsFor(session.id).bypassCliPermissions, false);
+  assert.equal(core.settingsFor(other.id).bypassComputerPermissions, false);
+  assert.equal(core.settings.bypassComputerPermissions, false);
   let tools = await core.rpc('mcp.tools', { token: 'fixture' });
   assert.ok(tools.some((d: any) => d.name === 'timer.start'));
   assert.ok(!tools.some((d: any) => d.category === 'scripts'));
-  await core.action('timer.start', { minutes: 1, label: 'Computer bypass' }, session.id);
+  await core.action('timer.start', { minutes: 1, label: 'Computer power' }, session.id);
   await assert.rejects(core.action('script.run', { id: 'hello' }, session.id), /disabled/);
-  await core.updateSettings({ bypassComputerPermissions: false, bypassCliPermissions: true });
-  tools = await core.rpc('mcp.tools', { token: 'fixture' });
-  assert.ok(tools.every((d: any) => d.category === 'scripts'));
-  assert.match((await core.action('script.run', { id: 'hello' }, session.id)).stdout, /bypass test/);
-  assert.equal(core.approvals.size, 0);
-  await assert.rejects(core.action('timer.start', { minutes: 1, label: 'Blocked' }, session.id), /disabled/);
-  await core.updateSettings({ bypassComputerPermissions: true });
   await assert.rejects(core.action('audio.volume', { percent: 101 }, session.id), /percent/);
   await core.updateSettings({ paused: true });
   assert.deepEqual(await core.rpc('mcp.tools', { token: 'fixture' }), []);
-  await assert.rejects(core.action('script.run', { id: 'hello' }, session.id), /disabled/);
-  await core.updateSettings({ paused: false, bypassCliPermissions: false, bypassComputerPermissions: false });
-  assert.deepEqual(await core.rpc('mcp.tools', { token: 'fixture' }), []);
+  await core.updateSettings({ paused: false });
+  await core.rpc('power.end', { id: computerLease.id });
+
+  core.tokens.set('other', other.id);
+  await core.rpc('power.start', { sessionIds: [other.id], minutes: 5, cli: true, computer: false });
+  tools = await core.rpc('mcp.tools', { token: 'other' });
+  assert.ok(tools.every((d: any) => d.category === 'scripts'));
+  assert.match((await core.action('script.run', { id: 'hello' }, other.id)).stdout, /power test/);
+  assert.equal(core.approvals.size, 0);
+  await assert.rejects(core.action('timer.start', { minutes: 1, label: 'Blocked' }, other.id), /disabled/);
   assert.deepEqual(core.settings.categories, []);
   assert.equal(core.settings.profile, 'manual');
 });
 
-test('revocation after automatic approval still prevents execution', async t => {
+test('ending power after automatic approval still prevents execution', async t => {
   const { core, session, directory } = await setup(t);
-  await core.updateSettings({ bypassCliPermissions: true, scripts: [{ id: 'hello', name: 'Hello', executable: '/usr/bin/printf', args: ['must not run'], cwd: directory, timeout: 1000 }] });
-  const action = core.action('script.run', { id: 'hello' }, session.id);
-  await core.updateSettings({ bypassCliPermissions: false });
-  await assert.rejects(action, /revoked/);
+  await core.updateSettings({ scripts: [{ id: 'wait', name: 'Wait', executable: '/usr/bin/sleep', args: ['5'], cwd: directory, timeout: 10000 }] });
+  const lease = await core.rpc('power.start', { sessionIds: [session.id], minutes: 5, cli: true, computer: false });
+  const action = core.action('script.run', { id: 'wait' }, session.id);
+  await core.rpc('power.end', { id: lease.id });
+  await assert.rejects(action, /(revoked|aborted|Power access ended)/i);
   assert.equal(core.store.activities().length, 0);
 });
 
-test('Claude computer-tool entry approval follows computer bypass independently of shell access', async t => {
+test('disabling a persistent switch after automatic approval prevents execution', async t => {
+  const { core, session, directory } = await setup(t);
+  await core.updateSettings({ bypassCliPermissions:true, scripts:[{id:'hello',name:'Hello',executable:'/usr/bin/printf',args:['must not run'],cwd:directory,timeout:1000}] });
+  const action=core.action('script.run',{id:'hello'},session.id);
+  await core.updateSettings({bypassCliPermissions:false});
+  await assert.rejects(action,/revoked/);
+  assert.equal(core.store.activities().length,0);
+});
+
+test('Claude computer-tool entry approval follows computer power independently of shell access', async t => {
   const { core, directory } = await setup(t);
   const session = await core.create({ provider: 'claude', cwd: directory, trusted: true });
   core.tokens.set('claude', session.id);
-  await core.updateSettings({ bypassComputerPermissions: true });
+  await core.rpc('power.start', { sessionIds: [session.id], minutes: 5, cli: false, computer: true });
   const input = { address: '0x123' };
   assert.deepEqual(await core.rpc('mcp.call', { token: 'claude', name: 'approve', args: { tool_name: 'mcp__cere__windows_focus', input } }), { behavior: 'allow', updatedInput: input });
   const command = core.rpc('mcp.call', { token: 'claude', name: 'approve', args: { tool_name: 'Bash', input: { command: 'printf test' } } });
   assert.equal(core.approvals.size, 1);
   assert.equal(core.snapshot().approvals[0].kind, 'provider');
-  await core.updateSettings({ bypassCliPermissions: true });
-  assert.equal((await command).behavior, 'allow');
+  core.answer({ id: core.snapshot().approvals[0].id, choice: 'deny' });
+  assert.equal((await command).behavior, 'deny');
 });
 
-test('CLI bypass covers project trust while computer bypass does not grant CLI trust', async t => {
+test('Claude native permission prompts honor persistent computer and CLI switches independently', async t => {
   const { core, directory } = await setup(t);
-  await core.updateSettings({ bypassComputerPermissions: true });
+  const session=await core.create({provider:'claude',cwd:directory,trusted:true});
+  core.tokens.set('claude-persistent',session.id);
+  await core.updateSettings({bypassComputerPermissions:true});
+  const input={address:'0x456'};
+  assert.deepEqual(await core.rpc('mcp.call',{token:'claude-persistent',name:'approve',args:{tool_name:'mcp__cere__windows_focus',input}}),{behavior:'allow',updatedInput:input});
+  assert.equal(core.approvals.size,0);
+  const command=core.rpc('mcp.call',{token:'claude-persistent',name:'approve',args:{tool_name:'Bash',input:{command:'printf test'}}});
+  assert.equal(core.snapshot().approvals[0].kind,'provider');
+  await core.updateSettings({bypassCliPermissions:true});
+  assert.equal((await command).behavior,'allow');
+});
+
+test('project trust remains explicit because power can only select an existing idle session', async t => {
+  const { core, directory } = await setup(t);
   await assert.rejects(core.create({ provider: 'claude', cwd: directory }), /trust/);
-  await core.updateSettings({ bypassCliPermissions: true });
-  assert.equal((await core.create({ provider: 'claude', cwd: directory })).provider, 'claude');
-  await core.updateSettings({ bypassCliPermissions: false });
   await assert.rejects(core.create({ provider: 'codex', cwd: directory }), /trust/);
+  assert.equal((await core.create({ provider: 'claude', cwd: directory, trusted: true })).provider, 'claude');
+});
+
+
+test('revoking persistent bypass before a native Claude approval is returned denies it', async t => {
+  const {core,directory}=await setup(t);
+  const session=await core.create({provider:'claude',cwd:directory,trusted:true});core.tokens.set('revocation',session.id);
+  for(const [key,tool_name] of [['bypassCliPermissions','Bash'],['bypassComputerPermissions','mcp__cere__windows_focus']] as const){
+    await core.updateSettings({[key]:true});
+    const pending=core.rpc('mcp.call',{token:'revocation',name:'approve',args:{tool_name,input:{}}});
+    await core.updateSettings({[key]:false});
+    assert.equal((await pending).behavior,'deny');
+  }
+});
+
+test('persistent bypass never resolves a queued remote approval and explicitly skips local project trust', async t => {
+  const {core,directory}=await setup(t);core.remoteAuthority=()=>true;
+  const remote=await core.create({provider:'codex',cwd:directory,trusted:true},undefined,{remote:{deviceId:'device',projectId:'project',scopeVersion:'1',expiresAt:Date.now()+60_000,caps:['providers.execute'],categories:[],scriptIds:[]},effectivePolicy:'unknown'});
+  const cli=core.approval(remote.id,{kind:'provider',title:'Remote command',detail:'',choices:['allow','deny']});
+  const desktop=core.approval(remote.id,{kind:'desktop',title:'Remote desktop',detail:'',choices:['allow','deny']});
+  await core.updateSettings({bypassCliPermissions:true,bypassComputerPermissions:true});
+  assert.equal(core.approvals.size,2);
+  for(const approval of core.snapshot().approvals)core.answer({id:approval.id,choice:'deny'});
+  assert.equal((await cli).choice,'deny');assert.equal((await desktop).choice,'deny');
+  assert.equal((await core.create({provider:'codex',cwd:directory,trusted:false})).provider,'codex');
 });

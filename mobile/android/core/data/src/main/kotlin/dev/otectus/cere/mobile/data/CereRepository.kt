@@ -50,6 +50,7 @@ data class MobileState(
     val monitoring: Boolean = false,
     val cacheEpoch: String? = null,
     val messagesBefore: Map<String, String> = emptyMap(),
+    val scrollPositions: Map<String, SessionScrollPosition> = emptyMap(),
 ) {
     fun supports(operation: String) = (connection as? ConnectionState.Online)?.operations?.contains(operation) == true
     fun draft(session: Session) = drafts[session.id] ?: LocalDraft(session.id, session.draft, session.draftRevision, session.draftRevision, false)
@@ -245,6 +246,7 @@ class CereRepository(context: Context) {
     suspend fun syncDraft(sessionId: String) = draftMutexes.getOrPut(sessionId) { Mutex() }.withLock { syncDraftLocked(sessionId) }
     private suspend fun syncDraftLocked(sessionId: String) {
         if (!_state.value.supports("drafts.put")) return; val draft = _state.value.drafts[sessionId] ?: return
+        if (_state.value.sessions.firstOrNull { it.id == sessionId }?.draftAttachmentCount != 0) return
         if (!draft.dirty || draft.conflict) return
         val result = mutate("drafts.put", buildJsonObject { put("sessionId", sessionId); put("text", draft.text); put("expectedRevision", draft.remoteRevision) }).jsonObject
         val revision = result.getValue("revision").jsonPrimitive.content
@@ -258,10 +260,13 @@ class CereRepository(context: Context) {
     }
 
     /** Serialize pending autosaves before binding the send signature to draft/config revisions. */
-    suspend fun prepareSend(sessionId: String, text: String): PreparedAction = draftMutexes.getOrPut(sessionId) { Mutex() }.withLock {
+    suspend fun prepareSend(sessionId: String, text: String, webSearch: Boolean = false): PreparedAction = draftMutexes.getOrPut(sessionId) { Mutex() }.withLock {
         require(_state.value.pendingCommands.none { it.sessionId == sessionId && it.method == "sessions.send" }) { "Review the previous send outcome before sending another message" }
         val initial = _state.value.sessions.first { it.id == sessionId }
         require(initial.canSend && initial.draftIncluded) { "This session is not ready to send" }
+        require(initial.draftAttachmentCount != null) { "Restart the updated Cere broker on your PC to synchronize desktop attachments before sending. Your draft is saved." }
+        require(initial.draftAttachmentCount == 0) { "This draft has desktop attachments. Review and send or remove them on the PC first." }
+        require(!webSearch || _state.value.canSearchWeb(initial)) { "Web search is unavailable for this conversation" }
         require(!_state.value.draft(initial).conflict) { "Resolve the desktop draft conflict before sending" }
         check(saveLocalDraft(sessionId, text)) { PRIVATE_CACHE_ERROR }
         syncDraftLocked(sessionId)
@@ -270,11 +275,12 @@ class CereRepository(context: Context) {
         val draft = current.draft(session)
         require(!draft.conflict && draft.text == text) { "Draft changed. Review the current text before sending" }
         val attachments = current.attachments.filter { it.sessionId == sessionId }
+        require(attachments.all { it.reviewedAt != null }) { "Review every image before sending" }
         require(attachments.all { it.remoteAttachmentId != null && it.remoteStatus == "ready" }) { "Finish uploading the images before sending" }
         prepareAction("sessions.send", buildJsonObject {
             put("sessionId", sessionId); put("text", text)
             put("attachments", JsonArray(attachments.map { JsonPrimitive(it.remoteAttachmentId!!) }))
-            put("webSearch", false); put("expectedDraftRevision", draft.remoteRevision); put("expectedConfigRevision", session.configRevision)
+            put("webSearch", webSearch); put("expectedDraftRevision", draft.remoteRevision); put("expectedConfigRevision", session.configRevision)
         })
     }
     suspend fun keepLocalDraft(sessionId: String) { updateState { current -> current.drafts[sessionId]?.let { current.copy(drafts = current.drafts + (sessionId to it.copy(baseRevision = it.remoteRevision, conflict = false, remoteText = null, dirty = true))) } ?: current }; syncDraft(sessionId) }
@@ -285,6 +291,13 @@ class CereRepository(context: Context) {
             current.copy(drafts = if (draft.text == sentText) current.drafts + (sessionId to draft.copy(text = "", dirty = false, conflict = false, remoteText = null)) else current.drafts,
                 attachments = current.attachments.filterNot { it.id in attachmentIds }) }
         snapshotRequests.trySend(Unit)
+    }
+    fun recordScrollPosition(position: SessionScrollPosition) {
+        if (_state.value.scrollPositions[position.sessionId] == position) return
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { updateState { current ->
+            if (current.sessions.none { it.id == position.sessionId }) current
+            else current.copy(scrollPositions = current.scrollPositions + (position.sessionId to position))
+        } }
     }
 
     suspend fun loadMessages(sessionId: String) {
@@ -305,10 +318,10 @@ class CereRepository(context: Context) {
             .map { WireCodec.json.decodeFromJsonElement(Message.serializer(), it) }
         updateState { current -> current.copy(messages = mergeMessages(current.messages, incoming)) }
     }
-    suspend fun models(provider: String, refresh: Boolean = false): List<ModelOption> {
+    suspend fun models(provider: String, refresh: Boolean = false, sessionId: String? = null): List<ModelOption> {
         val cached = _state.value.providers[provider]?.jsonObject?.get("models")?.jsonArray.orEmpty().mapNotNull { runCatching { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }.getOrNull() }
-        if (!refresh && cached.isNotEmpty()) return cached; if (!_state.value.supports("providers.models")) return emptyList()
-        return request("providers.models", buildJsonObject { put("provider", provider) }).jsonArray.map { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }
+        if (!refresh && sessionId == null && cached.isNotEmpty()) return cached; if (!_state.value.supports("providers.models")) return emptyList()
+        return request("providers.models", buildJsonObject { put("provider", provider); sessionId?.let { put("sessionId", it) } }).jsonArray.map { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }
     }
 
     suspend fun importImage(sessionId: String, uri: android.net.Uri): LocalAttachment {
@@ -323,9 +336,18 @@ class CereRepository(context: Context) {
         require(_state.value.attachments.sumOf { it.size } + _state.value.drafts.values.sumOf { it.text.toByteArray().size } + attachment.size <= 19 * 1024 * 1024) { "Private offline media has reached the 20 MiB device limit" }
         store.writeBlob(attachment.id, bytes); updateState { it.copy(attachments = it.attachments + attachment) }; return attachment
     }
+    suspend fun attachmentPreview(localId: String): ByteArray {
+        require(_state.value.attachments.any { it.id == localId }) { "Attachment is no longer available" }
+        return store.readBlob(localId)
+    }
+    suspend fun markAttachmentReviewed(localId: String) = updateState { current ->
+        require(current.attachments.any { it.id == localId }) { "Attachment is no longer available" }
+        current.copy(attachments = current.attachments.map { if (it.id == localId) it.copy(reviewedAt = System.currentTimeMillis()) else it })
+    }
     suspend fun removeAttachment(id: String) { store.deleteBlob(id); updateState { it.copy(attachments = it.attachments.filterNot { item -> item.id == id }) } }
     suspend fun uploadAttachment(localId: String, initial: JsonObject? = null): JsonObject {
         var local = _state.value.attachments.firstOrNull { it.id == localId } ?: error("Attachment is no longer available")
+        require(local.reviewedAt != null) { "Review this image before uploading it" }
         var upload = initial ?: local.remoteAttachmentId?.let { request("attachments.status", buildJsonObject { put("attachmentId", it) }).jsonObject } ?: error("Upload has not started")
         val attachmentId = upload.getValue("attachmentId").jsonPrimitive.content; val uploadId = upload.getValue("uploadId").jsonPrimitive.content; var offset = upload["offset"]?.jsonPrimitive?.intOrNull ?: 0
         updateState { current -> current.copy(attachments = current.attachments.map { if (it.id == localId) it.copy(remoteAttachmentId = attachmentId, uploadId = uploadId, committedOffset = offset, remoteStatus = upload["status"]?.jsonPrimitive?.contentOrNull ?: "uploading") else it }) }
@@ -444,7 +466,9 @@ class CereRepository(context: Context) {
         override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) { synchronized(this@CereRepository) {
             if (socket !== webSocket) { webSocket.cancel(); return }; val desktop = _state.value.desktop ?: return
             scope.launch { updateState { it.copy(connection = ConnectionState.Authenticating) } }
-            val hello = Hello(desktopId = desktop.desktopId, deviceId = desktop.deviceId, clientNonce = CanonicalJson.base64Url(ByteArray(32).also(java.security.SecureRandom()::nextBytes)), appVersion = "0.1.0")
+            @Suppress("DEPRECATION")
+            val appVersion = app.packageManager.getPackageInfo(app.packageName, 0).versionName ?: "unknown"
+            val hello = Hello(desktopId = desktop.desktopId, deviceId = desktop.deviceId, clientNonce = CanonicalJson.base64Url(ByteArray(32).also(java.security.SecureRandom()::nextBytes)), appVersion = appVersion)
             activeHello = hello; webSocket.send(WireCodec.encode(hello))
         } }
         override fun onMessage(webSocket: WebSocket, text: String) { if (socket === webSocket) frames.trySend(webSocket to text) }
@@ -488,6 +512,7 @@ class CereRepository(context: Context) {
         val persisted = updateState(System.currentTimeMillis()) { current -> val base = if (snapshot.cacheEpoch != null && snapshot.cacheEpoch != current.cacheEpoch) current.copy(messages = emptyList()) else current; val merged = CacheReconciler.merge(base, snapshot, selected); current.copy(sessions = merged.sessions, messages = merged.messages, approvals = merged.approvals, drafts = merged.drafts,
             projects = snapshot.projects, providers = snapshot.providers, permissions = snapshot.permissions, settings = snapshot.settings, cursor = snapshot.cursor,
             selectedSessionId = current.selectedSessionId?.takeIf { id -> merged.sessions.any { it.id == id } }, attachments = current.attachments.filter { it.sessionId in authorized },
+            scrollPositions = current.scrollPositions.filterKeys { it in authorized },
             pendingCommands = CacheReconciler.retainAuthorizedCommands(current.pendingCommands, authorized, authorizedProjects, welcome?.scopeVersion),
             cacheEpoch = snapshot.cacheEpoch ?: current.cacheEpoch, messagesBefore = if (selected == null) current.messagesBefore else snapshot.messagesBefore?.let { current.messagesBefore + (selected to it) } ?: (current.messagesBefore - selected), lastError = null) }
         retainApprovalInteractionState(snapshot.approvals)
@@ -551,7 +576,7 @@ class CereRepository(context: Context) {
             _state.value = MobileState(restoreReady = true, desktop = cache.desktop,
             connection = cache.desktop?.let { ConnectionState.Offline("Not connected", cache.lastVerifiedAt) } ?: ConnectionState.Unpaired,
             sessions = cache.sessions, messages = cache.messages, approvals = cache.approvals, projects = cache.projects, providers = cache.providers,
-            permissions = cache.permissions, settings = cache.settings, cursor = cache.cursor, drafts = cache.drafts.associateBy(LocalDraft::sessionId), pendingCommands = cache.pendingCommands, selectedSessionId = cache.selectedSessionId, attachments = cache.attachments, cacheEpoch = cache.cacheEpoch, monitoring = shouldMonitor)
+            permissions = cache.permissions, settings = cache.settings, cursor = cache.cursor, drafts = cache.drafts.associateBy(LocalDraft::sessionId), pendingCommands = cache.pendingCommands, selectedSessionId = cache.selectedSessionId, attachments = cache.attachments, cacheEpoch = cache.cacheEpoch, scrollPositions = cache.scrollPositions, monitoring = shouldMonitor)
             restoreBlocked = false
         }
         true
@@ -564,14 +589,14 @@ class CereRepository(context: Context) {
         val sessions = transformed.sessions.filter { it.id in keepIds }.map { if (it.id != transformed.selectedSessionId && transformed.drafts[it.id]?.dirty != true) it.copy(draft = "", draftIncluded = false) else it }
         val fixedBytes = attachments.sumOf { it.size } + transformed.drafts.filterKeys { it in keepIds }.values.sumOf { it.text.toByteArray().size }; var remaining = (20 * 1024 * 1024 - fixedBytes - 512 * 1024).coerceAtLeast(0)
         val retainedMessages = ArrayList<Message>(); transformed.messages.asReversed().forEach { message -> val bytes = message.text.toByteArray().size + 256; if (message.sessionId in keepIds && (message.time == 0L || message.time >= cutoff) && bytes <= remaining) { retainedMessages += message; remaining -= bytes } }
-        val next = transformed.copy(sessions = sessions, messages = retainedMessages.asReversed(), drafts = transformed.drafts.filterKeys { it in keepIds }, attachments = attachments, lastError = if (expired.isNotEmpty()) "Expired local image drafts were removed" else transformed.lastError); _state.value = next
+        val next = transformed.copy(sessions = sessions, messages = retainedMessages.asReversed(), drafts = transformed.drafts.filterKeys { it in keepIds }, attachments = attachments, scrollPositions = transformed.scrollPositions.filterKeys { it in keepIds }, lastError = if (expired.isNotEmpty()) "Expired local image drafts were removed" else transformed.lastError); _state.value = next
         val ready = if (next.lastError == PRIVATE_CACHE_ERROR) next.copy(lastError = null) else next; _state.value = ready
         try { store.write(cached(ready, verifiedAt)); cacheDirty = false; true } catch (cancelled: CancellationException) { throw cancelled } catch (_: Throwable) { cacheDirty = true; _state.value = ready.copy(lastError = PRIVATE_CACHE_ERROR); false } }
     private suspend fun flushPrivateCache() {
         val persisted = stateMutex.withLock { if (restoreBlocked) return@withLock false; val ready = if (_state.value.lastError == PRIVATE_CACHE_ERROR) _state.value.copy(lastError = null) else _state.value; try { store.write(cached(ready, lastVerified)); _state.value = ready; cacheDirty = false; true } catch (cancelled: CancellationException) { throw cancelled } catch (_: Throwable) { cacheDirty = true; false } }
         if (persisted) _state.value.cursor?.let { cursor -> if (_state.value.supports("sync.ack")) runCatching { request("sync.ack", buildJsonObject { put("cursor", cursor) }) } }
     }
-    private fun cached(state: MobileState, verifiedAt: Long?) = CachedState(state.desktop, state.cursor, state.sessions, state.messages, state.approvals, state.projects, state.providers, state.permissions, state.settings, verifiedAt, state.drafts.values.toList(), state.pendingCommands, state.selectedSessionId, state.attachments, state.cacheEpoch)
+    private fun cached(state: MobileState, verifiedAt: Long?) = CachedState(state.desktop, state.cursor, state.sessions, state.messages, state.approvals, state.projects, state.providers, state.permissions, state.settings, verifiedAt, state.drafts.values.toList(), state.pendingCommands, state.selectedSessionId, state.attachments, state.cacheEpoch, state.scrollPositions)
     private suspend fun removePending(commandId: String) = updateState { it.copy(pendingCommands = it.pendingCommands.filterNot { command -> command.commandId == commandId }) }
     private suspend fun markPending(commandId: String, status: String) = updateState { current -> current.copy(pendingCommands = current.pendingCommands.map { if (it.commandId == commandId) it.copy(status = status) else it }) }
     private fun pendingCommand(commandId: String, method: String, params: JsonObject, boundProjectId: String? = null): PendingCommand {

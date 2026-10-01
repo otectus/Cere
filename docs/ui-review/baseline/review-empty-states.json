@@ -1,0 +1,17 @@
+[
+    {
+        "check": "fresh state has no sessions",
+        "detail": "0",
+        "ok": true
+    },
+    {
+        "check": "compact initial focus",
+        "detail": "Shell:",
+        "ok": true
+    },
+    {
+        "check": "ollama unreachable error shown",
+        "detail": "Cannot reach Ollama at http://127.0.0.1:9. Check the server and connection settings. fetch failed",
+        "ok": true
+    }
+]

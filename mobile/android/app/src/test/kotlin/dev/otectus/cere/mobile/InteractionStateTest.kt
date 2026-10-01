@@ -4,11 +4,27 @@ import dev.otectus.cere.mobile.protocol.Agent
 import dev.otectus.cere.mobile.protocol.ApprovalOption
 import dev.otectus.cere.mobile.protocol.ApprovalQuestion
 import dev.otectus.cere.mobile.protocol.Session
+import dev.otectus.cere.mobile.protocol.Message
+import dev.otectus.cere.mobile.data.SessionScrollPosition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class InteractionStateTest {
+    @Test fun restoredConversationPositionUsesStableMessageAnchor() {
+        fun message(id: String) = Message(id, "session", role = "assistant", text = id, revision = "1")
+        val position = SessionScrollPosition("session", anchorMessageId = "middle", itemIndex = 1, offset = 24, following = false)
+        assertEquals(2, restoredScrollIndex(position, listOf(message("first"), message("middle")), hasOlder = true))
+        assertEquals(3, restoredScrollIndex(position, listOf(message("older"), message("first"), message("middle")), hasOlder = true))
+    }
+
+    @Test fun missingScrollAnchorFallsBackToBoundedSavedIndex() {
+        val position = SessionScrollPosition("session", anchorMessageId = "forgotten", itemIndex = 40, following = false)
+        val messages = listOf(Message("current", "session", role = "assistant", text = "current", revision = "1"))
+        assertEquals(1, restoredScrollIndex(position, messages, hasOlder = false))
+        assertEquals(0, restoredScrollIndex(position.copy(following = true), messages, hasOlder = false))
+    }
+
     @Test fun activeAgentsOverrideIdleSessionStatus() {
         val session = Session("s", "codex", "Work", status = "idle", agents = listOf(
             Agent("a", "Builder", status = "running"),

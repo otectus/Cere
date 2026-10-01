@@ -50,7 +50,7 @@ test('selecting an interruption retains every joint value and velocity', () => {
 });
 
 test('catalogue and puppet references are complete and valid', () => {
-  assert.equal(Object.keys(catalog.clips).length, 67);
+  assert.equal(Object.keys(catalog.clips).length, 74);
   assert.equal(catalog.frames.length, 32);
   assert.ok(catalog.rig && Object.keys(catalog.puppet.poses).length >= catalog.frames.length);
   for (const [name, config] of Object.entries<any>(catalog.puppet.channels)) {
@@ -103,7 +103,7 @@ test('still mode is the exact first stance and never advances either clock', () 
   for (const [name, clip] of Object.entries<any>(catalog.clips)) {
     const state = stateFor(name);
     for (let i = 0; i < 17; ++i) sample(state);
-    const beforeTime = state.time, beforeElapsed = state.elapsed;
+    const beforeTime = state.time, beforeElapsed = state.elapsed, beforeBlink = state.blinkTime, beforeRhythm = state.rhythmTime;
     const result = motion.sample(state, 8, 0, 1, -1, 100, -100, true);
     const stance = { ...catalog.puppet.poses[String(clip.keys[0].pose)].joints, ...(clip.keys[0].joints || {}) };
     assert.equal(result.pose, clip.keys[0].pose, name);
@@ -111,6 +111,8 @@ test('still mode is the exact first stance and never advances either clock', () 
     for (const channel of channels) assert.equal(result[channel], stance[channel] || 0, `${name}/${channel}`);
     assert.equal(state.time, beforeTime, name);
     assert.equal(state.elapsed, beforeElapsed, name);
+    assert.equal(state.blinkTime, beforeBlink, name);
+    assert.equal(state.rhythmTime, beforeRhythm, name);
   }
 });
 
@@ -330,4 +332,89 @@ test('an interrupted blink finishes smoothly while a new gesture starts', () => 
   assert.ok(Math.abs(after.eyeClose - interrupted.eyeClose) < .12);
   for (let i = 0; i < 90; ++i) sample(state);
   assert.equal(state.blink, 0);
+});
+
+test('energy profiles preserve Calm and give Lively more frequent autonomous beats', () => {
+  const run = (profile: string) => {
+    const state=stateFor('idle',17);motion.configure(state,profile,'neutral');
+    for(let i=0;i<60*120;i++)sample(state);
+    return state;
+  };
+  const calm=run('calm'), lively=run('lively');
+  assert.deepEqual(JSON.parse(JSON.stringify(calm.life)),catalog.clips.idle.life);
+  assert.ok(lively.beatCount>calm.beatCount);
+  for(const k of ['presence','sway','head','hands'])assert.ok(lively.life[k]>calm.life[k]);
+  assert.equal(catalog.idleProfiles.calm.pool.length,14);
+  assert.equal(catalog.idleProfiles.lively.pool.length,21);
+});
+
+test('every eligible stance can blink during entries and nonlooping gestures', () => {
+  for(let pose=0;pose<catalog.frames.length;pose++) {
+    if(!catalog.frames[pose].eyesVisible)continue;
+    const joints=catalog.puppet.poses[String(pose)].joints;
+    if(joints.wink || joints.eyeClose)continue;
+    const state=motion.create(5);
+    const clip={keys:[{pose,ms:12000}],entryMs:1000,life:{autonomy:0}};
+    motion.select(state,clip,catalog,'test');state.nextBlink=.1;
+    let duringEntry=false,afterEntry=false,last=0;
+    for(let i=0;i<1200;i++) {
+      const v=sample(state);
+      if(v.blink>.1) {if(state.elapsed<1000)duringEntry=true;else afterEntry=true;last=state.blinkTime;}
+      assert.ok(state.blinkTime-last<=8,`pose ${pose} blink gap`);
+    }
+    assert.ok(duringEntry && afterEntry,`pose ${pose}`);
+  }
+});
+
+test('occluded eyes defer their overdue blink and authored eye clips own their eyes', () => {
+  const state=stateFor('idle');state.nextBlink=.1;
+  const occluded={entryMs:0,keys:[{pose:28,ms:12000}],life:{autonomy:0}};
+  motion.select(state,occluded,catalog,'occluded');
+  for(let i=0;i<1200;i++)assert.equal(sample(state).blink,0);
+  assert.equal(state.nextBlink,.1);
+  motion.select(state,{...occluded,keys:[{pose:0,ms:1000}]},catalog,'eligible');
+  sample(state);assert.ok(sample(state).blink>0);
+  for(const name of ['wink','doze','cheeky','doubleBlink']) {
+    if(!catalog.clips[name])continue;
+    motion.select(state,catalog.clips[name],catalog,name);
+    for(let i=0;i<1000;i++)assert.equal(sample(state).blink,0,name);
+  }
+});
+
+test('new clips preserve interruption continuity at every authored segment and intensity', () => {
+  const names=catalog.idleProfiles.lively.pool.filter((n:string)=>!catalog.idlePool.includes(n));
+  for(const name of names)for(const intensity of [.2,.7,1]) {
+    const state=stateFor('idle');sample(state);
+    motion.select(state,catalog.clips[name],catalog,name);
+    for(let i=0;i<1000;i++) {
+      const result=sample(state,1/120,intensity);
+      for(const channel of channels) {
+        const config=catalog.puppet.channels[channel];
+        assert.ok(result[channel]>=config.min-1e-8 && result[channel]<=config.max+1e-8,`${name}/${channel}`);
+      }
+      if(i%150===0) {
+        const before=structuredClone(state.springs);
+        const copy=structuredClone(state);
+        motion.select(copy,catalog.clips.waiting,catalog,'waiting');
+        const interrupted=sample(copy,0,intensity);
+        for(const channel of channels)assert.equal(interrupted[channel],before[channel].value);
+      }
+    }
+  }
+});
+
+test('all eleven shared moods have valid reactions, weights and idle life adjustments', () => {
+  const moods=catalog.bodyMoods.moods;
+  assert.equal(Object.keys(moods).length,11);
+  assert.equal(moods.neutral.reaction,'');assert.ok(moods.neutral.reason);
+  for(const [name,mood] of Object.entries<any>(moods)) {
+    if(mood.reaction) {assert.ok(catalog.clips[mood.reaction]);assert.ok(!catalog.clips[mood.reaction].outcome);}
+    for(const clip of mood.preferred)assert.ok(catalog.idleProfiles.lively.pool.includes(clip));
+    for(const scale of Object.values<any>(mood.lifeScale))assert.ok(Number.isFinite(scale)&&scale>0);
+    const state=stateFor('idle');motion.configure(state,'lively',name);
+    for(let i=0;i<500;i++)for(const value of Object.values(sample(state)))if(typeof value==='number')assert.ok(Number.isFinite(value));
+  }
+  const happy=stateFor('idle'),sleepy=stateFor('idle');
+  motion.configure(happy,'lively','happy');motion.configure(sleepy,'lively','sleepy');
+  assert.ok(happy.life.sway>sleepy.life.sway);assert.ok(sleepy.life.pace<1);
 });

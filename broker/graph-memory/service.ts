@@ -52,13 +52,13 @@ export class MemoryService {
   extractor?: OllamaExtractionAdapter;
   timer: NodeJS.Timeout;
   busy = false;
+  recoveryFrozen = false;
   closed = false;
   foreground = 0;
   lastMaintenance = 0;
   controller = new AbortController();
   notify: (event: Row) => void;
   lastError = "";
-  modelIdentity?: { key: string; dimension: number; digest: string };
   /** Collector generation: callbacks from a stopped generation are discarded. */
   collectorGeneration = 0;
   /** Current collector policy with resolved approved roots, used to filter every live read. */
@@ -86,7 +86,6 @@ export class MemoryService {
     if (!changed) return;
     this.controller.abort(new Error("Memory configuration changed"));
     this.controller = new AbortController();
-    this.modelIdentity = undefined;
     this.extractor = undefined;
     const current = await this.canonical.call("policy_get");
     if (
@@ -117,7 +116,7 @@ export class MemoryService {
       )
     ).filter(Boolean);
     // Configuration and canonical policy must both allow collection; otherwise nothing survives.
-    const enabled = this.configuration.enabled && !this.configuration.paused && policy.enabled;
+    const enabled = !this.recoveryFrozen && this.configuration.enabled && !this.configuration.paused && policy.enabled;
     this.livePolicy = { policy: enabled ? policy : { ...policy, enabled: false }, roots };
     // Revocation takes effect before any new collector starts: revoked sources, roots
     // and titles leave the live state immediately.
@@ -384,10 +383,10 @@ export class MemoryService {
       const data = await this.canonical.call("projection_data", { id: job.id });
       if (backend === "graph") {
         const { artifacts, owner_id, ...mutation } = data;
-        await (
-          await this.graphRepo()
-        ).apply({ ...mutation, generation: Number(data.generation) });
-        if(data.deletedIds.length)await (await this.graphRepo()).eraseAllGenerations(data.deletedIds,data.erasureEpoch);
+        const graph = await this.graphRepo();
+        await graph.apply({ ...mutation, generation: Number(data.generation) });
+        if (data.deletedIds.length)
+          await graph.eraseAllGenerations(data.deletedIds, data.erasureEpoch);
       } else {
         const signal = AbortSignal.any([
           this.controller.signal,
@@ -399,76 +398,75 @@ export class MemoryService {
         if (data.deletedIds.length) {
           for (const space of await this.canonical.call("embedding_spaces"))
             await this.vectorRepo(space.fingerprint, space.dimension, signal);
-          for (const target of data.deletedIds)
-            for (const repo of this.vectors.values())
-              await repo.deleteByArtifact(target);
+          for (const repo of this.vectors.values())
+            await repo.deleteByArtifacts(data.deletedIds, data.erasureEpoch, signal);
         }
+        const byHost = new Map<string, Row[]>();
         for (const artifact of data.artifacts) {
-          const host = artifact.embedding_host || this.configuration.host,
-            identity = await this.identity(host, signal);
-          const [vector] = await this.embed(
+          const host = artifact.embedding_host || this.configuration.host;
+          const group = byHost.get(host) || [];
+          group.push(artifact);
+          byHost.set(host, group);
+        }
+        // A projection job can contain many artifacts after rebuild. Probe a route once
+        // per host and embed bounded batches instead of issuing one model request per row.
+        for (const [host, artifacts] of byHost) {
+          const identity = await this.identity(host, signal);
+          for (let offset = 0; offset < artifacts.length; offset += 64) {
+            const batch = artifacts.slice(offset, offset + 64);
+            const vectors = await this.embed(
               host,
-              [artifact.text],
+              batch.map((artifact) => artifact.text),
               "document",
               signal,
-            ),
-            fingerprint = this.fingerprint(identity, vector.length),
-            generation = Number(data.generation),
-            point = pointId(
-              artifact.id,
-              artifact.content_revision,
-              fingerprint,
-              generation,
             );
-          await this.canonical.call("embedding_save", {
-            artifact_id: artifact.id,
-            content_revision: artifact.content_revision,
-            erasure_epoch: artifact.erasure_epoch,
-            fingerprint,
-            generation: data.generation,
-            point_id: point,
-            vector,
-          });
-          const repo = await this.vectorRepo(fingerprint, vector.length, signal);
-          const metadata: VectorArtifactMetadata = {
-            ownerId: data.owner_id,
-            scopeId: artifact.scope_id,
-            artifactKind: artifact.kind,
-            artifactId: artifact.id,
-            contentRevision: artifact.content_revision,
-            embeddingFingerprint: fingerprint,
-            generation,
-            sensitivity: artifact.sensitivity,
-            validFromUs: null,
-            validToUs: null,
-            sourceGeneration: artifact.source_generation,
-            erasureEpoch: data.erasureEpoch,
-            expiresAtUs: artifact.expires_us,
-          };
-          // Single publisher: canonical recheck immediately precedes the awaited remote write.
-          await this.canonical.call("embedding_save", {
-            artifact_id: artifact.id,
-            content_revision: artifact.content_revision,
-            erasure_epoch: artifact.erasure_epoch,
-            fingerprint,
-            generation: data.generation,
-            point_id: point,
-            vector,
-          });
-          await repo.publish({ pointId: point, vector, metadata });
-          try {
-            await this.canonical.call("embedding_save", {
-              artifact_id: artifact.id,
-              content_revision: artifact.content_revision,
-              erasure_epoch: artifact.erasure_epoch,
-              fingerprint,
-              generation: data.generation,
-              point_id: point,
-              vector,
-            });
-          } catch (e) {
-            await repo.retire([point]);
-            throw e;
+            for (let index = 0; index < batch.length; index++) {
+              const artifact = batch[index],
+                vector = vectors[index],
+                fingerprint = this.fingerprint(identity, vector.length),
+                generation = Number(data.generation),
+                point = pointId(
+                  artifact.id,
+                  artifact.content_revision,
+                  fingerprint,
+                  generation,
+                ),
+                repo = await this.vectorRepo(fingerprint, vector.length, signal),
+                record = {
+                  artifact_id: artifact.id,
+                  content_revision: artifact.content_revision,
+                  erasure_epoch: artifact.erasure_epoch,
+                  fingerprint,
+                  generation: data.generation,
+                  point_id: point,
+                  vector,
+                },
+                metadata: VectorArtifactMetadata = {
+                  ownerId: data.owner_id,
+                  scopeId: artifact.scope_id,
+                  artifactKind: artifact.kind,
+                  artifactId: artifact.id,
+                  contentRevision: artifact.content_revision,
+                  embeddingFingerprint: fingerprint,
+                  generation,
+                  sensitivity: artifact.sensitivity,
+                  validFromUs: null,
+                  validToUs: null,
+                  sourceGeneration: artifact.source_generation,
+                  erasureEpoch: data.erasureEpoch,
+                  expiresAtUs: artifact.expires_us,
+                };
+              // Recheck canonical eligibility immediately before the remote write.
+              await this.canonical.call("embedding_save", record);
+              await repo.publish({ pointId: point, vector, metadata });
+              try {
+                // A changed/erased artifact cannot leave a usable late point behind.
+                await this.canonical.call("embedding_save", record);
+              } catch (e) {
+                await repo.retire([point]);
+                throw e;
+              }
+            }
           }
         }
       }
@@ -586,6 +584,7 @@ export class MemoryService {
   async maintain() {
     if (
       this.busy ||
+      this.recoveryFrozen ||
       this.closed ||
       !this.configuration.enabled ||
       this.configuration.paused ||
@@ -600,6 +599,18 @@ export class MemoryService {
     } finally {
       this.busy = false;
     }
+  }
+  /** Reserve the current memory profile before recovery starts reading or replacing it. */
+  async freezeForRecovery(){
+    if(this.busy)throw new Error('Wait for memory maintenance to finish before restoring');
+    this.recoveryFrozen=true;this.collectorGeneration++;
+    this.controller.abort(new Error('Memory paused for recovery'));
+    await this.collectorRpc?.close();this.collectorRpc=undefined;
+    for(const collector of this.collectors)await collector.stop();this.collectors=[];
+  }
+  async resumeAfterRecovery(){
+    if(!this.recoveryFrozen)return;
+    this.recoveryFrozen=false;this.controller=new AbortController();await this.startCollectors();
   }
   async retrieve(p: Row, signal?: AbortSignal) {
     const time = performance.now(),
@@ -654,8 +665,15 @@ export class MemoryService {
           });
         }
       }
-      const health = await this.canonical.call("health", {}, guard);
+      // Preserve the durable overlay before optional projection setup/query can
+      // exhaust the deadline. An unavailable projection must not discard local hits.
+      semantic = await this.canonical.call("embedding_search", {
+        scope_id: p.scope_id,
+        fingerprint,
+        vector,
+      }, guard);
       try {
+        const health = await this.canonical.call("health", {}, guard);
         // Collection preparation shares the retrieval deadline; expiry degrades to canonical recall.
         const repo = await this.vectorRepo(fingerprint, vector.length, guard);
         const generation = Number(
@@ -672,18 +690,10 @@ export class MemoryService {
           nowUs: Date.now() * 1000,
           deadline: guard,
         });
-        semantic = hits.map((h) => ({ ...h.metadata, score: h.score }));
+        semantic = [...hits.map((h) => ({ ...h.metadata, score: h.score })), ...semantic];
       } catch {
         coverage.push("semantic_projection_unavailable");
       }
-      // Durable canonical overlay includes unindexed changes; it never trusts an old point.
-      semantic.push(
-        ...(await this.canonical.call("embedding_search", {
-          scope_id: p.scope_id,
-          fingerprint,
-          vector,
-        }, guard)),
-      );
     } catch (error: any) {
       signal?.throwIfAborted();
       coverage.push(error?.code === "POLICY_DENIED" ? "semantic_route_denied" : "semantic_degraded");

@@ -40,7 +40,7 @@ ColumnLayout {
     function focusSearch() { search.forceActiveFocus() }
     function pending(name) { return Object.values(requests).some(r=>r.name===name) }
     function action(name,args,label) {
-        const id=App.rpc("action.run",{name:name,args:args||{}})
+        const id=App.rpc("action.run",{name:name,args:args||{},expectedScript:name==="script.run"?scriptConfirm.script:undefined})
         if(id<0)return id
         const next=Object.assign({},requests);next[id]={name:name,label:label||"Done"};requests=next
         return id
@@ -70,6 +70,7 @@ ColumnLayout {
             }
             ColumnLayout {
                 Layout.fillWidth:true;Layout.minimumWidth:0;spacing:3
+                CButton { text:"Offline tools";onClicked:utilityShelf.open() }
                 CText { text:"Desktop";font.pixelSize:24;font.weight:Font.DemiBold }
                 CText { text:desktop.width>=500?"Your apps, windows, sound, and everyday actions.":"Your everyday controls.";color:Theme.muted;font.pixelSize:12 }
             }
@@ -289,4 +290,5 @@ ColumnLayout {
             CButton { Layout.fillWidth:true;text:"Run script";primary:true;onClicked:{desktop.action("script.run",{id:scriptConfirm.script.id},"Script finished");scriptConfirm.close()} }
         }
     }
+    UtilityShelf { id:utilityShelf }
 }

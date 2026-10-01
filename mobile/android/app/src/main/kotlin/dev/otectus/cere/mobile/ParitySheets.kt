@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit
 import java.io.InputStream
 import java.io.ByteArrayOutputStream
 
-private fun signedReview(activity: FragmentActivity, repository: CereRepository, method: String, params: JsonObject, title: String, success: (JsonElement) -> Unit, failure: (String) -> Unit, boundProjectId: String? = null) {
+internal fun signedReview(activity: FragmentActivity, repository: CereRepository, method: String, params: JsonObject, title: String, success: (JsonElement) -> Unit, failure: (String) -> Unit, boundProjectId: String? = null) {
     activity.lifecycleScope.launch {
         runCatching { repository.prepareAction(method, params, boundProjectId) }.onFailure { failure(it.message ?: "Unable to review action") }.onSuccess { action ->
             val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {

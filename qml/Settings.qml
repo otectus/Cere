@@ -10,13 +10,14 @@ ColumnLayout {
     readonly property var navigationEntries:[
         {label:"Companion",detail:"window, size, roaming, login",target:companionSection},
         {label:"Personality",detail:"tone and response style",target:personalitySection},
-        {label:"Voice",detail:"speech and Piper voices",target:voiceSection},
+        {label:"Voice",detail:"voices, pitch, speed and volume",target:voiceSection},
         {label:"Motion & expressions",detail:"animation, quiet mode, previews",target:motionSection},
         {label:"Cere Mobile",detail:"pairing and remote access",target:remoteSection},
         {label:"AI assistance",detail:"permissions, categories, grants",target:assistanceSection},
         {label:"Saved scripts",detail:"commands and working folders",target:scriptsSection},
-        {label:"Connections",detail:"Ollama, Codex, Claude",target:connectionsSection},
+        {label:"Connections",detail:"Ollama, Codex, Claude Code, AntiGravity, OpenAI API, Claude API, Google AI API, keys",target:connectionsSection},
         {label:"Web search & memory",detail:"search providers and recall",target:knowledgeSection},
+        {label:"Workspace telemetry",detail:"workspaces, shell hooks, recent edits",target:telemetrySection},
         {label:"Application",detail:"Hyprland shortcut and quit",target:applicationSection}
     ]
     readonly property string navigationQuery:settingsSearch.text.trim().toLowerCase()
@@ -34,6 +35,8 @@ ColumnLayout {
             CText { text:"Settings";font.pixelSize:24;font.weight:Font.DemiBold }
             CText { text:"Shape how Cere looks, speaks, connects, and acts on your desktop.";color:Theme.muted;font.pixelSize:12 }
         }
+        CButton { text:"Backup";onClicked:recovery.open() }
+        CButton { text:"Health";onClicked:health.open() }
     }
     RowLayout {
         Layout.fillWidth:true;spacing:8
@@ -52,9 +55,24 @@ ColumnLayout {
     PageScroll {
         id:settingsScroll;objectName:"settingsScroll"
         Layout.fillWidth:true;Layout.fillHeight:true;maximumContentWidth:820
+    TelemetrySettings { id:telemetrySection;backend:App;Layout.fillWidth:true }
     CSection {
         id:companionSection
         title:"Companion"
+        CComboBox { model:["Normal","Focus","Gaming","Presentation"];currentIndex:["normal","focus","gaming","presentation"].indexOf(settingsView.settings.desktopProfile||"normal");Accessible.name:"Desktop profile";onActivated:settingsView.update({desktopProfile:["normal","focus","gaming","presentation"][currentIndex]}) }
+        CText { text:"Profiles coordinate visibility, speech, motion and ordinary notifications. Pending approvals remain available from Cere’s tray.";color:Theme.muted;font.pixelSize:12 }
+        RowLayout {
+            CText { text:"Interface size" }
+            CSlider { Layout.fillWidth:true;from:.8;to:1.5;stepSize:.1;value:settingsView.settings.interfaceScale||1;Accessible.name:"Interface size";onMoved:settingsView.update({interfaceScale:value}) }
+            CText { text:Math.round((settingsView.settings.interfaceScale||1)*100)+"%" }
+        }
+        Flow {
+            Layout.fillWidth:true;spacing:6
+            CButton { text:"Save monitor home";onClicked:App.saveHomePosition() }
+            CButton { text:"Go home";onClicked:App.goHomePosition() }
+            CButton { text:"Dock left";onClicked:App.dockPet("left") }
+            CButton { text:"Dock right";onClicked:App.dockPet("right") }
+        }
         CCheckBox { text:"Always on top";checked:settingsView.settings.topmost===true;onClicked:settingsView.update({topmost:checked}) }
         CText { text:"Keep Cere above your applications, including fullscreen windows.";color:Theme.muted;font.pixelSize:12 }
         RowLayout {
@@ -90,6 +108,17 @@ ColumnLayout {
             Text { text:Math.round((settingsView.settings.motionIntensity === undefined ? 0.7 : settingsView.settings.motionIntensity)*100)+"%";color:Theme.cyan;font.pixelSize:12 }
         }
         CText { text:"From a quiet presence to full personality: soften her breathing, gaze, hair sway and gestures together. Zero keeps state poses still.";color:Theme.muted;font.pixelSize:12 }
+        RowLayout {
+            Layout.fillWidth:true
+            CText { text:"Idle energy";font.pixelSize:12 }
+            CComboBox {
+                objectName:"idleEnergy";Layout.fillWidth:true;textRole:"label";valueRole:"value"
+                model:[{label:"Calm",value:"calm"},{label:"Lively",value:"lively"}]
+                currentIndex:settingsView.settings.idleEnergy === "calm" ? 0 : 1
+                Accessible.name:"Idle energy"
+                onActivated:settingsView.update({idleEnergy:currentValue})
+            }
+        }
         MotionStage { Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0 }
         CCheckBox { objectName:"expressiveCues";text:"Respond to conversational tone";checked:settingsView.settings.expressiveCues!==false;onClicked:settingsView.update({expressiveCues:checked}) }
         CText { text:"Occasional expressions from clear English conversational cues, interpreted locally. Task results always come from the app.";color:Theme.muted;font.pixelSize:12 }
@@ -122,18 +151,18 @@ ColumnLayout {
         title:"AI assistance"
         description:"Choose which actions your assistant sessions can request. Manual controls in the Desktop tab remain available."
         CCheckBox {
-            objectName:"bypassCliPermissions";text:"Bypass all CLI permissions"
+            objectName:"bypassCliPermissions";text:"Skip CLI permission prompts"
             checked:settingsView.settings.bypassCliPermissions===true
             onClicked:settingsView.update({bypassCliPermissions:checked})
         }
-        CText { text:"Automatically allow CLI actions, saved scripts and delegation. Codex and Claude run with full access, without permission prompts or their optional sandbox. Applies to every session and new cere terminal launches.";color:Theme.muted;font.pixelSize:12 }
         CCheckBox {
-            objectName:"bypassComputerPermissions";text:"Bypass all computer-control permissions"
+            objectName:"bypassComputerPermissions";text:"Skip computer permission prompts"
             checked:settingsView.settings.bypassComputerPermissions===true
             onClicked:settingsView.update({bypassComputerPermissions:checked})
         }
-        CText { text:"Allow all Cere desktop tools and share captures with the requesting session without asking. Overrides desktop categories and standing grants.";color:Theme.muted;font.pixelSize:12 }
-        CText { visible:settingsView.settings.bypassCliPermissions||settingsView.settings.bypassComputerPermissions;text:"Bypass is active. Matching pending requests are accepted. CLI sandbox changes apply on the next turn; stop the current turn to end its existing access. Restart linked terminals to change their permissions. Pause still blocks Cere tools.";color:Theme.amber;font.pixelSize:12 }
+        CText { text:"These switches stay on until you turn them off. CLI includes project trust, commands, file changes, scripts, delegation and new terminals launched through Cere. Computer includes desktop actions. Questions still require an answer.";color:Theme.muted;font.pixelSize:12 }
+        CButton { objectName:"openPermissionCenter";text:"Permission Center and power sessions";Layout.fillWidth:true;onClicked:permissionCenter.open() }
+        CText { text:"Power sessions grant project-bound access for a limited time. Power does not approve existing requests or change already-running terminals.";color:Theme.muted;font.pixelSize:12 }
         CComboBox {
             id:profile;Layout.fillWidth:true;Layout.minimumWidth:0;model:["Manual controls only","Scoped assistance","Broad control"]
             Accessible.name:"Desktop assistance profile"
@@ -154,7 +183,7 @@ ColumnLayout {
                 }
             }
         }
-        CText { text:"Without CLI bypass, provider orchestration asks you to review each task and saved scripts follow the profile and grant settings. CLI full access can also control the desktop through shell commands.";color:Theme.muted;font.pixelSize:12 }
+        CText { text:"Provider orchestration and saved scripts follow the selected profile and grants. A power session can grant temporary access. Native CLI shell access remains outside Cere’s desktop grants.";color:Theme.muted;font.pixelSize:12 }
         CButton { text:settingsView.settings.paused?"Resume AI actions":"Pause AI actions";Layout.fillWidth:true;onClicked:settingsView.update({paused:!settingsView.settings.paused}) }
         ColumnLayout {
             visible:settingsView.settings.profile==="broad";Layout.fillWidth:true;spacing:12
@@ -163,7 +192,7 @@ ColumnLayout {
             CText { text:App.session.cwd||"Select a session to grant access.";color:Theme.cyan;font.pixelSize:12 }
             GridLayout {
                 Layout.fillWidth:true;columns:width>=340?2:1;columnSpacing:8;rowSpacing:8
-                CButton { Layout.fillWidth:true;text:"Grant for 1 hour";enabled:!!App.session.cwd;onClicked:settingsView.update({grants:(settingsView.settings.categories||[]).filter(c=>c!=="providers").map(c=>({category:c,cwd:App.session.cwd,expires:Date.now()+3600000}))}) }
+                CButton { Layout.fillWidth:true;text:"Grant for 1 hour";enabled:!!App.session.cwd;onClicked:settingsView.update({grants:(settingsView.settings.grants||[]).filter(g=>g.cwd!==App.session.cwd).concat((settingsView.settings.categories||[]).filter(c=>c!=="providers").map(c=>({category:c,cwd:App.session.cwd,expires:Date.now()+3600000})))}) }
                 CButton { Layout.fillWidth:true;text:"Revoke all";onClicked:settingsView.update({grants:[]}) }
             }
             Repeater { model:settingsView.settings.grants||[];CText { required property var modelData;text:modelData.category+" · expires "+new Date(modelData.expires).toLocaleTimeString(Qt.locale(),"h:mm AP");color:Theme.muted;font.pixelSize:11 } }
@@ -189,15 +218,20 @@ ColumnLayout {
         title:"Connections"
         OllamaConnection {}
         Repeater {
-            model:["codex","claude"]
+            model:["codex","claude","antigravity"]
             ColumnLayout {
                 required property string modelData
                 property var capability:(App.state.capabilities||{})[modelData]||({})
                 Layout.fillWidth:true;spacing:5
-                CText { text:(modelData==="codex"?"Codex":"Claude")+" · "+(capability.available?"Ready":"Unavailable");color:capability.available?Theme.cyan:Theme.amber;font.weight:Font.DemiBold }
+                CText { text:(modelData==="codex"?"Codex":modelData==="antigravity"?"AntiGravity":"Claude Code")+" · "+(capability.available?"Ready":"Unavailable");color:capability.available?Theme.cyan:Theme.amber;font.weight:Font.DemiBold }
                 CText { text:capability.version||capability.error||"Checking installed CLI…";color:Theme.muted;font.pixelSize:12 }
+                CText { visible:modelData==="antigravity";text:"Sign in with agy in a terminal first. Headless actions that need approval are skipped unless allowed in AntiGravity or Cere’s CLI bypass is enabled. Desktop only; text attachments supported.";color:Theme.muted;font.pixelSize:12 }
             }
         }
+        CText { text:"API keys stay on this computer in an owner-only credentials file, outside settings and backups. Shared memory follows Settings → Knowledge → cloud sharing.";color:Theme.muted;font.pixelSize:12 }
+        ApiConnection { provider:"openai";label:"OpenAI API" }
+        ApiConnection { provider:"anthropic";label:"Claude API" }
+        ApiConnection { provider:"google";label:"Google AI API" }
     }
     KnowledgeSettings { id:knowledgeSection }
     CSection {
@@ -257,4 +291,7 @@ ColumnLayout {
         }
     }
     Connections { target:App;function onResult(id,value){if(id===scriptDialog.requestId){scriptDialog.requestId=-1;if(value?.error)scriptDialog.error=value.error;else{scriptDialog.close();scriptName.clear();executable.clear();scriptArgs.text="[]"}}} }
+    PermissionCenter { id:permissionCenter }
+    Health { id:health }
+    Recovery { id:recovery }
 }

@@ -62,6 +62,10 @@ class Controller : public QObject {
     Q_PROPERTY(QVariantMap animations READ animations CONSTANT)
     Q_PROPERTY(QString toast READ toast NOTIFY toastChanged)
     Q_PROPERTY(QString motion READ motion NOTIFY motionChanged)
+    Q_PROPERTY(QVariantMap conversationMoods READ conversationMoods NOTIFY conversationMoodsChanged)
+    Q_PROPERTY(QString bodyMood READ bodyMood NOTIFY moodContextChanged)
+    Q_PROPERTY(QString moodSession READ actingSession NOTIFY moodContextChanged)
+    Q_PROPERTY(bool moodSourceEnabled READ moodSourceEnabled NOTIFY moodContextChanged)
     Q_PROPERTY(bool hasOlderMessages READ hasOlderMessages NOTIFY messagesChanged)
 public:
     explicit Controller(QString root, bool overlay, QObject *parent=nullptr);
@@ -79,6 +83,11 @@ public:
     QVariantMap animations() const { return m_animations; }
     QString toast() const { return m_toast; }
     QString motion() const { return m_motion; }
+    QVariantMap conversationMoods() const { return m_conversationMoods; }
+    QString bodyMood() const;
+    bool moodSourceEnabled() const;
+    Q_INVOKABLE void setConversationMood(const QString &sessionId, const QVariantMap &sample);
+    Q_INVOKABLE void registerMoodSource() { m_sharedMoodReady=true; }
     Q_PROPERTY(QPointF petVelocity READ petVelocity NOTIFY motionDynamicsChanged)
     Q_PROPERTY(QPointF petSubpixel READ petSubpixel NOTIFY motionDynamicsChanged)
     Q_PROPERTY(bool petMoving READ petMoving NOTIFY motionDynamicsChanged)
@@ -100,12 +109,17 @@ public:
     Q_INVOKABLE void setListening(bool listening);
     Q_INVOKABLE void resizePet(qreal factor);
     Q_INVOKABLE void copy(const QString &text);
+    Q_INVOKABLE QString clipboardText() const;
+    Q_INVOKABLE QVariantMap clipboardContent();
     Q_INVOKABLE void openPath(const QString &path);
     Q_INVOKABLE void openMessageLink(const QString &link, const QString &directory);
     Q_INVOKABLE void formatMessage(QQuickTextDocument *document);
     Q_INVOKABLE QString chooseFolder();
     Q_INVOKABLE QString chooseImage();
     Q_INVOKABLE QString chooseFile();
+    Q_INVOKABLE void saveHomePosition();
+    Q_INVOKABLE void goHomePosition();
+    Q_INVOKABLE void dockPet(const QString &edge);
     Q_INVOKABLE void notify(const QString &text);
     Q_INVOKABLE void quit(bool stopTasks=false);
     Q_INVOKABLE void setAutostart(bool enabled);
@@ -116,6 +130,7 @@ public:
     Q_INVOKABLE void copyMessage(const QString &messageId);
     Q_INVOKABLE void copySessionMessage(const QString &sessionId, const QString &messageId);
     Q_INVOKABLE void openCompletion(const QString &completionId);
+    Q_INVOKABLE void openCompanionReply(const QString &replyId);
     Q_INVOKABLE QVariantMap questionDraft(const QString &approvalId) const { return m_questionDrafts.value(approvalId); }
     Q_INVOKABLE void setQuestionDraft(const QString &approvalId, const QVariantMap &answers);
     // The pet's current logical placement in global coordinates (diagnostics and tests).
@@ -132,6 +147,8 @@ signals:
     void questionDraftsChanged();
     void toastChanged();
     void motionChanged();
+    void conversationMoodsChanged();
+    void moodContextChanged();
     void motionDynamicsChanged();
     void result(int id, const QVariant &value);
     // Editors persist unsaved text before a window hides, expands or quits.
@@ -177,6 +194,9 @@ private:
     bool m_roamLeft=false,m_petInteracting=false;
     bool m_listening=false;
     QVariantMap m_attention;
+    QVariantMap m_conversationMoods;
+    bool m_sharedMoodReady=false;
+    void receiveMood(const QString &sessionId, const QVariantMap &sample);
     QHash<QString,QString> m_cuedMessages;
     QString m_tenderSession;
     QQuickView *m_pet=nullptr, *m_panel=nullptr, *m_bubble=nullptr;
@@ -201,6 +221,7 @@ private:
     void followMouse();
     void refreshMotion();
     QString actingSession() const;
+    QString moodOwner() const;
     void publishAttention();
     void observeConversation(const QVariantMap &message);
     void publishMotion();

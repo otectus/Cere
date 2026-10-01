@@ -294,6 +294,15 @@
       },
       "result": "session"
     },
+    "sessions.organize": {
+      "params": {
+        "sessionId": "uuid",
+        "expectedRevision": "0",
+        "pinned": "optional boolean",
+        "archived": "optional boolean"
+      },
+      "result": "session"
+    },
     "drafts.get": {
       "params": {
         "sessionId": "uuid"
@@ -325,6 +334,7 @@
       "params": {
         "sessionId": "uuid",
         "model": "model",
+        "effort": "optional",
         "tools": false,
         "expectedConfigRevision": "0"
       },
@@ -389,7 +399,11 @@
         "name": "Phone",
         "expiresAt": 0,
         "scopeVersion": "1",
-        "caps": []
+        "caps": [],
+        "categories": [],
+        "scriptIds": [],
+        "projects": [],
+        "ollamaHosts": []
       }
     },
     "devices.selfRevoke": {
@@ -582,6 +596,27 @@
         "state": "canonical job state",
         "purgeComplete": false
       }
+    },
+    "permissions.reduce": {
+      "params": {
+        "expectedScopeVersion": "1",
+        "caps": [],
+        "categories": [],
+        "scriptIds": [],
+        "projectIds": [],
+        "ollamaHosts": [],
+        "expiresAt": 1
+      },
+      "result": {
+        "scopeVersion": "2",
+        "reconnectRequired": true,
+        "caps": [],
+        "categories": [],
+        "scriptIds": [],
+        "projectIds": [],
+        "ollamaHosts": [],
+        "expiresAt": 1
+      }
     }
   },
   "dto": {
@@ -602,6 +637,15 @@
       "turnId": "optional uuid",
       "remoteRestricted": true,
       "canSend": true,
+      "canConfigure": true,
+      "pinned": false,
+      "archived": false,
+      "unread": false,
+      "readAt": 0,
+      "folderId": "optional uuid or null",
+      "folderName": "optional scoped folder name or null",
+      "draftAttachmentCount": 0,
+      "draftAttachmentHint": "optional desktop draft attachment warning or null",
       "updated": 0,
       "draftIncluded": true,
       "ollamaHost": "optional approved Ollama server"
@@ -651,7 +695,7 @@
     "remote.disabled",
     "attachment.progress (data is upload DTO; cursor is opaque like other events)"
   ],
-  "notes": "All operations are capability negotiated. Absent operation must have no enabled control. Unsupported forms/unsafe active providers expose deny/Stop only. All mutation failures preserve drafts. Connection loss never queues a new action. On ambiguous mutation query commands.status with original ID. All snapshot arrays replace cached scope; removed resources must be purged. Reconnect always supports full scoped snapshot even without retained replay. No command retry with a new ID without review. TLS trust exactly paired SPKI and valid certificate/SAN. No network pairing endpoint. Session summaries set draftIncluded:false; fetch sessions.get before enabling Send. sync.open sessionIds is authoritative for cache removal; use sessions.list with nextSessionOffset to hydrate omitted summaries. Submitted Ollama image files can be removed after a completed turn because full image context is persisted. Native path inputs remain until session removal, local clear, or device revocation. Command outcomes are redacted across device scopeVersion changes. Memory invalidation clears retained result payloads. cacheEpoch changes clear phone transcript and transient memory views. Memory CAS revisions above 9007199254740991 are rejected.",
+  "notes": "All operations are capability negotiated. Absent operation must have no enabled control. Unsupported forms/unsafe active providers expose deny/Stop only. All mutation failures preserve drafts. Connection loss never queues a new action. On ambiguous mutation query commands.status with original ID. All snapshot arrays replace cached scope; removed resources must be purged. Reconnect always supports full scoped snapshot even without retained replay. No command retry with a new ID without review. TLS trust exactly paired SPKI and valid certificate/SAN. No network pairing endpoint. Session summaries set draftIncluded:false; fetch sessions.get before enabling Send. A positive draftAttachmentCount means the desktop draft must be reviewed there; mobile draft edits and sends do not discard those attachments. sync.open sessionIds is authoritative for cache removal; use sessions.list with nextSessionOffset to hydrate omitted summaries. Submitted Ollama image files can be removed after a completed turn because full image context is persisted. Native path inputs remain until session removal, local clear, or device revocation. Command outcomes are redacted across device scopeVersion changes. Memory invalidation clears retained result payloads. cacheEpoch changes clear phone transcript and transient memory views. Memory CAS revisions above 9007199254740991 are rejected.",
   "media": {
     "binaryFrame": "16-byte UUID, 8-byte unsigned big endian offset, up to 262144 payload bytes; single outstanding chunk per upload; wait attachment.progress before next chunk",
     "upload": "attachments.begin signed; binary chunks; attachments.status after reconnect; attachments.commit signed; session-specific opaque IDs in signed sessions.send",

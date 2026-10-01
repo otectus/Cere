@@ -35,7 +35,7 @@ ColumnLayout {
     }
     CSection {
         title:"Memory"
-        description:"Help Ollama recall earlier conversations and durable facts in the same project."
+        description:"Share project facts and earlier conversations across Codex, Claude and Ollama."
         CCheckBox { objectName:"memoryEnabled";text:"Remember and recall conversations";checked:knowledge.memory.enabled;enabled:knowledge.memoryRequest<0;onClicked:{knowledge.checkAfterSave=false;knowledge.memoryError="";knowledge.memoryRequest=App.rpc("settings.update",{memory:{enabled:checked}})} }
         ColumnLayout {
             visible:knowledge.memory.enabled;Layout.fillWidth:true;spacing:8
@@ -45,7 +45,7 @@ ColumnLayout {
                 CField { id:embedding;objectName:"embeddingModel";Layout.fillWidth:true;Layout.minimumWidth:0;text:knowledge.memory.model;placeholderText:"nomic-embed-text";Accessible.name:"Ollama embedding model" }
                 CButton { objectName:"memoryCheck";text:knowledge.checkRequest>=0?"Checking…":"Check & save";enabled:knowledge.memoryRequest<0&&knowledge.checkRequest<0;onClicked:{knowledge.checkAfterSave=true;knowledge.memoryError="";knowledge.checkResult="";knowledge.memoryRequest=App.rpc("settings.update",{memory:{model:embedding.text.trim()}})} }
             }
-            CText { text:"Default: nomic-embed-text. Install it with ollama pull nomic-embed-text. Embeddings use each conversation’s Ollama server; Check uses the server in Connections.";color:Theme.muted;font.pixelSize:12 }
+            CText { text:"Default: nomic-embed-text. Install it with ollama pull nomic-embed-text. Codex and Claude use the Ollama server in Connections for memory. Ollama conversations retain their saved server.";color:Theme.muted;font.pixelSize:12 }
             CText { text:"Graph extraction model";color:Theme.muted;font.pixelSize:12 }
             RowLayout {
                 Layout.fillWidth:true
@@ -54,14 +54,14 @@ ColumnLayout {
             }
             CText { text:"Extraction uses GPT-OSS Cloud by default and runs in the background. Source restrictions apply before sending text. Claims retain exact evidence and correction history.";color:Theme.muted;font.pixelSize:12 }
             CCheckBox { objectName:"cloudExtractionEnabled";text:"Allow GPT-OSS Cloud memory extraction";checked:knowledge.memory.allowCloudExtraction===undefined?true:knowledge.memory.allowCloudExtraction;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudExtraction:checked}}) }
-            CCheckBox { objectName:"cloudMemoryEnabled";text:"Allow recalled memory in Cloud chat prompts";checked:knowledge.memory.allowCloudMemory||false;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudMemory:checked}}) }
+            CCheckBox { objectName:"cloudMemoryEnabled";text:"Share recalled memory with Codex, Claude and cloud models";checked:knowledge.memory.allowCloudMemory||false;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudMemory:checked}}) }
             CText { text:(knowledge.status.saved||0)+" saved facts · "+Math.max(0,(knowledge.status.total||0)-(knowledge.status.saved||0))+" conversation passages"+((knowledge.status.pending||0)?" · "+knowledge.status.pending+" awaiting embedding":"");color:Theme.muted;font.pixelSize:12 }
             CText { visible:!!knowledge.checkResult;text:knowledge.checkResult;color:Theme.cyan;font.pixelSize:12 }
             CText { visible:knowledge.status.state==="degraded";text:knowledge.status.error||"Semantic memory is unavailable. Keyword recall is still available.";color:Theme.amber;font.pixelSize:12 }
         }
         CText { visible:!!knowledge.memoryError;text:knowledge.memoryError;color:Theme.danger;font.pixelSize:12 }
-        CButton { objectName:"manageMemories";text:"Manage project memory";enabled:App.connected&&App.session.provider==="ollama";onClicked:manager.open() }
-        CText { text:App.session.provider==="ollama"?"Review, correct or forget saved facts and conversation passages. Memory stays separate for each project and server.":"Select an Ollama conversation to manage its project’s memory.";color:Theme.muted;font.pixelSize:12 }
+        CButton { objectName:"manageMemories";text:"Manage project memory";enabled:App.connected&&!!App.session.id&&!App.session.temporary;onClicked:manager.open() }
+        CText { text:App.session.id?"Review, correct or forget shared facts and conversation passages. Memory stays separate for each project and server.":"Select a conversation to manage its project’s memory.";color:Theme.muted;font.pixelSize:12 }
     }
     MemoryDialog { id:manager }
     Connections { target:App;function onResult(id,value){

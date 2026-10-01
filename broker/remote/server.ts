@@ -26,6 +26,7 @@ export class MobileGateway {
   constructor(core:Core) {
     this.core=core;this.registry=new RemoteStore(core.store);this.identity=new Identity(this.registry);this.pairing=new Pairing(this.registry,this.identity);
     this.router=new Router(core,this.registry,id=>this.revoke(id));
+    this.router.scopeReduced=id=>{void this.reduced(id).catch(()=>{});};
     core.remoteAuthority=(execution,session)=> {
       const device=this.registry.live(execution.deviceId);
       return !!device&&this.registry.config().enabled&&device.scopeVersion===execution.scopeVersion&&device.projects.some(p=>p.id===execution.projectId&&p.path===session.cwd)&&this.router.inScope(device,session);
@@ -100,18 +101,21 @@ export class MobileGateway {
       if(isBinary) {
         if(!peer.device){socket.close(4001,'UNAUTHENTICATED');return;}
         peer.inFlight++;
-        void this.router.media.chunk(peer.device,bytes).then(progress=>this.event(peer,'attachment.progress',progress)).catch(()=>socket.close(4009,'ATTACHMENT_INVALID')).finally(()=>peer.inFlight--);return;
+        void this.core.withMutation(()=>this.router.media.chunk(peer.device!,bytes)).then(progress=>this.event(peer,'attachment.progress',progress)).catch(()=>socket.close(4009,'ATTACHMENT_INVALID')).finally(()=>peer.inFlight--);return;
       }
       let frame:any;
       try{frame=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{socket.close(4000,'INVALID_ARGUMENT');return;}
       peer.inFlight++;
       void this.frame(peer,frame).catch(error=>{
-        if(!peer.device){this.registry.audit({operation:'auth.failed',decision:'denied'});socket.close(4001,'UNAUTHENTICATED');}
+        if(!peer.device){if(!this.core.recovery.pending)this.registry.audit({operation:'auth.failed',decision:'denied'});socket.close(4001,'UNAUTHENTICATED');}
         else this.send(peer,{v:1,type:'response',id:frame?.id||null,error:safeError(error)});
       }).finally(()=>peer.inFlight--);
     });
   }
   async frame(peer:Peer,frame:any) {
+    return this.core.withMutation(()=>this.frameInner(peer,frame));
+  }
+  private async frameInner(peer:Peer,frame:any) {
     if(!peer.device) {
       if(frame.type==='hello'&&!peer.hello) {
         const hello=helloSchema.parse(frame),device=this.registry.live(hello.deviceId);
@@ -133,7 +137,7 @@ export class MobileGateway {
     if(peer.expiresAt<Date.now()){peer.socket.close(4001,'AUTH_EXPIRED');return;}
     const schema=methods[request.method];if(!schema)throw remoteError('INVALID_ARGUMENT','Unknown mobile operation.');
     const params:any=schema.parse(request.params),method=request.method,now=Date.now();
-    const defensive=['sessions.stop','permissions.pause','devices.selfRevoke'].includes(method)||method==='approvals.answer'&&['deny','cancel'].includes(params.choice);
+    const defensive=['sessions.stop','permissions.pause','permissions.reduce','devices.selfRevoke'].includes(method)||method==='approvals.answer'&&['deny','cancel'].includes(params.choice);
     const budget=this.budgets.get(device.id)||{reads:40,last:now,mutations:[]};this.budgets.set(device.id,budget);
     budget.reads=Math.min(40,budget.reads+(now-budget.last)/1000*20);budget.last=now;
     if(!defensive&&--budget.reads<0)throw remoteError('RATE_LIMITED','Read request rate exceeded.');
@@ -177,7 +181,7 @@ export class MobileGateway {
     }
   }
   async maintain() {
-    if(this.closed)return;
+    if(this.closed||this.core.recovery.pending)return;
     for(const peer of this.peers) {
       if(peer.device&&(!this.registry.live(peer.device.id)||peer.expiresAt<Date.now())){peer.socket.close(4003,'AUTH_EXPIRED');continue;}
       if(!peer.alive&&Date.now()-peer.pingAt>=20000){peer.socket.terminate();continue;}
@@ -207,6 +211,10 @@ export class MobileGateway {
     this.router.abortActions();
     for(const peer of this.peers)this.send(peer,{v:1,type:'event',eventId:randomUUID(),cursor:'',resourceRevision:'1',name:'remote.disabled',data:{}});
     await this.stopListeners();await this.stopOwned();this.registry.audit({operation:'remote.disable',decision:'disabled'});this.presence();
+  }
+  async reduced(id:string){
+    for(const peer of this.peers)if(peer.device?.id===id)peer.socket.close(4003,'SCOPE_CHANGED');
+    await this.stopOwned(id);await this.router.media.purge(id);this.presence();
   }
   async revoke(id:string) {
     const device=this.registry.device(id);if(!device)throw new Error('Device not found');

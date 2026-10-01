@@ -1,0 +1,451 @@
+{
+  "schema": 1,
+  "upstream": {
+    "commit": "d9e41aac89fd00b3d71497fddb287b7f24613712",
+    "url": "https://codeload.github.com/index-tts/index-tts/tar.gz/d9e41aac89fd00b3d71497fddb287b7f24613712",
+    "sha256": "38ad78b770c1f09dd2028347713f2137d818aca2658ac4be6fccc000af3ba4f3"
+  },
+  "python": "3.11.13",
+  "torch": "2.8.0+cu128",
+  "torchaudio": "2.8.0+cu128",
+  "cuda": "12.8",
+  "uv": {
+    "version": "0.12.21",
+    "url": "https://github.com/astral-sh/uv/releases/download/0.12.21/uv-x86_64-unknown-linux-gnu.tar.gz",
+    "sha256": "23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0"
+  },
+  "models": {
+    "2.5": {
+      "module": "infer_v2_5",
+      "languages": [
+        "zh",
+        "en",
+        "ja",
+        "es",
+        "ar"
+      ],
+      "aux": [
+        "w2v",
+        "camp",
+        "bigvgan"
+      ],
+      "sampleRate": 22050
+    },
+    "2": {
+      "module": "infer_v2",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "aux": [
+        "w2v",
+        "codec",
+        "camp",
+        "bigvgan"
+      ],
+      "sampleRate": 22050
+    }
+  },
+  "artifacts": {
+    "2.5": {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "files": [
+        {
+          "path": "LICENSE",
+          "file": "LICENSE",
+          "size": 10553,
+          "sha256": "cc7da9ea0f8a97ef15ab3bf0389e636ce79ffca1aef5489520796ac87d87a87b",
+          "optional": null
+        },
+        {
+          "path": "README.md",
+          "file": "README.md",
+          "size": 4272,
+          "sha256": "d21e2ed55013ce0c456b9aa6d4fab7222365bfad10dd839155da0ce36fa93001",
+          "optional": null
+        },
+        {
+          "path": "codec.pth",
+          "file": "codec.pth",
+          "size": 607290935,
+          "sha256": "d15cbed16a40f478438c961fb043f68dfa6353bf56c966761315db3433e9722c",
+          "optional": null
+        },
+        {
+          "path": "config.yaml",
+          "file": "config.yaml",
+          "size": 2860,
+          "sha256": "18adf417be3e8f5e2e48e30f7420c719170a6870619436250f360d626877870e",
+          "optional": null
+        },
+        {
+          "path": "feat1.pt",
+          "file": "feat1.pt",
+          "size": 57170,
+          "sha256": "f219cb447d80216ba615666da2ff8d63ac544eee26657f3a7b278692bf7a67c4",
+          "optional": null
+        },
+        {
+          "path": "feat2.pt",
+          "file": "feat2.pt",
+          "size": 374866,
+          "sha256": "9c4292e96dee535aea9a6206e9a0c856dd578dde9212acdb16dd3ada4d12bf80",
+          "optional": null
+        },
+        {
+          "path": "gpt.pth",
+          "file": "gpt.pth",
+          "size": 3259599833,
+          "sha256": "43a8f4c30eccdf201958d3b9713511482c19d56dc20b0b1c4ee1e6b080b19d85",
+          "optional": null
+        },
+        {
+          "path": "multilingual_zh_ja_yue_char_del.tiktoken",
+          "file": "multilingual_zh_ja_yue_char_del.tiktoken",
+          "size": 907395,
+          "sha256": "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718",
+          "optional": null
+        },
+        {
+          "path": "qwen0.6bemo4-merge/added_tokens.json",
+          "file": "qwen0.6bemo4-merge/added_tokens.json",
+          "size": 707,
+          "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/chat_template.jinja",
+          "file": "qwen0.6bemo4-merge/chat_template.jinja",
+          "size": 550,
+          "sha256": "a13337ea164ac47b2c1e644b6338d5e7e91cdcb58218511899c083112472730c",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/config.json",
+          "file": "qwen0.6bemo4-merge/config.json",
+          "size": 727,
+          "sha256": "2e04bc223dfb548dde52faebe2a819964523ff749cbe26467c49380aa371594f",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/generation_config.json",
+          "file": "qwen0.6bemo4-merge/generation_config.json",
+          "size": 117,
+          "sha256": "6453260cdb41552215d87400ab399a760f25509ec2860ceb07817b195651626d",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/merges.txt",
+          "file": "qwen0.6bemo4-merge/merges.txt",
+          "size": 1671853,
+          "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/model.safetensors",
+          "file": "qwen0.6bemo4-merge/model.safetensors",
+          "size": 1192135096,
+          "sha256": "11293257a8df593c154a8ecd5fc039f3076de35411e35f06d41b471e136f6641",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/special_tokens_map.json",
+          "file": "qwen0.6bemo4-merge/special_tokens_map.json",
+          "size": 616,
+          "sha256": "6676f091c8bc4d1b50146427cfde92073402866b87b6e39223227931b70083e9",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/tokenizer.json",
+          "file": "qwen0.6bemo4-merge/tokenizer.json",
+          "size": 11422654,
+          "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/tokenizer_config.json",
+          "file": "qwen0.6bemo4-merge/tokenizer_config.json",
+          "size": 5433,
+          "sha256": "147bae7844ddfb8767c1f9cc0f505d4a26839bd6fbb0656d6d6bc17c82e9108a",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/vocab.json",
+          "file": "qwen0.6bemo4-merge/vocab.json",
+          "size": 2776833,
+          "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+          "optional": "emotion"
+        },
+        {
+          "path": "s2mel.pth",
+          "file": "s2mel.pth",
+          "size": 414908601,
+          "sha256": "9b1b0003fc189c94cc349758d7ebc25f903b7eb2de4602879959cc64ce816456",
+          "optional": null
+        },
+        {
+          "path": "wav2vec2bert_stats.pt",
+          "file": "wav2vec2bert_stats.pt",
+          "size": 9343,
+          "sha256": "c9c176c2b8850ab2e3ba828bbfa969deaf4566ce55db5f2687b8430b87526ad2",
+          "optional": null
+        }
+      ]
+    },
+    "2": {
+      "repo": "IndexTeam/IndexTTS-2",
+      "revision": "740dcaff396282ffb241903d150ac011cd4b1ede",
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "file": "LICENSE.txt",
+          "size": 10554,
+          "sha256": "53875532237e0a97b17a41721556ff57e93193fc566e48c3a0febe6e35bb5343",
+          "optional": null
+        },
+        {
+          "path": "LICENSE_ZH.txt",
+          "file": "LICENSE_ZH.txt",
+          "size": 7336,
+          "sha256": "366175ecf329274358801b8365922677c52f25e643dcf00f0bc15857b5b2777f",
+          "optional": null
+        },
+        {
+          "path": "README.md",
+          "file": "README.md",
+          "size": 2511,
+          "sha256": "3e3225d4ec5fd95737613ec0e3f8ed64a5cde48a435ac21bce29b5ad4abc27a2",
+          "optional": null
+        },
+        {
+          "path": "bpe.model",
+          "file": "bpe.model",
+          "size": 475997,
+          "sha256": "b2a5ce8090d32da3642cc4f81fdc996376bc6dd3f4cd5e3d165f71120d9f2bc8",
+          "optional": null
+        },
+        {
+          "path": "config.yaml",
+          "file": "config.yaml",
+          "size": 2882,
+          "sha256": "ea9c2815ecc3874577c7ac158b97248c027250e5b05972fbbb1216b6d6539081",
+          "optional": null
+        },
+        {
+          "path": "feat1.pt",
+          "file": "feat1.pt",
+          "size": 57170,
+          "sha256": "f219cb447d80216ba615666da2ff8d63ac544eee26657f3a7b278692bf7a67c4",
+          "optional": null
+        },
+        {
+          "path": "feat2.pt",
+          "file": "feat2.pt",
+          "size": 374866,
+          "sha256": "9c4292e96dee535aea9a6206e9a0c856dd578dde9212acdb16dd3ada4d12bf80",
+          "optional": null
+        },
+        {
+          "path": "gpt.pth",
+          "file": "gpt.pth",
+          "size": 3484663079,
+          "sha256": "baaaeb8b56328da81731dc540a85a7dee32eca9da28f174b05757cb651c602a4",
+          "optional": null
+        },
+        {
+          "path": "qwen0.6bemo4-merge/added_tokens.json",
+          "file": "qwen0.6bemo4-merge/added_tokens.json",
+          "size": 707,
+          "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/chat_template.jinja",
+          "file": "qwen0.6bemo4-merge/chat_template.jinja",
+          "size": 550,
+          "sha256": "a13337ea164ac47b2c1e644b6338d5e7e91cdcb58218511899c083112472730c",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/config.json",
+          "file": "qwen0.6bemo4-merge/config.json",
+          "size": 727,
+          "sha256": "2e04bc223dfb548dde52faebe2a819964523ff749cbe26467c49380aa371594f",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/generation_config.json",
+          "file": "qwen0.6bemo4-merge/generation_config.json",
+          "size": 117,
+          "sha256": "6453260cdb41552215d87400ab399a760f25509ec2860ceb07817b195651626d",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/merges.txt",
+          "file": "qwen0.6bemo4-merge/merges.txt",
+          "size": 1671853,
+          "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/model.safetensors",
+          "file": "qwen0.6bemo4-merge/model.safetensors",
+          "size": 1192135096,
+          "sha256": "11293257a8df593c154a8ecd5fc039f3076de35411e35f06d41b471e136f6641",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/special_tokens_map.json",
+          "file": "qwen0.6bemo4-merge/special_tokens_map.json",
+          "size": 616,
+          "sha256": "6676f091c8bc4d1b50146427cfde92073402866b87b6e39223227931b70083e9",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/tokenizer.json",
+          "file": "qwen0.6bemo4-merge/tokenizer.json",
+          "size": 11422654,
+          "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/tokenizer_config.json",
+          "file": "qwen0.6bemo4-merge/tokenizer_config.json",
+          "size": 5433,
+          "sha256": "147bae7844ddfb8767c1f9cc0f505d4a26839bd6fbb0656d6d6bc17c82e9108a",
+          "optional": "emotion"
+        },
+        {
+          "path": "qwen0.6bemo4-merge/vocab.json",
+          "file": "qwen0.6bemo4-merge/vocab.json",
+          "size": 2776833,
+          "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+          "optional": "emotion"
+        },
+        {
+          "path": "s2mel.pth",
+          "file": "s2mel.pth",
+          "size": 1202198223,
+          "sha256": "aae1bb12017cbb47e7a5ce537fc82f40b6b1deb71acdb9b8f25686f32714b636",
+          "optional": null
+        },
+        {
+          "path": "wav2vec2bert_stats.pt",
+          "file": "wav2vec2bert_stats.pt",
+          "size": 9343,
+          "sha256": "c9c176c2b8850ab2e3ba828bbfa969deaf4566ce55db5f2687b8430b87526ad2",
+          "optional": null
+        }
+      ]
+    },
+    "w2v": {
+      "repo": "facebook/w2v-bert-2.0",
+      "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "files": [
+        {
+          "path": "hf_cache/w2v-bert-2.0/README.md",
+          "file": "README.md",
+          "size": 4792,
+          "sha256": "478afeacb3b4ce0d86b361f099416d28a7e7673ade31775c0f85f396979b7fc2",
+          "optional": null
+        },
+        {
+          "path": "hf_cache/w2v-bert-2.0/config.json",
+          "file": "config.json",
+          "size": 1874,
+          "sha256": "f5572bd5998b68182e9c328a43127ed21fed687f6910497136b91a4e3b0e3675",
+          "optional": null
+        },
+        {
+          "path": "hf_cache/w2v-bert-2.0/model.safetensors",
+          "file": "model.safetensors",
+          "size": 2322063736,
+          "sha256": "eb890c9660ed6e3414b6812e27257b8ce5454365d5490d3ad581ea60b93be043",
+          "optional": null
+        },
+        {
+          "path": "hf_cache/w2v-bert-2.0/preprocessor_config.json",
+          "file": "preprocessor_config.json",
+          "size": 275,
+          "sha256": "8e6281aad64f97e40534135a59dcc5d33571efae376f2a25adf5551951897ab4",
+          "optional": null
+        }
+      ]
+    },
+    "codec": {
+      "repo": "amphion/MaskGCT",
+      "revision": "265c6cef07625665d0c28d2faafb1415562379dc",
+      "files": [
+        {
+          "path": "notices/MaskGCT-README.md",
+          "file": "README.md",
+          "size": 6490,
+          "sha256": "8dfdbd32898b8b260f6cf63647ac1ae98aa6779f3b49cc4ff32059920e712cdf",
+          "optional": null
+        },
+        {
+          "path": "hf_cache/semantic_codec_model.safetensors",
+          "file": "semantic_codec/model.safetensors",
+          "size": 177183712,
+          "sha256": "ec947271175d8cad75ec37e83aa487e27c97a0f72a303393772da5ffa84bddf2",
+          "optional": null
+        }
+      ]
+    },
+    "camp": {
+      "repo": "funasr/campplus",
+      "revision": "e4b6ede7ce16997aff4ae69fbca1f0175e2afede",
+      "files": [
+        {
+          "path": "notices/CAMPPlus-README.md",
+          "file": "README.md",
+          "size": 2020,
+          "sha256": "c6025ccc42e290640f44e06f0742c584b99afe738bb819d74889330c692446f9",
+          "optional": null
+        },
+        {
+          "path": "hf_cache/campplus_cn_common.bin",
+          "file": "campplus_cn_common.bin",
+          "size": 28036335,
+          "sha256": "3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8",
+          "optional": null
+        }
+      ]
+    },
+    "bigvgan": {
+      "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+      "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+      "files": [
+        {
+          "path": "hf_cache/bigvgan/LICENSE",
+          "file": "LICENSE",
+          "size": 1076,
+          "sha256": "90459cd52fc41bd723df7c0c76fac1e4dd60e6bfd644a7e2a93f325bed4f6d95",
+          "optional": null
+        },
+        {
+          "path": "hf_cache/bigvgan/README.md",
+          "file": "README.md",
+          "size": 8038,
+          "sha256": "e70574f9ca1a0fac3a1faea840898c4c814552e46f5c160639db1397f9c7ddf4",
+          "optional": null
+        },
+        {
+          "path": "hf_cache/bigvgan/bigvgan_generator.pt",
+          "file": "bigvgan_generator.pt",
+          "size": 449228171,
+          "sha256": "e95ba25972d3de0628d99cd156e9315a9c018899bf739988959ebe3544080ced",
+          "optional": null
+        },
+        {
+          "path": "hf_cache/bigvgan/config.json",
+          "file": "config.json",
+          "size": 1405,
+          "sha256": "88a1f47acf747db0b21e97a389d838566147f7a5464583ff5c8d819d870f03ee",
+          "optional": null
+        }
+      ]
+    }
+  }
+}
