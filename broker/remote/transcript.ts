@@ -24,7 +24,7 @@ export function mobilePage(store:Store,sessionId:string,before?:string,limit=100
   if(before&&!cursor)throw remoteError('INVALID_ARGUMENT','Message page is no longer available.');
   // Page the two surfaces independently: a long tool run must not push every
   // conversational reply out of the first phone page.
-  const conversation="json_extract(data,'$.role') IN ('user','assistant') AND COALESCE(json_extract(data,'$.kind'),'text') IN ('text','message','')";
+  const conversation="json_extract(data,'$.role') IN ('user','assistant') AND COALESCE(json_extract(data,'$.kind'),'text') IN ('text','message','','question','answer','queued','queue-cancelled')";
   const filter=`AND ${activity?`NOT (${conversation})`:`(${conversation})`}`;
   const rows=store.db.prepare(`SELECT ${projection} FROM messages WHERE session_id=? AND (? IS NULL OR rowid<?) ${filter} ORDER BY rowid DESC LIMIT ?`).iterate(sessionId,cursor??null,cursor??null,limit+1);
   const items:ReturnType<typeof dto>[]=[];let used=0,more=false;

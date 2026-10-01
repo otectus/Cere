@@ -23,6 +23,24 @@ class ConversationContentTest {
     val compose = createComposeRule()
 
     @Test
+    fun waitingTimelineKeepsQuestionsAnswersAndQueuedMessagesReadable() {
+        val messages = listOf(
+            message("question", role = "assistant", kind = "question", text = "Which branch should I use?"),
+            message("answer", role = "user", kind = "answer", text = "Use the current branch"),
+            message("queued", role = "user", kind = "queued", text = "Queued for the next turn: follow-up"),
+        )
+        compose.setContent {
+            MaterialTheme {
+                ConversationTimeline(messages, true, "waiting", statusText = "Input needed: Child request") { Text(it.text) }
+            }
+        }
+        compose.onNodeWithText("Which branch should I use?").assertIsDisplayed()
+        compose.onNodeWithText("Use the current branch").assertIsDisplayed()
+        compose.onNodeWithText("Queued for the next turn: follow-up").assertIsDisplayed()
+        compose.onNodeWithText("Input needed: Child request").assertIsDisplayed()
+    }
+
+    @Test
     fun timelineExcludesActivityMessagesFromChat() {
         val messages = listOf(
             message("user", role = "user", kind = "text", text = "Visible user prompt"),

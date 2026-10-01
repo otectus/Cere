@@ -16,7 +16,7 @@ CDialog {
     function call(method,args){const id=App.rpc(method,args||{});const p=Object.assign({},pending);p[id]=method;pending=p}
     function refresh(){call("utility.list")}
     onOpened:refresh()
-    CText { text:"Offline utility shelf";font.pixelSize:22 }
+    CText { text:"Offline utility shelf";font.pixelSize:Theme.page }
     CText { text:"Notes, tasks and calculations stay local and do not need a model.";color:Theme.muted }
     CSection {
         title:"Notes and tasks"
@@ -31,7 +31,7 @@ CDialog {
             }
         }
         CField { id:entryTitle;Layout.fillWidth:true;placeholderText:"Title";Accessible.name:"Note or task title" }
-        TextArea { color:Theme.text;wrapMode:TextEdit.Wrap;selectByMouse:true; id:entryText;Layout.fillWidth:true;placeholderText:"Details";Accessible.name:"Note or task details" }
+        CTextArea { color:Theme.text;wrapMode:TextEdit.Wrap;selectByMouse:true; id:entryText;Layout.fillWidth:true;placeholderText:"Details";Accessible.name:"Note or task details" }
         RowLayout {
             CComboBox { id:entryKind;model:["Note","Task"];Accessible.name:"Entry type" }
             CButton { text:shelf.selected.id?"Save changes":"Add";enabled:entryTitle.text.trim().length>0;onClicked:shelf.call("utility.save",{id:shelf.selected.id,expectedRevision:shelf.selected.revision,kind:entryKind.currentIndex?"task":"note",title:entryTitle.text,text:entryText.text,done:shelf.selected.done===true}) }

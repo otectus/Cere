@@ -20,6 +20,7 @@ class ConnectedDesktopTest {
         val args = InstrumentationRegistry.getArguments()
         val desktopId = args.getString("cereExpectedDesktopId")
         assumeTrue("Needs an explicitly selected paired desktop", desktopId != null)
+        requireCellularAndVpnIfRequested(instrumentation.targetContext)
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
         val repository = (activity.application as CereApp).repository
@@ -52,7 +53,7 @@ class ConnectedDesktopTest {
                 }
                 val prompt = "Connectivity test. Reply with exactly CERE_MOBILE_OK. Do not use tools or save anything to memory."
                 val action = repository.prepareSend(session.id, prompt)
-                repository.completeAction(action, repository.signAuthenticated(action))
+                repository.completeAction(action, repository.signWithoutAuthentication(action))
                 repository.clearAcceptedDraft(session.id, prompt, emptySet())
                 withTimeout(120_000) {
                     while (true) {
@@ -63,7 +64,11 @@ class ConnectedDesktopTest {
                     }
                 }
                 check(repository.state.value.messages.any { it.sessionId == session.id && it.role == "user" && it.text == prompt })
-                check(repository.state.value.pendingCommands.none { it.sessionId == session.id && it.method == "sessions.send" })
+                // Message delivery and the authoritative command-ledger refresh run
+                // independently; wait for both before asserting convergence.
+                withTimeout(45_000) {
+                    repository.state.first { state -> state.pendingCommands.none { it.sessionId == session.id && it.method == "sessions.send" } }
+                }
                 println("CONNECTED_CHECK: live Ollama reply received after phone-key signed send; command reconciled; draft cleared")
                 if (online.supports("sessions.organize")) {
                     var current = WireCodec.json.decodeFromJsonElement(Session.serializer(), repository.request("sessions.get", buildJsonObject { put("sessionId", session.id) }))

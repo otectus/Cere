@@ -27,9 +27,9 @@ Rectangle {
         : Theme.muted
 
     implicitHeight: body.implicitHeight + 16
-    radius: 7
+    radius: Theme.radiusControl
     color: Theme.surface
-    border.color: active ? "#31566c" : Theme.line
+    border.color: active ? Theme.activeBorder : Theme.line
 
     ColumnLayout {
         id: body
@@ -60,7 +60,7 @@ Rectangle {
                     textFormat: Text.PlainText
                     color: Theme.text
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.secondary
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
@@ -69,12 +69,12 @@ Rectangle {
                     textFormat: Text.PlainText
                     color: card.statusColor
                     font.family: Theme.font
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.caption
                 }
                 Text {
                     text: card.expanded ? "▾" : "▸"
                     color: Theme.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.secondary
                 }
             }
         }
@@ -90,7 +90,7 @@ Rectangle {
                 text: card.agent.task || ""
                 textFormat: Text.PlainText
                 color: Theme.text
-                font.pixelSize: 11
+                font.pixelSize: Theme.caption
                 wrapMode: Text.Wrap
             }
             CText {
@@ -99,7 +99,7 @@ Rectangle {
                 text: card.agent.detail || ""
                 textFormat: Text.PlainText
                 color: card.agent.status === "failed" ? Theme.danger : Theme.muted
-                font.pixelSize: 11
+                font.pixelSize: Theme.caption
                 wrapMode: Text.Wrap
             }
             CText {
@@ -107,7 +107,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: "Parent · " + String(card.agent.parentId).slice(0, 8)
                 color: Theme.muted
-                font.pixelSize: 10
+                font.pixelSize: Theme.caption
             }
             CButton {
                 visible: !!card.relatedSession && App.selectedId !== card.agent.id

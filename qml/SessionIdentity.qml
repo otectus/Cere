@@ -20,14 +20,14 @@ ColumnLayout {
     Text {
         Layout.fillWidth: true; Layout.minimumWidth: 0
         text: identity.heading; textFormat: Text.PlainText
-        color: Theme.muted; font.family: Theme.font; font.pixelSize: 11; font.weight: Font.DemiBold
+        color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.caption; font.weight: Font.DemiBold
         elide: Text.ElideRight
     }
     Text {
         visible: identity.title.length > 0
         Layout.fillWidth: true; Layout.minimumWidth: 0
         text: identity.title; textFormat: Text.PlainText
-        color: Theme.text; font.family: Theme.font; font.pixelSize: 12
+        color: Theme.text; font.family: Theme.font; font.pixelSize: Theme.secondary
         wrapMode: Text.WrapAtWordBoundaryOrAnywhere
     }
     Text {
@@ -35,7 +35,7 @@ ColumnLayout {
         visible: identity.cwd.length > 0
         Layout.fillWidth: true; Layout.minimumWidth: 0
         text: identity.cwd; textFormat: Text.PlainText
-        color: Theme.muted; font.family: Theme.font; font.pixelSize: 11
+        color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.caption
         maximumLineCount: 1; elide: Text.ElideMiddle
         HoverHandler { id: projectHover }
         ToolTip.visible: projectHover.hovered && project.truncated; ToolTip.text: project.text; ToolTip.delay: 600

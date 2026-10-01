@@ -15,7 +15,7 @@ Item {
         readonly property bool iconOnly:chat.width<480
         property bool badge:false
         quiet:true;implicitHeight:30;implicitWidth:iconOnly?34:contentItem.implicitWidth+16
-        leftPadding:8;rightPadding:8;font.pixelSize:12
+        leftPadding:8;rightPadding:8;font.pixelSize:Theme.secondary
         help:text
         contentItem:Item {
             implicitWidth:tool.iconOnly?18:caption.implicitWidth
@@ -30,12 +30,13 @@ Item {
     property var pendingApprovals: []
     readonly property var pendingQuestions: pendingApprovals.filter(approval => approval.kind === "question" || (approval.questions || []).length > 0)
     function syncApprovals() {
-        const next = (App.state.approvals || []).filter(approval => approval.sessionId === App.selectedId)
+        const next = (App.state.approvals || []).filter(approval => approval.sessionId === App.selectedId || agents.some(agent => agent.id === approval.sessionId))
         // Preserve focused editors during unrelated provider progress snapshots.
         if (JSON.stringify(next) !== JSON.stringify(pendingApprovals)) pendingApprovals = next
     }
     Component.onCompleted: syncApprovals()
     property bool busy: ["starting","working","waiting","stopping"].indexOf(App.session.status)>=0 || activeAgents.length>0 || pendingApprovals.length>0
+    readonly property bool canSendWhileBusy: App.session.provider === "ollama" && App.session.status !== "stopping"
     property bool linked: App.session.mode==="linked"
     readonly property var motionSettings: App.state.settings || ({})
     readonly property bool idleWhileReading: !!(((App.animations.idleProfiles || {})[motionSettings.idleEnergy || App.animations.defaultIdleProfile] || {}).idleWhileReading)
@@ -237,14 +238,14 @@ Item {
                     id:sessionTitle;objectName:"sessionTitle"
                     text:App.session.title||"A little help. A little company."
                     Layout.fillWidth:true;Layout.minimumWidth:0;color:Theme.text;font.family:Theme.font;font.weight:Font.DemiBold
-                    font.pixelSize:chat.width>=600?22:16;elide:Text.ElideRight;textFormat:Text.PlainText
+                    font.pixelSize:chat.width>=600?Theme.page:Theme.section;elide:Text.ElideRight;textFormat:Text.PlainText
                     HoverHandler { id:titleHover }
                     ToolTip.visible:titleHover.hovered&&sessionTitle.truncated;ToolTip.text:sessionTitle.text;ToolTip.delay:600
                 }
                 Text {
                     id:sessionSubtitle;objectName:"sessionSubtitle";visible:!!App.session.id
                     text:App.session.provider?App.session.provider.charAt(0).toUpperCase()+App.session.provider.slice(1)+(App.session.model?" · "+App.session.model:"")+"  /  "+App.session.cwd:""
-                    Layout.fillWidth:true;Layout.minimumWidth:0;color:Theme.muted;font.family:Theme.font;font.pixelSize:11
+                    Layout.fillWidth:true;Layout.minimumWidth:0;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
                     maximumLineCount:1;elide:Text.ElideMiddle;textFormat:Text.PlainText
                     HoverHandler { id:subtitleHover }
                     ToolTip.visible:subtitleHover.hovered&&sessionSubtitle.truncated;ToolTip.text:sessionSubtitle.text;ToolTip.delay:600
@@ -255,21 +256,21 @@ Item {
         Rectangle { Layout.fillWidth:true;height:1;color:Theme.subtle }
     RowLayout {
         visible:App.session.temporary===true;Layout.fillWidth:true
-        CText { Layout.fillWidth:true;text:"Temporary · no Cere history or memory. External providers may retain this conversation.";color:Theme.amber;font.pixelSize:11 }
+        CText { Layout.fillWidth:true;text:"Temporary · no Cere history or memory. External providers may retain this conversation.";color:Theme.amber;font.pixelSize:Theme.caption }
         CButton { text:"Discard";danger:true;onClicked:App.rpc("session.discardTemporary",{id:App.selectedId}) }
     }
     Rectangle {
-        visible: !!App.session.error; Layout.fillWidth: true; implicitHeight: errorText.implicitHeight+18; radius: 7; color: "#382630"
-        Text { id:errorText; anchors.fill:parent;anchors.margins:9;text:App.session.error || "";color:Theme.danger;wrapMode:Text.Wrap;font.pixelSize:12 }
+        visible: !!App.session.error; Layout.fillWidth: true; implicitHeight: errorText.implicitHeight+18; radius: Theme.radiusControl; color: Theme.dangerSurface; border.color: Theme.dangerBorder
+        Text { id:errorText; anchors.fill:parent;anchors.margins:9;text:App.session.error || "";color:Theme.danger;wrapMode:Text.Wrap;font.pixelSize:Theme.secondary }
     }
     RowLayout {
         visible:!!App.session.remote;Layout.fillWidth:true
-        CText { Layout.fillWidth:true;text:"Mobile restrictions remain active for this session, including desktop turns.";color:Theme.amber;font.pixelSize:12 }
+        CText { Layout.fillWidth:true;text:"Mobile restrictions remain active for this session, including desktop turns.";color:Theme.amber;font.pixelSize:Theme.secondary }
         CButton { text:"Detach mobile";enabled:!chat.busy;onClicked:App.rpc("session.detachRemote",{id:App.selectedId}) }
     }
     RowLayout {
         objectName:"draftConflict";visible:chat.draftConflict;Layout.fillWidth:true
-        CText { Layout.fillWidth:true;text:"Draft changed on another client. Your text is retained.";color:Theme.amber;font.pixelSize:12 }
+        CText { Layout.fillWidth:true;text:"Draft changed on another client. Your text is retained.";color:Theme.amber;font.pixelSize:Theme.secondary }
         CButton { text:"Copy mine";onClicked:App.copy(composer.text) }
         CButton { objectName:"draftReload";text:"Reload";onClicked:chat.loadDraft() }
         CButton { objectName:"draftKeepMine";text:"Keep mine";onClicked:{chat.draftRevision=App.session.draftRevision||"0";chat.draftBaseline=App.session.draft||"";chat.draftConflict=false;chat.saveDraft()} }
@@ -281,7 +282,7 @@ Item {
         ColumnLayout {
             visible:!App.session.id;anchors.centerIn:parent;width:Math.min(parent.width,400);spacing:18
             CereSprite { visible:conversationArea.height>=270;Layout.alignment:Qt.AlignHCenter;Layout.preferredHeight:Math.min(156,conversationArea.height*.4);Layout.preferredWidth:144;fillMode:Image.PreserveAspectFit }
-            CText { text:"What are we making today?";font.pixelSize:chat.width>=600?28:22;font.bold:true;horizontalAlignment:Text.AlignHCenter }
+            CText { text:"What are we making today?";font.pixelSize:chat.width>=600?Theme.display:Theme.page;font.bold:true;horizontalAlignment:Text.AlignHCenter }
             CText { visible:conversationArea.height>=170;text:"A fresh idea, an unfinished project, or a little help.\nChoose a provider and make yourself at home.";color:Theme.muted;horizontalAlignment:Text.AlignHCenter }
             CButton { text: "New session"; iconName:"plus"; primary: true; Layout.alignment: Qt.AlignHCenter; onClicked: chat.createRequested() }
         }
@@ -295,7 +296,8 @@ Item {
             delegate: MessageCard { required property var entry; width:scroll.width-12; message:entry;onProposalRequested:kind=>{chat.proposalRequest=App.rpc("memoryReview.propose",{sessionId:entry.sessionId,messageId:entry.id,kind:kind})};onBranchRequested:text=>{branch.contextText=text;branch.open()};onQuoteRequested:text=>{composer.text+=(composer.text?"\n\n":"")+text.split("\n").map(line=>"> "+line).join("\n")+"\n\n";chat.focusComposer()} }
             footer:Column {
                 width:scroll.width;spacing:8
-                Text { visible: chat.busy; text: chat.activityStatus(); color: chat.pendingApprovals.length ? Theme.amber : Theme.cyan; font.pixelSize: 12 }
+                Text { visible: (App.session.queuedCount||0)>0; text: App.session.queuedCount+" message(s) queued · will send after this turn"; color:Theme.cyan;font.pixelSize:Theme.secondary }
+                Text { visible: chat.busy; text: chat.activityStatus(); color: chat.pendingApprovals.length ? Theme.amber : Theme.cyan; font.pixelSize: Theme.secondary }
                 Repeater {
                     model: chat.pendingQuestions
                     ApprovalCard {
@@ -304,7 +306,7 @@ Item {
                         approval: modelData
                     }
                 }
-                Text { visible: !App.messages.length && !!App.session.id && !chat.busy; text: chat.linked ? "Linked terminal · lifecycle observation only. Continue this conversation in its terminal. Once it ends, use CLI history to hand it to Cere." : App.session.nativeId ? "This session will continue its CLI context when you send a message." : "Your session is ready. Tell me what you have in mind."; width: parent.width; wrapMode: Text.Wrap; color: Theme.muted; font.pixelSize: 13 }
+                Text { visible: !App.messages.length && !!App.session.id && !chat.busy; text: chat.linked ? "Linked terminal · lifecycle observation only. Continue this conversation in its terminal. Once it ends, use CLI history to hand it to Cere." : App.session.nativeId ? "This session will continue its CLI context when you send a message." : "Your session is ready. Tell me what you have in mind."; width: parent.width; wrapMode: Text.Wrap; color: Theme.muted; font.pixelSize: Theme.body }
             }
             onMovementStarted:{chat.follow=false;chat.viewPristine=false}
             onContentYChanged:if(!chat.restoringView&&!chat.pendingAnchor)anchorTracker.restart()
@@ -320,7 +322,7 @@ Item {
         Layout.preferredHeight:implicitHeight
         maximumHeight:Math.max(0,Math.min(260,chat.height-300))
     }
-    CText { visible:!!chat.attachmentError;text:chat.attachmentError;color:Theme.danger;Layout.fillWidth:true;font.pixelSize:12 }
+    CText { visible:!!chat.attachmentError;text:chat.attachmentError;color:Theme.danger;Layout.fillWidth:true;font.pixelSize:Theme.secondary }
     Flickable {
         visible:chat.attachments.length>0;Layout.fillWidth:true;Layout.preferredHeight:68;contentWidth:attachmentRow.width;clip:true
         Row {
@@ -330,10 +332,10 @@ Item {
                 Rectangle {
                     required property var modelData;required property int index
                     objectName:"attachmentChip_"+modelData.id
-                    width:180;height:60;radius:8;color:Theme.surface;border.color:Theme.line
+                    width:180;height:60;radius:Theme.radiusControl;color:Theme.surface;border.color:Theme.border
                     Image { x:4;y:4;width:48;height:48;fillMode:Image.PreserveAspectFit;visible:parent.modelData.kind==="image";source:visible?"file://"+parent.modelData.path:"";asynchronous:true }
-                    Text { x:parent.modelData.kind==="image"?58:8;y:8;width:90;text:parent.modelData.name;elide:Text.ElideMiddle;color:Theme.text;font.pixelSize:11 }
-                    Text { x:parent.modelData.kind==="image"?58:8;y:30;text:Math.ceil(parent.modelData.size/1024)+" KiB";color:Theme.muted;font.pixelSize:10 }
+                    Text { x:parent.modelData.kind==="image"?58:8;y:8;width:90;text:parent.modelData.name;elide:Text.ElideMiddle;color:Theme.text;font.pixelSize:Theme.caption }
+                    Text { x:parent.modelData.kind==="image"?58:8;y:30;text:Math.ceil(parent.modelData.size/1024)+" KiB";color:Theme.muted;font.pixelSize:Theme.caption }
                     CButton { anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;text:"×";quiet:true;implicitWidth:28;Accessible.name:"Remove "+parent.modelData.name;onClicked:chat.attachments=chat.attachments.filter((a,i)=>i!==parent.index) }
                 }
             }
@@ -343,14 +345,14 @@ Item {
         visible: !!App.session.id
         id:composerCard;objectName:"composerCard"
         readonly property int minimumHeight:chat.height<560?96:122
-        Layout.fillWidth:true;implicitHeight:Math.min(Math.max(minimumHeight,chat.height*.32),Math.max(minimumHeight,composer.contentHeight+76));radius:14;color:Theme.surface;border.color:composer.activeFocus?"#3275a0":Theme.line
+        Layout.fillWidth:true;implicitHeight:Math.min(Math.max(minimumHeight,chat.height*.32),Math.max(minimumHeight,composer.contentHeight+76));radius:Theme.radiusPanel;color:Theme.surface;border.color:composer.activeFocus?Theme.focus:Theme.border;border.width:composer.activeFocus?Theme.focusWidth:1
         DropArea { anchors.fill:parent;onDropped:drop=>{if(drop.hasUrls){for(const url of drop.urls){const value=String(url);if(value.startsWith("file://"))chat.importAttachment(decodeURIComponent(value.slice(7)))}}else if(drop.hasText)composer.text+=(composer.text?"\n":"")+drop.text;drop.acceptProposedAction()} }
         ScrollView {
             id:composerViewport;anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top;anchors.bottom:composerActions.top;anchors.margins:12;clip:true
             contentWidth:availableWidth;ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar{}
             TextArea {
                 id: composer; objectName:"composer"; enabled: !!App.session.id && !chat.linked; placeholderText: chat.linked ? "Continue in the linked terminal" : App.session.id ? "Tell me what you have in mind…" : "Start a session to send a message"
-                color: Theme.text; placeholderTextColor: Theme.muted; selectionColor: Theme.selected; font.pixelSize: 14; font.family: Theme.font
+                color: Theme.text; placeholderTextColor: Theme.muted; selectionColor: Theme.selected; font.pixelSize: Theme.message; font.family: Theme.font
                 // Moving to another control keeps the selection, so it survives switching surfaces too.
                 wrapMode: TextEdit.Wrap; selectByMouse: true; persistentSelection: true; background: null
                 onTextChanged: { if(App.session.id&&!chat.loadingDraft)draftTimer.restart() }
@@ -371,9 +373,9 @@ Item {
         CButton { text:chat.width>=480?"Attach":"";iconName:"image";quiet:true;help:"Attach an image or text file";Accessible.name:"Attach a file";enabled:!!App.session.id&&!App.session.temporary&&attachments.length<8;onClicked:{const p=App.chooseFile();if(p)chat.importAttachment(p)} }
         CButton { objectName:"pasteClipboard";text:"Paste";quiet:true;help:"Paste text, images or files (Ctrl+V)";enabled:composer.enabled;onClicked:chat.pasteClipboard() }
         CButton { visible:attachments.length>0;text:chat.width>=480?"Clear":"×";help:"Clear image attachments";onClicked:attachments=[] }
-        CCheckBox { id:searchThisTurn;objectName:"searchThisTurn";visible:["ollama","openai","anthropic","google"].includes(App.session.provider)&&App.state.settings?.webSearch?.enabled===true;text:chat.width>=480?"Search web":"Web";enabled:!chat.busy&&!App.state.settings?.paused;Accessible.name:"Search web for this message";Accessible.description:"Search uses the next message as a public query, up to 500 characters";ToolTip.visible:hovered;ToolTip.text:Accessible.description;onToggled:chat.viewPristine=false }
+        CCheckBox { id:searchThisTurn;objectName:"searchThisTurn";visible:["ollama","openai","anthropic","google"].includes(App.session.provider)&&App.state.settings?.webSearch?.enabled===true;text:chat.width>=480?"Search web":"Web";enabled:(!chat.busy||chat.canSendWhileBusy)&&!App.state.settings?.paused;Accessible.name:"Search web for this message";Accessible.description:"Search uses the next message as a public query, up to 500 characters";ToolTip.visible:hovered;ToolTip.text:Accessible.description;onToggled:chat.viewPristine=false }
         Item { Layout.fillWidth:true;Layout.minimumWidth:0 }
-        Text { visible:chat.width>=480;text:"Shift+Enter · new line";color:Theme.muted;font.pixelSize:10 }
+        Text { visible:chat.width>=480;text:"Shift+Enter · new line";color:Theme.muted;font.pixelSize:Theme.caption }
         CButton {
             id:moreTools;objectName:"conversationMore";visible:chat.toolsFolded&&!!App.session.id
             implicitWidth:implicitHeight;leftPadding:9;rightPadding:9;quiet:true
@@ -385,11 +387,11 @@ Item {
             id:voiceInput;sessionId:App.selectedId;available:composer.enabled
             onTranscriptionAccepted:text=>{composer.insert(composer.cursorPosition,(composer.text?"\n":"")+text);composer.forceActiveFocus()}
         }
-        CButton { objectName:"stopMessage";visible:chat.busy;text:"Stop";implicitWidth:64;leftPadding:6;rightPadding:6;font.pixelSize:13;help:"Stop";Accessible.name:"Stop";danger:true;onClicked:App.rpc("session.stop",{id:App.selectedId}) }
+        CButton { objectName:"stopMessage";visible:chat.busy;text:"Stop";implicitWidth:64;leftPadding:6;rightPadding:6;font.pixelSize:Theme.body;help:"Stop";Accessible.name:"Stop";danger:true;onClicked:App.rpc("session.stop",{id:App.selectedId}) }
         CButton {
-            id:sendButton;objectName:"sendMessage";visible:!chat.busy
+            id:sendButton;objectName:"sendMessage";visible:!chat.busy||chat.canSendWhileBusy
             implicitWidth:implicitHeight;leftPadding:9;rightPadding:9
-            help:"Send (Enter) · Shift+Enter for a new line";Accessible.name:"Send";primary:true
+            help:chat.busy?"Queue message after this turn (Enter)":"Send (Enter) · Shift+Enter for a new line";Accessible.name:"Send";primary:true
             enabled:!!App.session.id&&!chat.linked&&!chat.importingAttachments&&composer.text.trim().length>0&&App.connected
             onClicked:chat.send()
             contentItem: Item {
@@ -409,7 +411,7 @@ Item {
     }
     RowLayout {
         visible:!!voiceInput.statusText;Layout.fillWidth:true;spacing:6
-        CText { objectName:"voiceInputStatus";Layout.fillWidth:true;text:voiceInput.statusText;wrapMode:Text.Wrap;font.pixelSize:11;color:voiceInput.error?Theme.danger:Theme.amber }
+        CText { objectName:"voiceInputStatus";Layout.fillWidth:true;text:voiceInput.statusText;wrapMode:Text.Wrap;font.pixelSize:Theme.caption;color:voiceInput.error?Theme.danger:Theme.amber }
         CButton { objectName:"voiceCancel";visible:voiceInput.recording;quiet:true;danger:true;text:"Cancel";implicitHeight:30;onClicked:voiceInput.cancel() }
     }
         Flow {
@@ -425,18 +427,17 @@ Item {
     }
     }
     // The same tools as the row below the composer, for pages too short to show it.
-    Menu {
+    CMenu {
         id:toolsMenu;objectName:"conversationToolsMenu"
-        component ToolItem: MenuItem { height:visible?implicitHeight:0 }
-        ToolItem { objectName:"menuModelOptions";text:"Model";visible:App.session.mode==="managed";enabled:!chat.busy&&App.connected;onTriggered:modelOptions.open() }
-        ToolItem { objectName:"menuHandoff";text:"Handoff";onTriggered:handoffDialog.open() }
-        ToolItem { objectName:"menuInbox";text:"Inbox · "+(App.state.completions||[]).length;onTriggered:inbox.open() }
-        ToolItem { objectName:"menuMemoryReview";text:"Memory review";onTriggered:memoryReview.open() }
-        ToolItem { objectName:"menuContext";text:"Context";onTriggered:contextDrawer.open() }
-        ToolItem { text:"Recover submission";visible:!!chat.recoverable.text&&chat.recoverable.state!=="accepted";onTriggered:submissionRecovery.open() }
-        ToolItem { text:"Terminal";visible:chat.linked;onTriggered:App.rpc("session.terminal",{id:App.selectedId}) }
+                CMenuItem { objectName:"menuModelOptions";text:"Model";visible:App.session.mode==="managed";enabled:!chat.busy&&App.connected;onTriggered:modelOptions.open() }
+        CMenuItem { objectName:"menuHandoff";text:"Handoff";onTriggered:handoffDialog.open() }
+        CMenuItem { objectName:"menuInbox";text:"Inbox · "+(App.state.completions||[]).length;onTriggered:inbox.open() }
+        CMenuItem { objectName:"menuMemoryReview";text:"Memory review";onTriggered:memoryReview.open() }
+        CMenuItem { objectName:"menuContext";text:"Context";onTriggered:contextDrawer.open() }
+        CMenuItem { text:"Recover submission";visible:!!chat.recoverable.text&&chat.recoverable.state!=="accepted";onTriggered:submissionRecovery.open() }
+        CMenuItem { text:"Terminal";visible:chat.linked;onTriggered:App.rpc("session.terminal",{id:App.selectedId}) }
     }
-    function send(){if(!App.connected||sendRequest>=0||!App.session.id||busy||linked||draftConflict||importingAttachments||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingAttachments=JSON.stringify(attachmentIds());sendRequest=App.rpc("session.send",{id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision});follow=true}
+    function send(){if(!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingAttachments=JSON.stringify(attachmentIds());sendRequest=App.rpc("session.send",{id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision});follow=true}
     Timer { id:draftTimer;interval:600;onTriggered:chat.saveDraft(false) }
     Timer { id:anchorTracker;interval:150;onTriggered:chat.trackedAnchor=chat.computeAnchor()||chat.trackedAnchor }
     Timer {
@@ -498,7 +499,7 @@ Item {
     Connections { target:App;function onResult(id,value){if(id===chat.recoveryRequest){chat.recoveryRequest=-1;if(chat.recoveryOwner===App.selectedId&&!value?.error)chat.recoverable=value||{}}else if(id===chat.recoveryRestoreRequest){chat.recoveryRestoreRequest=-1;if(value?.error)App.notify(String(value.error.message||value.error));else if(chat.restoreOwner===App.selectedId)chat.loadDraft()}} }
     CDialog {
         id:submissionRecovery
-        CText { text:"Recover the last submission";font.pixelSize:18 }
+        CText { text:"Recover the last submission";font.pixelSize:Theme.title }
         CText { text:"The provider’s acceptance was not confirmed. Restoring this text and its attachments replaces your current draft and sends nothing. Check the transcript before sending again.";color:Theme.amber }
         CText { text:chat.recoverable.text||"";wrapMode:Text.Wrap }
         CText { text:(chat.recoverable.attachmentIds||[]).length+" retained attachments";color:Theme.muted }
@@ -508,7 +509,7 @@ Item {
     }
     CDialog {
         id:imagePreview;property string imagePath
-        CText { text:"Share this image with "+(App.session.provider||"the provider")+"?";font.pixelSize:18;font.weight:Font.DemiBold }
+        CText { text:"Share this image with "+(App.session.provider||"the provider")+"?";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
         Image { id:previewImage;Layout.fillWidth:true;Layout.preferredHeight:Math.min(240,chat.height*.5);fillMode:Image.PreserveAspectFit }
         RowLayout { Layout.fillWidth:true;CButton{Layout.fillWidth:true;text:"Cancel";onClicked:imagePreview.close()}CButton{Layout.fillWidth:true;text:"Attach image";primary:true;onClicked:{chat.importAttachment(imagePreview.imagePath);imagePreview.close()}} }
     }
@@ -518,7 +519,7 @@ Item {
         property string sessionId:""
         property string error:""
         onOpened:{sessionId=App.selectedId;renameTitle.text=App.session.title||"";error="";renameTitle.forceActiveFocus();renameTitle.selectAll()}
-        CText { text:"Rename session";font.pixelSize:22;font.weight:Font.DemiBold }
+        CText { text:"Rename session";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
         CText { text:"Give this conversation a name you’ll recognize.";color:Theme.muted }
         CField { id:renameTitle;objectName:"renameSessionTitle";Layout.fillWidth:true;maximumLength:100;placeholderText:"Untitled session";Accessible.name:"Session title";onAccepted:if(renameSave.enabled)renameSave.clicked() }
         CText { visible:renameDialog.error.length>0;text:renameDialog.error;color:Theme.danger }
@@ -535,17 +536,17 @@ Item {
         property string error:""
         property var targets:[{id:"codex",displayName:"Codex"},{id:"claude",displayName:"Claude"},{id:"ollama",displayName:"Ollama"},{id:"antigravity",displayName:"AntiGravity"},{id:"openai",displayName:"OpenAI API"},{id:"anthropic",displayName:"Claude API"},{id:"google",displayName:"Google AI API"}].filter(p=>p.id!==App.session.provider)
         onOpened: {error="";handoffTrust.checked=false;handoffProvider.currentIndex=0;handoffText.text="Continue this work in "+(App.session.cwd||"")+".\n\n"+App.messages.filter(m=>m.role!=="tool").slice(-8).map(m=>m.role+": "+m.text).join("\n\n");if(handoffProvider.currentValue)App.rpc("provider.models",{provider:handoffProvider.currentValue})}
-        CText { text:"Review context before sharing";font.pixelSize:18;font.bold:true }
-        CText { text:"Choose a provider for the new conversation. Nothing is sent until you submit its draft.";color:Theme.muted;font.pixelSize:12 }
+        CText { text:"Review context before sharing";font.pixelSize:Theme.title;font.bold:true }
+        CText { text:"Choose a provider for the new conversation. Nothing is sent until you submit its draft.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CComboBox { id:handoffProvider;objectName:"handoffProvider";Layout.fillWidth:true;model:handoffDialog.targets;textRole:"displayName";valueRole:"id";Accessible.name:"Handoff provider";onActivated:if(currentValue)App.rpc("provider.models",{provider:currentValue}) }
         CComboBox { id:handoffModel;visible:["ollama","openai","anthropic","google"].includes(handoffProvider.currentValue);Layout.fillWidth:true;model:(App.state.capabilities||{})[handoffProvider.currentValue]?.models||[];textRole:"displayName";valueRole:"id";Accessible.name:"Handoff model";currentIndex:Math.max(0,model.findIndex(m=>m.id===App.state.settings?.ollama?.model)) }
         CCheckBox { id:handoffTrust;objectName:"handoffTrust";visible:!App.state.settings?.bypassCliPermissions&&["codex","claude","antigravity"].includes(handoffProvider.currentValue);text:"I trust this project’s CLI configuration and hooks" }
-        CText { visible:!!handoffDialog.error;text:handoffDialog.error;color:Theme.danger;font.pixelSize:12 }
+        CText { visible:!!handoffDialog.error;text:handoffDialog.error;color:Theme.danger;font.pixelSize:Theme.secondary }
         ScrollView {
             Layout.fillWidth:true;Layout.preferredHeight:Math.min(240,chat.height*.5);clip:true;contentWidth:availableWidth
             ScrollBar.horizontal.policy:ScrollBar.AlwaysOff
             ScrollBar.vertical:CScrollBar{}
-            TextArea{id:handoffText;color:Theme.text;font.family:Theme.font;font.pixelSize:13;wrapMode:TextEdit.Wrap;selectByMouse:true;background:Rectangle{color:Theme.input;radius:7}}
+            CTextArea{id:handoffText;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;wrapMode:TextEdit.Wrap;selectByMouse:true}
         }
         CButton { objectName:"handoffCreate";Layout.fillWidth:true;text:"Create handoff draft";primary:true;enabled:App.connected&&chat.handoffRequest<0&&(!handoffTrust.visible||handoffTrust.checked)&&(!handoffModel.visible||!!handoffModel.currentValue);onClicked:{chat.handoff=handoffText.text;chat.handoffRequest=App.rpc("session.create",{provider:handoffProvider.currentValue,model:handoffModel.visible?handoffModel.currentValue:"",cwd:App.session.cwd,temporary:App.session.temporary===true,trusted:!handoffTrust.visible||handoffTrust.checked,title:"Handoff · "+App.session.title})} }
     }

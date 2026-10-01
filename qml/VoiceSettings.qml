@@ -40,11 +40,11 @@ CSection {
         function save(){saveValue(control.value)}
         RowLayout {
             Layout.fillWidth:true
-            CText { text:tuning.label;font.pixelSize:12 }
+            CText { text:tuning.label;font.pixelSize:Theme.secondary }
             CText {
                 Layout.fillWidth:false
                 text:(tuning.signed&&control.value>0?"+":"")+(control.value*tuning.displayScale).toFixed(tuning.decimals)+tuning.suffix
-                color:Theme.cyan;font.pixelSize:12
+                color:Theme.cyan;font.pixelSize:Theme.secondary
             }
         }
         CSlider {
@@ -69,7 +69,7 @@ CSection {
         onClicked:App.rpc("settings.update",{speechEnabled:checked})
     }
     CText { text:"Speak replies from";font.weight:Font.DemiBold }
-    CText { text:"Choose conversation providers for automatic speech, including pinned conversations. Turning one off stops its current and queued speech; message bubbles remain visible. Test voice still works.";font.pixelSize:12;color:Theme.muted }
+    CText { text:"Choose conversation providers for automatic speech, including pinned conversations. Turning one off stops its current and queued speech; message bubbles remain visible. Test voice still works.";font.pixelSize:Theme.secondary;color:Theme.muted }
     Flow {
         Layout.fillWidth:true;spacing:8
         Repeater {
@@ -103,7 +103,7 @@ CSection {
     TuningSlider { visible:voiceSettings.settings.ttsProvider!=="indextts";settingKey:"speechRate";label:"Speaking speed";minimum:.5;maximum:2;suffix:"×" }
     TuningSlider { settingKey:"speechPitch";label:"Pitch · lower / higher";minimum:-6;maximum:6;increment:.5;neutral:0;decimals:1;suffix:" semitones";signed:true }
     TuningSlider { settingKey:"speechVolume";label:"Cere’s volume";displayScale:100;decimals:0;suffix:"%" }
-    CText { text:"Pitch changes tone without changing speed. Adjustments apply to new replies and Test voice. Volume affects Cere only; 0% mutes her voice.";color:Theme.muted;font.pixelSize:12 }
+    CText { text:"Pitch changes tone without changing speed. Adjustments apply to new replies and Test voice. Volume affects Cere only; 0% mutes her voice.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CButton {
         objectName:"resetVoiceTuning";text:"Reset voice adjustments";enabled:!voiceSettings.savingTuning
         onClicked:voiceSettings.saveTuning({speechRate:1,speechPitch:0,speechVolume:1})
@@ -116,14 +116,14 @@ CSection {
         CButton { text:"Refresh voices";Layout.fillWidth:true;onClicked:voiceSettings.refresh() }
     }
     CText {
-        objectName:"ttsStatus";font.pixelSize:12
+        objectName:"ttsStatus";font.pixelSize:Theme.secondary
         text:voiceSettings.speech.error||voiceSettings.error||(voiceSettings.settings.speechVolume===0?"Voice muted · raise Cere’s volume to preview":voiceSettings.speech.state==="preparing"?"Preparing voice…":voiceSettings.speech.state==="speaking"?"Speaking · "+voiceSettings.speech.backend:voiceSettings.speech.backend?"Ready · "+voiceSettings.speech.backend:"Ready to test")
         color:voiceSettings.speech.error||voiceSettings.error?Theme.danger:Theme.cyan
     }
-    CText { visible:!voiceSettings.settings.ttsProvider||voiceSettings.settings.ttsProvider==="local";text:"Add a voice’s .onnx and .onnx.json files to ~/.local/share/piper/voices/ or Cere’s config/voices/ folder, then refresh. Test voice plays even in quiet mode.";color:Theme.muted;font.pixelSize:12 }
+    CText { visible:!voiceSettings.settings.ttsProvider||voiceSettings.settings.ttsProvider==="local";text:"Add a voice’s .onnx and .onnx.json files to ~/.local/share/piper/voices/ or Cere’s config/voices/ folder, then refresh. Test voice plays even in quiet mode.";color:Theme.muted;font.pixelSize:Theme.secondary }
     Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
     CText { text:"Local voice input";font.weight:Font.DemiBold }
-    CText { text:"Push-to-talk uses a whisper.cpp executable and model already installed on this computer. Cere never uploads recordings and does not download a model at startup.";color:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap }
+    CText { text:"Push-to-talk uses a whisper.cpp executable and model already installed on this computer. Cere never uploads recordings and does not download a model at startup.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CField {
         id:whisperExecutable;objectName:"whisperExecutable";Layout.fillWidth:true
         placeholderText:"Absolute path to whisper-cli";text:voiceSettings.transcriptionSettings.executable||""
@@ -139,7 +139,7 @@ CSection {
         enabled:whisperExecutable.text.trim().startsWith("/")&&whisperModel.text.trim().startsWith("/")
         onClicked:App.rpc("settings.update",{transcription:{executable:whisperExecutable.text.trim(),model:whisperModel.text.trim()}})
     }
-    CText { text:"Follow the whisper.cpp README at github.com/ggml-org/whisper.cpp: build whisper-cli locally and download a GGML model with the project’s model script. Paste both absolute paths above. Audio capture uses PipeWire pw-record, with ALSA arecord as a fallback. Recordings are limited to 60 seconds and deleted after finish, cancel, or error.";color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap }
+    CText { text:"Follow the whisper.cpp README at github.com/ggml-org/whisper.cpp: build whisper-cli locally and download a GGML model with the project’s model script. Paste both absolute paths above. Audio capture uses PipeWire pw-record, with ALSA arecord as a fallback. Recordings are limited to 60 seconds and deleted after finish, cancel, or error.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     Connections {
         target:App
         function onStateChanged(){

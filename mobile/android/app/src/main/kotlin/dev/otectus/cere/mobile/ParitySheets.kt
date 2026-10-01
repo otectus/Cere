@@ -41,6 +41,11 @@ import java.io.ByteArrayOutputStream
 internal fun signedReview(activity: FragmentActivity, repository: CereRepository, method: String, params: JsonObject, title: String, success: (JsonElement) -> Unit, failure: (String) -> Unit, boundProjectId: String? = null) {
     activity.lifecycleScope.launch {
         runCatching { repository.prepareAction(method, params, boundProjectId) }.onFailure { failure(it.message ?: "Unable to review action") }.onSuccess { action ->
+            if (!action.requiresUserAuthentication) {
+                runCatching { repository.completeAction(action, repository.signWithoutAuthentication(action)) }
+                    .onSuccess(success).onFailure { failure(it.message ?: "Check the pending command before retrying") }
+                return@onSuccess
+            }
             val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) { activity.lifecycleScope.launch {
                     runCatching { repository.completeAction(action, repository.signAuthenticated(action)) }.onSuccess(success).onFailure { failure(it.message ?: "Check the pending command before retrying") }

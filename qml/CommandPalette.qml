@@ -11,8 +11,8 @@ Popup {
     height:Math.min(600,parent?parent.height-28:600)
     modal:true;dim:true;focus:true;padding:16;margins:14
     closePolicy:Popup.CloseOnEscape|Popup.CloseOnPressOutside
-    background:Rectangle { color:Theme.surface;radius:16;border.color:"#36536a" }
-    Overlay.modal:Rectangle { color:"#b304090f" }
+    background:Rectangle { color:Theme.surface;radius:Theme.radiusDialog;border.color:Theme.borderStrong }
+    Overlay.modal:Rectangle { color:Theme.overlayScrim }
 
     signal sessionRequested(string id)
     signal folderRequested(string id)
@@ -154,7 +154,7 @@ Popup {
         }
         CText {
             text:rootPalette.query?rootPalette.results.length+" result"+(rootPalette.results.length===1?"":"s"):"Favorites and recent destinations"
-            color:Theme.muted;font.pixelSize:11
+            color:Theme.muted;font.pixelSize:Theme.caption
         }
         ListView {
             id:resultList;objectName:"commandPaletteResults"
@@ -179,8 +179,8 @@ Popup {
                     onClicked:{resultList.currentIndex=resultRow.index;rootPalette.activate(resultRow.modelData)}
                     contentItem:ColumnLayout {
                         spacing:3
-                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:resultRow.modelData.title;color:Theme.text;font.family:Theme.font;font.pixelSize:13;font.weight:Font.Medium;elide:Text.ElideRight;textFormat:Text.PlainText }
-                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:resultRow.modelData.detail;color:Theme.muted;font.family:Theme.font;font.pixelSize:11;elide:Text.ElideMiddle;textFormat:Text.PlainText }
+                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:resultRow.modelData.title;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;elide:Text.ElideRight;textFormat:Text.PlainText }
+                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:resultRow.modelData.detail;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption;elide:Text.ElideMiddle;textFormat:Text.PlainText }
                     }
                 }
                 CButton {
@@ -193,21 +193,21 @@ Popup {
             }
             CText { visible:resultList.count===0;width:parent.width;text:rootPalette.query?"No matching destination.":"Search to find anything in Cere.";color:Theme.muted;horizontalAlignment:Text.AlignHCenter }
         }
-        CText { visible:rootPalette.error.length>0;text:rootPalette.error;color:Theme.danger;font.pixelSize:12 }
-        CText { text:"↑ ↓ navigate  ·  Enter open  ·  Esc close";color:Theme.muted;font.pixelSize:11;horizontalAlignment:Text.AlignRight }
+        CText { visible:rootPalette.error.length>0;text:rootPalette.error;color:Theme.danger;font.pixelSize:Theme.secondary }
+        CText { text:"↑ ↓ navigate  ·  Enter open  ·  Esc close";color:Theme.muted;font.pixelSize:Theme.caption;horizontalAlignment:Text.AlignRight }
     }
 
     CDialog {
         id:scriptReview;objectName:"commandScriptReview";property var script:({});property int requestId:-1;property string error:""
         onOpened:error=""
-        CText { text:"Run "+(scriptReview.script.name||"saved script")+"?";font.pixelSize:20;font.weight:Font.DemiBold }
-        CText { text:"Executable";color:Theme.muted;font.pixelSize:11 }
-        CText { text:scriptReview.script.executable||"";font.family:"monospace";font.pixelSize:12 }
-        CText { text:"Arguments";color:Theme.muted;font.pixelSize:11 }
-        CText { text:JSON.stringify(scriptReview.script.args||[]);font.family:"monospace";font.pixelSize:12 }
-        CText { text:"Working folder";color:Theme.muted;font.pixelSize:11 }
-        CText { text:scriptReview.script.cwd||"";font.family:"monospace";font.pixelSize:12 }
-        CText { visible:scriptReview.error.length>0;text:scriptReview.error;color:Theme.danger;font.pixelSize:12 }
+        CText { text:"Run "+(scriptReview.script.name||"saved script")+"?";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { text:"Executable";color:Theme.muted;font.pixelSize:Theme.caption }
+        CText { text:scriptReview.script.executable||"";font.family:"monospace";font.pixelSize:Theme.secondary }
+        CText { text:"Arguments";color:Theme.muted;font.pixelSize:Theme.caption }
+        CText { text:JSON.stringify(scriptReview.script.args||[]);font.family:"monospace";font.pixelSize:Theme.secondary }
+        CText { text:"Working folder";color:Theme.muted;font.pixelSize:Theme.caption }
+        CText { text:scriptReview.script.cwd||"";font.family:"monospace";font.pixelSize:Theme.secondary }
+        CText { visible:scriptReview.error.length>0;text:scriptReview.error;color:Theme.danger;font.pixelSize:Theme.secondary }
         RowLayout {
             Layout.fillWidth:true
             CButton { Layout.fillWidth:true;text:"Cancel";enabled:scriptReview.requestId<0;onClicked:scriptReview.close() }

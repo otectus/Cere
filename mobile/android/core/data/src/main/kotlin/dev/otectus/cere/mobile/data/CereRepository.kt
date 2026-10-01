@@ -39,6 +39,7 @@ sealed interface ConnectionState {
 data class MobileState(
     val restoreReady: Boolean = false,
     val desktop: PairedDesktop? = null,
+    val stagedPairing: CompletedPairing? = null,
     val connection: ConnectionState = ConnectionState.Unpaired,
     val sessions: List<Session> = emptyList(), val messages: List<Message> = emptyList(),
     val approvals: List<Approval> = emptyList(), val projects: List<Project> = emptyList(),
@@ -62,12 +63,14 @@ class PreparedAction internal constructor(
     val commandId: String,
     val challengeId: String,
     val signature: Signature,
+    val requiresUserAuthentication: Boolean,
     internal val transcript: ByteArray,
     internal val command: PendingCommand,
 )
 class CommandPendingException(val commandId: String) : IllegalStateException("Outcome unknown. Cere will reconcile command $commandId after reconnect.")
 data class ApprovalPreview(val bytes: ByteArray, val mime: String, val imageDigest: String)
 private class TerminalProtocolException(message: String) : IllegalStateException(message)
+private class RemoteRequestException(val code: String, detail: String) : IllegalStateException("$code: $detail")
 
 class CereRepository(context: Context) {
     private val app = context.applicationContext
@@ -79,18 +82,22 @@ class CereRepository(context: Context) {
     private val binaryReads = ConcurrentHashMap<String, CompletableDeferred<Pair<Long, ByteArray>>>()
     private val stateMutex = Mutex(); private val syncMutex = Mutex(); private val restoreMutex = Mutex()
     private val draftMutexes = ConcurrentHashMap<String, Mutex>()
+    private val approvalRetirements = ApprovalRetirements()
     private val snapshotRequests = Channel<Unit>(Channel.CONFLATED)
     private val frames = Channel<Pair<WebSocket, String>>(Channel.UNLIMITED)
     private val _state = MutableStateFlow(MobileState()); val state: StateFlow<MobileState> = _state.asStateFlow()
     private val _questionDrafts = MutableStateFlow<Map<String, Map<String, List<String>>>>(emptyMap())
     val questionDrafts: StateFlow<Map<String, Map<String, List<String>>>> = _questionDrafts.asStateFlow()
+    private val questionDraftIdentities = ConcurrentHashMap<String, ApprovalIdentity>()
     private val _approvalMutations = MutableStateFlow<Set<String>>(emptySet())
     val approvalMutations: StateFlow<Set<String>> = _approvalMutations.asStateFlow()
+    private val approvalMutationIdentities = ConcurrentHashMap<String, ApprovalIdentity>()
     @Volatile private var socket: WebSocket? = null
     private var welcome: Welcome? = null; private var activeHello: Hello? = null
     private var reconnectJob: Job? = null; private var refreshJob: Job? = null
     private var endpointIndex = 0; private var backoffAttempt = 0; private var terminalBlocked = false
     @Volatile private var shouldMonitor = false; private var lastVerified: Long? = null
+    @Volatile private var pairingTransition = false
     // Treat startup as restore-blocked until the credential-encrypted cache has
     // been read. This prevents service/UI callbacks from persisting the default
     // unpaired state over an existing pairing while restore is still in flight.
@@ -105,7 +112,7 @@ class CereRepository(context: Context) {
         val unlockFilter = IntentFilter().apply { addAction(Intent.ACTION_USER_UNLOCKED); addAction(Intent.ACTION_USER_PRESENT) }
         if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(unlockReceiver, unlockFilter, Context.RECEIVER_NOT_EXPORTED)
         else @Suppress("DEPRECATION") app.registerReceiver(unlockReceiver, unlockFilter)
-        scope.launch { if (restore() && shouldMonitor) connect(); for ((webSocket, text) in frames) {
+        scope.launch { if (restore() && shouldMonitor && _state.value.stagedPairing == null) connect(); for ((webSocket, text) in frames) {
             if (socket !== webSocket) continue
             try { handle(webSocket, WireCodec.decodeFrame(text)) }
             catch (error: Throwable) { fail(webSocket, error.message ?: "Protocol error", error is TerminalProtocolException) }
@@ -118,6 +125,7 @@ class CereRepository(context: Context) {
     }
 
     fun pairingManager() = pairing
+    fun replacementBlocker(): String? = ReplacementPolicy.blocker(_state.value)
     suspend fun dismissError() { updateState { it.copy(lastError = null) } }
 
     // Start on the caller in edit order, then finish encrypted persistence in the
@@ -129,16 +137,107 @@ class CereRepository(context: Context) {
             catch (error: Exception) { updateState { it.copy(lastError = error.message) } }
         }
     }
-    suspend fun completePairing(completed: CompletedPairing) {
-        if (!updateState { MobileState(restoreReady = true, desktop = completed.desktop, connection = ConnectionState.Offline("Ready to connect", null)) }) {
-            cacheDirty = false; stateMutex.withLock { _state.value = MobileState(connection = ConnectionState.Blocked(PRIVATE_CACHE_ERROR), lastError = PRIVATE_CACHE_ERROR) }; error(PRIVATE_CACHE_ERROR)
+    /** Seal the response and new aliases before showing them. The old pairing remains committed. */
+    suspend fun stagePairing(completed: CompletedPairing) {
+        pairingTransition = true
+        try {
+            stateMutex.withLock {
+                val current = _state.value
+                require(current.stagedPairing == null || current.stagedPairing == completed) { "Another pairing response is already awaiting confirmation" }
+                validateReplacement(completed, current.desktop)
+                ReplacementPolicy.blocker(current)?.let(::error)
+                val staged = current.copy(
+                    stagedPairing = completed,
+                    connection = current.desktop?.let { ConnectionState.Offline("Replacement response awaiting desktop confirmation", lastVerified) }
+                        ?: ConnectionState.Unpaired,
+                    monitoring = false,
+                    lastError = null,
+                )
+                store.write(cached(staged, lastVerified))
+                _state.value = staged
+                cacheDirty = false
+            }
+        } catch (error: Throwable) {
+            pairingTransition = _state.value.stagedPairing != null
+            throw error
         }
+        disconnectForPairingTransition()
+    }
+
+    suspend fun completePairing(completed: CompletedPairing) {
+        val replacing = stateMutex.withLock {
+            val current = _state.value
+            require(current.stagedPairing == completed) { "Pairing response was not durably staged" }
+            validateReplacement(completed, current.desktop)
+            ReplacementPolicy.blocker(current)?.let(::error)
+            val previousDesktop = current.desktop
+            val next = if (previousDesktop == null) MobileState(
+                restoreReady = true,
+                desktop = completed.desktop,
+                connection = ConnectionState.Offline("Ready to connect", null),
+            ) else current.copy(
+                desktop = completed.desktop,
+                stagedPairing = null,
+                connection = ConnectionState.Offline("Pairing updated; ready to connect", lastVerified),
+                cursor = null,
+                approvals = emptyList(),
+                monitoring = false,
+                lastError = null,
+            )
+            store.write(cached(next, lastVerified))
+            _state.value = next
+            cacheDirty = false
+            previousDesktop
+        }
+        pairingTransition = false
+        if (replacing != null) {
+            approvalRetirements.clear(); questionDraftIdentities.clear(); approvalMutationIdentities.clear()
+            _questionDrafts.value = emptyMap(); _approvalMutations.value = emptySet()
+        }
+        if (replacing != null) runCatching { pairing.delete(replacing) }
+    }
+
+    suspend fun cancelStagedPairing() {
+        val staged = stateMutex.withLock {
+            val current = _state.value
+            val pending = current.stagedPairing ?: return@withLock null
+            val next = if (current.desktop == null) MobileState(restoreReady = true)
+            else current.copy(
+                stagedPairing = null,
+                connection = ConnectionState.Offline("Replacement cancelled", lastVerified),
+                monitoring = false,
+                lastError = null,
+            )
+            store.write(cached(next, lastVerified))
+            _state.value = next
+            cacheDirty = false
+            pending
+        } ?: return
+        pairingTransition = false
+        runCatching { pairing.delete(staged.desktop) }
+    }
+
+    private fun validateReplacement(completed: CompletedPairing, replacing: PairedDesktop?) {
+        if (replacing == null) require(completed.replacesDeviceId == null) { "A replacement response requires its existing phone pairing" }
+        else {
+            require(completed.desktop.desktopId == replacing.desktopId) { "A paired phone can only replace its current desktop connection" }
+            require(completed.replacesDeviceId == replacing.deviceId) { "Replacement response does not identify this paired phone" }
+        }
+    }
+
+    @Synchronized private fun disconnectForPairingTransition() {
+        val currentSocket = socket; socket = null; welcome = null; activeHello = null
+        refreshJob?.cancel(); refreshJob = null; reconnectJob?.cancel(); reconnectJob = null
+        pendingResponses.values.forEach { it.completeExceptionally(IllegalStateException("Pairing confirmation in progress")) }; pendingResponses.clear()
+        uploadProgress.values.forEach { it.completeExceptionally(IllegalStateException("Pairing confirmation in progress")) }; uploadProgress.clear()
+        binaryReads.values.forEach { it.completeExceptionally(IllegalStateException("Pairing confirmation in progress")) }; binaryReads.clear()
+        currentSocket?.close(1000, "Pairing confirmation in progress")
     }
 
     @Synchronized fun startMonitoring() { shouldMonitor = true; terminalBlocked = false; if (restoreBlocked) scope.launch { stateMutex.withLock { _state.value = _state.value.copy(monitoring = true) } } else scope.launch { updateState { it.copy(monitoring = true) } }; if (socket == null && !restoreBlocked) connect() }
     /** Opening the app reconnects a restored pairing even when its service was stopped by an update. */
     @Synchronized fun connectWhileOpen() {
-        if (restoreBlocked || _state.value.desktop == null || socket != null || terminalBlocked) return
+        if (restoreBlocked || _state.value.desktop == null || _state.value.stagedPairing != null || socket != null || terminalBlocked) return
         shouldMonitor = true; reconnectJob?.cancel(); reconnectJob = null; connect()
     }
     @Synchronized fun networkAvailable() {
@@ -153,33 +252,50 @@ class CereRepository(context: Context) {
     @Synchronized fun retry() { terminalBlocked = false; backoffAttempt = 0; shouldMonitor = true; if (restoreBlocked) { scope.launch { if (restore()) connect() }; return }; val old = socket; socket = null; old?.cancel(); reconnectJob?.cancel(); reconnectJob = null; connect() }
 
     fun setQuestionAnswer(approvalId: String, questionId: String, answers: List<String>) {
+        val identity = _state.value.approvals.firstOrNull { it.id == approvalId }?.identity() ?: return
+        val previousIdentity = questionDraftIdentities.put(approvalId, identity)
         _questionDrafts.update { drafts ->
-            val approval = drafts[approvalId].orEmpty().toMutableMap()
+            val approval = if (previousIdentity == null || previousIdentity == identity) drafts[approvalId].orEmpty().toMutableMap() else mutableMapOf()
             if (answers.any(String::isNotBlank)) approval[questionId] = answers else approval.remove(questionId)
-            if (approval.isEmpty()) drafts - approvalId else drafts + (approvalId to approval.toMap())
+            if (approval.isEmpty()) {
+                questionDraftIdentities.remove(approvalId, identity)
+                drafts - approvalId
+            } else drafts + (approvalId to approval.toMap())
         }
     }
 
-    @Synchronized fun beginApprovalMutation(approvalId: String): Boolean {
-        if (approvalId in _approvalMutations.value) return false
-        _approvalMutations.value = _approvalMutations.value + approvalId
+    @Synchronized fun beginApprovalMutation(approval: Approval): Boolean {
+        if (approval.id in _approvalMutations.value) return false
+        approvalMutationIdentities[approval.id] = approval.identity()
+        _approvalMutations.value = _approvalMutations.value + approval.id
         return true
     }
 
-    @Synchronized fun endApprovalMutation(approvalId: String) {
-        _approvalMutations.value = _approvalMutations.value - approvalId
+    @Synchronized fun endApprovalMutation(approval: Approval) {
+        if (!approvalMutationIdentities.remove(approval.id, approval.identity())) return
+        _approvalMutations.value = _approvalMutations.value - approval.id
     }
 
     private fun retainApprovalInteractionState(approvals: List<Approval>) {
-        val ids = approvals.mapTo(mutableSetOf(), Approval::id)
-        _questionDrafts.update { drafts -> drafts.filterKeys { it in ids } }
-        _approvalMutations.update { mutations -> mutations.filterTo(mutableSetOf()) { it in ids } }
+        val identities = approvals.associate { it.id to it.identity() }
+        _questionDrafts.update { drafts -> drafts.filterKeys { id -> questionDraftIdentities[id] == identities[id] } }
+        questionDraftIdentities.forEach { (id, identity) -> if (identities[id] != identity) questionDraftIdentities.remove(id, identity) }
+        _approvalMutations.update { mutations -> mutations.filterTo(mutableSetOf()) { id -> approvalMutationIdentities[id] == identities[id] } }
+        approvalMutationIdentities.forEach { (id, identity) -> if (identities[id] != identity) approvalMutationIdentities.remove(id, identity) }
+    }
+
+    private fun clearApprovalInteractionState(identity: ApprovalIdentity) {
+        if (questionDraftIdentities.remove(identity.id, identity)) _questionDrafts.update { it - identity.id }
+        if (approvalMutationIdentities.remove(identity.id, identity)) _approvalMutations.update { it - identity.id }
     }
 
     suspend fun forget() {
-        val desktop = _state.value.desktop ?: return
-        if (_state.value.supports("devices.selfRevoke")) runCatching { mutate("devices.selfRevoke", buildJsonObject {}) }
-        stopMonitoring("Forgotten"); pairing.delete(desktop); store.clear(); stateMutex.withLock { _state.value = MobileState(restoreReady = true) }
+        val desktop = _state.value.desktop
+        if (desktop != null && _state.value.supports("devices.selfRevoke")) runCatching { mutate("devices.selfRevoke", buildJsonObject {}) }
+        val staged = _state.value.stagedPairing?.desktop
+        if (desktop == null && staged == null) return
+        stopMonitoring("Forgotten"); desktop?.let { runCatching { pairing.delete(it) } }; staged?.let { runCatching { pairing.delete(it) } }; store.clear(); stateMutex.withLock { _state.value = MobileState(restoreReady = true) }
+        pairingTransition = false; approvalRetirements.clear(); questionDraftIdentities.clear(); approvalMutationIdentities.clear()
         _questionDrafts.value = emptyMap(); _approvalMutations.value = emptySet()
     }
 
@@ -205,11 +321,12 @@ class CereRepository(context: Context) {
     }
 
     suspend fun request(method: String, params: JsonObject): JsonElement {
+        check(!pairingTransition && _state.value.stagedPairing == null) { "Finish or cancel pairing confirmation first" }
         require(_state.value.supports(method)) { "Desktop did not negotiate $method" }
         val id = UUID.randomUUID().toString(); val deferred = CompletableDeferred<WireResponse>(); pendingResponses[id] = deferred
         if (socket?.send(WireCodec.encode(WireRequest(id = id, method = method, params = params))) != true) { pendingResponses.remove(id); error("Desktop is unreachable") }
         val response = try { withTimeout(30_000) { deferred.await() } } finally { pendingResponses.remove(id) }
-        response.error?.let { error("${it.code}: ${it.message}") }; return response.result ?: JsonNull
+        response.error?.let { throw RemoteRequestException(it.code, it.message) }; return response.result ?: JsonNull
     }
 
     suspend fun mutate(method: String, params: JsonObject): JsonElement {
@@ -231,11 +348,19 @@ class CereRepository(context: Context) {
         val transcript = CanonicalJson.encode(SigningTranscripts.action(desktop.desktopId, desktop.deviceId, 1, session.scopeVersion, session.epoch,
             session.authSessionId, challengeId, nonce, method, digest, commandId)).toByteArray()
         val signature = if (connectionSigned) pairing.connectionSignature(desktop.connectionAlias) else pairing.actionSignature(desktop.actionAlias)
-        return PreparedAction(method, params, commandId, challengeId, signature, transcript,
+        val requiresUserAuthentication = ActionAuthenticationPolicy.actionRequiresPrompt(desktop, session, connectionSigned)
+        return PreparedAction(method, params, commandId, challengeId, signature, requiresUserAuthentication, transcript,
             pendingCommand(commandId, method, params, boundProjectId))
     }
     suspend fun completeAction(action: PreparedAction, signature: ByteArray): JsonElement = requestWithCommand(action.command, Proof(action.challengeId, CanonicalJson.base64Url(signature)))
-    fun signAuthenticated(action: PreparedAction): ByteArray = action.signature.run { update(action.transcript); sign() }
+    fun signAuthenticated(action: PreparedAction): ByteArray {
+        require(action.requiresUserAuthentication) { "This action does not use phone authentication" }
+        return action.signature.run { update(action.transcript); sign() }
+    }
+    fun signWithoutAuthentication(action: PreparedAction): ByteArray {
+        require(!action.requiresUserAuthentication) { "Phone authentication is required for this action" }
+        return action.signature.run { update(action.transcript); sign() }
+    }
 
     suspend fun saveLocalDraft(sessionId: String, text: String) = updateState { current ->
         val session = current.sessions.firstOrNull { it.id == sessionId } ?: return@updateState current; val old = current.drafts[sessionId] ?: current.draft(session)
@@ -350,7 +475,10 @@ class CereRepository(context: Context) {
         require(local.reviewedAt != null) { "Review this image before uploading it" }
         var upload = initial ?: local.remoteAttachmentId?.let { request("attachments.status", buildJsonObject { put("attachmentId", it) }).jsonObject } ?: error("Upload has not started")
         val attachmentId = upload.getValue("attachmentId").jsonPrimitive.content; val uploadId = upload.getValue("uploadId").jsonPrimitive.content; var offset = upload["offset"]?.jsonPrimitive?.intOrNull ?: 0
-        updateState { current -> current.copy(attachments = current.attachments.map { if (it.id == localId) it.copy(remoteAttachmentId = attachmentId, uploadId = uploadId, committedOffset = offset, remoteStatus = upload["status"]?.jsonPrimitive?.contentOrNull ?: "uploading") else it }) }
+        updateState { current ->
+            check(!pairingTransition && current.stagedPairing == null) { "Finish or cancel pairing confirmation first" }
+            current.copy(attachments = current.attachments.map { if (it.id == localId) it.copy(remoteAttachmentId = attachmentId, uploadId = uploadId, committedOffset = offset, remoteStatus = upload["status"]?.jsonPrimitive?.contentOrNull ?: "uploading") else it })
+        }
         local = _state.value.attachments.first { it.id == localId }
         val bytes = store.readBlob(local.id)
         require(bytes.size == local.size && offset in 0..bytes.size)
@@ -367,20 +495,28 @@ class CereRepository(context: Context) {
     }
     suspend fun markAttachmentReady(localId: String, result: JsonObject) = updateState { current -> current.copy(attachments = current.attachments.map { if (it.id == localId) it.copy(remoteAttachmentId = result["attachmentId"]?.jsonPrimitive?.contentOrNull, uploadId = result["uploadId"]?.jsonPrimitive?.contentOrNull ?: it.uploadId, committedOffset = result["offset"]?.jsonPrimitive?.intOrNull ?: it.committedOffset, remoteStatus = result["status"]?.jsonPrimitive?.contentOrNull ?: "ready") else it }) }
     suspend fun approvalPreview(approval: Approval): ApprovalPreview {
-        val metadata = request("approvals.preview", buildJsonObject { put("approvalId", approval.id); put("revision", approval.revision); put("digest", approval.digest) }).jsonObject
-        val readId = metadata.getValue("readId").jsonPrimitive.content; val size = metadata.getValue("size").jsonPrimitive.int
-        require(size in 1..1_048_576) { "Preview is too large" }
-        val output = ByteArray(size); var offset = 0
-        while (offset < size) {
-            val expected = minOf(256 * 1024, size - offset); val binary = CompletableDeferred<Pair<Long, ByteArray>>(); binaryReads[readId] = binary
-            val response = try { request("attachments.read", buildJsonObject { put("readId", readId); put("offset", offset); put("length", expected) }).jsonObject } catch (error: Throwable) { binaryReads.remove(readId); throw error }
-            val (frameOffset, payload) = try { withTimeout(30_000) { binary.await() } } finally { binaryReads.remove(readId) }
-            require(frameOffset == offset.toLong() && response["bytes"]?.jsonPrimitive?.intOrNull == payload.size && payload.size in 1..expected) { "Desktop returned an invalid preview part" }
-            payload.copyInto(output, offset); offset += payload.size
+        try {
+            val metadata = request("approvals.preview", buildJsonObject { put("approvalId", approval.id); put("revision", approval.revision); put("digest", approval.digest) }).jsonObject
+            val readId = metadata.getValue("readId").jsonPrimitive.content; val size = metadata.getValue("size").jsonPrimitive.int
+            require(size in 1..1_048_576) { "Preview is too large" }
+            val output = ByteArray(size); var offset = 0
+            while (offset < size) {
+                val expected = minOf(256 * 1024, size - offset); val binary = CompletableDeferred<Pair<Long, ByteArray>>(); binaryReads[readId] = binary
+                val response = try { request("attachments.read", buildJsonObject { put("readId", readId); put("offset", offset); put("length", expected) }).jsonObject } catch (error: Throwable) { binaryReads.remove(readId); throw error }
+                val (frameOffset, payload) = try { withTimeout(30_000) { binary.await() } } finally { binaryReads.remove(readId) }
+                require(frameOffset == offset.toLong() && response["bytes"]?.jsonPrimitive?.intOrNull == payload.size && payload.size in 1..expected) { "Desktop returned an invalid preview part" }
+                payload.copyInto(output, offset); offset += payload.size
+            }
+            val hash = android.util.Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(output), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+            require(hash == metadata["sha256"]?.jsonPrimitive?.contentOrNull) { "Preview integrity check failed" }
+            return ApprovalPreview(output, metadata.getValue("mime").jsonPrimitive.content, metadata.getValue("imageDigest").jsonPrimitive.content)
+        } catch (error: RemoteRequestException) {
+            when (error.code) {
+                "APPROVAL_GONE" -> retireApproval(approval.identity())
+                "REVISION_CONFLICT" -> snapshotRequests.trySend(Unit)
+            }
+            throw error
         }
-        val hash = android.util.Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(output), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
-        require(hash == metadata["sha256"]?.jsonPrimitive?.contentOrNull) { "Preview integrity check failed" }
-        return ApprovalPreview(output, metadata.getValue("mime").jsonPrimitive.content, metadata.getValue("imageDigest").jsonPrimitive.content)
     }
 
     suspend fun fullMessage(message: Message): String {
@@ -401,7 +537,10 @@ class CereRepository(context: Context) {
     }
 
     private suspend fun requestWithCommand(command: PendingCommand, proof: Proof?): JsonElement {
-        require(_state.value.supports(command.method)); check(updateState { current -> if (current.pendingCommands.any { it.commandId == command.commandId }) current else current.copy(pendingCommands = current.pendingCommands + command) }) { PRIVATE_CACHE_ERROR }
+        require(_state.value.supports(command.method)); check(updateState { current ->
+            check(!pairingTransition && current.stagedPairing == null) { "Finish or cancel pairing confirmation first" }
+            if (current.pendingCommands.any { it.commandId == command.commandId }) current else current.copy(pendingCommands = current.pendingCommands + command)
+        }) { PRIVATE_CACHE_ERROR }
         val id = UUID.randomUUID().toString(); val deferred = CompletableDeferred<WireResponse>(); pendingResponses[id] = deferred
         if (socket?.send(WireCodec.encode(WireRequest(id = id, method = command.method, params = command.params, commandId = command.commandId, proof = proof))) != true) { pendingResponses.remove(id); throw CommandPendingException(command.commandId) }
         val response = try { withTimeout(30_000) { deferred.await() } } catch (_: TimeoutCancellationException) {
@@ -413,11 +552,17 @@ class CereRepository(context: Context) {
         } finally { pendingResponses.remove(id) }
         response.error?.let {
             if (it.code == "OUTCOME_UNKNOWN") { markPending(command.commandId, "unknown"); throw CommandPendingException(command.commandId) }
-            removePending(command.commandId)
-            error("${it.code}: ${it.message}")
+            if (it.code == "REVISION_CONFLICT") snapshotRequests.trySend(Unit)
+            settleCommand(command, retireApproval = it.code == "APPROVAL_GONE")
+            throw RemoteRequestException(it.code, it.message)
         }; val result = response.result ?: JsonNull
-        if (command.method == "sessions.send") { val status = result.jsonObject["status"]?.jsonPrimitive?.contentOrNull; if (status !in setOf("accepted", "completed")) { markPending(command.commandId, "unknown"); throw CommandPendingException(command.commandId) }; markPending(command.commandId, status!!) }
-        else removePending(command.commandId)
+        if (command.method == "sessions.send") {
+            val status = acceptedSendStatus(result)
+            if (status == null) { markPending(command.commandId, "unknown"); throw CommandPendingException(command.commandId) }
+            // A queued result acknowledges durable broker ownership, so the user
+            // can send the next follow-up without an uncertain-command barrier.
+            if (status == "queued") removePending(command.commandId) else markPending(command.commandId, status)
+        } else settleCommand(command, retireApproval = command.method == "approvals.answer")
         return result
     }
     private suspend fun resolveCommand(command: PendingCommand): JsonElement {
@@ -427,9 +572,12 @@ class CereRepository(context: Context) {
             // Ledger acceptance means the broker is still processing the request;
             // only its completed result confirms provider acceptance to the UI.
             "accepted" -> { markPending(command.commandId, "accepted"); throw CommandPendingException(command.commandId) }
-            "completed" -> { removePending(command.commandId); status["result"] ?: JsonNull }
-            "failed" -> { removePending(command.commandId); val failure = status["error"] as? JsonObject
-                error("${failure?.get("code")?.jsonPrimitive?.contentOrNull ?: "COMMAND_FAILED"}: ${failure?.get("message")?.jsonPrimitive?.contentOrNull ?: "Command failed"}") }
+            "completed" -> { settleCommand(command, retireApproval = command.method == "approvals.answer"); status["result"] ?: JsonNull }
+            "failed" -> { val failure = status["error"] as? JsonObject
+                val code = failure?.get("code")?.jsonPrimitive?.contentOrNull ?: "COMMAND_FAILED"
+                if (code == "REVISION_CONFLICT") snapshotRequests.trySend(Unit)
+                settleCommand(command, retireApproval = code == "APPROVAL_GONE")
+                throw RemoteRequestException(code, failure?.get("message")?.jsonPrimitive?.contentOrNull ?: "Command failed") }
             else -> { markPending(command.commandId, "unknown"); throw CommandPendingException(command.commandId) }
         }
     }
@@ -443,7 +591,7 @@ class CereRepository(context: Context) {
 
     @Synchronized private fun connect() {
         if (restoreBlocked || !shouldMonitor) return
-        val desktop = _state.value.desktop ?: return; if (socket != null || terminalBlocked) return
+        val desktop = _state.value.desktop ?: return; if (_state.value.stagedPairing != null || socket != null || terminalBlocked) return
         if (!pairing.hasSigningKeys(desktop)) {
             val reason = "Phone pairing keys are missing. Remove this phone pairing and pair again."
             terminalBlocked = true; reconnectJob?.cancel(); reconnectJob = null
@@ -489,6 +637,10 @@ class CereRepository(context: Context) {
             val transcript = SigningTranscripts.authentication(CanonicalJson.sha256(WireCodec.json.encodeToJsonElement(Hello.serializer(), hello)), frame.value, desktop.desktopId, desktop.deviceId, 1)
             webSocket.send(WireCodec.encode(Auth(challengeId = frame.value.challengeId, signature = pairing.signConnection(desktop.connectionAlias, CanonicalJson.encode(transcript).toByteArray())))) }
         is Frame.Accepted -> { val desktop = _state.value.desktop ?: return; if (frame.value.desktopId != desktop.desktopId || frame.value.protocol.major != 1) throw TerminalProtocolException("Desktop protocol is incompatible")
+            if (!ActionAuthenticationPolicy.modesMatch(desktop, frame.value)) throw TerminalProtocolException(
+                if (desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) "Restart the updated Cere broker on your PC to use trusted-phone actions."
+                else "Desktop action authentication does not match this phone pairing."
+            )
             welcome = frame.value; backoffAttempt = 0; updateState { current -> current.copy(
                 connection = ConnectionState.Online(desktop.desktopName, frame.value.operations, frame.value.expiresAt),
                 pendingCommands = current.pendingCommands.map { command -> if (command.scopeVersion != null && command.scopeVersion != frame.value.scopeVersion) command.copy(params = JsonObject(emptyMap())) else command },
@@ -509,13 +661,18 @@ class CereRepository(context: Context) {
         val authorized = snapshot.sessionIds?.toSet() ?: snapshot.sessions.mapTo(mutableSetOf(), Session::id)
         val authorizedProjects = snapshot.projects.mapTo(mutableSetOf(), Project::id)
         _state.value.attachments.filter { it.sessionId !in authorized }.forEach { store.deleteBlob(it.id) }
-        val persisted = updateState(System.currentTimeMillis()) { current -> val base = if (snapshot.cacheEpoch != null && snapshot.cacheEpoch != current.cacheEpoch) current.copy(messages = emptyList()) else current; val merged = CacheReconciler.merge(base, snapshot, selected); current.copy(sessions = merged.sessions, messages = merged.messages, approvals = merged.approvals, drafts = merged.drafts,
+        var visibleApprovals = emptyList<Approval>()
+        val persisted = updateState(System.currentTimeMillis()) { current ->
+            visibleApprovals = approvalRetirements.visible(snapshot.approvals)
+            val visibleSnapshot = snapshot.copy(approvals = visibleApprovals)
+            val base = if (snapshot.cacheEpoch != null && snapshot.cacheEpoch != current.cacheEpoch) current.copy(messages = emptyList()) else current; val merged = CacheReconciler.merge(base, visibleSnapshot, selected); current.copy(sessions = merged.sessions, messages = merged.messages, approvals = merged.approvals, drafts = merged.drafts,
             projects = snapshot.projects, providers = snapshot.providers, permissions = snapshot.permissions, settings = snapshot.settings, cursor = snapshot.cursor,
             selectedSessionId = current.selectedSessionId?.takeIf { id -> merged.sessions.any { it.id == id } }, attachments = current.attachments.filter { it.sessionId in authorized },
             scrollPositions = current.scrollPositions.filterKeys { it in authorized },
             pendingCommands = CacheReconciler.retainAuthorizedCommands(current.pendingCommands, authorized, authorizedProjects, welcome?.scopeVersion),
-            cacheEpoch = snapshot.cacheEpoch ?: current.cacheEpoch, messagesBefore = if (selected == null) current.messagesBefore else snapshot.messagesBefore?.let { current.messagesBefore + (selected to it) } ?: (current.messagesBefore - selected), lastError = null) }
-        retainApprovalInteractionState(snapshot.approvals)
+            cacheEpoch = snapshot.cacheEpoch ?: current.cacheEpoch, messagesBefore = if (selected == null) current.messagesBefore else snapshot.messagesBefore?.let { current.messagesBefore + (selected to it) } ?: (current.messagesBefore - selected), lastError = null)
+        }
+        retainApprovalInteractionState(visibleApprovals)
         snapshot.nextSessionOffset?.let { hydrateSessionPages(it) }
         if (persisted && _state.value.supports("sync.ack")) runCatching { request("sync.ack", buildJsonObject { put("cursor", snapshot.cursor) }) }
     }
@@ -552,9 +709,10 @@ class CereRepository(context: Context) {
     }
     private suspend fun revokeLocal(webSocket: WebSocket, reason: String) {
         if (socket !== webSocket) return
-        val desktop = _state.value.desktop; socket = null; welcome = null; shouldMonitor = false; terminalBlocked = true; refreshJob?.cancel(); reconnectJob?.cancel(); webSocket.cancel()
+        val desktop = _state.value.desktop; val staged = _state.value.stagedPairing?.desktop; socket = null; welcome = null; shouldMonitor = false; terminalBlocked = true; refreshJob?.cancel(); reconnectJob?.cancel(); webSocket.cancel()
         pendingResponses.values.forEach { it.completeExceptionally(IllegalStateException(reason)) }; pendingResponses.clear(); uploadProgress.values.forEach { it.completeExceptionally(IllegalStateException(reason)) }; uploadProgress.clear()
-        if (desktop != null) pairing.delete(desktop); store.clear(); stateMutex.withLock { _state.value = MobileState(restoreReady = true, connection = ConnectionState.Unpaired, lastError = reason) }
+        if (desktop != null) runCatching { pairing.delete(desktop) }; if (staged != null) runCatching { pairing.delete(staged) }; store.clear(); stateMutex.withLock { _state.value = MobileState(restoreReady = true, connection = ConnectionState.Unpaired, lastError = reason) }
+        pairingTransition = false; approvalRetirements.clear(); questionDraftIdentities.clear(); approvalMutationIdentities.clear()
         _questionDrafts.value = emptyMap(); _approvalMutations.value = emptySet()
     }
     @Synchronized private fun scheduleReconnect(reason: String) {
@@ -573,10 +731,11 @@ class CereRepository(context: Context) {
         }
         stateMutex.withLock {
             lastVerified = cache.lastVerifiedAt
-            _state.value = MobileState(restoreReady = true, desktop = cache.desktop,
+            _state.value = MobileState(restoreReady = true, desktop = cache.desktop, stagedPairing = cache.stagedPairing,
             connection = cache.desktop?.let { ConnectionState.Offline("Not connected", cache.lastVerifiedAt) } ?: ConnectionState.Unpaired,
             sessions = cache.sessions, messages = cache.messages, approvals = cache.approvals, projects = cache.projects, providers = cache.providers,
             permissions = cache.permissions, settings = cache.settings, cursor = cache.cursor, drafts = cache.drafts.associateBy(LocalDraft::sessionId), pendingCommands = cache.pendingCommands, selectedSessionId = cache.selectedSessionId, attachments = cache.attachments, cacheEpoch = cache.cacheEpoch, scrollPositions = cache.scrollPositions, monitoring = shouldMonitor)
+            pairingTransition = cache.stagedPairing != null
             restoreBlocked = false
         }
         true
@@ -596,9 +755,47 @@ class CereRepository(context: Context) {
         val persisted = stateMutex.withLock { if (restoreBlocked) return@withLock false; val ready = if (_state.value.lastError == PRIVATE_CACHE_ERROR) _state.value.copy(lastError = null) else _state.value; try { store.write(cached(ready, lastVerified)); _state.value = ready; cacheDirty = false; true } catch (cancelled: CancellationException) { throw cancelled } catch (_: Throwable) { cacheDirty = true; false } }
         if (persisted) _state.value.cursor?.let { cursor -> if (_state.value.supports("sync.ack")) runCatching { request("sync.ack", buildJsonObject { put("cursor", cursor) }) } }
     }
-    private fun cached(state: MobileState, verifiedAt: Long?) = CachedState(state.desktop, state.cursor, state.sessions, state.messages, state.approvals, state.projects, state.providers, state.permissions, state.settings, verifiedAt, state.drafts.values.toList(), state.pendingCommands, state.selectedSessionId, state.attachments, state.cacheEpoch, state.scrollPositions)
+    private fun cached(state: MobileState, verifiedAt: Long?) = CachedState(
+        desktop = state.desktop,
+        stagedPairing = state.stagedPairing,
+        cursor = state.cursor,
+        sessions = state.sessions,
+        messages = state.messages,
+        approvals = state.approvals,
+        projects = state.projects,
+        providers = state.providers,
+        permissions = state.permissions,
+        settings = state.settings,
+        lastVerifiedAt = verifiedAt,
+        drafts = state.drafts.values.toList(),
+        pendingCommands = state.pendingCommands,
+        selectedSessionId = state.selectedSessionId,
+        attachments = state.attachments,
+        cacheEpoch = state.cacheEpoch,
+        scrollPositions = state.scrollPositions,
+    )
     private suspend fun removePending(commandId: String) = updateState { it.copy(pendingCommands = it.pendingCommands.filterNot { command -> command.commandId == commandId }) }
     private suspend fun markPending(commandId: String, status: String) = updateState { current -> current.copy(pendingCommands = current.pendingCommands.map { if (it.commandId == commandId) it.copy(status = status) else it }) }
+    private suspend fun retireApproval(identity: ApprovalIdentity) {
+        approvalRetirements.retire(identity)
+        updateState { current -> current.copy(approvals = current.approvals.filterNot { it.identity() == identity }) }
+        clearApprovalInteractionState(identity)
+    }
+    private suspend fun settleCommand(command: PendingCommand, retireApproval: Boolean) {
+        val identity = command.takeIf { retireApproval && it.method == "approvals.answer" }?.params?.let(::approvalIdentity)
+        identity?.let(approvalRetirements::retire)
+        updateState { current -> current.copy(
+            pendingCommands = current.pendingCommands.filterNot { it.commandId == command.commandId },
+            approvals = identity?.let { retired -> current.approvals.filterNot { it.identity() == retired } } ?: current.approvals,
+        ) }
+        identity?.let(::clearApprovalInteractionState)
+    }
+    private fun approvalIdentity(params: JsonObject): ApprovalIdentity? {
+        val id = params["approvalId"]?.jsonPrimitive?.contentOrNull ?: return null
+        val revision = params["revision"]?.jsonPrimitive?.contentOrNull ?: return null
+        val digest = params["digest"]?.jsonPrimitive?.contentOrNull ?: return null
+        return ApprovalIdentity(id, revision, digest)
+    }
     private fun pendingCommand(commandId: String, method: String, params: JsonObject, boundProjectId: String? = null): PendingCommand {
         val directSession = listOf("sessionId", "sourceSessionId").firstNotNullOfOrNull { (params[it] as? JsonPrimitive)?.contentOrNull }
         val approvalSession = (params["approvalId"] as? JsonPrimitive)?.contentOrNull?.let { id -> _state.value.approvals.firstOrNull { it.id == id }?.sessionId }
@@ -610,4 +807,13 @@ class CereRepository(context: Context) {
     }
     private fun revisionAfter(incoming: String, existing: String): Boolean = incoming.toBigIntegerOrNull()?.let { next -> existing.toBigIntegerOrNull()?.let { next > it } } ?: incoming != existing
     private companion object { const val PRIVATE_CACHE_ERROR = "Private cache is unavailable. Unlock the phone and retry." }
+}
+
+internal object ReplacementPolicy {
+    fun blocker(state: MobileState): String? = when {
+        state.pendingCommands.isNotEmpty() -> "Resolve pending command outcomes before replacing this phone pairing"
+        state.attachments.any { it.remoteStatus !in setOf("local", "ready") } ->
+            "Finish or cancel in-progress image uploads before replacing this phone pairing"
+        else -> null
+    }
 }

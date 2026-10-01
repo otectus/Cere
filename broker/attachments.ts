@@ -65,7 +65,7 @@ export class Attachments {
   }
   private referenced(sessionId:string,id:string){
     const session=this.store.session(sessionId),submission=this.store.get<any>('submission:'+sessionId,null);
-    return ['starting','working','waiting','stopping'].includes(session.status)||session.draftAttachments?.some(a=>a.id===id)||submission?.attachmentIds?.includes(id);
+    return ['starting','working','waiting','stopping'].includes(session.status)||session.draftAttachments?.some(a=>a.id===id)||submission?.attachmentIds?.includes(id)||this.store.get<any[]>('sendQueue:'+sessionId,[]).some(entry=>entry.params.attachmentIds?.includes(id));
   }
   /** Called after references change. Failed deletion retains its metadata for retry. */
   prune(sessionId:string){

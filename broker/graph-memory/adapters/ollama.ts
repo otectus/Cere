@@ -109,14 +109,17 @@ class OllamaApi {
     return result;
   }
 
-  async model(model: string, timeoutMs: number, signal?: AbortSignal): Promise<{ tag: OllamaTag; digest: string; capabilities: string[]; cloud: boolean }> {
-    const [tags, show] = await Promise.all([
-      this.json('tags', undefined, timeoutMs, signal), this.json('show', { model }, timeoutMs, signal),
-    ]);
-    const tag = (tags.models ?? []).find((candidate: OllamaTag) => candidate.model === model || candidate.name === model) as OllamaTag | undefined;
+  async model(model: string, timeoutMs: number, signal?: AbortSignal, cloudAliases = false): Promise<{ model: string; tag: OllamaTag; digest: string; capabilities: string[]; cloud: boolean }> {
+    const tags = await this.json('tags', undefined, timeoutMs, signal);
+    // Extraction preferences can use Ollama Cloud's short names. Keep explicit
+    // registrations intact, then resolve only known cloud suffixes from /tags.
+    const names = cloudAliases ? [model, model + ':cloud', model + '-cloud'] : [model];
+    const tag = names.map(name => (tags.models ?? []).find((candidate: OllamaTag) => candidate.model === name || candidate.name === name)).find(Boolean) as OllamaTag | undefined;
     if (!tag) throw new Error(`Configured Ollama model ${model} is not installed or registered`);
+    model = tag.model || tag.name!;
+    const show = await this.json('show', { model }, timeoutMs, signal);
     if (!tag.digest || !/^[a-f0-9]{64}$/iu.test(tag.digest)) throw new Error(`Ollama did not provide a stable digest for ${model}`);
-    return { tag, digest: tag.digest.toLowerCase(), capabilities: Array.isArray(show.capabilities) ? show.capabilities.map(String) : [], cloud: isCloudModel(model, tag, show) };
+    return { model, tag, digest: tag.digest.toLowerCase(), capabilities: Array.isArray(show.capabilities) ? show.capabilities.map(String) : [], cloud: isCloudModel(model, tag, show) };
   }
 }
 
@@ -131,12 +134,12 @@ export class OllamaExtractionAdapter implements ExtractionAdapter {
   }
 
   async probe(signal?: AbortSignal): Promise<{ model: string; digest: string; capabilities: string[] }> {
-    const info = await this.api.model(this.config.model, this.config.probeTimeoutMs ?? 8_000, signal);
+    const info = await this.api.model(this.config.model, this.config.probeTimeoutMs ?? 8_000, signal, true);
     if (this.config.expectedDigest && info.digest !== this.config.expectedDigest.toLowerCase()) throw new Error('Configured extraction model digest does not match the registered Ollama model');
     if (info.cloud && !this.config.allowCloud) throw new ExtractionPolicyError('CLOUD_EXTRACTION_DISABLED', 'Cloud extraction model requires explicit allowCloud authorization');
     if (info.capabilities.length && !info.capabilities.includes('completion')) throw new Error('Extraction model does not advertise completion capability');
     const response = await this.api.json('chat', {
-      model: this.config.model, stream: false, format: MUTATION_PROPOSAL_JSON_SCHEMA, messages: [
+      model: info.model, stream: false, format: MUTATION_PROPOSAL_JSON_SCHEMA, messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: 'Capability fixture: return exactly {"entities":[],"assertions":[]}.' },
       // Thinking models count private reasoning against num_predict.
@@ -146,18 +149,18 @@ export class OllamaExtractionAdapter implements ExtractionAdapter {
     try { parsed = JSON.parse(String(response.message?.content ?? '')); } catch { throw new Error('Extraction model failed the JSON-schema capability probe'); }
     const checked = MutationProposalBatchSchema.safeParse(parsed);
     if (!checked.success || checked.data.entities.length || checked.data.assertions.length) throw new Error('Extraction model failed the JSON-schema capability probe');
-    this.probed = { model: this.config.model, ...info };
-    return { model: this.config.model, digest: info.digest, capabilities: info.capabilities };
+    this.probed = info;
+    return { model: info.model, digest: info.digest, capabilities: info.capabilities };
   }
 
   async extract(source: ExtractionSource, signal?: AbortSignal): Promise<ExtractionRun> {
     if ([...source.text].length > (this.config.maxInputCodePoints ?? 32_768)) throw new TypeError('Extraction source exceeds the configured input bound');
-    const current = await this.api.model(this.config.model, this.config.probeTimeoutMs ?? 8_000, signal);
-    if (!this.probed || this.probed.digest !== current.digest) await this.probe(signal);
+    const current = await this.api.model(this.config.model, this.config.probeTimeoutMs ?? 8_000, signal, true);
+    if (!this.probed || this.probed.model !== current.model || this.probed.digest !== current.digest) await this.probe(signal);
     const info = this.probed!;
     if (info.cloud && source.modelRoute !== 'cloud_allowed') throw new ExtractionPolicyError('LOCAL_ONLY_CLOUD_ROUTE', 'Local-only source cannot be dispatched to an Ollama cloud model');
     const request = {
-      model: this.config.model, stream: false, format: MUTATION_PROPOSAL_JSON_SCHEMA, keep_alive: '5m', options: {
+      model: info.model, stream: false, format: MUTATION_PROPOSAL_JSON_SCHEMA, keep_alive: '5m', options: {
         temperature: 0, num_predict: this.config.maxOutputTokens ?? 2_048,
       }, messages: [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -188,7 +191,7 @@ export class OllamaExtractionAdapter implements ExtractionAdapter {
       }
     }
     return {
-      proposals, model: this.config.model, modelDigest: info.digest, endpointClass: info.cloud ? 'ollama_cloud' : 'local',
+      proposals, model: info.model, modelDigest: info.digest, endpointClass: info.cloud ? 'ollama_cloud' : 'local',
       promptVersion: EXTRACTION_PROMPT_VERSION, schemaVersion: EXTRACTION_SCHEMA_VERSION, parserVersion: EXTRACTION_PARSER_VERSION,
     };
   }

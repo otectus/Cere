@@ -1,6 +1,6 @@
 # Sideload releases
 
-No release has been published by this implementation task. The build produces a debug-signed APK and an unsigned R8-shrunk release APK. Stable releases require the owner's permanent signing key and completed hardware gates.
+Development download: [Cere Mobile 0.1.3 debug APK](https://github.com/otectus/Cere/releases/download/mobile-dev-v0.1.3/cere-mobile-v0.1.3-debug.apk), published under the prerelease tag [`mobile-dev-v0.1.3`](https://github.com/otectus/Cere/releases/tag/mobile-dev-v0.1.3). Its `dev.otectus.cere.mobile.debug` package and signing certificate match the previously installed development build, allowing an in-place upgrade. This manual download is separate from the stable update checker and signing workflow below. Stable releases still require the owner's permanent signing key and completed hardware gates.
 
 Tags are `mobile-vX.Y.Z`; the Android `versionName` must be `X.Y.Z`, and `versionCode = major*1000000 + minor*1000 + patch`, with each component below 1000. Do not reuse/downgrade a released version. Stable package: `dev.otectus.cere.mobile`; debug: `.debug` suffix.
 

@@ -64,22 +64,22 @@ ColumnLayout {
             id:desktopHeader;x:16;y:14;width:parent.width-32;spacing:12
             Rectangle {
                 visible:desktop.width>=500
-                Layout.preferredWidth:42;Layout.preferredHeight:42;radius:12
+                Layout.preferredWidth:42;Layout.preferredHeight:42;radius:Theme.radiusCard
                 color:Theme.selected
-                Text { anchors.centerIn:parent;text:"⌁";color:Theme.cyan;font.family:Theme.font;font.pixelSize:24;font.weight:Font.DemiBold }
+                Text { anchors.centerIn:parent;text:"⌁";color:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.page;font.weight:Font.DemiBold }
             }
             ColumnLayout {
                 Layout.fillWidth:true;Layout.minimumWidth:0;spacing:3
                 CButton { text:"Offline tools";onClicked:utilityShelf.open() }
-                CText { text:"Desktop";font.pixelSize:24;font.weight:Font.DemiBold }
-                CText { text:desktop.width>=500?"Your apps, windows, sound, and everyday actions.":"Your everyday controls.";color:Theme.muted;font.pixelSize:12 }
+                CText { text:"Desktop";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
+                CText { text:desktop.width>=500?"Your apps, windows, sound, and everyday actions.":"Your everyday controls.";color:Theme.muted;font.pixelSize:Theme.secondary }
             }
             ColumnLayout {
                 spacing:5;Layout.alignment:Qt.AlignVCenter
                 RowLayout {
                     Layout.alignment:Qt.AlignRight;spacing:6
                     Rectangle { Layout.preferredWidth:8;Layout.preferredHeight:8;radius:4;color:App.connected?Theme.success:Theme.muted }
-                    CText { text:App.connected?"Ready":"Offline";color:App.connected?Theme.success:Theme.muted;font.pixelSize:11 }
+                    CText { text:App.connected?"Ready":"Offline";color:App.connected?Theme.success:Theme.muted;font.pixelSize:Theme.caption }
                 }
                 CButton { text:desktop.loading?"Loading…":"Refresh";help:"Refresh applications, windows and volume";onClicked:desktop.refresh();enabled:App.connected&&!desktop.loading }
             }
@@ -102,15 +102,15 @@ ColumnLayout {
         text:desktop.query
             ? "Results for “"+search.text.trim()+"”"
             : ["All desktop tools and recent activity","Quick actions, sound, timers, and scripts","Installed applications","Open windows and workspaces"][desktop.category]
-        color:desktop.query?Theme.cyan:Theme.muted;font.pixelSize:11
+        color:desktop.query?Theme.cyan:Theme.muted;font.pixelSize:Theme.caption
     }
     Rectangle {
         visible:desktop.feedback.length>0||desktop.catalogError.length>0
         Layout.fillWidth:true;implicitHeight:feedbackRow.implicitHeight+20
-        color:desktop.failed||desktop.catalogError ? "#33232e" : Theme.selected;radius:8
+        color:desktop.failed||desktop.catalogError ? Theme.dangerSurface : Theme.selected;radius:Theme.radiusControl
         RowLayout {
             id:feedbackRow;x:10;y:10;width:parent.width-20
-            CText { text:desktop.feedback||desktop.catalogError;color:desktop.failed||desktop.catalogError?Theme.danger:Theme.text;font.pixelSize:12 }
+            CText { text:desktop.feedback||desktop.catalogError;color:desktop.failed||desktop.catalogError?Theme.danger:Theme.text;font.pixelSize:Theme.secondary }
             CButton { text:"Dismiss";implicitHeight:30;onClicked:{desktop.feedback="";desktop.catalogError=""} }
         }
     }
@@ -130,23 +130,23 @@ ColumnLayout {
                     CButton { Layout.fillWidth:true;Layout.preferredWidth:1;text:"Open folder";onClicked:{const p=App.chooseFolder();if(p)desktop.action("files.open",{path:p},"Folder opened")} }
                     CButton { Layout.fillWidth:true;Layout.preferredWidth:1;text:"Open file";onClicked:{const p=App.chooseFile();if(p)desktop.action("files.open",{path:p},"File opened")} }
                 }
-                CText { text:"Crop or annotate in Satty. Enter saves; Escape cancels.";color:Theme.muted;font.pixelSize:11 }
+                CText { text:"Crop or annotate in Satty. Enter saves; Escape cancels.";color:Theme.muted;font.pixelSize:Theme.caption }
             }
             CSection {
                 title:"Sound & playback";visible:desktop.showAudio;Layout.preferredWidth:1
                 RowLayout {
                     Layout.fillWidth:true
-                    CText { text:"Output volume";font.pixelSize:12;color:Theme.muted }
-                    Text { text:desktop.audio.available?(desktop.audio.muted?"Muted · ":"")+Math.round(volume.value)+"%":"Unavailable";color:Theme.cyan;font.family:Theme.font;font.pixelSize:12 }
+                    CText { text:"Output volume";font.pixelSize:Theme.secondary;color:Theme.muted }
+                    Text { text:desktop.audio.available?(desktop.audio.muted?"Muted · ":"")+Math.round(volume.value)+"%":"Unavailable";color:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.secondary }
                 }
                 RowLayout {
                     Layout.fillWidth:true
                     CSlider { id:volume;objectName:"desktopVolume";Layout.fillWidth:true;Layout.minimumWidth:0;from:0;to:100;stepSize:1;enabled:desktop.audio.available;Accessible.name:"Output volume";onMoved:volumeDebounce.restart() }
                     CButton { text:desktop.audio.muted?"Unmute":"Mute";enabled:desktop.audio.available&&!desktop.pending("audio.mute");onClicked:desktop.action("audio.mute",{},"Output updated") }
                 }
-                CText { visible:!desktop.audio.available;text:"No audio output is available. Refresh after connecting a device.";font.pixelSize:11;color:Theme.muted }
+                CText { visible:!desktop.audio.available;text:"No audio output is available. Refresh after connecting a device.";font.pixelSize:Theme.caption;color:Theme.muted }
                 Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
-                CText { objectName:"mediaStatus";text:desktop.media.available?desktop.media.name+" · "+desktop.media.status:desktop.mediaError|| (desktop.mediaRequest>=0?"Checking media players…":"Open Spotify or another media player to use playback controls.");font.pixelSize:12;color:desktop.media.available?Theme.cyan:Theme.muted }
+                CText { objectName:"mediaStatus";text:desktop.media.available?desktop.media.name+" · "+desktop.media.status:desktop.mediaError|| (desktop.mediaRequest>=0?"Checking media players…":"Open Spotify or another media player to use playback controls.");font.pixelSize:Theme.secondary;color:desktop.media.available?Theme.cyan:Theme.muted }
                 GridLayout {
                     Layout.fillWidth:true;columns:2;columnSpacing:8;rowSpacing:8
                     Repeater {
@@ -159,13 +159,13 @@ ColumnLayout {
                 title:"Focus timer";visible:desktop.showTimers;Layout.preferredWidth:1
                 RowLayout {
                     Layout.fillWidth:true
-                    CText { text:"Duration";color:Theme.muted;font.pixelSize:12 }
+                    CText { text:"Duration";color:Theme.muted;font.pixelSize:Theme.secondary }
                     CSpinBox { id:minutes;objectName:"timerMinutes";from:1;to:10080;value:25;Accessible.name:"Timer duration in minutes" }
-                    Text { text:"min";color:Theme.muted;font.pixelSize:12;font.family:Theme.font }
+                    Text { text:"min";color:Theme.muted;font.pixelSize:Theme.secondary;font.family:Theme.font }
                 }
                 CField { id:timerLabel;objectName:"timerLabel";Layout.fillWidth:true;placeholderText:"Reminder (optional)";Accessible.name:"Timer reminder" }
                 CButton { objectName:"startTimer";Layout.fillWidth:true;primary:true;text:desktop.pending("timer.start")?"Starting…":"Start timer";enabled:App.connected&&!desktop.pending("timer.start");onClicked:desktop.action("timer.start",{minutes:minutes.value,label:timerLabel.text.trim()||"Time for a break"},"Timer started · "+minutes.value+" min") }
-                CText { visible:!(App.state.timers||[]).length;text:"A gentle reminder when it’s time for a break.";color:Theme.muted;font.pixelSize:12 }
+                CText { visible:!(App.state.timers||[]).length;text:"A gentle reminder when it’s time for a break.";color:Theme.muted;font.pixelSize:Theme.secondary }
                 Repeater {
                     model:App.state.timers||[]
                     RowLayout {
@@ -173,8 +173,8 @@ ColumnLayout {
                         id:timerRow;Layout.fillWidth:true
                         ColumnLayout {
                             Layout.fillWidth:true;Layout.minimumWidth:0;spacing:3
-                            CText { text:timerRow.modelData.label;font.pixelSize:12 }
-                            CText { text:"Ends "+new Date(timerRow.modelData.due).toLocaleTimeString(Qt.locale(),"h:mm AP");color:Theme.muted;font.pixelSize:11 }
+                            CText { text:timerRow.modelData.label;font.pixelSize:Theme.secondary }
+                            CText { text:"Ends "+new Date(timerRow.modelData.due).toLocaleTimeString(Qt.locale(),"h:mm AP");color:Theme.muted;font.pixelSize:Theme.caption }
                         }
                         CButton { text:"Cancel";help:"Cancel this timer";onClicked:App.rpc("timer.cancel",{id:timerRow.modelData.id}) }
                     }
@@ -184,11 +184,11 @@ ColumnLayout {
                 title:"Windows & workspaces";visible:desktop.showWindows;hint:desktop.filteredWindows.length+" open";Layout.columnSpan:sections.columns
                 RowLayout {
                     Layout.fillWidth:true
-                    CText { text:"Destination";color:Theme.muted;font.pixelSize:12 }
+                    CText { text:"Destination";color:Theme.muted;font.pixelSize:Theme.secondary }
                     CSpinBox { id:workspace;objectName:"workspaceNumber";from:1;to:99;value:1;Accessible.name:"Destination workspace" }
                     CButton { text:"Switch";enabled:App.connected;onClicked:desktop.action("workspace.switch",{workspace:workspace.value},"Switched to workspace "+workspace.value) }
                 }
-                CText { text:"Select a window to focus it. Move sends it to workspace "+workspace.value+".";color:Theme.muted;font.pixelSize:12 }
+                CText { text:"Select a window to focus it. Move sends it to workspace "+workspace.value+".";color:Theme.muted;font.pixelSize:Theme.secondary }
                 Repeater {
                     model:desktop.filteredWindows
                     RowLayout {
@@ -198,7 +198,7 @@ ColumnLayout {
                         CButton { text:"Move";help:"Move this window to workspace "+workspace.value;onClicked:desktop.action("windows.move",{address:windowRow.modelData.address,workspace:workspace.value},"Window moved to workspace "+workspace.value) }
                     }
                 }
-                CText { visible:!desktop.filteredWindows.length;text:desktop.windowsRequest>=0?"Loading open windows…":desktop.query?"No windows match your search.":"No application windows are open.";color:Theme.muted;font.pixelSize:12 }
+                CText { visible:!desktop.filteredWindows.length;text:desktop.windowsRequest>=0?"Loading open windows…":desktop.query?"No windows match your search.":"No application windows are open.";color:Theme.muted;font.pixelSize:Theme.secondary }
             }
             CSection {
                 title:"Applications";visible:desktop.showApps;hint:desktop.filteredApps.length+" available";Layout.columnSpan:sections.columns
@@ -210,7 +210,7 @@ ColumnLayout {
                     }
                 }
                 CButton { visible:desktop.filteredApps.length>desktop.appLimit;Layout.fillWidth:true;text:"Show more applications ("+(desktop.filteredApps.length-desktop.appLimit)+" remaining)";onClicked:desktop.appLimit+=12 }
-                CText { visible:!desktop.filteredApps.length;text:desktop.appsRequest>=0?"Loading applications…":"No applications found. Refresh to check again.";color:Theme.muted;font.pixelSize:12 }
+                CText { visible:!desktop.filteredApps.length;text:desktop.appsRequest>=0?"Loading applications…":"No applications found. Refresh to check again.";color:Theme.muted;font.pixelSize:Theme.secondary }
             }
             CSection {
                 title:"Saved scripts";visible:desktop.showScripts;Layout.preferredWidth:1
@@ -218,7 +218,7 @@ ColumnLayout {
                     model:desktop.filteredScripts
                     CActionRow { required property var modelData;Layout.fillWidth:true;text:modelData.name;detail:"Review and run";mark:"›_";onClicked:{scriptConfirm.script=modelData;scriptConfirm.open()} }
                 }
-                CText { visible:!desktop.filteredScripts.length;text:"Keep frequently used commands here. Add an executable and its arguments in Settings.";color:Theme.muted;font.pixelSize:12 }
+                CText { visible:!desktop.filteredScripts.length;text:"Keep frequently used commands here. Add an executable and its arguments in Settings.";color:Theme.muted;font.pixelSize:Theme.secondary }
                 CButton { text:"Manage scripts";onClicked:desktop.settingsRequested() }
             }
             CSection {
@@ -227,11 +227,11 @@ ColumnLayout {
                     model:(App.state.activity||[]).slice(0,6)
                     RowLayout {
                         required property var modelData;id:activityRow;Layout.fillWidth:true
-                        CText { text:(App.state.actions||[]).find(a=>a.name===activityRow.modelData.action)?.title||activityRow.modelData.action;font.pixelSize:12 }
-                        Text { text:activityRow.modelData.status==="completed"?"Done":"Failed";color:activityRow.modelData.status==="failed"?Theme.danger:Theme.cyan;font.family:Theme.font;font.pixelSize:11 }
+                        CText { text:(App.state.actions||[]).find(a=>a.name===activityRow.modelData.action)?.title||activityRow.modelData.action;font.pixelSize:Theme.secondary }
+                        Text { text:activityRow.modelData.status==="completed"?"Done":"Failed";color:activityRow.modelData.status==="failed"?Theme.danger:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.caption }
                     }
                 }
-                CText { visible:!(App.state.activity||[]).length;text:"Your completed desktop actions will appear here.";color:Theme.muted;font.pixelSize:12 }
+                CText { visible:!(App.state.activity||[]).length;text:"Your completed desktop actions will appear here.";color:Theme.muted;font.pixelSize:Theme.secondary }
             }
             CSection {
                 visible:!desktop.showQuick&&!desktop.showAudio&&!desktop.showTimers&&!desktop.showWindows&&!desktop.showApps&&!desktop.showScripts
@@ -270,7 +270,7 @@ ColumnLayout {
     }
     CDialog {
         id:capturePreview;objectName:"capturePreview"
-        CText { text:"Your capture";font.pixelSize:20;font.weight:Font.DemiBold }
+        CText { text:"Your capture";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
         Image { source:desktop.capturePath?"file://"+desktop.capturePath:"";Layout.fillWidth:true;Layout.preferredHeight:Math.min(240,desktop.height*.4);fillMode:Image.PreserveAspectFit }
         CText { text:"Saved locally. Attach it to a conversation when you’re ready.";color:Theme.muted }
         GridLayout {
@@ -282,8 +282,8 @@ ColumnLayout {
     }
     CDialog {
         id:scriptConfirm;property var script:({})
-        CText { text:"Run "+(scriptConfirm.script.name||"script")+"?";font.pixelSize:20;font.weight:Font.DemiBold }
-        CText { text:(scriptConfirm.script.executable||"")+"\n"+JSON.stringify(scriptConfirm.script.args||[])+"\n\n"+(scriptConfirm.script.cwd||"");color:Theme.muted;font.family:"monospace";font.pixelSize:12 }
+        CText { text:"Run "+(scriptConfirm.script.name||"script")+"?";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { text:(scriptConfirm.script.executable||"")+"\n"+JSON.stringify(scriptConfirm.script.args||[])+"\n\n"+(scriptConfirm.script.cwd||"");color:Theme.muted;font.family:"monospace";font.pixelSize:Theme.secondary }
         RowLayout {
             Layout.fillWidth:true
             CButton { Layout.fillWidth:true;text:"Cancel";onClicked:scriptConfirm.close() }

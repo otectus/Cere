@@ -17,18 +17,18 @@ CDialog {
         error=""
         requestId=App.rpc("projects.createSession",{cwd:project.cwd,expectedRevision:project.revision,title:sessionName.text.trim()})
     }
-    CText { text:"New session";font.pixelSize:22;font.weight:Font.DemiBold }
+    CText { text:"New session";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
     CText { text:dialog.project.name||"Project";color:Theme.cyan;font.weight:Font.DemiBold }
-    CText { text:dialog.project.cwd||"";font.pixelSize:11;color:Theme.muted;wrapMode:Text.WrapAnywhere }
+    CText { text:dialog.project.cwd||"";font.pixelSize:Theme.caption;color:Theme.muted;wrapMode:Text.WrapAnywhere }
     CField {
         id:sessionName;objectName:"projectSessionName";Layout.fillWidth:true;maximumLength:100
         placeholderText:"Session name";Accessible.name:"Session name";onAccepted:dialog.submit()
     }
     CText {
         text:[dialog.project.defaults?.provider,dialog.project.defaults?.model||"Default model",dialog.project.defaults?.effort,dialog.project.defaults?.tools?"Desktop tools enabled":"",dialog.project.defaults?.temporary?"Temporary":""].filter(v=>!!v).join(" · ")
-        color:Theme.muted;font.pixelSize:12
+        color:Theme.muted;font.pixelSize:Theme.secondary
     }
-    CText { visible:!!dialog.error;text:dialog.error;color:Theme.danger;font.pixelSize:12 }
+    CText { visible:!!dialog.error;text:dialog.error;color:Theme.danger;font.pixelSize:Theme.secondary }
     CButton { objectName:"quickProjectSettings";text:"Edit project defaults";iconName:"settings";quiet:true;enabled:dialog.requestId<0;onClicked:{dialog.close();dialog.settingsRequested(dialog.project,sessionName.text)} }
     RowLayout {
         Layout.fillWidth:true

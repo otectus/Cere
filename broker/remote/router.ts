@@ -29,6 +29,7 @@ export class Router {
   recheckActions() {for(const action of this.actions.values())try{action.check();}catch(error){action.controller.abort(error);}}
   current(device:Device) {
     const current=this.registry.live(device.id);
+    if(current?.replacementPending)throw remoteError('PAIRING_PENDING','Desktop pairing replacement is still recovering. Reconnect shortly.');
     if(!current)throw remoteError('AUTH_REVOKED','Device access expired or was revoked.');
     if(!this.registry.config().enabled)throw remoteError('REMOTE_DISABLED','The owner disabled remote access.');
     if(current.scopeVersion!==device.scopeVersion)throw remoteError('SCOPE_CHANGED','Device grants changed. Reconnect to refresh.');
@@ -58,7 +59,7 @@ export class Router {
     const folder=s.folderId?this.core.store.folders().find(folder=>folder.id===s.folderId):undefined,draftAttachmentCount=s.draftAttachments?.length||0;
     return {id:s.id,provider:s.provider,title:s.title.slice(0,100),projectId:p.id,project:p.path,mode:s.mode,status:s.status,model:s.model,effort:s.effort||'',draft:includeDraft?s.draft:'',draftIncluded:includeDraft,draftRevision:s.draftRevision||'0',configRevision:s.configRevision||'0',revision:s.revision||'0',turnId:s.turnId,remoteRestricted:!!s.remote,
       canSend:restrictedProvider&&device.caps.includes('chat.write')&&(s.provider==='ollama'||device.caps.includes('providers.execute'))&&s.mode==='managed'&&(!s.remote||s.remote.deviceId===device.id),
-      canConfigure:this.canConfigure(device,s),pinned:!!s.pinned,archived:!!s.archived,unread:!!s.unread,readAt:s.readAt??0,folderId:s.folderId??null,folderName:folder?.name??null,draftAttachmentCount,draftAttachmentHint:draftAttachmentCount?`${draftAttachmentCount} desktop draft attachment${draftAttachmentCount===1?' is':'s are'} waiting. Review or send from the desktop.`:null,
+      queuedCount:s.queuedCount||0,canQueue:s.provider==='ollama'&&!!s.remote,canConfigure:this.canConfigure(device,s),pinned:!!s.pinned,archived:!!s.archived,unread:!!s.unread,readAt:s.readAt??0,folderId:s.folderId??null,folderName:folder?.name??null,draftAttachmentCount,draftAttachmentHint:draftAttachmentCount?`${draftAttachmentCount} desktop draft attachment${draftAttachmentCount===1?' is':'s are'} waiting. Review or send from the desktop.`:null,
       updated:s.updated,activity:s.activity,agents:(s.agents || []).map(a=>({...a,task:a.task?.slice(0,1000),detail:a.detail?.slice(0,2000)})),parentId:s.parentId,tools:s.ollama?.tools||false,ollamaHost:s.provider==='ollama'?s.ollama?.host:undefined,error:s.error?'The desktop provider reported an error. Review Activity.':undefined};
   }
   canConfigure(device:Device,s:Session) {
@@ -76,7 +77,12 @@ export class Router {
     const session=this.session(device,a.sessionId);
     const provider=['provider','permissions','cli'].includes(a.kind);
     const canAnswer=!!session.remote&&session.remote.deviceId===device.id&&session.effectivePolicy==='restricted'&&a.remoteAllow!==false&&(a.kind!=='image'||session.provider==='ollama'&&device.caps.includes('capture.preview'))&&(!provider||device.caps.includes('approvals.provider'));
-    const base={id:a.id,sessionId:a.sessionId,kind:a.kind,title:a.title,detail:a.detail,...(a.url?{url:a.url}:{}),...(a.nativeThreadId?{nativeThreadId:a.nativeThreadId}:{}),choices:a.choices,questions:a.questions||[],fields:a.fields||{},time:a.time,revision:'1',turnId:session.turnId||''};
+    const parentSessionIds:string[]=[]; let owner=session;
+    while(owner.parentId&&!parentSessionIds.includes(owner.parentId)) {
+      const parent=this.core.store.sessions().find(s=>s.id===owner.parentId&&this.inScope(device,s));
+      if(!parent)break;parentSessionIds.push(parent.id);owner=parent;
+    }
+    const base={id:a.id,sessionId:a.sessionId,parentSessionIds,kind:a.kind,title:a.title,detail:a.detail,...(a.url?{url:a.url}:{}),...(a.nativeThreadId?{nativeThreadId:a.nativeThreadId}:{}),choices:a.choices,questions:a.questions||[],fields:a.fields||{},time:a.time,revision:'1',turnId:session.turnId||''};
     const large=Buffer.byteLength(JSON.stringify(base))>64000;
     return {...base,...(large?{title:a.title.slice(0,200),detail:'This proposal is too large for mobile review. Review it on the desktop.',questions:[],fields:{}}:{}),digest:digest(base),canAnswer:canAnswer&&!large};
   }
@@ -146,14 +152,14 @@ export class Router {
         if(!this.sessionDto(device,session).canSend)throw remoteError('PROVIDER_POLICY_UNSAFE','Stop and attach a supported restricted session before sending.');
         if(p.attachments.length)this.require(device,'attachments.write');
         const images=this.media.resolve(device,session.id,p.attachments);
-        if(busy(session))throw remoteError('SESSION_BUSY','This session is busy.');
+        if(busy(session)&&!this.core.sendQueue.shouldQueue(session))throw remoteError('SESSION_BUSY','This session is busy.');
         if(device.caps.includes('web')===false&&p.webSearch)throw remoteError('SCOPE_DENIED','Web search is not granted.');
-        if(this.core.store.sessions().filter(s=>s.remote?.deviceId===device.id&&busy(s)).length>=2)throw remoteError('RATE_LIMITED','Two remote turns are already active.');
+        if(!busy(session)&&this.core.store.sessions().filter(s=>s.remote?.deviceId===device.id&&busy(s)).length>=2)throw remoteError('SESSION_BUSY','Two remote turns are already active.');
         const turnId=randomUUID(),project=device.projects.find(pr=>pr.path===session.cwd)!;
         let accepting=false;
         try {
-          await this.core.sendRemote({...p,id:session.id,turnId,images},this.execution(device,project),()=>this.current(device),()=>{accepting=true;},()=>{this.media.submitted(device,p.attachments);},()=>{accepting=false;});
-          const result={commandId,status:'accepted',turnId};this.registry.finish(device.id,commandId!,{status:'completed',result});return result;
+          const outcome=await this.core.sendRemote({...p,id:session.id,turnId,images},this.execution(device,project),()=>this.current(device),()=>{accepting=true;},()=>{this.media.submitted(device,p.attachments);},()=>{accepting=false;});
+          const result={commandId,status:typeof outcome==='object'&&outcome.queued?'queued':'accepted',turnId};this.registry.finish(device.id,commandId!,{status:'completed',result});return result;
         } catch(error:any) {
           if(accepting||error?.code==='OUTCOME_UNKNOWN')throw remoteError('OUTCOME_UNKNOWN','The provider may have accepted this turn. Reconcile its status before sending again.');
           throw error;
@@ -221,7 +227,7 @@ export class Router {
       case 'activity.list':this.session(device,p.sessionId);return mobilePage(this.core.store,p.sessionId,undefined,p.limit,true).items;
       case 'permissions.get':return this.permissions(device);
       case 'permissions.pause':await this.core.updateSettings({paused:true});return true;
-      case 'devices.self':return {id:device.id,name:device.name,expiresAt:device.expiresAt,scopeVersion:device.scopeVersion,caps:device.caps,categories:device.categories,scriptIds:device.scriptIds,projects:device.projects,ollamaHosts:device.ollamaHosts};
+      case 'devices.self':return {actionAuthentication:device.actionAuthentication||'biometric',id:device.id,name:device.name,expiresAt:device.expiresAt,scopeVersion:device.scopeVersion,caps:device.caps,categories:device.categories,scriptIds:device.scriptIds,projects:device.projects,ollamaHosts:device.ollamaHosts};
       case 'permissions.reduce': {
         const current=this.current(device);if(p.expectedScopeVersion!==current.scopeVersion)throw remoteError('REVISION_CONFLICT','Device access changed. Review it again.');
         const subset=(requested:unknown,granted:string[])=>{if(requested===undefined)return [...granted];if(!Array.isArray(requested)||requested.some(v=>typeof v!=='string'||!granted.includes(v)))throw remoteError('SCOPE_DENIED','Mobile permission changes can only remove existing access.');return [...new Set(requested)] as string[];};
@@ -250,7 +256,7 @@ export class Router {
       }
       case 'desktop.execute': {
         const def=validateAction(p.action,p.args),{project,settings}=this.category(device,p.projectId,def.category);
-        if([...this.actions.values()].filter(a=>a.deviceId===device.id).length>=1)throw remoteError('RATE_LIMITED','Wait for this device’s active desktop action.');
+        if([...this.actions.values()].filter(a=>a.deviceId===device.id).length>=1)throw remoteError('SESSION_BUSY','Wait for this device’s active desktop action.');
         const controller=new AbortController(),executionId=randomUUID();
         const check=()=>{controller.signal.throwIfAborted();const current=this.category(device,p.projectId,def.category).settings;if(p.action==='script.run'&&digest(current.scripts.find(s=>s.id===p.args.id))!==p.definitionDigest)throw remoteError('REVISION_CONFLICT','The saved script changed.');if(p.action==='files.open'){const path=realpathSync(p.args.path),rel=relative(project.path,path);if(isAbsolute(rel)||rel==='..'||rel.startsWith('../'))throw remoteError('SCOPE_DENIED','File is outside the approved project.');p.args.path=path;}};
         this.actions.set(executionId,{deviceId:device.id,controller,check});
@@ -269,7 +275,7 @@ export class Router {
       case 'timers.cancel': {this.category(device,p.projectId,'timers');if(!this.core.store.timers().some(t=>t.id===p.timerId&&t.remoteProjectId===p.projectId))throw remoteError('SCOPE_DENIED','Timer is not available in this project.');this.core.store.removeTimer(p.timerId);this.core.changed();return true;}
       case 'memory.list':case 'memory.retrieve':case 'memory.save': {
         this.require(device,method==='memory.save'?'memory.write':'memory.read');const session=this.session(device,p.sessionId);if(session.provider!=='ollama')throw remoteError('SCOPE_DENIED','Memory requires an Ollama session.');
-        if([...this.actions.values()].some(a=>a.deviceId===device.id))throw remoteError('RATE_LIMITED','Wait for this device’s active operation.');
+        if([...this.actions.values()].some(a=>a.deviceId===device.id))throw remoteError('SESSION_BUSY','Wait for this device’s active operation.');
         const controller=new AbortController(),check=()=>{this.current(device);if(this.core.settings.paused||!this.core.settings.memory.enabled)throw remoteError('POLICY_PAUSED','Memory is disabled or paused.');controller.signal.throwIfAborted();};
         check();const executionId=randomUUID();this.actions.set(executionId,{deviceId:device.id,controller,check});
         try {

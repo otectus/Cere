@@ -1,6 +1,7 @@
 import { createServer } from 'node:https';
 import type { Server } from 'node:https';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { networkInterfaces } from 'node:os';
 import { TextDecoder } from 'node:util';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
@@ -16,13 +17,16 @@ import { helloSchema, requestSchema, methods, mutations, needsProof, availableOp
 import { mobileMessage } from './transcript.ts';
 
 type Peer = {socket:WebSocket;device?:Device;hello?:any;challenge?:any;authSessionId?:string;expiresAt:number;subscribed:boolean;selected?:string;
-  challenges:Map<string,any>;readBudget:number;mutationTimes:number[];lastBudget:number;inFlight:number;timer:NodeJS.Timeout;alive:boolean;pingAt:number};
+  challenges:Map<string,any>;inFlight:number;timer:NodeJS.Timeout;alive:boolean;pingAt:number};
 export class MobileGateway {
   core:Core;registry:RemoteStore;identity:Identity;pairing:Pairing;router:Router;
   servers:Server[]=[];wsServers:WebSocketServer[]=[];peers=new Set<Peer>();closed=false;
-  attempts=new Map<string,number[]>();heartbeat:NodeJS.Timeout;stateTimer?:NodeJS.Timeout;
-  budgets=new Map<string,{reads:number;last:number;mutations:number[]}>();
+  heartbeat:NodeJS.Timeout;stateTimer?:NodeJS.Timeout;
   lifecycle=Promise.resolve();
+  bindings=new Map<string,{server:Server;ws:WebSocketServer}>();
+  networkError:string|undefined;
+  availableAddresses=()=>Object.values(networkInterfaces()).flat().filter(Boolean).map(info=>info!.address);
+
   constructor(core:Core) {
     this.core=core;this.registry=new RemoteStore(core.store);this.identity=new Identity(this.registry);this.pairing=new Pairing(this.registry,this.identity);
     this.router=new Router(core,this.registry,id=>this.revoke(id));
@@ -59,38 +63,41 @@ export class MobileGateway {
     peer.socket.send(data);
   }
   presence() {
-    this.core.remoteStatus={enabled:this.registry.config().enabled,listening:this.servers.length>0,connected:[...new Map([...this.peers].filter(p=>p.device).map(p=>[p.device!.id,{id:p.device!.id,name:p.device!.name}])).values()],
+    this.core.remoteStatus={enabled:this.registry.config().enabled,listening:this.servers.length>0,listeningAddresses:[...this.bindings.keys()],waitingForNetwork:this.registry.config().enabled&&!this.servers.length,networkError:this.networkError,connected:[...new Map([...this.peers].filter(p=>p.device).map(p=>[p.device!.id,{id:p.device!.id,name:p.device!.name}])).values()],
       activeTurns:this.core.store.sessions().filter(s=>s.remote&&busy(s)).map(s=>({sessionId:s.id,deviceId:s.remote!.deviceId,project:s.cwd}))};
     if(!this.closed)this.core.changed();
   }
-  async start() {this.lifecycle=this.lifecycle.then(()=>this.refresh());return this.lifecycle;}
+  async start() {this.lifecycle=this.lifecycle.catch(()=>{}).then(()=>this.refresh());return this.lifecycle;}
   async refresh() {
     if(this.closed)return;
+    await this.completeReplacements();
     const config=this.registry.config();
     if(!config.enabled||!this.registry.devices().some(d=>this.registry.live(d.id))) {await this.stopListeners();this.presence();return;}
-    if(this.servers.length)return;
-    addresses(config.addresses);await this.identity.ensure(config);
+    const available=this.availableAddresses(),wanted=config.addresses.filter(address=>available.includes(address));
+    for(const address of [...this.bindings.keys()])if(!wanted.includes(address))await this.stopBinding(address);
+    this.networkError=undefined;
+    if(!wanted.length){this.presence();return;}
+    try {await this.identity.ensure(config);} catch(error) {this.networkError=(error as Error).message;this.presence();return;}
     const material=this.identity.material();
-    try {
-      for(const address of config.addresses) {
+    for(const address of wanted) {
+      if(this.bindings.has(address))continue;
+      try {
         const https=createServer({key:material.key,cert:material.cert,minVersion:'TLSv1.2',maxHeaderSize:8192,requestTimeout:10000,headersTimeout:10000},(_req,res)=>{res.writeHead(404);res.end();});
         const ws=new WebSocketServer({noServer:true,perMessageDeflate:false,maxPayload:1024*1024,handleProtocols:protocols=>protocols.has('cere.mobile.v1')?'cere.mobile.v1':false});
         https.on('upgrade',(request,socket,head)=>{
-          const ip=request.socket.remoteAddress||'unknown',now=Date.now();
-          const recent=(this.attempts.get(ip)||[]).filter(t=>now-t<60000);recent.push(now);this.attempts.set(ip,recent);
-          if(this.attempts.size>1000)for(const [key,times]of this.attempts)if(times.every(t=>now-t>=60000))this.attempts.delete(key);
-          const allowed=this.registry.config().enabled&&request.url==='/mobile/v1'&&!request.headers.origin&&request.headers['sec-websocket-protocol']==='cere.mobile.v1'&&this.peers.size<10&&recent.length<=5;
+          const allowed=this.registry.config().enabled&&request.url==='/mobile/v1'&&!request.headers.origin&&request.headers['sec-websocket-protocol']==='cere.mobile.v1'&&this.peers.size<10;
           if(!allowed){socket.destroy();return;}
           ws.handleUpgrade(request,socket,head,client=>this.connection(client));
         });
-        this.servers.push(https);this.wsServers.push(ws);
-        await new Promise<void>((resolve,reject)=>{https.once('error',reject);https.listen(config.port,address,()=>{https.off('error',reject);https.on('error',()=>{void this.disable();});resolve();});});
-      }
-    } catch(error){await this.stopListeners();throw error;}
+        this.bindings.set(address,{server:https,ws});this.servers.push(https);this.wsServers.push(ws);
+        await new Promise<void>((resolve,reject)=>{https.once('error',reject);https.listen(config.port,address,()=>{https.off('error',reject);https.on('error',error=>{if(this.bindings.get(address)?.server!==https)return;this.networkError=error.message;void this.stopBinding(address,https).then(()=>this.presence());});resolve();});});
+        if(this.closed||!this.registry.config().enabled)await this.stopBinding(address);
+      } catch(error){await this.stopBinding(address);this.networkError=(error as Error).message;}
+    }
     this.presence();
   }
   connection(socket:WebSocket) {
-    const peer:Peer={socket,expiresAt:0,subscribed:false,challenges:new Map(),readBudget:40,mutationTimes:[],lastBudget:Date.now(),inFlight:0,alive:true,pingAt:Date.now(),timer:setTimeout(()=>socket.close(4001,'UNAUTHENTICATED'),10000)};
+    const peer:Peer={socket,expiresAt:0,subscribed:false,challenges:new Map(),inFlight:0,alive:true,pingAt:Date.now(),timer:setTimeout(()=>socket.close(4001,'UNAUTHENTICATED'),10000)};
     peer.timer.unref();this.peers.add(peer);
     socket.on('error',()=>{});socket.on('pong',()=>{peer.alive=true;});
     socket.on('close',()=>{clearTimeout(peer.timer);peer.challenges.clear();this.peers.delete(peer);if(!this.closed)this.presence();});
@@ -119,7 +126,7 @@ export class MobileGateway {
     if(!peer.device) {
       if(frame.type==='hello'&&!peer.hello) {
         const hello=helloSchema.parse(frame),device=this.registry.live(hello.deviceId);
-        if(!device||hello.desktopId!==this.identity.id||hello.protocolMin>0||hello.protocolMax<0||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
+        if(!device||device.replacementPending||hello.desktopId!==this.identity.id||hello.protocolMin>0||hello.protocolMax<0||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
         peer.hello=hello;peer.challenge={challengeId:randomUUID(),serverNonce:randomBytes(32).toString('base64url'),epoch:this.registry.epoch,audience:this.identity.id,expiresAt:Date.now()+30000};
         this.send(peer,{v:1,type:'auth.challenge',...peer.challenge});return;
       }
@@ -127,24 +134,20 @@ export class MobileGateway {
       const hello=peer.hello,challenge=peer.challenge;peer.challenge=undefined;
       const device=hello?this.registry.live(hello.deviceId):undefined;
       const transcript={domain:'cere.mobile.auth.v1',helloDigest:hello?digest(hello):'',challenge,desktopId:this.identity.id,deviceId:device?.id,keyVersion:1,epoch:this.registry.epoch};
-      if(!device||!challenge||challenge.expiresAt<Date.now()||reply.challengeId!==challenge.challengeId||!verified(device.connectionKey,transcript,reply.signature)||!this.registry.config().enabled||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
+      if(!device||device.replacementPending||!challenge||challenge.expiresAt<Date.now()||reply.challengeId!==challenge.challengeId||!verified(device.connectionKey,transcript,reply.signature)||!this.registry.config().enabled||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
       peer.device=device;peer.authSessionId=randomUUID();peer.expiresAt=Date.now()+15*60000;clearTimeout(peer.timer);
       device.lastSeen=Date.now();this.registry.saveDevice(device);
-      this.send(peer,{v:1,type:'welcome',desktopId:this.identity.id,brokerBuild:'0.1.0/mobile-v1',authSessionId:peer.authSessionId,expiresAt:peer.expiresAt,epoch:this.registry.epoch,scopeVersion:device.scopeVersion,protocol:{major:1,minor:0},operations:availableOperations(device.caps),sendAuthentication:'connection-key',limits:{maxFrameBytes:1024*1024,maxMessageLength:100000,maxAttachments:4}});
+      this.send(peer,{v:1,type:'welcome',desktopId:this.identity.id,brokerBuild:'0.1.0/mobile-v1',authSessionId:peer.authSessionId,expiresAt:peer.expiresAt,epoch:this.registry.epoch,scopeVersion:device.scopeVersion,protocol:{major:1,minor:0},operations:availableOperations(device.caps),sendAuthentication:'connection-key',actionAuthentication:device.actionAuthentication||'biometric',limits:{maxFrameBytes:1024*1024,maxMessageLength:100000,maxAttachments:4}});
       this.registry.audit({deviceId:device.id,operation:'auth',decision:'connected'});this.presence();return;
     }
     const request=requestSchema.parse(frame),device=this.router.current(peer.device);
     if(peer.expiresAt<Date.now()){peer.socket.close(4001,'AUTH_EXPIRED');return;}
     const schema=methods[request.method];if(!schema)throw remoteError('INVALID_ARGUMENT','Unknown mobile operation.');
     const params:any=schema.parse(request.params),method=request.method,now=Date.now();
-    const defensive=['sessions.stop','permissions.pause','permissions.reduce','devices.selfRevoke'].includes(method)||method==='approvals.answer'&&['deny','cancel'].includes(params.choice);
-    const budget=this.budgets.get(device.id)||{reads:40,last:now,mutations:[]};this.budgets.set(device.id,budget);
-    budget.reads=Math.min(40,budget.reads+(now-budget.last)/1000*20);budget.last=now;
-    if(!defensive&&--budget.reads<0)throw remoteError('RATE_LIMITED','Read request rate exceeded.');
     if(method==='commands.challenge') {
       if(!mutations.has(params.method))throw remoteError('INVALID_ARGUMENT','Only a supported mutation can be authenticated.');
       for(const[id,c]of peer.challenges)if(c.expiresAt<now)peer.challenges.delete(id);
-      if(peer.challenges.size>=4)throw remoteError('RATE_LIMITED','Too many pending action challenges.');
+      if(peer.challenges.size>=4)throw remoteError('LIMIT_EXCEEDED','Too many pending action challenges.');
       const challenge={challengeId:randomUUID(),nonce:randomBytes(32).toString('base64url'),expiresAt:now+30000};peer.challenges.set(challenge.challengeId,{...challenge,...params});
       this.send(peer,{v:1,type:'response',id:request.id,result:challenge});return;
     }
@@ -153,14 +156,11 @@ export class MobileGateway {
       const prior=this.registry.prior(device.id,request.commandId,method,request.params);
       if(prior){this.send(peer,{v:1,type:'response',id:request.id,...(prior.status==='failed'?{error:prior.error}:{result:prior.result??prior})});return;}
       if(needsProof(method,params)) {
-        budget.mutations=budget.mutations.filter(t=>now-t<60000);
-        if(budget.mutations.length>=10)throw remoteError('RATE_LIMITED','Action rate exceeded.');
         const proof=request.proof,challenge=proof?peer.challenges.get(proof.challengeId):undefined;
         if(proof)peer.challenges.delete(proof.challengeId);
         const transcript={domain:'cere.mobile.action.v1',desktopId:this.identity.id,deviceId:device.id,keyVersion:device.keyVersion,scopeVersion:device.scopeVersion,epoch:this.registry.epoch,authSessionId:peer.authSessionId,challengeId:challenge?.challengeId,nonce:challenge?.nonce,method,paramsDigest:digest(request.params),commandId:request.commandId};
         const signatureValid=!!proof&&(verified(device.actionKey,transcript,proof.signature)||(method==='sessions.send'&&verified(device.connectionKey,transcript,proof.signature)));
         if(!challenge||challenge.expiresAt<now||challenge.method!==method||challenge.paramsDigest!==digest(request.params)||challenge.commandId!==request.commandId||!signatureValid)throw remoteError('UNAUTHENTICATED','Review and authenticate the exact operation again.');
-        budget.mutations.push(now);
       }
       this.registry.accept(device.id,request.commandId,method,request.params);
       this.registry.audit({deviceId:device.id,authSessionId:peer.authSessionId,commandId:request.commandId,operation:method,argsDigest:digest(request.params),decision:'authorized',scopeVersion:device.scopeVersion,policyRevision:this.core.store.get('settingsRevision','0'),sessionId:params.sessionId,projectId:params.projectId});
@@ -191,7 +191,7 @@ export class MobileGateway {
     await this.router.media.purge();
     const config=this.registry.config();
     if(config.enabled) {
-      try{addresses(config.addresses);}catch{await this.disable();return;}
+      await this.start();
       for(const device of this.registry.devices())if(!device.revokedAt&&device.expiresAt<=Date.now())await this.revoke(device.id);
       if(!this.registry.devices().some(d=>this.registry.live(d.id)))await this.stopListeners();
     }
@@ -200,11 +200,17 @@ export class MobileGateway {
     const sessions=this.core.store.sessions().filter(s=>s.remote&&(!deviceId||s.remote.deviceId===deviceId));
     await Promise.allSettled(sessions.map(async s=>{await this.core.stop(s.id);this.core.generations.set(s.id,(this.core.generations.get(s.id)||0)+1);const adapter=this.core.adapters.get(s.id);this.core.adapters.delete(s.id);for(const[token,id]of this.core.tokens)if(id===s.id)this.core.tokens.delete(token);let timer:NodeJS.Timeout|undefined;await Promise.race([adapter?.close(),new Promise<void>(resolve=>{timer=setTimeout(resolve,3000);})]).finally(()=>clearTimeout(timer));if(busy(this.core.store.session(s.id)))this.core.updateSession(s.id,{status:'interrupted'});}));
   }
+  async stopBinding(address:string,expected?:Server) {
+    const binding=this.bindings.get(address);if(!binding||(expected&&binding.server!==expected))return;
+    this.bindings.delete(address);
+    this.servers=this.servers.filter(server=>server!==binding.server);this.wsServers=this.wsServers.filter(ws=>ws!==binding.ws);
+    for(const socket of binding.ws.clients)socket.terminate();
+    await new Promise<void>(resolve=>{binding.server.close(()=>resolve());binding.server.closeAllConnections();});
+    binding.ws.close();
+  }
   async stopListeners() {
     for(const peer of this.peers)peer.socket.terminate();
-    const servers=this.servers.splice(0),websockets=this.wsServers.splice(0);
-    await Promise.all(servers.map(server=>new Promise<void>(resolve=>{server.close(()=>resolve());server.closeAllConnections();})));
-    for(const ws of websockets)ws.close();
+    await Promise.all([...this.bindings.keys()].map(address=>this.stopBinding(address)));
   }
   async disable() {
     this.registry.configure({...this.registry.config(),enabled:false});
@@ -224,12 +230,41 @@ export class MobileGateway {
     await this.stopOwned(id);await this.router.media.purge(id);this.registry.audit({deviceId:id,operation:'device.revoke',decision:'revoked'});
     if(!this.registry.devices().some(d=>this.registry.live(d.id)))await this.stopListeners();this.presence();
   }
+  // The pairing transaction writes this marker together with old-key revocation.
+  // Repeated startup/maintenance completes any interrupted ownership migration before
+  // the new device can authenticate. Each stopped-session update is idempotent.
+  async completeReplacements() {
+    for(const device of this.registry.devices()) {
+      if(!device.replacementPending||!device.replacesDeviceId||!this.registry.live(device.id))continue;
+      this.router.abortActions(device.replacesDeviceId);
+      for(const peer of this.peers)if(peer.device?.id===device.replacesDeviceId)peer.socket.close(4003,'PAIRING_REPLACED');
+      await this.stopOwned(device.replacesDeviceId);
+      for(const session of this.core.store.sessions())if(session.remote?.deviceId===device.replacesDeviceId) {
+        const project=device.projects.find(project=>project.path===session.cwd);
+        if(project)this.core.updateSession(session.id,{remote:this.router.execution(device,project)});
+      }
+      const current=this.registry.live(device.id);
+      if(current){current.replacementPending=false;this.registry.saveDevice(current);}
+    }
+  }
   async local(method:string,params:any={}) {
     switch(method) {
       case 'remote.status':return {...this.core.remoteStatus as object,config:this.registry.config(),desktopId:this.identity.id,devices:this.registry.devices().map(({connectionKey,actionKey,...d})=>({...d,fingerprint:digest({connectionKey,actionKey})}))};
       case 'remote.preparePair':return this.pairing.prepare(params);
-      case 'remote.reviewPair': {const {response,sas,fingerprint}=this.pairing.review(params.response);return {sas,fingerprint,name:response.name};}
-      case 'remote.confirmPair': {const device=this.pairing.confirm(params);await this.start();return {id:device.id,name:device.name};}
+      case 'remote.reviewPair': {const {response,sas,fingerprint,offer}=this.pairing.review(params.response);return {sas,fingerprint,name:response.name,actionAuthentication:offer.actionAuthentication||'biometric',replacesDeviceId:offer.replacesDeviceId};}
+      case 'remote.confirmPair': {
+        const device=this.pairing.confirm(params);
+        await this.start();return {id:device.id,name:device.name};
+      }
+      case 'remote.configureEndpoints': {
+        const p=z.strictObject({addresses:z.array(z.string()),port:z.number().int().min(1024).max(65535).default(8443),confirmed:z.literal(true)}).parse(params);
+        const config={...this.registry.config(),addresses:addresses(p.addresses),port:p.port};
+        await this.identity.renewCertificate(config);
+        this.registry.configure(config);this.registry.store.db.exec('DELETE FROM remote_pair_offers');
+        await this.stopListeners();await this.start();
+        this.registry.audit({operation:'identity.endpoints',decision:'updated',argsDigest:digest(config.addresses)});
+        return true;
+      }
       case 'remote.enable':this.registry.configure({...this.registry.config(),enabled:true});await this.start();return true;
       case 'remote.off':await this.disable();return true;
       case 'remote.resetIdentity': {

@@ -43,52 +43,52 @@ CDialog {
     }
     onSessionIdChanged:{cliAccess.checked=false;computerAccess.checked=false;if(opened)inspect()}
 
-    CText { text:"Permission Center";font.pixelSize:20;font.weight:Font.DemiBold }
+    CText { text:"Permission Center";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
     CText {
         text:"Review Cere’s standing desktop permissions and grant short, project-bound power access to an idle managed session. Existing permission requests still need your answer."
-        color:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap
+        color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
     CText {
         visible:!!center.inspection.warning
         text:center.inspection.warning||""
-        color:Theme.amber;font.pixelSize:12;wrapMode:Text.Wrap
+        color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
     CText {
         text:"Power access changes Cere and provider permission handling for the selected sessions. It is not operating-system containment and cannot constrain processes outside Cere."
-        color:Theme.amber;font.pixelSize:12;wrapMode:Text.Wrap
+        color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
 
     CText {
         visible:center.inspection.persistent?.cli===true||center.inspection.persistent?.computer===true
         text:"Persistent permission skipping: "+[center.inspection.persistent?.cli?"CLI":"",center.inspection.persistent?.computer?"computer":""].filter(value=>value).join(" + ")+". Change these switches in Settings → AI assistance."
-        color:Theme.amber;font.pixelSize:12;wrapMode:Text.Wrap
+        color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
     Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
     CText { text:"Selected session";font.weight:Font.DemiBold }
     CText {
         text:center.sessionId?(center.selectedAccess.title||"Selected session")+" · "+(center.selectedAccess.provider||"unknown provider")+" · "+(center.selectedAccess.status||"unavailable"):"Select a session before opening Permission Center."
-        color:center.sessionId?Theme.text:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap
+        color:center.sessionId?Theme.text:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
-    CText { visible:!!center.selectedAccess.cwd;text:center.selectedAccess.cwd||"";color:Theme.cyan;font.pixelSize:11;wrapMode:Text.Wrap }
+    CText { visible:!!center.selectedAccess.cwd;text:center.selectedAccess.cwd||"";color:Theme.cyan;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     CText {
         visible:!!center.selectedAccess.leaseId
         text:"Power active: "+center.accessLabel(center.selectedAccess)+" · "+center.remaining(center.selectedAccess.expiresAt)+" remaining"
-        color:Theme.amber;font.pixelSize:12;font.weight:Font.DemiBold;wrapMode:Text.Wrap
+        color:Theme.amber;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;wrapMode:Text.Wrap
     }
     CText {
         visible:!!center.sessionId&&!center.selectedIdle&&!center.selectedAccess.leaseId
         text:"Stop the provider turn before starting power access. Linked, historical, and remote sessions are excluded."
-        color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap
+        color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap
     }
     CCheckBox { id:cliAccess;objectName:"powerCliAccess";text:"CLI full access";checked:false;enabled:!center.selectedAccess.leaseId }
-    CText { text:"Launch this session’s provider without its permission prompts or optional sandbox for the lease duration.";color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap }
+    CText { text:"Launch this session’s provider without its permission prompts or optional sandbox for the lease duration.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     CCheckBox { id:computerAccess;objectName:"powerComputerAccess";text:"Computer control";checked:false;enabled:!center.selectedAccess.leaseId }
-    CText { text:"Allow Cere desktop tools and captures for this session without category prompts during the lease.";color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap }
+    CText { text:"Allow Cere desktop tools and captures for this session without category prompts during the lease.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     RowLayout {
         Layout.fillWidth:true
-        CText { text:"Duration";font.pixelSize:12;Layout.fillWidth:true }
+        CText { text:"Duration";font.pixelSize:Theme.secondary;Layout.fillWidth:true }
         CSpinBox { id:duration;objectName:"powerDuration";from:1;to:120;value:15;Accessible.name:"Power duration in minutes" }
-        CText { text:"minutes";color:Theme.muted;font.pixelSize:12 }
+        CText { text:"minutes";color:Theme.muted;font.pixelSize:Theme.secondary }
     }
     CButton {
         objectName:"startPower";Layout.fillWidth:true;primary:true
@@ -98,7 +98,7 @@ CDialog {
     }
 
     CText { text:"Active and recent leases";font.weight:Font.DemiBold }
-    CText { visible:!(center.inspection.power||[]).length;text:"No power leases in this broker process.";color:Theme.muted;font.pixelSize:12 }
+    CText { visible:!(center.inspection.power||[]).length;text:"No power leases in this broker process.";color:Theme.muted;font.pixelSize:Theme.secondary }
     Repeater {
         model:center.inspection.power||[]
         ColumnLayout {
@@ -107,10 +107,10 @@ CDialog {
             CText {
                 text:center.accessLabel(modelData)+" · "+modelData.state+(modelData.state==="active"?" · "+center.remaining(modelData.expiresAt):"")
                 color:modelData.state==="active"?Theme.amber:modelData.state==="unconfirmed"?Theme.danger:Theme.text
-                font.pixelSize:12;font.weight:Font.DemiBold;wrapMode:Text.Wrap
+                font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;wrapMode:Text.Wrap
             }
-            CText { text:modelData.cwd+" · "+(modelData.sessionIds||[]).length+" session"+((modelData.sessionIds||[]).length===1?"":"s")+" · revision "+modelData.revision;color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap }
-            CText { visible:!!modelData.reason;text:"Reason: "+modelData.reason;color:Theme.muted;font.pixelSize:11 }
+            CText { text:modelData.cwd+" · "+(modelData.sessionIds||[]).length+" session"+((modelData.sessionIds||[]).length===1?"":"s")+" · revision "+modelData.revision;color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+            CText { visible:!!modelData.reason;text:"Reason: "+modelData.reason;color:Theme.muted;font.pixelSize:Theme.caption }
             CButton {
                 visible:modelData.state==="active"||modelData.state==="ending"||modelData.state==="unconfirmed"
                 text:modelData.state==="ending"?"Ending…":modelData.state==="unconfirmed"?"Retry provider stop":"End power access"
@@ -122,7 +122,7 @@ CDialog {
     }
 
     CText { text:"Cere actions";font.weight:Font.DemiBold }
-    CText { text:"Profile: "+(center.inspection.profile||"manual")+" · enabled categories: "+((center.inspection.categories||[]).join(", ")||"none");color:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap }
+    CText { text:"Profile: "+(center.inspection.profile||"manual")+" · enabled categories: "+((center.inspection.categories||[]).join(", ")||"none");color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CButton {
         objectName:"pauseCereActions";Layout.fillWidth:true
         text:center.inspection.paused?"Resume Cere actions":"Pause Cere actions"
@@ -136,18 +136,18 @@ CDialog {
 
     CText { text:center.selectedAccess.termination||"";visible:text.length>0;color:Theme.amber;wrapMode:Text.Wrap }
     CText { text:"Standing project grants";font.weight:Font.DemiBold }
-    CText { visible:!(center.inspection.grants||[]).length;text:"No standing desktop grants.";color:Theme.muted;font.pixelSize:12 }
+    CText { visible:!(center.inspection.grants||[]).length;text:"No standing desktop grants.";color:Theme.muted;font.pixelSize:Theme.secondary }
     Repeater {
         model:center.inspection.grants||[]
         RowLayout {
             required property var modelData
             Layout.fillWidth:true
-            CText { Layout.fillWidth:true;text:modelData.category+" · "+modelData.cwd;color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap }
+            CText { Layout.fillWidth:true;text:modelData.category+" · "+modelData.cwd;color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
             CButton { text:"Revoke";danger:true;enabled:center.actionRequest<0;onClicked:center.call("permissions.revoke",{category:modelData.category,cwd:modelData.cwd}) }
         }
     }
 
-    CText { visible:!!center.error;text:center.error;color:Theme.danger;font.pixelSize:12;wrapMode:Text.Wrap }
+    CText { visible:!!center.error;text:center.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     RowLayout {
         Layout.fillWidth:true
         CButton { text:"Refresh";Layout.fillWidth:true;enabled:center.inspectRequest<0&&center.actionRequest<0;onClicked:center.inspect() }

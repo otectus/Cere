@@ -38,7 +38,7 @@ ColumnLayout {
     }
     Component.onCompleted:call("indextts.refresh")
     CText { text:"IndexTTS · local voice cloning";font.weight:Font.DemiBold }
-    CText { text:"Audio is pipelined in completed chunks. Text, reference recordings and emotion descriptions stay on this computer.";font.pixelSize:12;color:Theme.muted }
+    CText { text:"Audio is pipelined in completed chunks. Text, reference recordings and emotion descriptions stay on this computer.";font.pixelSize:Theme.secondary;color:Theme.muted }
     CComboBox {
         Layout.fillWidth:true;model:["2.5","2"];currentIndex:model.indexOf(panel.config.version||"2.5")
         Accessible.name:"IndexTTS model version";enabled:!panel.status.busy
@@ -48,7 +48,7 @@ ColumnLayout {
     CButton { text:"Save model directory";enabled:!panel.status.busy;onClicked:panel.save({modelDir:modelDirectory.text.trim()}) }
     CText {
         text:"The bilibili model license is conditional. Commercial use is subject to its terms and voice authorization; large organizations may need a separate license. You must have rights to the reference voice."
-        font.pixelSize:12;color:Theme.muted
+        font.pixelSize:Theme.secondary;color:Theme.muted
     }
     RowLayout {
         CButton { text:"Read license";onClicked:Qt.openUrlExternally("https://github.com/index-tts/index-tts/blob/d9e41aac89fd00b3d71497fddb287b7f24613712/LICENSE") }
@@ -56,7 +56,7 @@ ColumnLayout {
     }
     CCheckBox { id:license; text:"I have reviewed and accept the model license and disclaimer." }
     CCheckBox { id:installEmotion;text:"Include Qwen text emotion · about 1.13 GiB extra download";checked:panel.caps.emotionInstalled===true }
-    CText { text:"Text emotion also needs additional working memory (roughly 1.1 GiB for FP16 weights, plus inference buffers). It loads on first use; on a small GPU it may run out of memory.";font.pixelSize:12;color:Theme.muted }
+    CText { text:"Text emotion also needs additional working memory (roughly 1.1 GiB for FP16 weights, plus inference buffers). It loads on first use; on a small GPU it may run out of memory.";font.pixelSize:Theme.secondary;color:Theme.muted }
     GridLayout {
         Layout.fillWidth:true;columns:width>440?3:1
         CButton { text:"Download / repair";enabled:license.checked&&!panel.status.busy;onClicked:panel.call("indextts.install",{acceptLicense:true,emotion:installEmotion.checked,deepspeed:installDeepSpeed.checked}) }
@@ -64,8 +64,8 @@ ColumnLayout {
         CButton { text:"Cancel download";enabled:panel.status.state==="downloading";onClicked:panel.call("indextts.cancelDownload") }
     }
     ProgressBar { Layout.fillWidth:true;visible:panel.status.busy;value:panel.status.progress||0;indeterminate:panel.status.state==="loading" }
-    CText { text:panel.error||panel.status.message||"Not installed";color:panel.error||panel.status.code?Theme.danger:Theme.cyan;font.pixelSize:12 }
-    CText { visible:!!panel.status.code;text:(panel.status.code||"")+" · "+(panel.status.recovery||"");color:Theme.muted;font.pixelSize:12 }
+    CText { text:panel.error||panel.status.message||"Not installed";color:panel.error||panel.status.code?Theme.danger:Theme.cyan;font.pixelSize:Theme.secondary }
+    CText { visible:!!panel.status.code;text:(panel.status.code||"")+" · "+(panel.status.recovery||"");color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout {
         CButton { text:"Refresh devices";enabled:!panel.status.busy;onClicked:panel.call("indextts.refresh") }
         CButton { text:"Load";enabled:!panel.status.busy;onClicked:panel.call("indextts.load") }
@@ -80,20 +80,20 @@ ColumnLayout {
         Layout.fillWidth:true;model:panel.precisions;currentIndex:panel.precisions.indexOf(panel.config.precision||"auto")
         Accessible.name:"IndexTTS precision";enabled:!panel.status.busy;onActivated:panel.save({precision:currentText})
     }
-    CText { visible:panel.config.device==="cpu";text:"CPU synthesis can be much slower than playback. Only FP32 is supported on CPU.";font.pixelSize:12;color:Theme.muted }
-    CText { visible:panel.caps.referenceDevice==="cpu"&&panel.caps.device?.startsWith("cuda:")===true;text:"GPU speech with CPU reference preparation saves video memory. The prepared reference is reused while the model stays loaded.";font.pixelSize:12;color:Theme.muted }
+    CText { visible:panel.config.device==="cpu";text:"CPU synthesis can be much slower than playback. Only FP32 is supported on CPU.";font.pixelSize:Theme.secondary;color:Theme.muted }
+    CText { visible:panel.caps.referenceDevice==="cpu"&&panel.caps.device?.startsWith("cuda:")===true;text:"GPU speech with CPU reference preparation saves video memory. The prepared reference is reused while the model stays loaded.";font.pixelSize:Theme.secondary;color:Theme.muted }
     CCheckBox { text:"Compiled CUDA kernels";checked:panel.config.cudaKernel===true;enabled:panel.caps.cudaKernel===true&&panel.config.device!=="cpu"&&!panel.status.busy;onClicked:panel.save({cudaKernel:checked}) }
     CCheckBox { id:installDeepSpeed;text:"Install experimental DeepSpeed support on the next download" }
     CCheckBox { text:"Use DeepSpeed · experimental; may be slower";checked:panel.config.deepspeed===true;enabled:panel.caps.deepspeed===true&&panel.config.device!=="cpu"&&!panel.status.busy;onClicked:panel.save({deepspeed:checked}) }
     RowLayout {
-        CText { text:"Unload after idle minutes";font.pixelSize:12 }
+        CText { text:"Unload after idle minutes";font.pixelSize:Theme.secondary }
         SpinBox { from:1;to:120;value:panel.config.idleMinutes||10;editable:true;enabled:!panel.status.busy;onValueModified:panel.save({idleMinutes:value}) }
     }
     RowLayout {
-        CText { text:"Target characters per chunk";font.pixelSize:12 }
+        CText { text:"Target characters per chunk";font.pixelSize:Theme.secondary }
         SpinBox { from:20;to:1000;value:panel.config.chunkChars||160;editable:true;enabled:!panel.status.busy;onValueModified:panel.save({chunkChars:value}) }
     }
-    CText { text:"Small GPUs use shorter chunks. Stop ends playback immediately and unloads the worker; the next request reloads the model.";color:Theme.muted;font.pixelSize:12 }
+    CText { text:"Small GPUs use shorter chunks. Stop ends playback immediately and unloads the worker; the next request reloads the model.";color:Theme.muted;font.pixelSize:Theme.secondary }
     Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
     CText { text:"Voice profiles";font.weight:Font.DemiBold }
     Repeater {
@@ -114,7 +114,7 @@ ColumnLayout {
     CButton { text:"New voice";onClicked:panel.edit(null) }
     CField { id:voiceName;objectName:"indexVoiceName";Layout.fillWidth:true;placeholderText:"Voice name";Accessible.name:"IndexTTS voice name" }
     CComboBox { id:language;Layout.fillWidth:true;model:panel.caps.languages||[];Accessible.name:"Voice language" }
-    CText { text:"Use a clean 3–15 second recording. Cere keeps the original privately and creates a mono reference. When editing, blank paths keep existing recordings.";font.pixelSize:12;color:Theme.muted }
+    CText { text:"Use a clean 3–15 second recording. Cere keeps the original privately and creates a mono reference. When editing, blank paths keep existing recordings.";font.pixelSize:Theme.secondary;color:Theme.muted }
     RowLayout {
         Layout.fillWidth:true
         CField { id:reference;Layout.fillWidth:true;placeholderText:"Speaker reference audio path";Accessible.name:"Speaker reference path" }
@@ -124,7 +124,7 @@ ColumnLayout {
         id:source;Layout.fillWidth:true;model:panel.sources.map(s=>panel.sourceLabels[s]);Accessible.name:"Emotion source"
         onActivated:alpha.value=["synthesis-text","text-description"].includes(panel.sources[currentIndex]) ? 0.6 : 1
     }
-    CText { visible:!panel.caps.emotionInstalled;text:"Text emotion modes become available after installing Qwen and refreshing devices.";color:Theme.muted;font.pixelSize:12 }
+    CText { visible:!panel.caps.emotionInstalled;text:"Text emotion modes become available after installing Qwen and refreshing devices.";color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout {
         visible:panel.sources[source.currentIndex]==="reference-audio";Layout.fillWidth:true
         CField { id:emotionReference;Layout.fillWidth:true;placeholderText:"Emotion reference audio path";Accessible.name:"Emotion reference path" }
@@ -139,20 +139,20 @@ ColumnLayout {
                 required property int index
                 required property string modelData
                 Layout.fillWidth:true
-                CText { text:modelData;Layout.preferredWidth:95;font.pixelSize:12 }
+                CText { text:modelData;Layout.preferredWidth:95;font.pixelSize:Theme.secondary }
                 CSlider { Layout.fillWidth:true;from:0;to:1;stepSize:.05;value:panel.vector[index];Accessible.name:modelData;onMoved:{const v=panel.vector.slice();v[index]=value;panel.vector=v} }
             }
         }
     }
     RowLayout {
         Layout.fillWidth:true;visible:panel.sources[source.currentIndex]!=="same-as-speaker"
-        CText { text:"Emotion strength · "+alpha.value.toFixed(2);font.pixelSize:12 }
+        CText { text:"Emotion strength · "+alpha.value.toFixed(2);font.pixelSize:Theme.secondary }
         CSlider { id:alpha;Layout.fillWidth:true;from:0;to:1;stepSize:.01;value:1;Accessible.name:"Emotion strength" }
     }
     CCheckBox { id:random;visible:["vector","synthesis-text","text-description"].includes(panel.sources[source.currentIndex]);text:"Random emotion sampling · reduces cloning fidelity" }
     RowLayout {
         objectName:"indexDuration";visible:panel.caps.durationControl===true;Layout.fillWidth:true
-        CText { text:"Duration · "+duration.value.toFixed(2)+"×";font.pixelSize:12 }
+        CText { text:"Duration · "+duration.value.toFixed(2)+"×";font.pixelSize:Theme.secondary }
         CSlider { id:duration;Layout.fillWidth:true;from:.5;to:2;stepSize:.01;value:1;Accessible.name:"Duration factor" }
     }
     CButton { text:panel.editId?"Save voice changes":"Add voice";enabled:!!panel.caps.languages&&!panel.status.busy&&voiceName.text.trim().length>0;onClicked:panel.saveVoice() }

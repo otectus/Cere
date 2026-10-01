@@ -16,17 +16,17 @@ Button {
     topPadding: 6; bottomPadding: 6
     hoverEnabled: true
     font.family: Theme.font
-    font.pixelSize: 13
+    font.pixelSize: Theme.body
     Accessible.name: text
     ToolTip.visible: hovered && (help.length>0 || label.truncated)
     ToolTip.text: help || text
     ToolTip.delay: 600
     background: Rectangle {
-        radius: 9
+        radius: Theme.radiusControl
         color: !control.enabled ? Theme.surface : control.down ? Theme.selected : control.primary ? Theme.selected : control.hovered ? Theme.raised : control.quiet ? "transparent" : Theme.surface
-        border.color: control.activeFocus ? Theme.cyan : control.primary ? "#235677" : control.danger ? "#704452" : control.quiet ? "transparent" : Theme.line
-        border.width: control.activeFocus ? 2 : 1
-        Behavior on color { ColorAnimation { duration: Theme.reducedMotion ? 0 : 100 } }
+        border.color: control.activeFocus ? Theme.focus : control.primary ? Theme.primaryBorder : control.danger ? Theme.dangerBorder : control.quiet ? "transparent" : control.hovered ? Theme.borderHover : Theme.border
+        border.width: control.activeFocus ? Theme.focusWidth : 1
+        Behavior on color { ColorAnimation { duration: Theme.duration(100) } }
     }
     contentItem: RowLayout {
         spacing: 8

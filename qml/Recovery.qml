@@ -8,7 +8,7 @@ CDialog {
     property int request:-1
     property string operation:""
     function call(method,args){if(request>=0)return;operation=method;request=App.rpc(method,args||{})}
-    CText { text:"Backup and restore";font.pixelSize:22 }
+    CText { text:"Backup and restore";font.pixelSize:Theme.page }
     CText { visible:recovery.request>=0;text:recovery.operation==="recovery.activate"?"Staging the reviewed restore. Editing is paused until the broker restarts.":"Working…";color:Theme.amber;Accessible.name:text }
     CText { text:"Backups exclude credentials, device keys, active grants, power sessions and executable actions. Temporary conversations are excluded. Files are private but not encrypted; text you typed may contain secrets.";color:Theme.muted;wrapMode:Text.Wrap }
     CCheckBox { id:content;text:"Include conversations, draft attachments, notes and memory";checked:false;onClicked:recovery.review={} }

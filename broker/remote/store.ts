@@ -5,6 +5,7 @@ import { remoteError } from '../execution.ts';
 
 export type Project = {id:string;name:string;path:string};
 export type Device = {id:string;name:string;connectionKey:string;actionKey:string;keyVersion:number;scopeVersion:string;
+  actionAuthentication?:'biometric'|'trusted-device';replacesDeviceId?:string;replacementPending?:boolean;
   createdAt:number;expiresAt:number;revokedAt?:number;lastSeen?:number;projects:Project[];caps:string[];categories:string[];scriptIds:string[];ollamaHosts:string[]};
 export type RemoteConfig = {enabled:boolean;addresses:string[];port:number;name:string};
 export class RemoteStore {

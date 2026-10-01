@@ -24,6 +24,10 @@ Every mutation has a per-device durable command ID and exact-parameter digest. A
 
 Command results are bound to the accepting device scopeVersion and redacted after grants change. Memory invalidation also removes retained result/error content. ID tombstones survive result retention, preserving duplicate suppression. Scope reduction purges phone caches and pending sensitive parameters; policy errors distinguish revoked devices, temporarily disabled remote access and changed grants.
 
+`APPROVAL_GONE` means the approval ID no longer exists. A changed proposal or capture digest returns `REVISION_CONFLICT` and requires fresh review. Android removes approvals after a confirmed answer or an authoritative gone response and refreshes changed requests; a delayed snapshot cannot restore a request retired during that snapshot. Transport failures and unknown command outcomes never count as approval success or authorize a replay.
+
+The desktop gateway has no per-second/per-minute request or reconnect budgets and no history/memory cooldowns. Simultaneous-operation and capacity checks remain separate (`SESSION_BUSY` / `LIMIT_EXCEEDED`); authentication, expiry, scope and exact-action signatures still apply to every request.
+
 ## Media and companion parity
 
 Uploads use signed begin/commit and one acknowledged chunk at a time. A binary frame contains a 16-byte UUID, unsigned 8-byte big-endian offset and at most 256 KiB of data. Status returns the contiguous committed offset. Phone drafts persist upload IDs/offsets for explicit resume, never automatic Send. Aborting removes a partial object.
@@ -35,3 +39,11 @@ Saved capture approval previews are device/proposal/digest-bound, expire in five
 Handoff copies a bounded eight-message preview into a new, reviewed draft without sending. Native history yields short-lived, single-use import tickets for stopped Codex threads in granted projects; raw native IDs stay on desktop. Memory offers paged browse/recall, saved-note CAS and exact-preview-bound forgetting/clearing. Remote graph inspection/erasure has a conservative worker-side work quota; large graphs require desktop maintenance.
 
 New APIs must be added to the strict schemas, capability map, implementation, golden/schema checks and scope/uncertainty regressions together. Planned methods without implementations must remain absent from negotiation.
+
+## Trusted-device mode and replacement pairing (0.1.2)
+
+The signed offer may include `actionAuthentication: "biometric" | "trusted-device"` (absent means biometric) and `replacesDeviceId` (a live same-desktop phone UUID). Every included field participates in the original JSON signature and offer digest; clients must not insert omitted defaults or remove unknown fields when calculating them. The response format is unchanged. The broker stores the policy from its own pending offer and includes it in welcome and `devices.self`. Android signs proof-required actions silently only when trusted policy matches both the saved pairing and authenticated welcome. No additional mutation accepts connection-key proofs.
+
+Replacement is explicitly initiated on the desktop. The phone verifies saved desktop/device identity and key continuity, refuses unresolved operations, and persists the new pairing together with retained drafts/cache before deleting old aliases. The broker reuses matching project IDs, revokes the replaced device, stops its native work, and transfers retained authorized session ownership. Local certificate/address renewal preserves the identity and TLS key but changes the pinned certificate, so each phone needs replacement pairing.
+
+Ollama session DTOs advertise `canQueue` and `queuedCount`. A signed `sessions.send` during a busy Ollama turn can return `status: "queued"` with its reserved `turnId`. Acceptance durably records the message and consumes the CAS-protected draft. Follow-ups dispatch FIFO after the current turn settles; Stop, shutdown, restart, or a failed turn leaves unsent messages visible without replaying them. Dispatch revalidates configuration and device authority. Approval DTOs include `parentSessionIds` so parent conversations can display delegated requests even when session summaries are paged. Conversation history includes question/answer and queued/cancelled message rows.

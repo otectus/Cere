@@ -54,7 +54,7 @@ ColumnLayout {
         Layout.preferredHeight: panel.maximumHeight
         color: Theme.input
         border.color: Theme.line
-        radius: 7
+        radius: Theme.radiusControl
         clip: true
 
         ColumnLayout {
@@ -69,14 +69,14 @@ ColumnLayout {
                     Layout.fillWidth: true
                     text: "Subagents · " + panel.agents.length
                     color: Theme.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.caption
                     font.bold: true
                 }
                 CText {
                     visible: panel.activeAgents.length > 0
                     text: panel.activeAgents.length + " active"
                     color: Theme.cyan
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.caption
                 }
             }
             ScrollView {
@@ -117,7 +117,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 text: "Tool activity · " + App.activityCount
                 color: Theme.muted
-                font.pixelSize: 11
+                font.pixelSize: Theme.caption
                 font.bold: true
             }
             ListView {

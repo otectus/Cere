@@ -28,25 +28,23 @@ CSection {
         clip:true
         ScrollBar.horizontal.policy:ScrollBar.AlwaysOff
         ScrollBar.vertical:CScrollBar {}
-        TextArea {
+        CTextArea {
             id:editor;objectName:"personalityText"
             textFormat:TextEdit.PlainText
             wrapMode:TextEdit.Wrap;selectByMouse:true
             readOnly:personality.requestId>=0
-            color:Theme.text;selectionColor:Theme.selected;selectedTextColor:Theme.text
-            font.family:Theme.font;font.pixelSize:13
+            font.family:Theme.font;font.pixelSize:Theme.body
             padding:12
             placeholderText:"Leave blank for a clear, helpful, neutral voice."
             Accessible.name:"Cere personality"
             onTextChanged:{personality.error="";personality.feedback=""}
-            background:Rectangle { color:Theme.input;radius:7;border.color:editor.activeFocus?Theme.cyan:Theme.line }
         }
     }
     CText {
         text:editor.length+" / "+personality.maximumLength+" characters"+(personality.dirty?" · Unsaved changes":"")
-        color:editor.length>personality.maximumLength?Theme.danger:Theme.muted;font.pixelSize:12
+        color:editor.length>personality.maximumLength?Theme.danger:Theme.muted;font.pixelSize:Theme.secondary
     }
-    CText { text:"Personality changes voice and manner, not permissions. Leave blank for a neutral voice. Restore default fills the editor; Save applies it.";color:Theme.muted;font.pixelSize:12 }
+    CText { text:"Personality changes voice and manner, not permissions. Leave blank for a neutral voice. Restore default fills the editor; Save applies it.";color:Theme.muted;font.pixelSize:Theme.secondary }
     GridLayout {
         Layout.fillWidth:true;columns:width>=480?3:1;columnSpacing:8;rowSpacing:8
         CButton {
@@ -65,9 +63,9 @@ CSection {
             onClicked:editor.text=App.state.personality.defaultText
         }
     }
-    CText { objectName:"personalityError";visible:!!personality.error;text:personality.error;color:Theme.danger;font.pixelSize:12 }
-    CText { visible:personality.conflict;text:"Personality changed on another client. Copy your text, then reload before saving.";color:Theme.amber;font.pixelSize:12 }
-    CText { visible:!!personality.feedback;text:personality.feedback;color:Theme.cyan;font.pixelSize:12 }
+    CText { objectName:"personalityError";visible:!!personality.error;text:personality.error;color:Theme.danger;font.pixelSize:Theme.secondary }
+    CText { visible:personality.conflict;text:"Personality changed on another client. Copy your text, then reload before saving.";color:Theme.amber;font.pixelSize:Theme.secondary }
+    CText { visible:!!personality.feedback;text:personality.feedback;color:Theme.cyan;font.pixelSize:Theme.secondary }
     Connections {
         target:App
         function onStateChanged(){personality.syncSaved()}

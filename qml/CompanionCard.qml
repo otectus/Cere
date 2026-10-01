@@ -10,7 +10,7 @@ ColumnLayout {
         Layout.fillWidth:true
         text:card.reply.title||"Pinned conversation"
         textFormat:Text.PlainText
-        color:Theme.muted;font.pixelSize:12
+        color:Theme.muted;font.pixelSize:Theme.secondary
     }
     RowLayout {
         Layout.fillWidth:true

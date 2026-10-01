@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import dev.otectus.cere.mobile.protocol.CanonicalJson
+import dev.otectus.cere.mobile.protocol.ActionAuthentication
 import dev.otectus.cere.mobile.protocol.WireCodec
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
@@ -32,6 +33,14 @@ data class PairingOffer(
     val nonce: String,
     val expiresAt: Long,
     val signature: String,
+    val actionAuthentication: ActionAuthentication = ActionAuthentication.BIOMETRIC,
+    val replacesDeviceId: String? = null,
+)
+
+data class VerifiedPairingOffer(
+    val offer: PairingOffer,
+    /** The exact parsed offer, including omitted/default fields, used by the desktop signature. */
+    val signedElement: JsonObject,
 )
 
 @Serializable
@@ -80,6 +89,8 @@ data class PairedDesktop(
     val connectionAlias: String,
     val actionAlias: String,
     val pairedAt: Long,
+    val actionAuthentication: ActionAuthentication = ActionAuthentication.BIOMETRIC,
+    val identityKey: String = "",
 )
 
 data class PendingPairing(
@@ -90,14 +101,20 @@ data class PendingPairing(
     val transcript: ByteArray,
     val connectionAlias: String,
     val actionAlias: String,
+    val actionAuthentication: ActionAuthentication,
 )
 
-@Serializable data class CompletedPairing(val desktop: PairedDesktop, val responseUri: String, val sas: String)
+@Serializable data class CompletedPairing(
+    val desktop: PairedDesktop,
+    val responseUri: String,
+    val sas: String,
+    val replacesDeviceId: String? = null,
+)
 
 class PairingManager(private val context: Context) {
     private val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
-    fun parseAndVerify(uri: String): PairingOffer {
+    fun parseAndVerify(uri: String): VerifiedPairingOffer {
         require(uri.toByteArray().size <= 2_000) { "Pairing offer is too large" }
         val prefix = "cere-pair://v1/"
         require(uri.startsWith(prefix)) { "Not a Cere pairing offer" }
@@ -119,18 +136,36 @@ class PairingManager(private val context: Context) {
         require(Signature.getInstance("SHA256withECDSA").run {
             initVerify(identity); update(CanonicalJson.encode(transcript).toByteArray()); verify(CanonicalJson.decodeBase64Url(offer.signature))
         }) { "Pairing offer signature is invalid" }
-        return offer
+        return VerifiedPairingOffer(offer, objectValue)
     }
 
-    fun prepare(offer: PairingOffer, deviceName: String): PendingPairing {
+    fun prepare(verified: VerifiedPairingOffer, deviceName: String, replacing: PairedDesktop? = null): PendingPairing {
+        val offer = verified.offer
         require(deviceName.isNotBlank() && deviceName.toByteArray().size <= 48)
+        if (replacing == null) {
+            require(offer.replacesDeviceId == null) { "This offer replaces an existing phone pairing" }
+        } else {
+            require(offer.desktopId == replacing.desktopId && offer.replacesDeviceId == replacing.deviceId) {
+                "Replacement offer does not identify this paired phone"
+            }
+            require(offer.spki == replacing.spki) { "Replacement certificate must retain the pinned desktop key" }
+            require(replacing.identityKey.isBlank() || offer.identityKey == replacing.identityKey) {
+                "Replacement offer changed the desktop identity key"
+            }
+        }
         val deviceId = UUID.randomUUID().toString()
         val suffix = offer.desktopId.take(12) + "." + deviceId.take(12)
         val connectionAlias = "cere.connection.$suffix"
         val actionAlias = "cere.action.$suffix"
-        generateKey(connectionAlias, requiresAuthentication = false)
-        generateKey(actionAlias, requiresAuthentication = true)
-        val signedOffer = WireCodec.json.encodeToJsonElement(PairingOffer.serializer(), offer)
+        try {
+            generateKey(connectionAlias, requiresAuthentication = false)
+            generateKey(actionAlias, requiresAuthentication = offer.actionAuthentication == ActionAuthentication.BIOMETRIC)
+        } catch (error: Throwable) {
+            keys.deleteEntry(connectionAlias)
+            keys.deleteEntry(actionAlias)
+            throw error
+        }
+        val signedOffer = verified.signedElement
         val body = PairingResponseBody(
             desktopId = offer.desktopId,
             pairingId = offer.pairingId,
@@ -147,8 +182,15 @@ class PairingManager(private val context: Context) {
         return PendingPairing(
             offer, body, sign(connectionAlias, transcript),
             Signature.getInstance("SHA256withECDSA").apply { initSign(keys.getKey(actionAlias, null) as java.security.PrivateKey) },
-            transcript, connectionAlias, actionAlias,
+            transcript, connectionAlias, actionAlias, offer.actionAuthentication,
         )
+    }
+
+    fun completeWithoutAuthentication(pending: PendingPairing): CompletedPairing {
+        require(pending.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) {
+            "Phone authentication is required for this pairing"
+        }
+        return complete(pending, pending.actionSignature.run { update(pending.transcript); sign() })
     }
 
     fun complete(pending: PendingPairing, authenticatedSignature: ByteArray): CompletedPairing {
@@ -167,8 +209,8 @@ class PairingManager(private val context: Context) {
         val sasBytes = MessageDigest.getInstance("SHA-256").digest("${pending.body.offerDigest}.$responseDigest".toByteArray())
         val sas = sasBytes.take(6).joinToString(" ") { SAS_WORDS[it.toInt() and 0xff] }
         return CompletedPairing(
-            PairedDesktop(pending.offer.desktopId, pending.offer.name, pending.body.deviceId, pending.body.name, pending.offer.certificate, pending.offer.spki, pending.offer.endpoints, pending.connectionAlias, pending.actionAlias, System.currentTimeMillis()),
-            responseUri, sas,
+            PairedDesktop(pending.offer.desktopId, pending.offer.name, pending.body.deviceId, pending.body.name, pending.offer.certificate, pending.offer.spki, pending.offer.endpoints, pending.connectionAlias, pending.actionAlias, System.currentTimeMillis(), pending.actionAuthentication, pending.offer.identityKey),
+            responseUri, sas, pending.offer.replacesDeviceId,
         )
     }
 
@@ -207,6 +249,18 @@ class PairingManager(private val context: Context) {
     private fun sign(alias: String, bytes: ByteArray): String = CanonicalJson.base64Url(Signature.getInstance("SHA256withECDSA").run {
         initSign(keys.getKey(alias, null) as java.security.PrivateKey); update(bytes); sign()
     })
+}
+
+internal object ActionAuthenticationPolicy {
+    fun pairingRequiresPrompt(mode: ActionAuthentication) = mode == ActionAuthentication.BIOMETRIC
+
+    fun modesMatch(desktop: PairedDesktop, welcome: dev.otectus.cere.mobile.protocol.Welcome): Boolean =
+        desktop.actionAuthentication == welcome.actionAuthentication
+
+    fun actionRequiresPrompt(desktop: PairedDesktop, welcome: dev.otectus.cere.mobile.protocol.Welcome, connectionSigned: Boolean): Boolean {
+        require(modesMatch(desktop, welcome)) { "Desktop action authentication does not match this pairing" }
+        return !connectionSigned && desktop.actionAuthentication == ActionAuthentication.BIOMETRIC
+    }
 }
 
 internal object PairingAliasPolicy {

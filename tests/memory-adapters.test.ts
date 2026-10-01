@@ -197,3 +197,26 @@ test('dependency profile pins registry digests, authentication, persistence, hea
   assert.match(compose, /NEO4J_AUTH/u); assert.match(compose, /QDRANT__SERVICE__API_KEY/u); assert.match(compose, /healthcheck:/u);
   assert.match(compose, /neo4j-data:\/data/u); assert.match(compose, /qdrant-data:\/qdrant\/storage/u);
 });
+
+test('extraction resolves registered cloud aliases and preserves explicit model IDs and policy gates', async () => {
+  for (const [selected, registered] of [['glm-5.3-flash', 'glm-5.3-flash:cloud'], ['gpt-oss:20b', 'gpt-oss:20b-cloud'], ['custom-extractor', 'custom-extractor']]) {
+    const requests: any[] = [];
+    const fetch: typeof globalThis.fetch = async (input, init = {}) => {
+      const path = new URL(String(input)).pathname, body = init.body ? JSON.parse(String(init.body)) : undefined;
+      if (body) requests.push({ path, ...body });
+      if (path === '/api/tags') return jsonResponse({ models: [{ model: registered, digest: 'a'.repeat(64), remote_host: 'https://ollama.com' }] });
+      assert.equal(body.model, registered);
+      if (path === '/api/show') return jsonResponse({ capabilities: ['completion'] });
+      if (path === '/api/chat') return jsonResponse({ message: { content: '{"entities":[],"assertions":[]}' } });
+      throw new Error(`Unexpected ${path}`);
+    };
+    const denied = new OllamaExtractionAdapter({ endpoint: 'http://localhost:11434', model: selected, allowCloud: false, fetch });
+    await assert.rejects(denied.probe(), /explicit allowCloud/);
+    assert.equal(requests.filter(r => r.path === '/api/chat').length, 0);
+    const adapter = new OllamaExtractionAdapter({ endpoint: 'http://localhost:11434', model: selected, allowCloud: true, fetch });
+    const result = await adapter.extract({ sourceRecordId: 'source', sourceRevision: 1, sourceRole: 'user', modelRoute: 'cloud_allowed', text: 'Use Ruff.' });
+    assert.equal(result.model, registered);
+    assert.equal(result.endpointClass, 'ollama_cloud');
+    assert.equal(requests.filter(r => r.path === '/api/chat').length, 2);
+  }
+});

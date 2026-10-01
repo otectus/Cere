@@ -5,7 +5,7 @@ Text {
     Layout.minimumWidth: 0
     color: Theme.text
     font.family: Theme.font
-    font.pixelSize: 13
+    font.pixelSize: Theme.body
     wrapMode: Text.Wrap
     textFormat: Text.PlainText
 }

@@ -32,7 +32,7 @@ CDialog {
         requestId=App.rpc("folders.save",params)
     }
 
-    CText { text:dialog.mode==="delete"?"Delete folder?":dialog.mode==="rename"?"Rename folder":"Create folder";font.pixelSize:20;font.weight:Font.DemiBold }
+    CText { text:dialog.mode==="delete"?"Delete folder?":dialog.mode==="rename"?"Rename folder":"Create folder";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
     CText {
         visible:dialog.mode==="delete"
         text:"“"+(dialog.folder.name||"This folder")+"” will be removed. Its sessions will become unfiled; no conversations will be deleted."
@@ -43,7 +43,7 @@ CDialog {
         placeholderText:"Folder name";Accessible.name:"Folder name";maximumLength:80
         onAccepted:dialog.submit()
     }
-    CText { visible:dialog.error.length>0;text:dialog.error;color:Theme.danger;font.pixelSize:12 }
+    CText { visible:dialog.error.length>0;text:dialog.error;color:Theme.danger;font.pixelSize:Theme.secondary }
     RowLayout {
         Layout.fillWidth:true
         CButton { Layout.fillWidth:true;text:"Cancel";enabled:dialog.requestId<0;onClicked:dialog.close() }

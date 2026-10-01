@@ -135,8 +135,8 @@ ColumnLayout {
     spacing:compact?10:14
     RowLayout {
         Layout.fillWidth:true
-        CText { text:list.compact?"RECENT SESSIONS":"Sessions";color:list.compact?Theme.muted:Theme.text;font.pixelSize:list.compact?10:26;font.letterSpacing:list.compact?1.4:0;font.weight:Font.DemiBold }
-        Text { visible:list.compact;text:list.totalSessions;color:Theme.muted;font.family:Theme.font;font.pixelSize:11 }
+        CText { text:list.compact?"RECENT SESSIONS":"Sessions";color:list.compact?Theme.muted:Theme.text;font.pixelSize:list.compact?Theme.caption:Theme.page;font.letterSpacing:list.compact?1.4:0;font.weight:Font.DemiBold }
+        Text { visible:list.compact;text:list.totalSessions;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
         CButton { visible:!list.compact;objectName:"newSession";text:"New session";iconName:"plus";primary:true;onClicked:list.createRequested() }
     }
     CText { visible:!list.compact&&list.height>=420;text:"Pick up where you left off, or organize conversations by project and folder.";color:Theme.muted }
@@ -205,12 +205,12 @@ ColumnLayout {
                     spacing:5
                     RowLayout {
                         Layout.fillWidth:true;spacing:8
-                        Text { visible:sessionDelegate.modelData.pinned===true;text:"★";color:Theme.amber;font.pixelSize:13;Accessible.ignored:true }
-                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:(sessionDelegate.modelData.unread?"● ":"")+(sessionDelegate.modelData.title||"Untitled session");maximumLineCount:1;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:13;font.weight:Font.Medium;textFormat:Text.PlainText }
+                        Text { visible:sessionDelegate.modelData.pinned===true;text:"★";color:Theme.amber;font.pixelSize:Theme.body;Accessible.ignored:true }
+                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:(sessionDelegate.modelData.unread?"● ":"")+(sessionDelegate.modelData.title||"Untitled session");maximumLineCount:1;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;textFormat:Text.PlainText }
                         Rectangle { width:6;height:6;radius:3;color:list.pendingInputCount(sessionDelegate.modelData)>0?Theme.amber:["starting","working","stopping"].indexOf(sessionDelegate.modelData.status)>=0?Theme.cyan:Theme.line }
                     }
-                    Text { Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight;text:sessionDelegate.modelData.provider.charAt(0).toUpperCase()+sessionDelegate.modelData.provider.slice(1)+" · "+list.statusLabel(sessionDelegate.modelData);color:Theme.muted;font.family:Theme.font;font.pixelSize:11 }
-                    Text { visible:!list.compact;Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideMiddle;text:sessionDelegate.modelData.cwd||"";color:Theme.muted;font.family:Theme.font;font.pixelSize:11;textFormat:Text.PlainText }
+                    Text { Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight;text:sessionDelegate.modelData.provider.charAt(0).toUpperCase()+sessionDelegate.modelData.provider.slice(1)+" · "+list.statusLabel(sessionDelegate.modelData);color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
+                    Text { visible:!list.compact;Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideMiddle;text:sessionDelegate.modelData.cwd||"";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption;textFormat:Text.PlainText }
                 }
             }
             RowLayout {
@@ -229,16 +229,16 @@ ColumnLayout {
         CText {
             visible:!list.filtered.length&&list.listRequest<0;width:parent.width-12;anchors.top:parent.top;anchors.topMargin:12
             text:filter.text?"No sessions match your search.":list.selectedFilter==="working"?"All caught up. No sessions are working.":"No sessions in this view."
-            color:Theme.muted;font.pixelSize:12
+            color:Theme.muted;font.pixelSize:Theme.secondary
         }
         footer:CButton { visible:list.nextPage!==null;width:sessionViewport.width-10;text:list.loadingMore?"Loading…":"Load more";enabled:!list.loadingMore;onClicked:list.refresh(false) }
     }
-    CText { visible:list.listRequest>=0&&list.filtered.length===0;text:"Loading sessions…";color:Theme.muted;font.pixelSize:12 }
-    CText { visible:list.error.length>0;text:list.error;color:Theme.danger;font.pixelSize:12 }
+    CText { visible:list.listRequest>=0&&list.filtered.length===0;text:"Loading sessions…";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { visible:list.error.length>0;text:list.error;color:Theme.danger;font.pixelSize:Theme.secondary }
     CButton { Layout.fillWidth:true;quiet:true;alignLeft:true;iconName:"sessions";text:list.historyExpanded?"Hide terminal history":"Import terminal session";help:"Continue a completed Codex or Claude conversation";onClicked:list.historyExpanded=!list.historyExpanded }
     ColumnLayout {
         visible:list.historyExpanded;Layout.fillWidth:true;spacing:8
-        CText { text:list.historyRequest>=0?"Loading history…":"Continue a completed conversation.";color:Theme.muted;font.pixelSize:11 }
+        CText { text:list.historyRequest>=0?"Loading history…":"Continue a completed conversation.";color:Theme.muted;font.pixelSize:Theme.caption }
         RowLayout {
             Layout.fillWidth:true;spacing:6
             CButton { text:"Codex";Layout.fillWidth:true;enabled:list.historyRequest<0&&App.connected;onClicked:{list.error="";list.historyRequest=App.rpc("session.history",{provider:"codex"})} }
@@ -246,18 +246,18 @@ ColumnLayout {
         }
         PageScroll { visible:list.history.length>0;Layout.fillWidth:true;Layout.preferredHeight:Math.min(220,list.height*.35);Repeater { model:list.history;CActionRow { required property var modelData;Layout.fillWidth:true;text:modelData.title;detail:modelData.cwd||"Continue this conversation";onClicked:{importSession.imported=modelData;importSession.open()} } } }
     }
-    Menu {
+    CMenu {
         id:sessionMenu;objectName:"sessionContextMenu";parent:list;focus:true
-        delegate:MenuItem { objectName:subMenu===folderMenu?"sessionContextFolderMenuItem":"" }
+        delegate:CMenuItem { objectName:subMenu===folderMenu?"sessionContextFolderMenuItem":"" }
         enabled:App.connected&&!!list.contextSession.id
-        MenuItem { objectName:"sessionContextOpen";text:"Open conversation";onTriggered:list.activate(list.contextSession) }
-        MenuItem { objectName:"sessionContextRename";text:"Rename…";onTriggered:renameSession.openFor(list.contextSession) }
-        MenuSeparator {}
-        Menu {
+        CMenuItem { objectName:"sessionContextOpen";text:"Open conversation";onTriggered:list.activate(list.contextSession) }
+        CMenuItem { objectName:"sessionContextRename";text:"Rename…";onTriggered:renameSession.openFor(list.contextSession) }
+        CMenuSeparator {}
+        CMenu {
             id:folderMenu;objectName:"sessionContextFolders";title:list.contextSession.folderId?"Move to folder":"Add to folder"
             Instantiator {
                 model:list.folders
-                delegate:MenuItem {
+                delegate:CMenuItem {
                     required property var modelData
                     objectName:"sessionContextFolder_"+modelData.id;text:modelData.name
                     checkable:true;checked:list.contextSession.folderId===modelData.id
@@ -266,13 +266,13 @@ ColumnLayout {
                 onObjectAdded:(index,object)=>folderMenu.insertItem(index,object)
                 onObjectRemoved:(index,object)=>folderMenu.removeItem(object)
             }
-            MenuSeparator { visible:list.folders.length>0 }
-            MenuItem { objectName:"sessionContextNewFolder";text:"New folder…";onTriggered:{list.folderSessionId=list.contextSessionId;folderDialog.createFolder()} }
+            CMenuSeparator { visible:list.folders.length>0 }
+            CMenuItem { objectName:"sessionContextNewFolder";text:"New folder…";onTriggered:{list.folderSessionId=list.contextSessionId;folderDialog.createFolder()} }
         }
-        MenuItem { objectName:"sessionContextUnfile";text:"Remove from folder";enabled:!!list.contextSession.folderId;onTriggered:list.organize(list.contextSession,{folderId:null}) }
-        MenuSeparator {}
-        MenuItem { objectName:"sessionContextPin";text:list.contextSession.pinned?"Unpin":"Pin";onTriggered:list.organize(list.contextSession,{pinned:!list.contextSession.pinned}) }
-        MenuItem { objectName:"sessionContextArchive";text:list.contextSession.archived?"Unarchive":"Archive";onTriggered:list.organize(list.contextSession,{archived:!list.contextSession.archived}) }
+        CMenuItem { objectName:"sessionContextUnfile";text:"Remove from folder";enabled:!!list.contextSession.folderId;onTriggered:list.organize(list.contextSession,{folderId:null}) }
+        CMenuSeparator {}
+        CMenuItem { objectName:"sessionContextPin";text:list.contextSession.pinned?"Unpin":"Pin";onTriggered:list.organize(list.contextSession,{pinned:!list.contextSession.pinned}) }
+        CMenuItem { objectName:"sessionContextArchive";text:list.contextSession.archived?"Unarchive":"Archive";onTriggered:list.organize(list.contextSession,{archived:!list.contextSession.archived}) }
     }
     CDialog {
         id:renameSession;objectName:"sessionContextRenameDialog"
@@ -283,7 +283,7 @@ ColumnLayout {
         function save(){if(requestId<0&&App.connected)requestId=App.rpc("session.rename",{id:sessionId,title:sessionTitle.text.trim()||"Untitled session"})}
         onOpened:{sessionTitle.forceActiveFocus();sessionTitle.selectAll()}
         closePolicy:requestId>=0?Popup.NoAutoClose:Popup.CloseOnEscape|Popup.CloseOnPressOutside
-        CText { text:"Rename session";font.pixelSize:22;font.weight:Font.DemiBold }
+        CText { text:"Rename session";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
         CField { id:sessionTitle;objectName:"sessionContextTitle";Layout.fillWidth:true;maximumLength:100;Accessible.name:"Session title";onAccepted:renameSession.save() }
         CText { visible:renameSession.error.length>0;text:renameSession.error;color:Theme.danger }
         RowLayout {

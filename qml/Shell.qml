@@ -95,8 +95,8 @@ Rectangle {
                     HeaderPortrait {}
                     ColumnLayout {
                         Layout.fillWidth:true; spacing:2
-                        Text { text:"CERE";color:Theme.text;font.family:Theme.font;font.pixelSize:19;font.weight:Font.Bold;font.letterSpacing:3 }
-                        Text { text:"Your desktop companion";color:Theme.muted;font.family:Theme.font;font.pixelSize:11 }
+                        Text { text:"CERE";color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.wordmark;font.weight:Font.Bold;font.letterSpacing:3 }
+                        Text { text:"Your desktop companion";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
                     }
                 }
                 ColumnLayout {
@@ -129,7 +129,7 @@ Rectangle {
                 RowLayout {
                     Layout.fillWidth:true;spacing:8
                     Rectangle { width:6;height:6;radius:3;color:App.connected?Theme.success:Theme.amber }
-                    CText { text:shell.statusText;color:Theme.muted;font.pixelSize:11;maximumLineCount:2;elide:Text.ElideRight }
+                    CText { text:shell.statusText;color:Theme.muted;font.pixelSize:Theme.caption;maximumLineCount:2;elide:Text.ElideRight }
                     CButton { text:"";iconName:"hide";quiet:true;help:"Hide window";Accessible.name:"Hide window";onClicked:App.closePanel() }
                 }
             }
@@ -144,8 +144,8 @@ Rectangle {
                 HeaderPortrait {}
                 ColumnLayout {
                     Layout.fillWidth:true;Layout.minimumWidth:0;spacing:2
-                    Text { text:"CERE";color:Theme.text;font.family:Theme.font;font.pixelSize:17;font.weight:Font.Bold;font.letterSpacing:3 }
-                    CText { text:shell.statusText;color:Theme.muted;font.pixelSize:11;maximumLineCount:1;elide:Text.ElideRight }
+                    Text { text:"CERE";color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.wordmark;font.weight:Font.Bold;font.letterSpacing:3 }
+                    CText { text:shell.statusText;color:Theme.muted;font.pixelSize:Theme.caption;maximumLineCount:1;elide:Text.ElideRight }
                 }
                 CButton {
                     objectName:"openCommandPalette";implicitWidth:40;implicitHeight:40;leftPadding:10;rightPadding:10
@@ -173,24 +173,24 @@ Rectangle {
             Rectangle { visible:!shell.wide;Layout.fillWidth:true;height:1;color:Theme.subtle }
             RowLayout {
                 visible:(App.state.remote?.connected||[]).length>0;Layout.fillWidth:true
-                CText { text:"Remote connected: "+(App.state.remote?.connected||[]).map(d=>d.name).join(", ");color:Theme.amber;font.pixelSize:12 }
+                CText { text:"Remote connected: "+(App.state.remote?.connected||[]).map(d=>d.name).join(", ");color:Theme.amber;font.pixelSize:Theme.secondary }
                 CButton { text:"Disable";danger:true;onClicked:App.rpc("remote.off",{}) }
             }
             Rectangle {
-                visible:settings.paused;Layout.fillWidth:true;implicitHeight:pausedText.implicitHeight+20;radius:9;color:"#2b261e"
-                CText { id:pausedText;anchors.fill:parent;anchors.margins:10;text:"AI actions, search and memory are paused.";color:Theme.amber;font.pixelSize:12 }
+                visible:settings.paused;Layout.fillWidth:true;implicitHeight:pausedText.implicitHeight+20;radius:Theme.radiusControl;color:Theme.warningSurface;border.color:Theme.warningBorder
+                CText { id:pausedText;anchors.fill:parent;anchors.margins:10;text:"AI actions, search and memory are paused.";color:Theme.amber;font.pixelSize:Theme.secondary }
             }
             RowLayout {
                 visible:!!App.state.recoveryWarning;Layout.fillWidth:true
-                CText { Layout.fillWidth:true;text:App.state.recoveryWarning||"";color:Theme.amber;font.pixelSize:11;wrapMode:Text.Wrap }
+                CText { Layout.fillWidth:true;text:App.state.recoveryWarning||"";color:Theme.amber;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
                 CButton { text:"Dismiss";onClicked:App.rpc("recovery.dismissWarning",{}) }
             }
             Rectangle {
                 visible:!shell.wide&&shell.powerText.length>0;Layout.fillWidth:true;implicitHeight:powerStatusRow.implicitHeight+20
-                radius:9;color:shell.unconfirmedPower?"#33232e":"#2b261e";border.color:shell.unconfirmedPower?"#704452":"#6b5836"
+                radius:Theme.radiusControl;color:shell.unconfirmedPower?Theme.dangerSurface:Theme.warningSurface;border.color:shell.unconfirmedPower?Theme.dangerBorder:Theme.warningBorder
                 RowLayout {
                     id:powerStatusRow;x:10;y:10;width:parent.width-20;spacing:8
-                    CText { text:shell.powerText;color:shell.unconfirmedPower?Theme.danger:Theme.amber;font.pixelSize:12;font.weight:Font.DemiBold }
+                    CText { text:shell.powerText;color:shell.unconfirmedPower?Theme.danger:Theme.amber;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold }
                     CButton { text:"Review";quiet:true;implicitHeight:30;onClicked:permissionCenter.open() }
                 }
             }
@@ -219,8 +219,8 @@ Rectangle {
             }
             Rectangle {
                 visible:App.toast.length>0;Layout.fillWidth:true;implicitHeight:toastText.implicitHeight+20
-                radius:9;color:Theme.raised;border.color:Theme.line
-                Text { id:toastText;anchors.fill:parent;anchors.margins:10;text:App.toast;color:Theme.text;font.family:Theme.font;font.pixelSize:12;wrapMode:Text.Wrap;maximumLineCount:5;elide:Text.ElideRight }
+                radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
+                Text { id:toastText;anchors.fill:parent;anchors.margins:10;text:App.toast;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;maximumLineCount:5;elide:Text.ElideRight }
             }
             RowLayout {
                 Layout.fillWidth:true;spacing:8
@@ -228,10 +228,10 @@ Rectangle {
                 Text {
                     property bool bypass:settings.bypassCliPermissions||settings.bypassComputerPermissions
                     text:settings.paused?"Tools paused":bypass?[settings.bypassCliPermissions?"CLI bypass":"",settings.bypassComputerPermissions?"Computer bypass":""].filter(s=>s).join(" · "):settings.profile==="manual"?"Manual desktop controls":settings.profile==="broad"?"Broad control · project grants apply":(settings.categories||[]).length+" AI desktop categories enabled"
-                    color:bypass?Theme.amber:Theme.muted;font.family:Theme.font;font.pixelSize:10
+                    color:bypass?Theme.amber:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
                     Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight
                 }
-                Text { text:App.connected?"Connected":"Offline";color:App.connected?Theme.success:Theme.amber;font.family:Theme.font;font.pixelSize:10 }
+                Text { text:App.connected?"Connected":"Offline";color:App.connected?Theme.success:Theme.amber;font.family:Theme.font;font.pixelSize:Theme.caption }
                 CButton { objectName:"shellPermissionCenter";text:"Permissions";quiet:true;implicitHeight:30;onClicked:permissionCenter.open() }
             }
         }
@@ -262,10 +262,10 @@ Rectangle {
     CDialog {
         id: welcome; closePolicy: Popup.NoAutoClose
         visible: App.connected && settings.onboarding === true
-        CText { text:"Hey. I’m Cere.";color:Theme.cyan;font.pixelSize:24;font.bold:true }
+        CText { text:"Hey. I’m Cere.";color:Theme.cyan;font.pixelSize:Theme.page;font.bold:true }
         CText { text:"A little company. A place for your projects.\n\nClick me to talk, drag me somewhere comfortable, or right-click to change my size. Your sessions keep working when this panel closes." }
         CCheckBox { id:startup;text:"Keep me around after login" }
-        CText { text:"Desktop AI tools start disabled. Enable the categories you want in Settings. Existing CLI permissions remain in effect.";color:Theme.muted;font.pixelSize:12 }
+        CText { text:"Desktop AI tools start disabled. Enable the categories you want in Settings. Existing CLI permissions remain in effect.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CButton { text:"Make yourself at home";primary:true;Layout.fillWidth:true;onClicked:{if(startup.checked)App.setAutostart(true);App.rpc("settings.update",{onboarding:false});welcome.close()} }
     }
 }

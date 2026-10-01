@@ -14,10 +14,10 @@ Popup {
     bottomPadding:24+footerHeight
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle {
-        color: Theme.surface; radius: 16; border.color: "#36536a"
+        color: Theme.surface; radius: Theme.radiusDialog; border.color: Theme.borderStrong
         Loader { id:footerLoader;anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;anchors.margins:24;sourceComponent:dialog.footerContent }
     }
-    Overlay.modal: Rectangle { color: "#b304090f" }
+    Overlay.modal: Rectangle { color: Theme.overlayScrim }
     contentItem: ScrollView {
         id: viewport
         clip: true; contentWidth: availableWidth; contentHeight: bodyColumn.implicitHeight

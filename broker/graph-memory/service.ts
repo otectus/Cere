@@ -21,6 +21,7 @@ import { ollamaJson, ollamaHost, isCloudModel } from "../ollama.ts";
 import { createHash } from "node:crypto";
 import { fail, entityTypes } from "./contracts.ts";
 import { CollectorRpc } from "./collector-rpc.ts";
+import { defaultExtractionModel } from "./models.ts";
 import { paths } from "../paths.ts";
 
 type Row = Record<string, any>;
@@ -40,7 +41,7 @@ export class MemoryService {
     paused: false,
     host: "http://127.0.0.1:11434",
     embedding_model: "nomic-embed-text",
-    extraction_model: "gpt-oss:20b-cloud",
+    extraction_model: defaultExtractionModel,
     allow_cloud_extraction: true,
     allow_cloud_memory: false,
   };

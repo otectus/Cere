@@ -68,6 +68,7 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
     choices: ['allow', 'deny'] });
   if (answer.choice !== 'allow') throw new Error('Delegation declined. Do not send this task again without a new user request.');
   permitted();
+  if(answer.automatic&&!core.automaticallyApprove(parentId,{kind:'provider',choices:['allow']}))throw new Error('Automatic CLI permission was revoked');
   if (!child) {
     child = await core.create({ provider, cwd: parent.cwd, trusted: true, model: args.model, effort: args.effort, title: 'Delegated · ' + args.prompt.trim().slice(0, 60) },permitted);
     child = core.updateSession(child.id, { parentId, remote:parent.remote ? structuredClone(parent.remote) : undefined, effectivePolicy:parent.remote ? 'unknown' : undefined });

@@ -1,3 +1,4 @@
+import { defaultExtractionModel } from './graph-memory/models.ts';
 import { providerIds } from './provider-catalog.ts';
 import { defaultElevenConfig, type ElevenConfig } from './elevenlabs.ts';
 import { defaultPersonality } from './personality.ts';
@@ -29,6 +30,7 @@ export type Session = {
   agents?: AgentActivity[];
   folderId?: string; pinned?: boolean; archived?: boolean; readAt?: number; unread?:boolean;
   draftAttachments?: Attachment[];
+  queuedCount?: number;
   temporary?: boolean;
   view?: DraftView;
 };
@@ -111,7 +113,7 @@ export const defaultSettings: Settings = {
   voice: 'en_US-amy-medium', speechEnabled: true, speechProviders:Object.fromEntries(providerIds.map(id=>[id,true])) as Record<Provider,boolean>, speechRate:1, speechPitch:0, speechVolume:1, speechBrief:false, transcription:{executable:'',model:''},
   ollama: { host: 'http://127.0.0.1:11434', model: '' },
   webSearch: { enabled: false, provider: 'auto', searxngUrl: '' },
-  memory: { enabled: false, model: 'nomic-embed-text' },
+  memory: { enabled: false, model: 'nomic-embed-text', extractionModel: defaultExtractionModel },
   desktopProfile: 'normal', interfaceScale:1, homePositions:{},
   topmost: true, scale: 1, roaming: false, quiet: false, reducedMotion: false, motionIntensity: .7, expressiveCues: true, idleEnergy: 'lively', hidden: false,
   profile: 'scoped', paused: false, bypassCliPermissions: false, bypassComputerPermissions: false, categories: [], grants: [],

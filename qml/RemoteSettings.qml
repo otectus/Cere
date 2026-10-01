@@ -14,10 +14,11 @@ CSection {
     property var selectedCaps:["chat.read","chat.write","approvals.answer"]
     property var selectedCategories:[]
     property string editingDevice:""
+    property string replacingDevice:""
     function call(method,params){if(requestId>=0)return;error="";operation=method;requestId=App.rpc(method,params||{})}
     function reload(){call("remote.status",{})}
     Component.onCompleted:reload()
-    CText { text:App.state.remote?.listening?"Remote gateway is listening":"Remote gateway is closed";color:App.state.remote?.listening?Theme.cyan:Theme.muted }
+    CText { text:App.state.remote?.listening?"Remote gateway is listening":(App.state.remote?.enabled?"Waiting for a configured network":"Remote gateway is closed");color:App.state.remote?.listening?Theme.cyan:Theme.muted }
     Flow {
         Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:8
         CButton { text:"Refresh";enabled:remote.requestId<0;onClicked:remote.reload() }
@@ -27,8 +28,14 @@ CSection {
     CText { text:"Disabling or revoking stops remote controlled work. Disconnecting a phone normally leaves accepted work running.";color:Theme.muted;font.pixelSize:12 }
     CField { id:desktopName;Layout.fillWidth:true;text:"Cere";placeholderText:"Desktop name";Accessible.name:"Desktop name for pairing" }
     CField { id:addresses;Layout.fillWidth:true;placeholderText:"Explicit IP addresses, comma separated";Accessible.name:"LAN or WireGuard bind addresses" }
-    CText { text:"No public relay or firewall changes. Use your existing WireGuard VPN when away from home. Addresses must belong to this desktop.";color:Theme.muted;font.pixelSize:12 }
-    CButton { text:"Prepare offline pairing QR";enabled:remote.requestId<0&&addresses.text.trim().length>0;onClicked:remote.call("remote.preparePair",{name:desktopName.text,addresses:addresses.text.split(",").map(a=>a.trim()).filter(a=>a.length)}) }
+    CText { text:"For access away from home, connect both devices to Tailscale and use this PC’s Tailscale IP. Keep Cere monitoring and the VPN enabled. Addresses must belong to this desktop.";color:Theme.muted;font.pixelSize:12 }
+    CCheckBox { id:trustedPhone;text:"Trusted phone — no fingerprint or PIN for Cere actions" }
+    CText { text:"Trusted mode keeps commands signed. Anyone using the unlocked phone can perform its granted actions. Changing mode requires replacement pairing.";color:Theme.muted;font.pixelSize:12 }
+    CText { visible:!!remote.replacingDevice;text:"Replacing this phone’s pairing while preserving its drafts and conversation cache.";color:Theme.cyan;font.pixelSize:12 }
+    CCheckBox { id:endpointsConfirmed;text:"Update addresses or renew certificate; paired phones will need replacement pairing" }
+    CButton { text:"Update gateway addresses / certificate";enabled:endpointsConfirmed.checked&&remote.requestId<0&&addresses.text.trim().length>0;onClicked:{remote.call("remote.configureEndpoints",{addresses:addresses.text.split(",").map(a=>a.trim()).filter(a=>a.length),confirmed:true});endpointsConfirmed.checked=false} }
+    CText { visible:!!App.state.remote?.networkError;text:App.state.remote?.networkError||"";color:Theme.amber;font.pixelSize:12 }
+    CButton { text:"Prepare offline pairing QR";enabled:remote.requestId<0&&addresses.text.trim().length>0;onClicked:{let params={name:desktopName.text,addresses:addresses.text.split(",").map(a=>a.trim()).filter(a=>a.length),actionAuthentication:trustedPhone.checked?"trusted-device":"biometric"};if(remote.replacingDevice)params.replacesDeviceId=remote.replacingDevice;remote.call("remote.preparePair",params)} }
     Image { visible:!!remote.offer.qr;source:remote.offer.qr||"";Layout.fillWidth:true;Layout.preferredHeight:visible?320:0;fillMode:Image.PreserveAspectFit;Accessible.name:"Scan this pairing QR in Cere Mobile" }
     CText { visible:!!remote.offer.uri;text:"Scan within five minutes. Pairing does not open a listener until you compare words and confirm below.";color:Theme.muted;font.pixelSize:12 }
     CButton { visible:!!remote.offer.uri;text:"Copy offer text";onClicked:App.copy(remote.offer.uri) }
@@ -39,7 +46,7 @@ CSection {
         TextArea { id:response;wrapMode:TextEdit.Wrap;selectByMouse:true;placeholderText:"Paste the phone’s public signed response";color:Theme.text;font.pixelSize:12;Accessible.name:"Phone pairing response";onTextChanged:remote.review=({});background:Rectangle{color:Theme.input} }
     }
     CButton { text:"Verify phone response";enabled:remote.requestId<0&&response.text.trim().length>0;onClicked:remote.call("remote.reviewPair",{response:response.text.trim()}) }
-    CText { visible:!!remote.review.sas;text:(remote.review.name||"Phone")+" · Compare both screens:\n"+(remote.review.sas||"");color:Theme.cyan;font.pixelSize:16 }
+    CText { visible:!!remote.review.sas;text:(remote.review.name||"Phone")+" · Compare both screens:\n"+(remote.review.sas||"")+"\n"+(remote.review.actionAuthentication==="trusted-device"?"Trusted phone: no fingerprint or PIN":"Actions require fingerprint or PIN");color:Theme.cyan;font.pixelSize:16 }
     CField { id:projects;Layout.fillWidth:true;placeholderText:"Approved project folders, separated by semicolons";Accessible.name:"Approved project paths separated by semicolons" }
     CText { text:"Project folders separated by semicolons. Confirming trusts their local CLI configuration for any native execution cap you select.";color:Theme.muted;font.pixelSize:12 }
     GridLayout {
@@ -68,10 +75,11 @@ CSection {
         model:remote.status.devices||[]
         ColumnLayout {
             required property var modelData;Layout.fillWidth:true
-            CText { Layout.fillWidth:true;text:modelData.name+" · "+(modelData.revokedAt?"Revoked":"Expires "+new Date(modelData.expiresAt).toLocaleDateString())+"\n"+(modelData.caps||[]).join(", ");font.pixelSize:12 }
+            CText { Layout.fillWidth:true;text:modelData.name+" · "+(modelData.revokedAt?"Revoked":"Expires "+new Date(modelData.expiresAt).toLocaleDateString())+" · "+(modelData.actionAuthentication==="trusted-device"?"Trusted phone":"Biometric actions")+"\n"+(modelData.caps||[]).join(", ");font.pixelSize:12 }
             Flow { Layout.fillWidth:true;spacing:8;Layout.preferredHeight:childrenRect.height
             CButton { text:"Revoke";danger:true;enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:remote.call("remote.revoke",{id:modelData.id}) }
             CButton { text:"Edit grants";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.editingDevice=modelData.id;remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ")} }
+            CButton { text:"Replace pairing";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.replacingDevice=modelData.id;remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ");trustedPhone.checked=modelData.actionAuthentication==="trusted-device";remote.offer=({});remote.review=({});response.text=""} }
             CButton { text:"Renew 90 days";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:remote.call("remote.renewDevice",{id:modelData.id,confirmed:true}) }
             CButton { text:"Clear retained images";enabled:remote.requestId<0;onClicked:remote.call("remote.purgeMedia",{id:modelData.id,confirmed:true}) }
             }
@@ -90,7 +98,7 @@ CSection {
             if(operation==="remote.status"){remote.status=value;if(!addresses.text)addresses.text=(value.config?.addresses||[]).join(", ")}
             else if(operation==="remote.preparePair"){remote.offer=value;remote.review=({});compare.checked=false}
             else if(operation==="remote.reviewPair"){remote.review=value;compare.checked=false}
-            else {if(operation==="remote.confirmPair"||operation==="remote.resetIdentity"){remote.offer=({});remote.review=({});response.text="";compare.checked=false}if(operation==="remote.updateDevice"||operation==="remote.resetIdentity")remote.editingDevice="";remote.reload()}
+            else {if(operation==="remote.confirmPair"||operation==="remote.resetIdentity"){remote.offer=({});remote.review=({});response.text="";compare.checked=false;remote.replacingDevice=""}if(operation==="remote.updateDevice"||operation==="remote.resetIdentity")remote.editingDevice="";remote.reload()}
         }
     }
 }

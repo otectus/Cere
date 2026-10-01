@@ -56,7 +56,7 @@ Item {
     }
     Rectangle {
         anchors.fill:parent;anchors.leftMargin:10;anchors.rightMargin:10
-        color:Theme.surface;border.color:bubble.accent;radius:12
+        color:Theme.surface;border.color:bubble.accent;radius:Theme.radiusCard
         ScrollView {
             id:viewport;anchors.fill:parent;anchors.margins:12;clip:true
             contentWidth:availableWidth;contentHeight:body.implicitHeight
@@ -68,7 +68,7 @@ Item {
                     text:bubble.needsInput?"Input needed"+(bubble.approvals.length>1?" · "+bubble.approvals.length:"")
                         :bubble.currentReply?"Cere · pinned conversation"
                         :"Run complete"+(bubble.completions.length>1?" · "+bubble.completions.length+" unread":"")
-                    font.pixelSize:15;font.bold:true;color:bubble.accent
+                    font.pixelSize:Theme.section;font.bold:true;color:bubble.accent
                 }
                 Repeater {
                     model:bubble.approvals
@@ -79,7 +79,7 @@ Item {
                     visible:!bubble.needsInput&&bubble.replies.length>1
                     Layout.fillWidth:true
                     CButton { objectName:"companionPrevious";text:"Previous";enabled:bubble.replyIndex>0;onClicked:bubble.selectReply(bubble.replyIndex-1) }
-                    CText { Layout.fillWidth:true;text:(bubble.replyIndex+1)+" / "+bubble.replies.length;color:Theme.muted;font.pixelSize:11;horizontalAlignment:Text.AlignHCenter }
+                    CText { Layout.fillWidth:true;text:(bubble.replyIndex+1)+" / "+bubble.replies.length;color:Theme.muted;font.pixelSize:Theme.caption;horizontalAlignment:Text.AlignHCenter }
                     CButton { objectName:"companionNext";text:"Next";enabled:bubble.replyIndex<bubble.replies.length-1;onClicked:bubble.selectReply(bubble.replyIndex+1) }
                 }
                 Loader {
@@ -96,7 +96,7 @@ Item {
                     visible:active
                     sourceComponent:CompletionCard { completion:bubble.currentCompletion||({}) }
                 }
-                CText { visible:!App.connected;text:"Reconnecting…";color:Theme.muted;font.pixelSize:11 }
+                CText { visible:!App.connected;text:"Reconnecting…";color:Theme.muted;font.pixelSize:Theme.caption }
             }
         }
     }

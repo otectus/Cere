@@ -1,5 +1,5 @@
 import { generateKeyPairSync, X509Certificate, createPublicKey, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, chmodSync, rmSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
@@ -38,6 +38,19 @@ export class Identity {
     const certificate=new X509Certificate(readFileSync(cert));
     if(config.addresses.some(a=>!certificate.checkIP(a)))throw remoteError('INVALID_ARGUMENT','Address is absent from the certificate. Re-pair with the original addresses or reset identity locally.');
     if(Date.parse(certificate.validTo)<Date.now())throw remoteError('AUTH_EXPIRED','The desktop certificate expired. Renew the desktop identity locally.');
+  }
+  // Local, explicitly confirmed maintenance. Keep the signing identity and TLS key;
+  // existing phones must import the new pinned certificate through replacement pairing.
+  async renewCertificate(config:RemoteConfig) {
+    addresses(config.addresses);
+    const key=join(this.directory,'tls.pem'),cert=join(this.directory,'tls.crt'),next=join(this.directory,'tls.next.crt');
+    if(!existsSync(key)) {await this.ensure(config);return;}
+    try {
+      await exec('openssl',['req','-new','-x509','-sha256','-days','365','-key',key,'-out',next,'-subj','/CN=Cere Mobile Gateway','-addext','subjectAltName='+config.addresses.map(a=>'IP:'+a).join(',')],{timeout:10000});
+      const certificate=new X509Certificate(readFileSync(next));
+      if(config.addresses.some(a=>!certificate.checkIP(a)))throw new Error('Renewed certificate does not match the selected addresses');
+      chmodSync(next,0o600);renameSync(next,cert);
+    } finally {rmSync(next,{force:true});}
   }
   material() {
     const key=readFileSync(join(this.directory,'tls.pem'),'utf8'), cert=readFileSync(join(this.directory,'tls.crt'),'utf8'), identity=readFileSync(join(this.directory,'identity.pem'),'utf8');

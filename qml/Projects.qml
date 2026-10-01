@@ -40,7 +40,7 @@ ColumnLayout {
     Timer { interval:5000;repeat:true;running:page.visible&&App.connected;onTriggered:page.refresh() }
     RowLayout {
         Layout.fillWidth:true
-        CText { text:"Projects";font.pixelSize:26;font.weight:Font.DemiBold;Layout.fillWidth:true }
+        CText { text:"Projects";font.pixelSize:Theme.page;font.weight:Font.DemiBold;Layout.fillWidth:true }
         CButton { objectName:"addProject";text:"Add project";iconName:"plus";enabled:App.connected;onClicked:page.edit({},false) }
     }
     CField {
@@ -48,8 +48,8 @@ ColumnLayout {
         onAccepted:if(page.filtered.length)page.projectRequested(page.filtered[0].cwd,page.filtered[0].sessions===0&&page.filtered[0].total>0)
         Keys.onDownPressed:{rows.forceActiveFocus();rows.currentIndex=0}
     }
-    CText { visible:page.error.length>0;text:page.error;color:Theme.danger;font.pixelSize:12 }
-    CText { visible:!App.connected;text:"Reconnecting… Projects will refresh when Cere is connected.";color:Theme.amber;font.pixelSize:12 }
+    CText { visible:page.error.length>0;text:page.error;color:Theme.danger;font.pixelSize:Theme.secondary }
+    CText { visible:!App.connected;text:"Reconnecting… Projects will refresh when Cere is connected.";color:Theme.amber;font.pixelSize:Theme.secondary }
     CText { visible:page.loaded&&!page.filtered.length;text:search.text.trim()?"No projects match this search.":"Add a project folder and save its defaults. Your existing session folders also appear here.";color:Theme.muted }
     ListView {
         id:rows;objectName:"projectRows";Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:60
@@ -61,7 +61,7 @@ ColumnLayout {
             id:row
             required property var modelData
             required property int index
-            width:rows.width;implicitHeight:92;radius:10
+            width:rows.width;implicitHeight:92;radius:Theme.radiusCard
             color:row.ListView.isCurrentItem?Theme.raised:Theme.surface;border.color:row.ListView.isCurrentItem?Theme.line:Theme.subtle
             RowLayout {
                 anchors.fill:parent;anchors.margins:8;spacing:4
@@ -74,12 +74,12 @@ ColumnLayout {
                         RowLayout {
                             Layout.fillWidth:true;spacing:6
                             CIcon { name:row.modelData.favorite?"star":"projects";color:row.modelData.favorite?Theme.amber:Theme.cyan;Layout.preferredWidth:18;Layout.preferredHeight:18 }
-                            Text { text:row.modelData.name;Layout.fillWidth:true;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:14;font.weight:Font.DemiBold }
+                            Text { text:row.modelData.name;Layout.fillWidth:true;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.message;font.weight:Font.DemiBold }
                         }
-                        Text { text:row.modelData.cwd;Layout.fillWidth:true;elide:Text.ElideMiddle;color:Theme.muted;font.family:Theme.font;font.pixelSize:11 }
+                        Text { text:row.modelData.cwd;Layout.fillWidth:true;elide:Text.ElideMiddle;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
                         Text {
                             text:(row.modelData.sessions?row.modelData.sessions+" session"+(row.modelData.sessions===1?"":"s"):row.modelData.total?row.modelData.total+" archived":"No sessions")+(row.modelData.active?" · "+row.modelData.active+" active":"")+(row.modelData.unread?" · "+row.modelData.unread+" unread":"")+(!row.modelData.configured?" · Set defaults":" · "+row.modelData.defaults.provider)
-                            Layout.fillWidth:true;elide:Text.ElideRight;color:row.modelData.unread?Theme.cyan:Theme.muted;font.family:Theme.font;font.pixelSize:11
+                            Layout.fillWidth:true;elide:Text.ElideRight;color:row.modelData.unread?Theme.cyan:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
                         }
                     }
                 }
@@ -100,7 +100,7 @@ ColumnLayout {
         Keys.onReturnPressed:if(currentIndex>=0)page.projectRequested(page.filtered[currentIndex].cwd,page.filtered[currentIndex].sessions===0&&page.filtered[currentIndex].total>0)
         Keys.onEnterPressed:if(currentIndex>=0)page.projectRequested(page.filtered[currentIndex].cwd,page.filtered[currentIndex].sessions===0&&page.filtered[currentIndex].total>0)
     }
-    CText { visible:page.height>350;text:"Favorites first · Ctrl+N starts a session in the selected project";color:Theme.muted;font.pixelSize:11 }
+    CText { visible:page.height>350;text:"Favorites first · Ctrl+N starts a session in the selected project";color:Theme.muted;font.pixelSize:Theme.caption }
     NewSession {
         id:editor;objectName:"projectSettingsDialog";projectSettings:true
         onProjectSaved:value=>{page.refresh();if(page.startAfterSave)quick.start(Object.assign({},value,{configured:true}),page.draftSessionName)}

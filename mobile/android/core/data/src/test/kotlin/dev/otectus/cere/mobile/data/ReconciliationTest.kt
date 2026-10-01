@@ -8,6 +8,39 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReconciliationTest {
+    @Test fun stagedReplacementSurvivesProcessDeathWithCacheAndBothKeyPairs() {
+        fun desktop(device: String, mode: ActionAuthentication, suffix: String) = PairedDesktop(
+            desktopId = "desktop", desktopName = "Desktop", deviceId = device, deviceName = "Phone",
+            certificate = "certificate-$suffix", spki = "spki", endpoints = listOf("wss://desktop/mobile/v1"),
+            connectionAlias = "cere.connection.$suffix", actionAlias = "cere.action.$suffix", pairedAt = 1,
+            actionAuthentication = mode, identityKey = "identity",
+        )
+        val old = desktop("old-device", ActionAuthentication.BIOMETRIC, "old")
+        val replacement = desktop("new-device", ActionAuthentication.TRUSTED_DEVICE, "new")
+        val completed = CompletedPairing(replacement, "cere-pair://v1/response", "six word sas value here now", old.deviceId)
+        val session = session("s", "desktop", "2")
+        val draft = LocalDraft("s", "phone draft", "2", "2", true)
+        val attachment = LocalAttachment("00000000-0000-0000-0000-000000000001", "s", "image", "image/webp", 1, "hash", 1, 1, false, remoteStatus = "ready")
+        val cached = CachedState(desktop = old, stagedPairing = completed, sessions = listOf(session), drafts = listOf(draft), attachments = listOf(attachment))
+
+        val restored = WireCodec.json.decodeFromString(CachedState.serializer(), WireCodec.json.encodeToString(CachedState.serializer(), cached))
+        assertEquals(old, restored.desktop)
+        assertEquals(completed, restored.stagedPairing)
+        assertEquals("phone draft", restored.drafts.single().text)
+        assertEquals(attachment.id, restored.attachments.single().id)
+        val aliases = setOf(old.connectionAlias, old.actionAlias, replacement.connectionAlias, replacement.actionAlias, "cere.action.orphan")
+        val kept = listOfNotNull(restored.desktop, restored.stagedPairing?.desktop).flatMap { listOf(it.connectionAlias, it.actionAlias) }.toSet()
+        assertEquals(setOf("cere.action.orphan"), PairingAliasPolicy.aliasesToPrune(aliases, restoreReady = true, kept = kept))
+    }
+
+    @Test fun replacementPreservesCacheOnlyAfterUncertainWorkIsSettled() {
+        val command = PendingCommand("command", "sessions.send", JsonObject(emptyMap()), 1)
+        assertTrue(ReplacementPolicy.blocker(MobileState(pendingCommands = listOf(command)))!!.contains("pending command"))
+        val uploading = LocalAttachment("00000000-0000-0000-0000-000000000001", "s", "image", "image/webp", 1, "hash", 1, 1, false, remoteStatus = "uploading")
+        assertTrue(ReplacementPolicy.blocker(MobileState(attachments = listOf(uploading)))!!.contains("image upload"))
+        assertNull(ReplacementPolicy.blocker(MobileState(attachments = listOf(uploading.copy(remoteStatus = "local"), uploading.copy(id = "00000000-0000-0000-0000-000000000002", remoteStatus = "ready")))))
+    }
+
     @Test fun privateCacheRoundTripKeepsScrollAnchorAndRequiresLegacyAttachmentsToBeReviewed() {
         val cached = CachedState(scrollPositions = mapOf("s" to SessionScrollPosition("s", "message", 4, 31, false)))
         val restored = WireCodec.json.decodeFromString(CachedState.serializer(), WireCodec.json.encodeToString(CachedState.serializer(), cached))

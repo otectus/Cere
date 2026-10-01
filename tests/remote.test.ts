@@ -357,6 +357,27 @@ test('media binary upload validates content and scope; revoke purges submitted f
   await f.gateway.revoke(f.device.id);await assert.rejects(stat(paths[0]));assert.equal(f.gateway.router.media.all().length,0);
 });
 
+test('changed capture approvals stay reviewable while ended approvals report gone',async t=>{
+  const f=await fixture(t);f.device.caps.push('capture.preview');f.gateway.registry.saveDevice(f.device);
+  const client=await connect(t,f),session=await f.core.create({provider:'codex',cwd:f.directory,trusted:true});
+  const capture=join(f.directory,'capture.png');
+  await writeFile(capture,await sharp({create:{width:8,height:8,channels:3,background:'#5dd8ff'}}).png().toBuffer());
+  const pending=f.core.approval(session.id,{kind:'image',title:'Share capture',detail:'Original capture',image:capture,choices:['allow','deny']});
+  const approval=(await client.request('approvals.list')).result[0];
+  const params={approvalId:approval.id,revision:approval.revision,digest:approval.digest};
+  const preview=(await client.request('approvals.preview',params)).result;assert.ok(preview?.readId);
+  f.core.approvals.get(approval.id)!.value.detail='Updated capture';
+  assert.equal((await client.request('approvals.preview',params)).error.code,'REVISION_CONFLICT');
+  assert.equal((await client.request('attachments.read',{readId:preview.readId,offset:0,length:100})).error.code,'REVISION_CONFLICT');
+  const current=(await client.request('approvals.get',{approvalId:approval.id})).result;
+  assert.equal(current.id,approval.id);assert.notEqual(current.digest,approval.digest);
+  const fresh=(await client.request('approvals.preview',{...params,digest:current.digest})).result;assert.ok(fresh?.readId);
+  f.core.answer({id:approval.id,choice:'deny'});assert.equal((await pending).choice,'deny');
+  assert.equal((await client.request('approvals.preview',{...params,digest:current.digest})).error.code,'APPROVAL_GONE');
+  assert.equal((await client.request('attachments.read',{readId:fresh.readId,offset:0,length:100})).error.code,'APPROVAL_GONE');
+  assert.deepEqual((await client.request('approvals.list')).result,[]);
+});
+
 test('grant changes redact prior command recovery and catalogs without losing deduplication',async t=>{
   const f=await fixture(t),client=await connect(t,f),commandId=randomUUID(),params={provider:'codex',projectId:f.device.projects[0].id,title:'private old project'};
   const created=await client.action('sessions.create',params,f,commandId);assert.equal(created.result.title,params.title);
@@ -403,4 +424,120 @@ test('mobile permission reduction is revision-bound, subset-only and immediately
   assert.equal(result.result.reconnectRequired,true);assert.notEqual(result.result.scopeVersion,original.scopeVersion);
   assert.deepEqual(f.gateway.registry.live(f.device.id)!.caps,['chat.read']);assert.equal(f.gateway.registry.live(f.device.id)!.projects.length,0);
   assert.throws(()=>f.gateway.router.current(original),/changed/i);
+});
+
+test('network loss waits without disabling remote authority and restores the listener',async t=>{
+  const f=await fixture(t),client=await connect(t,f);
+  const session=(await client.action('sessions.create',{provider:'codex',projectId:f.device.projects[0].id,tools:false},f)).result;
+  await client.action('sessions.send',{sessionId:session.id,text:'Retain accepted work',attachments:[],webSearch:false,expectedDraftRevision:session.draftRevision,expectedConfigRevision:session.configRevision},f);
+  const before=f.core.store.session(session.id).status;
+  f.gateway.availableAddresses=()=>[];
+  await f.gateway.maintain();
+  assert.equal(f.gateway.registry.config().enabled,true);
+  assert.equal(f.gateway.servers.length,0);
+  assert.equal((f.core.remoteStatus as any).waitingForNetwork,true);
+  assert.equal(f.core.store.session(session.id).status,before);
+  f.gateway.availableAddresses=()=>['127.0.0.1'];
+  await f.gateway.maintain();
+  const reconnected=await connect(t,f);
+  assert.equal((f.core.remoteStatus as any).waitingForNetwork,false);
+  assert.equal((await reconnected.request('sessions.get',{sessionId:session.id})).result.id,session.id);
+  await f.gateway.disable();await f.gateway.maintain();
+  assert.equal(f.gateway.registry.config().enabled,false);assert.equal(f.gateway.servers.length,0);
+});
+
+test('a transient bind failure retries without poisoning gateway lifecycle',async t=>{
+  const f=await fixture(t);await f.gateway.stopListeners();
+  const occupied=net.createServer();
+  await new Promise<void>(resolve=>occupied.listen(f.gateway.registry.config().port,'127.0.0.1',resolve));
+  try {
+    await f.gateway.start();
+    assert.equal(f.gateway.registry.config().enabled,true);assert.equal(f.gateway.servers.length,0);
+    assert.ok((f.core.remoteStatus as any).networkError);
+  } finally {await new Promise<void>(resolve=>occupied.close(()=>resolve()));}
+  await f.gateway.start();assert.equal(f.gateway.servers.length,1);
+  await connect(t,f);
+});
+
+test('trusted replacement is desktop-selected, retains scopes and ownership, and still requires exact action signatures',async t=>{
+  const f=await fixture(t),oldClient=await connect(t,f);
+  assert.equal(oldClient.welcome.actionAuthentication,'biometric');
+  const session=(await oldClient.action('sessions.create',{provider:'codex',projectId:f.device.projects[0].id,tools:false},f)).result;
+  await oldClient.action('sessions.send',{sessionId:session.id,text:'Active replacement',attachments:[],webSearch:false,expectedDraftRevision:session.draftRevision,expectedConfigRevision:session.configRevision},f);
+  assert.ok(['starting','working','waiting'].includes(f.core.store.session(session.id).status));
+  const prepared:any=await f.gateway.local('remote.preparePair',{addresses:['127.0.0.1'],port:f.gateway.registry.config().port,name:'Replacement',actionAuthentication:'trusted-device',replacesDeviceId:f.device.id});
+  const offer=parsePairing(prepared.uri);assert.equal(offer.actionAuthentication,'trusted-device');assert.equal(offer.replacesDeviceId,f.device.id);
+  assert.ok(Buffer.byteLength(prepared.uri)<=2000);
+  const connection=keypair(),action=keypair();
+  const body={type:'response',v:1,desktopId:offer.desktopId,pairingId:offer.pairingId,offerDigest:digest(offer),nonce:offer.nonce,deviceId:randomUUID(),name:'Trusted phone',keyVersion:1,connectionKey:pub(connection),actionKey:pub(action),deviceNonce:randomBytes(32).toString('base64url')};
+  const transcript={domain:'cere.mobile.pair.response.v1',response:body};
+  const response=pairingUri({...body,connectionProof:proof(connection,transcript),actionProof:proof(action,transcript)});
+  const review:any=await f.gateway.local('remote.reviewPair',{response});assert.equal(review.actionAuthentication,'trusted-device');
+  const params={response,sas:review.sas,confirmed:true,projectPaths:[f.directory],caps:f.device.caps,categories:f.device.categories};
+  await assert.rejects(()=>f.gateway.local('remote.confirmPair',{...params,actionAuthentication:'biometric'}));
+  // Inject a crash boundary after the durable confirm transaction but before
+  // in-memory session transfer. A fresh gateway must finish from the stored marker.
+  const committed=f.gateway.pairing.confirm(params);
+  assert.equal(committed.replacementPending,true);
+  assert.equal(f.core.store.session(session.id).remote?.deviceId,f.device.id);
+  assert.throws(()=>f.gateway.router.current(committed),/recovering/);
+  await f.gateway.close();
+  f.gateway=new MobileGateway(f.core);t.after(()=>f.gateway.close());
+  await f.gateway.start();
+  assert.equal(f.gateway.registry.live(committed.id)?.replacementPending,false);
+  assert.equal(f.gateway.registry.live(f.device.id),undefined);
+  const device=f.gateway.registry.live(body.deviceId)!;assert.equal(device.actionAuthentication,'trusted-device');
+  assert.equal(device.projects[0].id,f.device.projects[0].id);
+  assert.equal(f.core.store.session(session.id).remote?.deviceId,device.id);
+  assert.ok(!['starting','working','waiting','stopping'].includes(f.core.store.session(session.id).status));
+  const replacement={...f,offer,connection,action,device},client=await connect(t,replacement);
+  assert.equal(client.welcome.actionAuthentication,'trusted-device');
+  assert.equal((await client.request('devices.self')).result.actionAuthentication,'trusted-device');
+  const settings={expectedRevision:f.core.store.get('settingsRevision','0'),personality:'Trusted exact action'};
+  assert.equal((await client.action('settings.patch',settings,replacement,randomUUID(),connection)).error.code,'UNAUTHENTICATED');
+  assert.ok((await client.action('settings.patch',settings,replacement)).result);
+  await f.gateway.revoke(device.id);assert.equal(f.gateway.registry.live(device.id),undefined);
+});
+
+test('locally confirmed endpoint renewal preserves identity and invalidates obsolete pairing offers',async t=>{
+  const f=await fixture(t),original=f.gateway.identity.material();
+  const prepared:any=await f.gateway.local('remote.preparePair',{addresses:['127.0.0.1'],port:f.gateway.registry.config().port});
+  await assert.rejects(()=>f.gateway.local('remote.configureEndpoints',{addresses:['127.0.0.1'],confirmed:false}));
+  await f.gateway.local('remote.configureEndpoints',{addresses:['127.0.0.1'],port:f.gateway.registry.config().port,confirmed:true});
+  assert.equal(f.gateway.identity.id,f.offer.desktopId);assert.equal(f.gateway.identity.material().spki,original.spki);
+  assert.equal(f.gateway.identity.material().identityKey,original.identityKey);
+  assert.equal(f.gateway.registry.store.db.prepare('SELECT count(*) AS n FROM remote_pair_offers').get()!.n,0);
+  assert.ok(prepared.uri);assert.equal(f.gateway.registry.live(f.device.id)?.id,f.device.id);
+});
+
+ test('a retired listener error cannot close its replacement on the same address',async t=>{
+  const f=await fixture(t),retired=f.gateway.servers[0];
+  await f.gateway.stopListeners();await f.gateway.start();
+  const replacement=f.gateway.servers[0];assert.notEqual(replacement,retired);
+  retired.emit('error',new Error('Late error from a retired listener'));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.gateway.servers[0],replacement);assert.equal(replacement.listening,true);
+  await connect(t,f);
+});
+
+test('mobile Ollama follow-ups queue with signed deduplication, keep draft CAS, and include delegated approval ancestry',async t=>{
+  const f=await fixture(t),client=await connect(t,f);
+  // This fixture device must explicitly grant the configured Ollama host.
+  f.core.capabilities.ollama={available:true,modelsStatus:'ready',models:[{id:'fixture',displayName:'Fixture',description:'',efforts:[],defaultEffort:'',isDefault:true}]};
+  f.device.ollamaHosts=[f.core.settings.ollama.host];f.gateway.registry.saveDevice(f.device);
+  const created=await client.action('sessions.create',{provider:'ollama',projectId:f.device.projects[0].id,tools:false,model:'fixture'},f);
+  assert.ok(created.result,JSON.stringify(created));let session=created.result;
+  const params=()=>({sessionId:session.id,text:'message '+f.sends(),attachments:[],webSearch:false,expectedDraftRevision:session.draftRevision,expectedConfigRevision:session.configRevision});
+  const first=await client.action('sessions.send',params(),f);assert.equal(first.result.status,'accepted');
+  session=(await client.request('sessions.get',{sessionId:session.id})).result;assert.equal(session.canQueue,true);
+  const input=params(),commandId=randomUUID();const queued=await client.action('sessions.send',input,f,commandId);assert.equal(queued.result.status,'queued');assert.equal(f.sends(),1);
+  const replay=await client.request('sessions.send',input,commandId);assert.deepEqual(replay.result,queued.result);
+  const child=await f.core.create({provider:'codex',cwd:f.directory,trusted:true});f.core.updateSession(child.id,{parentId:session.id,remote:f.core.store.session(session.id).remote,effectivePolicy:'restricted'});
+  const waiting=f.core.approval(child.id,{kind:'question',title:'Child needs a choice',detail:'',choices:['answer'],questions:[{id:'q',question:'Proceed?',allowOther:true}]});
+  const approvals=(await client.request('approvals.list')).result;const approval=approvals.find((a:any)=>a.sessionId===child.id);
+  assert.deepEqual(approval.parentSessionIds,[session.id]);assert.equal(approval.canAnswer,true);
+  const answer=await client.action('approvals.answer',{approvalId:approval.id,revision:approval.revision,digest:approval.digest,choice:'answer',answers:{q:{answers:['yes']}}},f);assert.equal(answer.result,true);await waiting;f.core.event(child.id,{type:'complete'});
+  f.hooks.get(session.id)!.event({type:'complete'});await new Promise(r=>setTimeout(r,60));assert.equal(f.sends(),2);
+  assert.equal(f.core.store.messages(session.id).filter(m=>m.role==='user').length,2);
+  await client.request('sessions.stop',{sessionId:session.id},randomUUID());
 });

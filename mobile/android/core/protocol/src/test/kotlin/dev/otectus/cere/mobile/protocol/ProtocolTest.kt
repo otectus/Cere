@@ -5,12 +5,23 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ProtocolTest {
+    @Test fun queuedSendIsAcceptedButUnknownOutcomesStayUnresolved() {
+        for (status in listOf("queued", "accepted", "completed")) {
+            val result = WireCodec.json.parseToJsonElement("""{"status":"$status","turnId":"turn"}""")
+            assertEquals(status, acceptedSendStatus(result))
+        }
+        for (result in listOf("{}", "null", "[]", """{"status":"unknown"}""", """{"status":"failed"}""")) {
+            assertNull(acceptedSendStatus(WireCodec.json.parseToJsonElement(result)))
+        }
+    }
+
     @Test fun sessionAndQuestionMetadataDecodeWithSafeDefaults() {
         val session = WireCodec.json.decodeFromString<Session>("""{"id":"s","provider":"codex","title":"Work","status":"working","agents":[{"id":"a","name":"Scout","task":"Inspect","status":"waiting","detail":"Needs input","updated":4}]}""")
         assertEquals("Scout", session.agents.single().name)
@@ -28,15 +39,22 @@ class ProtocolTest {
 
     @Test fun welcomeNegotiatesPasswordlessSendsWithoutAssumingOldBrokerSupport() {
         val legacy = """{"v":1,"type":"welcome","authSessionId":"auth","expiresAt":1,"epoch":"1","desktopId":"desktop","scopeVersion":"1","protocol":{"major":1,"minor":0},"operations":["sessions.send"]}"""
-        assertEquals("action-key", WireCodec.json.decodeFromString<Welcome>(legacy).sendAuthentication)
+        val legacyWelcome = WireCodec.json.decodeFromString<Welcome>(legacy)
+        assertEquals("action-key", legacyWelcome.sendAuthentication)
+        assertEquals(ActionAuthentication.BIOMETRIC, legacyWelcome.actionAuthentication)
         val current = legacy.dropLast(1) + """, "sendAuthentication":"connection-key"}"""
         assertEquals("connection-key", WireCodec.json.decodeFromString<Welcome>(current).sendAuthentication)
+        val trusted = legacy.dropLast(1) + """, "actionAuthentication":"trusted-device"}"""
+        assertEquals(ActionAuthentication.TRUSTED_DEVICE, WireCodec.json.decodeFromString<Welcome>(trusted).actionAuthentication)
     }
 
     @Test fun conversationExcludesToolsThinkingAndSystemActivity() {
         val reply = Message("id", "session", role = "assistant", text = "Hello", revision = "1")
         assertTrue(reply.isConversationMessage())
         assertTrue(reply.copy(role = "user").isConversationMessage())
+        listOf("question", "answer", "queued", "queue-cancelled").forEach { kind ->
+            assertTrue(kind, reply.copy(kind = kind).isConversationMessage())
+        }
         assertFalse(reply.copy(role = "tool").isConversationMessage())
         assertFalse(reply.copy(kind = "tool").isConversationMessage())
         assertFalse(reply.copy(kind = "thinking").isConversationMessage())

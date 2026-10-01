@@ -460,6 +460,25 @@ Unicode: café ✦ 日本語
         QTRY_VERIFY(app->selectedId()!=sessionId);app->select(sessionId);
         QTRY_COMPARE(item("composer")->property("text").toString(),QString("A draft that must survive session switching."));capture("draft");
     }
+    void queuedOllamaMessages(){
+        click("tab_Chat");
+        call("settings.update",{{"quiet",true},{"memory",QVariantMap{{"enabled",false}}}});
+        const auto session=createSession("ollama","Queue regression","fixture-chat:latest");
+        QVERIFY(!session.isEmpty());app->select(session);
+        call("session.send",{{"id",session},{"text","queue-validation-hold"}});
+        QTRY_COMPARE(app->session().value("status").toString(),QString("working"));
+        QTRY_VERIFY(item("sendMessage"));QVERIFY(item("stopMessage"));
+        auto composer=item("composer");QVERIFY(composer);QVERIFY(composer->isEnabled());
+        composer->setProperty("text","A follow-up while working");
+        QTRY_VERIFY(item("sendMessage")->isEnabled());click("sendMessage");
+        QTRY_COMPARE(app->session().value("queuedCount").toInt(),1);
+        QTRY_COMPARE(composer->property("text").toString(),QString());
+        capture("ollama-queued-followup");
+        QTRY_COMPARE_WITH_TIMEOUT(app->session().value("status").toString(),QString("idle"),8000);
+        QTRY_COMPARE(app->session().value("queuedCount").toInt(),0);
+        int prompts=0;for(const auto &m:app->messages())if(m.toMap().value("role").toString()=="user")++prompts;
+        QCOMPARE(prompts,2);
+    }
     void ollamaConversation(){
         click("tab_Settings");
         auto defaults=item("ollamaDefaultModel");QVERIFY(defaults);
@@ -505,6 +524,38 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE(app->session().value("provider").toString(),QString("codex"));
         QTRY_VERIFY(item("composer")->property("text").toString().contains("Hello from Ollama"));
         QCOMPARE(app->session().value("status").toString(),QString("idle"));
+    }
+    void extractionModelSelection(){
+        auto fixtureModels=[&](const QString &method){
+            QProcess request;
+            request.start("node",{"--input-type=module","-e","await fetch(process.env.CERE_OLLAMA_HOST+'/test/extraction-models',{method:process.argv[1]})",method});
+            return request.waitForFinished(5000)&&request.exitCode()==0;
+        };
+        QVERIFY(fixtureModels("POST"));
+        const auto previous=app->state().value("settings").toMap().value("memory").toMap();
+        auto restore=qScopeGuard([&]{fixtureModels("DELETE");call("provider.models",{{"provider","ollama"}});call("settings.update",{{"memory",previous}});});
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"extractionModel","nemotron-3-super"}}}}).contains("error"));
+        click("tab_Settings");click("extractionModelsRefresh");
+        auto picker=item("extractionModel");QVERIFY(picker);
+        QTRY_COMPARE(picker->property("count").toInt(),3);
+        QTRY_COMPARE(picker->property("currentValue").toString(),QString("nemotron-3-super:cloud"));
+        QTRY_VERIFY(picker->isEnabled());
+        click("extractionModel");
+        auto popup=qvariant_cast<QObject*>(picker->property("popup"));QVERIFY(popup);
+        QTRY_VERIFY(popup->property("visible").toBool());
+        QTest::keyClick(window,Qt::Key_Home);QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap().value("extractionModel").toString(),QString("glm-5.3-flash:cloud"));
+        QTRY_VERIFY(picker->isEnabled());
+        capture("extraction-model-selection");
+        // A change from another client must still update the selection after user activation.
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"extractionModel","nemotron-3-ultra:cloud"}}}}).contains("error"));
+        QTRY_COMPARE(picker->property("currentValue").toString(),QString("nemotron-3-ultra:cloud"));
+        click("extractionModelsRefresh");
+        QTRY_VERIFY(picker->isEnabled());
+        QTRY_COMPARE(picker->property("currentValue").toString(),QString("nemotron-3-ultra:cloud"));
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"extractionModel","unregistered-cloud-model"}}}}).contains("error"));
+        QTRY_COMPARE(picker->property("count").toInt(),4);
+        QTRY_COMPARE(picker->property("currentValue").toString(),QString("unregistered-cloud-model"));
     }
     void searchAndMemory(){
         click("tab_Chat");

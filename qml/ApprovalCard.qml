@@ -126,9 +126,9 @@ Rectangle {
         }
     }
 
-    color: "#29291f"
-    border.color: "#867148"
-    radius: 9
+    color: Theme.approvalSurface
+    border.color: Theme.approvalBorder
+    radius: Theme.radiusControl
     implicitHeight: contents.implicitHeight + 24
 
     ColumnLayout {
@@ -144,15 +144,15 @@ Rectangle {
                 Layout.alignment: Qt.AlignTop
                 Layout.preferredWidth: badge.implicitWidth + 12
                 Layout.preferredHeight: 22
-                radius: 5
-                color: card.isQuestion ? "#173746" : "#3a3021"
+                radius: Theme.radiusChip
+                color: card.isQuestion ? Theme.questionBadge : Theme.permissionBadge
                 border.color: card.isQuestion ? Theme.cyan : Theme.amber
                 CText {
                     id: badge
                     anchors.centerIn: parent
                     text: card.isQuestion ? "QUESTION" : "PERMISSION"
                     color: card.isQuestion ? Theme.cyan : Theme.amber
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.caption
                     font.bold: true
                     font.letterSpacing: 1
                 }
@@ -184,7 +184,7 @@ Rectangle {
             text: "Subagent · " + (card.requestingAgent?.name || "")
             textFormat: Text.PlainText
             color: Theme.cyan
-            font.pixelSize: 11
+            font.pixelSize: Theme.caption
         }
         Text {
             text: card.approval.title || (card.isQuestion ? "A question needs your answer" : "Permission needed")
@@ -192,7 +192,7 @@ Rectangle {
             Layout.fillWidth: true
             color: card.isQuestion ? Theme.text : Theme.amber
             font.bold: true
-            font.pixelSize: 13
+            font.pixelSize: Theme.body
             wrapMode: Text.Wrap
         }
         Image {
@@ -205,9 +205,9 @@ Rectangle {
         ColumnLayout {
             visible: !!card.approval.url
             Layout.fillWidth: true
-            CText { Layout.fillWidth: true; text: card.approval.url || ""; textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 11; wrapMode: Text.WrapAnywhere }
+            CText { Layout.fillWidth: true; text: card.approval.url || ""; textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: Theme.caption; wrapMode: Text.WrapAnywhere }
             CButton { text: "Open request page"; onClicked: App.openMessageLink(card.approval.url, "") }
-            CText { Layout.fillWidth: true; text: "Complete the request in your browser, then confirm below."; color: Theme.muted; font.pixelSize: 11 }
+            CText { Layout.fillWidth: true; text: "Complete the request in your browser, then confirm below."; color: Theme.muted; font.pixelSize: Theme.caption }
         }
         ScrollView {
             id: details
@@ -225,7 +225,7 @@ Rectangle {
                 selectByMouse: true
                 wrapMode: TextEdit.Wrap
                 color: Theme.text
-                font.pixelSize: 11
+                font.pixelSize: Theme.caption
                 font.family: "monospace"
                 background: null
             }
@@ -243,9 +243,9 @@ Rectangle {
                 readonly property bool showOther: question.allowOther !== false
                 Layout.fillWidth: true
                 implicitHeight: questionContents.implicitHeight + 20
-                radius: 7
-                color: "#22272c"
-                border.color: card.validationErrors[questionId] ? Theme.danger : Theme.line
+                radius: Theme.radiusControl
+                color: Theme.questionSurface
+                border.color: card.validationErrors[questionId] ? Theme.danger : Theme.border
 
                 ColumnLayout {
                     id: questionContents
@@ -257,14 +257,14 @@ Rectangle {
                         CText {
                             text: "Question " + (questionBody.index + 1) + " of " + card.questions.length
                             color: Theme.cyan
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.caption
                             font.bold: true
                         }
                         Item { Layout.fillWidth: true }
                         CText {
                             text: questionBody.question.required === false ? "Optional" : "Required"
                             color: Theme.muted
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.caption
                         }
                     }
                     Text {
@@ -273,7 +273,7 @@ Rectangle {
                         color: Theme.text
                         wrapMode: Text.Wrap
                         Layout.fillWidth: true
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.secondary
                         font.bold: !!questionBody.question.header
                     }
                     Text {
@@ -283,7 +283,7 @@ Rectangle {
                         color: Theme.text
                         wrapMode: Text.Wrap
                         Layout.fillWidth: true
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.secondary
                     }
 
                     Repeater {
@@ -306,7 +306,7 @@ Rectangle {
                                 Layout.leftMargin: 34
                                 text: typeof modelData === "string" ? "" : modelData.description || ""
                                 color: Theme.muted
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.caption
                                 wrapMode: Text.Wrap
                             }
                         }
@@ -330,24 +330,18 @@ Rectangle {
                         contentWidth: availableWidth
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                         ScrollBar.vertical: CScrollBar {}
-                        TextArea {
+                        CTextArea {
                             id: writtenAnswer
                             objectName: "questionOther_" + card.approvalId + "_" + questionBody.questionId
                             text: card.otherValue(questionBody.question)
                             placeholderText: questionBody.options.length ? "Other answer" : "Enter your answer"
                             color: Theme.text
                             placeholderTextColor: Theme.muted
-                            selectionColor: "#396982"
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.secondary
                             wrapMode: TextEdit.Wrap
                             selectByMouse: true
                             Accessible.name: questionBody.question.question
-                            background: Rectangle {
-                                radius: 6
-                                color: Theme.input
-                                border.color: writtenAnswer.activeFocus ? Theme.cyan : Theme.line
-                            }
                             onTextChanged: if (activeFocus && text !== card.otherValue(questionBody.question)) card.setOther(questionBody.question, text)
                         }
                     }
@@ -355,7 +349,7 @@ Rectangle {
                         visible: !!card.validationErrors[questionBody.questionId]
                         text: card.validationErrors[questionBody.questionId] || ""
                         color: Theme.danger
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.caption
                         Accessible.role: Accessible.AlertMessage
                     }
                 }
@@ -366,7 +360,7 @@ Rectangle {
             visible: card.error.length > 0
             text: card.error
             color: Theme.danger
-            font.pixelSize: 12
+            font.pixelSize: Theme.secondary
             wrapMode: Text.Wrap
             Accessible.role: Accessible.AlertMessage
         }

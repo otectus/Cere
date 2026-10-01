@@ -43,7 +43,7 @@ export class MediaStore {
     if(m.status==='ready')return this.dto(m);
     if(m.status!=='uploading')throw remoteError('ATTACHMENT_INVALID','This attachment was already submitted.');
     if(m.offset!==m.size||this.busy.has(m.id))throw remoteError('ATTACHMENT_INVALID','Upload is incomplete.');
-    if(this.decoding)throw remoteError('RATE_LIMITED','Another image is being validated.');
+    if(this.decoding)throw remoteError('SESSION_BUSY','Another image is being validated.');
     this.busy.add(m.id);this.decoding=true;
     try {
       const bytes=await readFile(m.path);if(bytes.length!==m.size||bytesDigest(bytes)!==m.sha256)throw remoteError('ATTACHMENT_INVALID','Image hash does not match.');
@@ -67,8 +67,9 @@ export class MediaStore {
   submitted(device:Device,ids:string[]) {for(const id of ids){const m=this.get(device,id);m.status='submitted';m.submittedAt=Date.now();m.expiresAt=Number.MAX_SAFE_INTEGER;this.save(m);}}
   async preview(device:Device,p:any) {
     this.router.require(device,'capture.preview');const {a}=this.router.approval(device,p.approvalId),dto=this.router.approvalDto(device,a);
-    if(dto.revision!==p.revision||dto.digest!==p.digest||a.kind!=='image'||!a.image)throw remoteError('APPROVAL_GONE','Capture request changed.');
-    if(this.decoding||[...this.previews.values()].filter(v=>v.deviceId===device.id&&v.expiresAt>Date.now()).length>=4)throw remoteError('RATE_LIMITED','Close old previews before opening another.');
+    if(dto.revision!==p.revision||dto.digest!==p.digest||a.kind!=='image'||!a.image)throw remoteError('REVISION_CONFLICT','Capture request changed.');
+    if(this.decoding)throw remoteError('SESSION_BUSY','Another image is being validated.');
+    if([...this.previews.values()].filter(v=>v.deviceId===device.id&&v.expiresAt>Date.now()).length>=4)throw remoteError('LIMIT_EXCEEDED','Close old previews before opening another.');
     this.decoding=true;
     try {
     if((await stat(a.image)).size>20*1024*1024)throw remoteError('LIMIT_EXCEEDED','Capture is too large to preview.');
@@ -76,7 +77,7 @@ export class MediaStore {
     const bytes=await sharp(original,{limitInputPixels:40_000_000}).resize({width:1400,height:1400,fit:'inside',withoutEnlargement:true}).jpeg({quality:80}).toBuffer();
     if(bytes.length>1024*1024)throw remoteError('LIMIT_EXCEEDED','Capture preview is too large.');
     this.router.current(device);const current=this.router.approval(device,p.approvalId).a;
-    if(this.router.approvalDto(device,current).digest!==p.digest)throw remoteError('APPROVAL_GONE','Capture changed.');
+    if(this.router.approvalDto(device,current).digest!==p.digest)throw remoteError('REVISION_CONFLICT','Capture changed.');
     const id=randomUUID(),expiresAt=Date.now()+300000;
     this.previews.set(id,{id,deviceId:device.id,approvalId:a.id,revision:p.revision,digest:p.digest,imageDigest,expiresAt,bytes});
     return {readId:id,size:bytes.length,mime:'image/jpeg',sha256:bytesDigest(bytes),imageDigest,expiresAt};
@@ -86,7 +87,7 @@ export class MediaStore {
   read(device:Device,p:any):Buffer {
     this.router.require(device,'capture.preview');const preview=this.previews.get(p.readId);
     if(!preview||preview.deviceId!==device.id||preview.expiresAt<Date.now())throw remoteError('ATTACHMENT_INVALID','Preview expired.');
-    const current=this.router.approval(device,preview.approvalId);if(this.router.approvalDto(device,current.a).digest!==preview.digest)throw remoteError('APPROVAL_GONE','Capture request ended.');
+    const current=this.router.approval(device,preview.approvalId);if(this.router.approvalDto(device,current.a).digest!==preview.digest)throw remoteError('REVISION_CONFLICT','Capture request changed.');
     if(p.offset>=preview.bytes.length)throw remoteError('INVALID_ARGUMENT','Preview offset is outside the image.');
     const header=Buffer.alloc(24);Buffer.from(p.readId.replaceAll('-',''),'hex').copy(header);header.writeBigUInt64BE(BigInt(p.offset),16);
     return Buffer.concat([header,preview.bytes.subarray(p.offset,p.offset+p.length)]);

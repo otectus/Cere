@@ -22,7 +22,9 @@
       "pairingId": "uuid",
       "nonce": "32 bytes base64url",
       "expiresAt": 0,
-      "signature": "DER base64url"
+      "signature": "DER base64url",
+      "actionAuthentication": "biometric | trusted-device (optional; absent means biometric)",
+      "replacesDeviceId": "optional UUID of the existing phone being replaced on the same desktop"
     },
     "offerSignatureTranscript": {
       "domain": "cere.mobile.pair.offer.v1",
@@ -48,7 +50,8 @@
     },
     "response": "responseBody plus connectionProof and actionProof signatures of responseSignatureTranscript using respective keys",
     "sas": "SHA256 UTF8(offerDigest + '.' + digest(complete signed response)); first six bytes index sas-words.json; join words with spaces",
-    "maximumUriBytes": 2000
+    "maximumUriBytes": 2000,
+    "replacement": "A signed replacesDeviceId must match the saved desktop/device. Replacement reuses project IDs, revokes old authority, preserves local drafts/cache, and requires reconciliation of pending commands first. Policy is chosen locally in the signed offer, not supplied by the phone."
   },
   "authentication": {
     "hello": {
@@ -102,7 +105,8 @@
       "limits": {
         "maxFrameBytes": 1048576
       },
-      "brokerBuild": "0.1.0/mobile-v1"
+      "brokerBuild": "0.1.0/mobile-v1",
+      "actionAuthentication": "biometric | trusted-device (optional; absent means biometric)"
     }
   },
   "actions": {
@@ -270,7 +274,7 @@
       },
       "result": {
         "commandId": "uuid",
-        "status": "accepted",
+        "status": "accepted | queued (Ollama follow-up)",
         "turnId": "uuid"
       }
     },
@@ -637,6 +641,8 @@
       "turnId": "optional uuid",
       "remoteRestricted": true,
       "canSend": true,
+      "canQueue": true,
+      "queuedCount": 0,
       "canConfigure": true,
       "pinned": false,
       "archived": false,
@@ -665,6 +671,7 @@
     "approval": {
       "id": "uuid",
       "sessionId": "uuid",
+      "parentSessionIds": ["ancestor session uuid"],
       "kind": "question",
       "title": "Question",
       "detail": "exact proposal",

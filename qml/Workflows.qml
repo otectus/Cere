@@ -26,12 +26,10 @@ CDialog {
     property var checkScript:({})
     signal sessionRequested(string id)
 
-    component Editor:TextArea {
+    component Editor:CTextArea {
         Layout.fillWidth:true;Layout.preferredHeight:100
         textFormat:TextEdit.PlainText;wrapMode:TextEdit.Wrap;selectByMouse:true
-        color:Theme.text;selectionColor:Theme.selected;selectedTextColor:Theme.text
-        font.family:Theme.font;font.pixelSize:12;padding:10
-        background:Rectangle { color:Theme.input;radius:7;border.color:parent.activeFocus?Theme.cyan:Theme.line }
+        font.family:Theme.font;font.pixelSize:Theme.secondary;padding:10
     }
     function failure(value){return typeof value?.error==="string"?value.error:value?.error?.message||value?.message||"The workflow request failed."}
     function call(method,params){if(requestId>=0)return;error="";feedback="";action=method;requestId=App.rpc(method,params||{})}
@@ -68,7 +66,7 @@ CDialog {
 
     RowLayout {
         Layout.fillWidth:true
-        CText { text:"Project workflows";font.pixelSize:20;font.weight:Font.DemiBold }
+        CText { text:"Project workflows";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
         CButton { text:"Refresh";quiet:true;enabled:workflow.requestId<0&&App.connected;onClicked:workflow.refresh() }
     }
     RowLayout {
@@ -83,18 +81,18 @@ CDialog {
     ColumnLayout {
         visible:workflow.tab===0;Layout.fillWidth:true;spacing:10
         CText { text:"Project capsule";font.weight:Font.DemiBold }
-        CText { text:"Scoped to the selected session’s exact working folder. Worktree grouping never merges capsules or changes permissions, memory, or the working directory.";color:Theme.muted;font.pixelSize:12 }
-        CText { text:"Goal";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Scoped to the selected session’s exact working folder. Worktree grouping never merges capsules or changes permissions, memory, or the working directory.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { text:"Goal";color:Theme.muted;font.pixelSize:Theme.caption }
         CField { id:capsuleGoal;objectName:"capsuleGoal";Layout.fillWidth:true;placeholderText:"What is this project trying to achieve?";Accessible.name:"Project goal" }
-        CText { text:"Decisions · one per line";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Decisions · one per line";color:Theme.muted;font.pixelSize:Theme.caption }
         Editor { id:decisions;objectName:"capsuleDecisions";Accessible.name:"Project decisions" }
-        CText { text:"Constraints · one per line";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Constraints · one per line";color:Theme.muted;font.pixelSize:Theme.caption }
         Editor { id:constraints;objectName:"capsuleConstraints";Accessible.name:"Project constraints" }
-        CText { text:"Open questions · one per line";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Open questions · one per line";color:Theme.muted;font.pixelSize:Theme.caption }
         Editor { id:questions;objectName:"capsuleQuestions";Accessible.name:"Project questions" }
-        CText { text:"Next steps · one per line";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Next steps · one per line";color:Theme.muted;font.pixelSize:Theme.caption }
         Editor { id:nextSteps;objectName:"capsuleNextSteps";Accessible.name:"Project next steps" }
-        CText { text:"Relevant conversations · recent sessions in this project";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Relevant conversations · recent sessions in this project";color:Theme.muted;font.pixelSize:Theme.caption }
         Repeater {
             model:workflow.relatedSessions
             CCheckBox { required property var modelData;Layout.fillWidth:true;text:modelData.title||"Untitled conversation";checked:workflow.relatedSelection.split(", ").indexOf(modelData.id)>=0
@@ -107,10 +105,10 @@ CDialog {
             CSection {
                 required property var modelData
                 title:modelData.sourceRole||"source";description:modelData.label||"Source no longer available"
-                CText { text:modelData.text||"The referenced message is no longer available.";color:Theme.muted;font.pixelSize:11;maximumLineCount:6;elide:Text.ElideRight }
+                CText { text:modelData.text||"The referenced message is no longer available.";color:Theme.muted;font.pixelSize:Theme.caption;maximumLineCount:6;elide:Text.ElideRight }
             }
         }
-        CText { visible:!(workflow.capsule.sources||[]).length;text:"No source references. Adding capsule text does not promote model output automatically.";color:Theme.muted;font.pixelSize:11 }
+        CText { visible:!(workflow.capsule.sources||[]).length;text:"No source references. Adding capsule text does not promote model output automatically.";color:Theme.muted;font.pixelSize:Theme.caption }
         GridLayout {
             Layout.fillWidth:true;columns:2;columnSpacing:8;rowSpacing:8
             CButton {
@@ -124,15 +122,15 @@ CDialog {
     ColumnLayout {
         visible:workflow.tab===1;Layout.fillWidth:true;spacing:10
         CText { text:"Recipe library";font.weight:Font.DemiBold }
-        CText { text:"Recipes create a reviewed one-turn draft. They never run from search or preview, never grant permissions, and never send automatically.";color:Theme.muted;font.pixelSize:12 }
+        CText { text:"Recipes create a reviewed one-turn draft. They never run from search or preview, never grant permissions, and never send automatically.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CComboBox { id:recipePicker;objectName:"recipePicker";Layout.fillWidth:true;model:workflow.recipes;textRole:"name";Accessible.name:"Recipe";onActivated:workflow.chooseRecipe() }
-        CText { visible:!!workflow.selectedRecipe;text:(workflow.selectedRecipe?.description||"")+" · version "+(workflow.selectedRecipe?.version||"");color:Theme.muted;font.pixelSize:11 }
+        CText { visible:!!workflow.selectedRecipe;text:(workflow.selectedRecipe?.description||"")+" · version "+(workflow.selectedRecipe?.version||"");color:Theme.muted;font.pixelSize:Theme.caption }
         Repeater {
             model:workflow.selectedRecipe?.inputs||[]
             ColumnLayout {
                 required property var modelData
                 Layout.fillWidth:true;spacing:4
-                CText { text:modelData.label+(modelData.required?" · required":"");font.pixelSize:11;color:Theme.muted }
+                CText { text:modelData.label+(modelData.required?" · required":"");font.pixelSize:Theme.caption;color:Theme.muted }
                 CField {
                     visible:modelData.type==="number";Layout.fillWidth:true;placeholderText:modelData.type==="number"?"Number":"Text";Accessible.name:modelData.label
                     text:workflow.recipeValues[modelData.name]===undefined?"":String(workflow.recipeValues[modelData.name])
@@ -153,20 +151,20 @@ CDialog {
         CButton { objectName:"prepareRecipe";Layout.fillWidth:true;text:"Preview exact draft";primary:true;enabled:workflow.requestId<0&&!!workflow.selectedRecipe&&!!App.selectedId;onClicked:workflow.call("recipes.prepare",{sessionId:App.selectedId,recipeId:workflow.selectedRecipe.id,version:workflow.selectedRecipe.version,inputs:workflow.inputPayload()}) }
         CSection {
             visible:!!workflow.preview;title:"Reviewed preview";description:"One turn · up to "+(workflow.preview?.limits?.maxSeconds||0)+" seconds"
-            CText { text:"Source session: "+(workflow.preview?.sourceSessionId||"")+"\nProject: "+(workflow.preview?.source?.cwd||"")+"\nProvider: "+(workflow.preview?.source?.provider||"")+" · "+(workflow.preview?.source?.model||"default")+"\nConfiguration revision: "+(workflow.preview?.source?.configRevision||"");color:Theme.muted;font.pixelSize:11 }
+            CText { text:"Source session: "+(workflow.preview?.sourceSessionId||"")+"\nProject: "+(workflow.preview?.source?.cwd||"")+"\nProvider: "+(workflow.preview?.source?.provider||"")+" · "+(workflow.preview?.source?.model||"default")+"\nConfiguration revision: "+(workflow.preview?.source?.configRevision||"");color:Theme.muted;font.pixelSize:Theme.caption }
             Editor { objectName:"completeRecipePrompt";text:workflow.preview?.prompt||"";readOnly:true;Layout.preferredHeight:Math.max(160,implicitHeight);Accessible.name:"Complete recipe prompt" }
-            CText { text:"Declared access:\n"+(workflow.preview?.permissions?.nativeAccess||[]).join("\n");color:Theme.amber;font.pixelSize:11 }
-            CText { text:"Additional attachments and per-turn public search are excluded from this review.";color:Theme.muted;font.pixelSize:11 }
-            CText { text:workflow.preview?.permissions?.description||"";color:Theme.amber;font.pixelSize:11 }
+            CText { text:"Declared access:\n"+(workflow.preview?.permissions?.nativeAccess||[]).join("\n");color:Theme.amber;font.pixelSize:Theme.caption }
+            CText { text:"Additional attachments and per-turn public search are excluded from this review.";color:Theme.muted;font.pixelSize:Theme.caption }
+            CText { text:workflow.preview?.permissions?.description||"";color:Theme.amber;font.pixelSize:Theme.caption }
             CButton { objectName:"createRecipeDraft";Layout.fillWidth:true;text:"I reviewed this · create draft";primary:true;enabled:workflow.requestId<0;onClicked:workflow.call("recipes.createDraft",{previewToken:workflow.preview.token,reviewed:true}) }
         }
         Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
         CText { text:workflow.newDefinition?"New recipe definition":"Definition authoring";font.weight:Font.DemiBold }
         CButton { text:"New recipe";onClicked:{workflow.newDefinition=true;recipeName.text="";recipeDescription.text="";recipeInstructions.text="";recipeOutput.text="";recipePermissions.text="Requires review under the session’s existing permissions.";recipeAccess.text="";inputDefinitions.clear();recipeSeconds.value=300} }
-        CText { text:"Saving creates a new immutable version and invalidates unconsumed previews for this recipe.";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Saving creates a new immutable version and invalidates unconsumed previews for this recipe.";color:Theme.muted;font.pixelSize:Theme.caption }
         CField { id:recipeName;Layout.fillWidth:true;placeholderText:"Recipe name";Accessible.name:"Recipe name" }
         CField { id:recipeDescription;Layout.fillWidth:true;placeholderText:"Description";Accessible.name:"Recipe description" }
-        CText { text:"Recipe inputs";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Recipe inputs";color:Theme.muted;font.pixelSize:Theme.caption }
         Repeater {
             model:inputDefinitions
             ColumnLayout {
@@ -193,19 +191,19 @@ CDialog {
             }
         }
         CButton { text:"Add input";enabled:inputDefinitions.count<16;onClicked:inputDefinitions.append({inputName:"input"+(inputDefinitions.count+1),label:"New input",inputType:"text",isRequired:false,hasDefault:false,defaultText:""}) }
-        CText { text:"Pinned instructions";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Pinned instructions";color:Theme.muted;font.pixelSize:Theme.caption }
         Editor { id:recipeInstructions;Layout.preferredHeight:150;Accessible.name:"Pinned recipe instructions" }
-        CText { text:"Expected output";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Expected output";color:Theme.muted;font.pixelSize:Theme.caption }
         Editor { id:recipeOutput;Accessible.name:"Expected recipe output" }
-        CText { text:"Requested native access · one capability per line";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Requested native access · one capability per line";color:Theme.muted;font.pixelSize:Theme.caption }
         Editor { id:recipeAccess;Accessible.name:"Recipe native access" }
-        CText { text:"Permission declaration";color:Theme.muted;font.pixelSize:11 }
+        CText { text:"Permission declaration";color:Theme.muted;font.pixelSize:Theme.caption }
         Editor { id:recipePermissions;Accessible.name:"Recipe permission declaration" }
         RowLayout {
             Layout.fillWidth:true
-            CText { text:"Hard runtime";font.pixelSize:11;color:Theme.muted }
+            CText { text:"Hard runtime";font.pixelSize:Theme.caption;color:Theme.muted }
             CSpinBox { id:recipeSeconds;from:30;to:600;value:300;stepSize:30;Accessible.name:"Maximum recipe seconds" }
-            CText { text:"seconds · one turn";font.pixelSize:11;color:Theme.muted }
+            CText { text:"seconds · one turn";font.pixelSize:Theme.caption;color:Theme.muted }
         }
         CButton {
             objectName:"saveRecipeVersion";Layout.fillWidth:true;text:"Save new recipe version";enabled:workflow.requestId<0&&recipeName.text.trim().length>0
@@ -218,7 +216,7 @@ CDialog {
     ColumnLayout {
         visible:workflow.tab===2;Layout.fillWidth:true;spacing:10
         CText { text:"Result hub";font.weight:Font.DemiBold }
-        CText { text:"Provider outcome and verification are separate. Passed or failed verification appears only from broker-observed exit codes; response text is read live from the transcript.";color:Theme.muted;font.pixelSize:12 }
+        CText { text:"Provider outcome and verification are separate. Passed or failed verification appears only from broker-observed exit codes; response text is read live from the transcript.";color:Theme.muted;font.pixelSize:Theme.secondary }
         Repeater {
             model:workflow.results
             CSection {
@@ -227,13 +225,13 @@ CDialog {
                 title:modelData.providerOutcome+" · verification "+modelData.verification
                 description:new Date(modelData.time).toLocaleString(Qt.locale(),Locale.ShortFormat)
                 CText { visible:!!modelData.source;text:modelData.source?.text||"";maximumLineCount:8;elide:Text.ElideRight }
-                CText { visible:!modelData.source;text:"Source response is no longer available.";color:Theme.muted;font.pixelSize:11 }
+                CText { visible:!modelData.source;text:"Source response is no longer available.";color:Theme.muted;font.pixelSize:Theme.caption }
                 Repeater {
                     model:modelData.observed||[]
-                    CText { required property var modelData;text:(modelData.verification==="reviewed-check"?"Reviewed verification check":"Observed command result")+" · "+modelData.name+(modelData.exitCode===undefined?"":" · exit "+modelData.exitCode);color:modelData.verification==="reviewed-check"?(modelData.exitCode===0?Theme.success:Theme.danger):Theme.muted;font.pixelSize:11 }
+                    CText { required property var modelData;text:(modelData.verification==="reviewed-check"?"Reviewed verification check":"Observed command result")+" · "+modelData.name+(modelData.exitCode===undefined?"":" · exit "+modelData.exitCode);color:modelData.verification==="reviewed-check"?(modelData.exitCode===0?Theme.success:Theme.danger):Theme.muted;font.pixelSize:Theme.caption }
                 }
                 Repeater { model:modelData.artifacts||[];CButton { required property string modelData;text:"Open artifact · "+modelData;quiet:true;onClicked:App.rpc("action.run",{name:"files.open",args:{path:modelData}}) } }
-                CText { visible:!!modelData.uncertainty;text:modelData.uncertainty||"";color:Theme.amber;font.pixelSize:11 }
+                CText { visible:!!modelData.uncertainty;text:modelData.uncertainty||"";color:Theme.amber;font.pixelSize:Theme.caption }
                 CButton { text:"Open session";onClicked:{workflow.close();workflow.sessionRequested(modelData.sessionId)} }
                 CComboBox { id:checkPicker;Layout.fillWidth:true;model:(App.state.settings?.scripts||[]).filter(script=>script.cwd===resultCard.modelData.cwd);textRole:"name";Accessible.name:"Saved verification check" }
                 CButton { text:"Review verification check";enabled:workflow.requestId<0&&checkPicker.count>0;onClicked:{workflow.checkResult=resultCard.modelData;workflow.checkScript=JSON.parse(JSON.stringify(checkPicker.model[checkPicker.currentIndex]));checkReview.open()} }
@@ -242,13 +240,13 @@ CDialog {
         CText { visible:!workflow.results.length;text:"No durable result metadata yet.";color:Theme.muted }
     }
 
-    CText { visible:workflow.requestId>=0;text:"Working…";color:Theme.muted;font.pixelSize:11 }
-    CText { visible:workflow.error.length>0;text:workflow.error;color:Theme.danger;font.pixelSize:12 }
-    CText { visible:workflow.feedback.length>0;text:workflow.feedback;color:Theme.cyan;font.pixelSize:12 }
+    CText { visible:workflow.requestId>=0;text:"Working…";color:Theme.muted;font.pixelSize:Theme.caption }
+    CText { visible:workflow.error.length>0;text:workflow.error;color:Theme.danger;font.pixelSize:Theme.secondary }
+    CText { visible:workflow.feedback.length>0;text:workflow.feedback;color:Theme.cyan;font.pixelSize:Theme.secondary }
     CButton { Layout.fillWidth:true;text:"Done";onClicked:workflow.close() }
     CDialog {
         id:checkReview
-        CText { text:"Run this saved verification check?";font.pixelSize:18 }
+        CText { text:"Run this saved verification check?";font.pixelSize:Theme.title }
         CText { text:"Project: "+(workflow.checkScript.cwd||"")+"\nExecutable: "+(workflow.checkScript.executable||"")+"\nArguments: "+JSON.stringify(workflow.checkScript.args||[])+"\nTimeout: "+Math.ceil((workflow.checkScript.timeout||0)/1000)+" seconds";wrapMode:Text.Wrap;font.family:"monospace" }
         CText { text:"This executes the saved command. Passing establishes only this check’s result; it does not certify the entire task.";color:Theme.amber }
         CButton { text:"Run reviewed check";primary:true;enabled:workflow.requestId<0;onClicked:workflow.call("results.runVerification",{sessionId:workflow.checkResult.sessionId,resultId:workflow.checkResult.id,scriptId:workflow.checkScript.id,expectedScript:workflow.checkScript,reviewed:true}) }

@@ -13,15 +13,15 @@ CButton {
     contentItem: RowLayout {
         spacing: 12
         Rectangle {
-            Layout.preferredWidth: 32; Layout.preferredHeight: 32; radius: 9
+            Layout.preferredWidth: 32; Layout.preferredHeight: 32; radius: Theme.radiusControl
             color: control.primary ? Theme.selected : Theme.raised
-            Text { anchors.centerIn: parent; text: control.mark; color: Theme.cyan; font.family: Theme.font; font.pixelSize: 14 }
+            Text { anchors.centerIn: parent; text: control.mark; color: Theme.cyan; font.family: Theme.font; font.pixelSize: Theme.message }
         }
         ColumnLayout {
             Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 4
-            Text { Layout.fillWidth: true; Layout.minimumWidth: 0; text: control.text; color: Theme.text; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.DemiBold; elide: Text.ElideRight; textFormat: Text.PlainText }
-            Text { visible: control.detail.length>0; Layout.fillWidth: true; Layout.minimumWidth: 0; text: control.detail; color: Theme.muted; font.family: Theme.font; font.pixelSize: 11; elide: Text.ElideMiddle; textFormat: Text.PlainText }
+            Text { Layout.fillWidth: true; Layout.minimumWidth: 0; text: control.text; color: Theme.text; font.family: Theme.font; font.pixelSize: Theme.body; font.weight: Font.DemiBold; elide: Text.ElideRight; textFormat: Text.PlainText }
+            Text { visible: control.detail.length>0; Layout.fillWidth: true; Layout.minimumWidth: 0; text: control.detail; color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.caption; elide: Text.ElideMiddle; textFormat: Text.PlainText }
         }
-        Text { text: "›"; color: Theme.muted; font.pixelSize: 20 }
+        Text { text: "›"; color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.glyph }
     }
 }

@@ -20,6 +20,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class CachedState(
     val desktop: PairedDesktop? = null,
+    val stagedPairing: CompletedPairing? = null,
     val cursor: String? = null,
     val sessions: List<Session> = emptyList(),
     val messages: List<Message> = emptyList(),

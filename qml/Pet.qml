@@ -48,16 +48,16 @@ Item {
         onEntered: { App.setPetInteracting(true);if(!pet.busy&&!pet.waiting)App.preview("attentive") }
         onExited: { art.clearGaze(); if(!pressed&&!context.visible)App.setPetInteracting(false) }
     }
-    Menu {
+    CMenu {
         id: context
         onVisibleChanged: App.setPetInteracting(visible||petMouse.containsMouse||petMouse.pressed)
-        MenuItem { text: "Open Cere"; onTriggered: App.togglePanel() }
-        MenuItem { text: "Expand workspace"; onTriggered: App.expand() }
-        MenuSeparator {}
-        MenuItem { text: "Always on top"; checkable: true; checked: settings.topmost === true; onTriggered: App.rpc("settings.update",{topmost:!checked ? false : true}) }
-        Menu { title: "Size"; Repeater { model: [0.75,1,1.5,2,3]; MenuItem { required property real modelData; text: Math.round(modelData*100)+"%"; onTriggered: App.resizePet(modelData) } } }
-        MenuItem { text: "Roaming · follow mouse"; checkable: true; checked: settings.roaming === true; onTriggered: App.rpc("settings.update",{roaming:checked}) }
-        MenuItem { text: "Quiet mode"; checkable: true; checked: settings.quiet === true; onTriggered: App.rpc("settings.update",{quiet:checked}) }
-        MenuItem { text: "Hide Cere"; onTriggered: App.rpc("settings.update",{hidden:true}) }
+        CMenuItem { text: "Open Cere"; onTriggered: App.togglePanel() }
+        CMenuItem { text: "Expand workspace"; onTriggered: App.expand() }
+        CMenuSeparator {}
+        CMenuItem { text: "Always on top"; checkable: true; checked: settings.topmost === true; onTriggered: App.rpc("settings.update",{topmost:!checked ? false : true}) }
+        CMenu { title: "Size"; Repeater { model: [0.75,1,1.5,2,3]; CMenuItem { required property real modelData; text: Math.round(modelData*100)+"%"; onTriggered: App.resizePet(modelData) } } }
+        CMenuItem { text: "Roaming · follow mouse"; checkable: true; checked: settings.roaming === true; onTriggered: App.rpc("settings.update",{roaming:checked}) }
+        CMenuItem { text: "Quiet mode"; checkable: true; checked: settings.quiet === true; onTriggered: App.rpc("settings.update",{quiet:checked}) }
+        CMenuItem { text: "Hide Cere"; onTriggered: App.rpc("settings.update",{hidden:true}) }
     }
 }

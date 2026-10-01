@@ -80,11 +80,12 @@ private val primaryDestinations = listOf(Destination.Chat, Destination.Sessions,
 @Composable
 private fun CereRoot(repository: CereRepository, activity: FragmentActivity, openInbox: Boolean, sharedImage: android.net.Uri?, consumeShare: () -> Unit) {
     val state by repository.state.collectAsStateWithLifecycle()
-    LaunchedEffect(state.restoreReady, state.desktop?.deviceId) {
-        if (state.restoreReady && state.desktop != null) repository.connectWhileOpen()
+    LaunchedEffect(state.restoreReady, state.desktop?.deviceId, state.stagedPairing?.desktop?.deviceId) {
+        if (state.restoreReady && state.desktop != null && state.stagedPairing == null) repository.connectWhileOpen()
     }
     when {
         !state.restoreReady && state.connection !is ConnectionState.Blocked -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        state.stagedPairing != null -> PairingScreen(repository, state, activity, state.desktop)
         state.desktop == null && state.connection is ConnectionState.Blocked -> Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Icon(Icons.Default.Lock, null, modifier = Modifier.size(48.dp)); Spacer(Modifier.height(14.dp)); Text("Unlock private cache", style = MaterialTheme.typography.titleLarge); Text((state.connection as ConnectionState.Blocked).reason, color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(16.dp)); Button(repository::retry) { Text("Retry") } }
         state.desktop == null -> PairingScreen(repository, state, activity)
         state.connection is ConnectionState.Blocked -> Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -99,35 +100,54 @@ private fun CereRoot(repository: CereRepository, activity: FragmentActivity, ope
 }
 
 @Composable
-private fun PairingScreen(repository: CereRepository, state: MobileState, activity: FragmentActivity) {
+private fun PairingScreen(
+    repository: CereRepository,
+    state: MobileState,
+    activity: FragmentActivity,
+    replacing: PairedDesktop? = null,
+    onCancel: (() -> Unit)? = null,
+) {
     val scope = rememberCoroutineScope()
     var raw by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var scan by rememberSaveable { mutableStateOf(false) }
-    var resultJson by rememberSaveable { mutableStateOf<String?>(null) }
-    val result = resultJson?.let { runCatching { WireCodec.json.decodeFromString(CompletedPairing.serializer(), it) }.getOrNull() }
+    val result = state.stagedPairing
+    var unstaged by remember { mutableStateOf<CompletedPairing?>(null) }
     var deviceName by rememberSaveable { mutableStateOf(Build.MODEL.take(48).ifBlank { "Android phone" }) }
     var pendingCompletion by remember { mutableStateOf<CompletedPairing?>(null) }
-    LaunchedEffect(state.restoreReady, state.desktop?.deviceId, result?.desktop?.deviceId) {
-        repository.pairingManager().pruneUncommitted(state.restoreReady, state.desktop, result?.desktop)
+    LaunchedEffect(state.restoreReady, state.desktop?.deviceId, result?.desktop?.deviceId, unstaged?.desktop?.deviceId) {
+        repository.pairingManager().pruneUncommitted(state.restoreReady, state.desktop, result?.desktop, unstaged?.desktop)
     }
-    fun finishPairing(completed: CompletedPairing) { scope.launch { runCatching { repository.completePairing(completed); ContextCompat.startForegroundService(activity, Intent(activity, MonitoringService::class.java)) }.onFailure { repository.pairingManager().delete(completed.desktop); resultJson = null; error = it.message } } }
+    fun stagePairing(completed: CompletedPairing) { scope.launch {
+        unstaged = completed
+        runCatching { repository.stagePairing(completed) }
+            .onSuccess { unstaged = null }
+            .onFailure { error = "Could not seal the pairing response. Unlock the phone and retry: ${it.message}" }
+    } }
+    fun finishPairing(completed: CompletedPairing) { scope.launch { runCatching { repository.completePairing(completed); ContextCompat.startForegroundService(activity, Intent(activity, MonitoringService::class.java)); onCancel?.invoke() }.onFailure { error = it.message } } }
     val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) pendingCompletion?.let(::finishPairing).also { pendingCompletion = null } else error = "Local network permission is required to connect to Cere Desktop." }
     val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
 
     fun prepare(value: String) {
         var created: PendingPairing? = null
         runCatching {
+            replacing?.let { repository.replacementBlocker()?.let(::error) }
             val offer = repository.pairingManager().parseAndVerify(value.trim())
-            val pending = repository.pairingManager().prepare(offer, deviceName.trim())
+            val pending = repository.pairingManager().prepare(offer, deviceName.trim(), replacing)
             created = pending
+            if (pending.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) {
+                val completed = repository.pairingManager().completeWithoutAuthentication(pending)
+                created = null
+                stagePairing(completed)
+                return@runCatching
+            }
             val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(auth: BiometricPrompt.AuthenticationResult) {
                     runCatching {
                         val signature = auth.cryptoObject?.signature ?: error("Authentication signature unavailable")
                         signature.update(pending.transcript)
                         repository.pairingManager().complete(pending, signature.sign())
-                    }.onSuccess { completed -> created = null; resultJson = WireCodec.json.encodeToString(CompletedPairing.serializer(), completed) }.onFailure { repository.pairingManager().cancel(pending); created = null; error = it.message }
+                    }.onSuccess { completed -> created = null; stagePairing(completed) }.onFailure { repository.pairingManager().cancel(pending); created = null; error = it.message }
                 }
                 override fun onAuthenticationError(code: Int, message: CharSequence) { repository.pairingManager().cancel(pending); created = null; error = message.toString() }
             })
@@ -145,27 +165,34 @@ private fun PairingScreen(repository: CereRepository, state: MobileState, activi
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 42.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Image(painterResource(R.drawable.cere_face_icon), "Cere", modifier = Modifier.size(76.dp))
-            Text("Connect to Cere", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
-            Text("Pair offline with the offer shown in Desktop Settings. Cere will not contact the desktop until you copy the signed response back and confirm the six words.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (onCancel != null) TextButton(onClick = onCancel) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Back to settings") }
+            Text(if (replacing == null) "Connect to Cere" else "Update secure connection", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+            Text(if (replacing == null) "Pair offline with the offer shown in Desktop Settings. Cere will not contact the desktop until you copy the signed response back and confirm the six words." else "Use the replacement offer from this same desktop. Your encrypted conversations, drafts, and local images stay on this phone; unresolved commands and active uploads must be settled first.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            replacing?.let { desktop -> Text("Expected desktop ${desktop.desktopName} · device ${desktop.deviceId.take(8)}", style = MaterialTheme.typography.bodySmall) }
+            repository.replacementBlocker()?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             OutlinedTextField(deviceName, { deviceName = it.take(48) }, label = { Text("This phone") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(raw, { raw = it }, label = { Text("Pairing offer") }, placeholder = { Text("Paste cere-pair://v1/…") }, minLines = 4, maxLines = 6, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { prepare(raw) }, enabled = raw.isNotBlank() && result == null) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(8.dp)); Text("Verify offer") }
+                Button(onClick = { prepare(raw) }, enabled = raw.isNotBlank() && result == null && (replacing == null || repository.replacementBlocker() == null)) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(8.dp)); Text("Verify offer") }
                 OutlinedButton(onClick = { scan = true }) { Icon(Icons.Default.Create, null); Spacer(Modifier.width(8.dp)); Text("Scan") }
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            unstaged?.let { completed ->
+                Button(onClick = { stagePairing(completed) }) { Text("Retry secure staging") }
+                TextButton(onClick = { repository.pairingManager().delete(completed.desktop); unstaged = null; error = null }) { Text("Cancel unstaged pairing") }
+            }
             result?.let { completed ->
                 HorizontalDivider()
                 Text("Compare on both screens", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
                 Text(completed.sas, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.secondary)
-                Text("Copy this public signed response into Desktop Settings. Confirm only if the six words match.")
+                Text("Copy this public signed response into Desktop Settings. Confirm only if the six words match. ${if (completed.desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) "This trusted-phone pairing signs reviewed actions without a fingerprint or PIN." else "This pairing requires phone authentication for sensitive actions."}")
                 PairingQrCode(completed.responseUri, Modifier.align(Alignment.CenterHorizontally))
                 SelectionContainer { Text(completed.responseUri, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
                 Button(onClick = {
                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere pairing response", completed.responseUri))
                 }) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(8.dp)); Text("Copy response") }
                 Button(onClick = { if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(activity, "android.permission.ACCESS_LOCAL_NETWORK") != android.content.pm.PackageManager.PERMISSION_GRANTED) { pendingCompletion = completed; localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") } else finishPairing(completed) }, modifier = Modifier.fillMaxWidth()) { Text("Desktop confirmed") }
-                TextButton(onClick = { repository.pairingManager().delete(completed.desktop); resultJson = null; pendingCompletion = null }) { Text("Cancel pairing") }
+                TextButton(onClick = { scope.launch { runCatching { repository.cancelStagedPairing() }.onFailure { error = it.message } }; pendingCompletion = null }) { Text("Cancel pairing") }
             }
         }
     }
@@ -355,10 +382,10 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
     LaunchedEffect(canSearchWeb) { if (!canSearchWeb) webSearch = false }
     val attachments = state.attachments.filter { it.sessionId == session.id }
     val activeAgents = session.agents.filter(Agent::isActive)
-    val waitingApprovals = state.approvals.filter { it.sessionId == session.id }
+    val waitingApprovals = state.approvals.filter { it.sessionId == session.id || session.id in it.parentSessionIds || activeAgents.any { agent -> agent.id == it.sessionId } }
     val busy = session.status in setOf("starting", "working", "waiting", "stopping") || activeAgents.isNotEmpty() || waitingApprovals.isNotEmpty()
     val attachmentsReady = attachments.all { it.reviewedAt != null && it.remoteAttachmentId != null && it.remoteStatus == "ready" }
-    val canCompose = session.draftAttachmentCount == 0 && session.canSend && session.mode == "managed" && session.draftIncluded && !busy && !sending && attachmentsReady && state.supports("sessions.send") && state.pendingCommands.none { it.sessionId == session.id && it.method == "sessions.send" }
+    val canCompose = session.draftAttachmentCount == 0 && session.canSend && session.mode == "managed" && session.draftIncluded && (!busy || session.canQueue && session.status != "stopping") && !sending && attachmentsReady && state.supports("sessions.send") && state.pendingCommands.none { it.sessionId == session.id && it.method == "sessions.send" }
     fun imported(uri: android.net.Uri?) { if (uri != null) scope.launch { runCatching { repository.importImage(session.id, uri) }.onSuccess { attachmentReviewId = it.id }.onFailure { error = it.message } } }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia(), ::imported)
     val files = rememberLauncherForActivityResult(ActivityResultContracts.GetContent(), ::imported)
@@ -410,6 +437,8 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         sending -> "Sending your message…"
         !attachmentsReady -> "Upload or remove the images before sending."
         state.pendingCommands.any { it.sessionId == session.id && it.method == "sessions.send" } -> "Checking the previous send with your desktop…"
+        session.queuedCount > 0 -> "${session.queuedCount} message(s) queued · will send after this turn"
+        busy && session.canQueue -> "You can send another message; it will run after this turn."
         else -> null
     }
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -423,7 +452,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                 loadingOlder = true
                 scope.launch { try { repository.loadOlderMessages(session.id) } catch (failure: Exception) { error = failure.message } finally { loadingOlder = false } }
             }, statusText = when {
-                waitingApprovals.isNotEmpty() -> if (waitingApprovals.size == 1) "Waiting for your input…" else "Waiting for ${waitingApprovals.size} inputs…"
+                waitingApprovals.isNotEmpty() -> if (waitingApprovals.size == 1) "Input needed: ${waitingApprovals.first().title}" else "${waitingApprovals.size} requests need input · Review below"
                 activeAgents.size == 1 -> "1 subagent is working…"
                 activeAgents.size > 1 -> "${activeAgents.size} subagents are working…"
                 else -> null
@@ -431,7 +460,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                 onPositionChanged = repository::recordScrollPosition) { message -> MessageBubble(repository, state, message) }
         }
         if (waitingApprovals.isNotEmpty()) {
-            TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text("${waitingApprovals.size} request(s) need your input · Review") }
+            TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text("${waitingApprovals.first().title}${if (waitingApprovals.size > 1) " (+${waitingApprovals.size - 1})" else ""} · Review") }
         }
         (error ?: state.lastError)?.let { Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
@@ -444,18 +473,18 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         }
         if (attachments.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(attachments, key = { it.id }) { attachment -> Surface(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(8.dp)) { Column(Modifier.widthIn(min = 150.dp).padding(10.dp)) { Text(attachment.displayName, style = MaterialTheme.typography.labelLarge); Text("${attachment.width}×${attachment.height} · ${attachment.size / 1024} KiB${if (attachment.transformed) " · private copy optimized" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Row { if (attachment.reviewedAt == null) TextButton({ attachmentReviewId = attachment.id }) { Text("Review") } else if (attachment.remoteStatus != "ready") TextButton({ upload(attachment) }, enabled = state.supports("attachments.begin") && state.supports("attachments.commit")) { Text(if (attachment.committedOffset > 0) "Resume" else "Upload") } else Text("Ready", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(12.dp)); IconButton({ remove(attachment) }) { Icon(Icons.Default.Delete, "Remove image") } } } } } }
         if (state.supports("attachments.begin") && attachments.size < 4) FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) { TextButton({ picker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text("Photo") }; TextButton({ files.launch("image/*") }) { Text("Screenshot or file") }; TextButton({ camera.launch(null) }) { Text("Camera") } }
-        if (canSearchWeb) FilterChip(webSearch, { webSearch = !webSearch }, { Text("Search the web") }, enabled = !sending && !busy, modifier = Modifier.padding(horizontal = 12.dp))
+        if (canSearchWeb) FilterChip(webSearch, { webSearch = !webSearch }, { Text("Search the web") }, enabled = !sending && (!busy || session.canQueue), modifier = Modifier.padding(horizontal = 12.dp))
         sendHint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp)) }
         if (unknownSend != null) TextButton({ reviewingOutcome = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Review uncertain send") }
         OutlinedTextField(draft, { if (it.length <= 100_000) { draft = it; repository.editDraft(session.id, it) } }, enabled = session.mode == "managed" && session.draftIncluded && (session.draftAttachmentCount ?: 0) == 0 && !sending,
-            placeholder = { Text("Message Cere") }, minLines = 1, maxLines = 6, modifier = Modifier.fillMaxWidth().padding(12.dp), trailingIcon = {
+            placeholder = { Text(if (busy && session.canQueue) "Queue a message for Cere" else "Message Cere") }, minLines = 1, maxLines = 6, modifier = Modifier.fillMaxWidth().padding(12.dp), trailingIcon = {
                 IconButton(onClick = {
                     val sentText = draft; val sentAttachments = attachments.map { it.id }.toSet()
                     sending = true; error = null
                     scope.launch {
                         try {
                             val action = repository.prepareSend(session.id, sentText, webSearch = webSearch)
-                            repository.completeAction(action, repository.signAuthenticated(action))
+                            repository.completeAction(action, repository.signWithoutAuthentication(action))
                             repository.clearAcceptedDraft(session.id, sentText, sentAttachments)
                             if (draft == sentText) draft = ""
                         } catch (cancelled: CancellationException) {
@@ -554,8 +583,8 @@ private fun InboxScreen(repository: CereRepository, state: MobileState, activity
 
 @Composable
 private fun ApprovalCard(repository: CereRepository, state: MobileState, activity: FragmentActivity, approval: Approval) {
-    val scope = rememberCoroutineScope(); var error by remember { mutableStateOf<String?>(null) }; var expanded by remember { mutableStateOf(false) }; var preview by remember(approval.id, approval.revision) { mutableStateOf<ApprovalPreview?>(null) }; var previewLoading by remember { mutableStateOf(false) }
-    var validationAttempted by remember(approval.id, approval.revision) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope(); var error by remember(approval.id, approval.revision, approval.digest) { mutableStateOf<String?>(null) }; var expanded by remember(approval.id) { mutableStateOf(true) }; var preview by remember(approval.id, approval.revision, approval.digest) { mutableStateOf<ApprovalPreview?>(null) }; var previewLoading by remember(approval.id, approval.revision, approval.digest) { mutableStateOf(false) }
+    var validationAttempted by remember(approval.id, approval.revision, approval.digest) { mutableStateOf(false) }
     val drafts by repository.questionDrafts.collectAsStateWithLifecycle()
     val mutations by repository.approvalMutations.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
@@ -625,21 +654,21 @@ private fun ApprovalCard(repository: CereRepository, state: MobileState, activit
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { approval.choices.forEach { choice ->
             val deny = choice == "deny" || choice == "cancel"
             if (deny) OutlinedButton({
-                if (!repository.beginApprovalMutation(approval.id)) return@OutlinedButton
-                scope.launch { try { repository.mutate("approvals.answer", approvalParams(approval, choice, emptyMap())) } catch (failure: Exception) { error = failure.message } finally { repository.endApprovalMutation(approval.id) } }
+                if (!repository.beginApprovalMutation(approval)) return@OutlinedButton
+                scope.launch { try { repository.mutate("approvals.answer", approvalParams(approval, choice, emptyMap())) } catch (failure: Exception) { error = failure.message } finally { repository.endApprovalMutation(approval) } }
             }, enabled = state.supports("approvals.answer") && !pending) { Text(choice.replaceFirstChar(Char::uppercase)) }
             else Button({
                 validationAttempted = true
-                if (!answersComplete || !repository.beginApprovalMutation(approval.id)) return@Button
+                if (!answersComplete || !repository.beginApprovalMutation(approval)) return@Button
                 scope.launch {
                     runCatching { repository.prepareAction("approvals.answer", approvalParams(approval, choice, answers, preview?.imageDigest)) }
                         .onSuccess { action ->
                             runCatching { authenticate(activity, "${choice.replaceFirstChar(Char::uppercase)} ${approval.title}", action, repository,
-                                { repository.endApprovalMutation(approval.id) },
-                                { error = it; repository.endApprovalMutation(approval.id) }) }
-                                .onFailure { error = it.message; repository.endApprovalMutation(approval.id) }
+                                { repository.endApprovalMutation(approval) },
+                                { error = it; repository.endApprovalMutation(approval) }) }
+                                .onFailure { error = it.message; repository.endApprovalMutation(approval) }
                         }
-                        .onFailure { error = it.message; repository.endApprovalMutation(approval.id) }
+                        .onFailure { error = it.message; repository.endApprovalMutation(approval) }
                 }
             }, enabled = approval.canAnswer && !unsupported && state.supports("approvals.answer") && !pending && (approval.kind != "image" || preview != null)) { Text(when { choice == "answer" -> "Send answers"; choice == "allow" && approval.url != null -> "I've completed it"; else -> choice.replaceFirstChar(Char::uppercase) }) }
         } }
@@ -788,7 +817,7 @@ private fun MemoryScreen(repository: CereRepository, state: MobileState, activit
 
 @Composable
 private fun SettingsScreen(repository: CereRepository, state: MobileState, activity: FragmentActivity) {
-    val context = LocalContext.current; val scope = rememberCoroutineScope(); var confirmForget by remember { mutableStateOf(false) }; var showMemory by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current; val scope = rememberCoroutineScope(); var confirmForget by remember { mutableStateOf(false) }; var showMemory by rememberSaveable { mutableStateOf(false) }; var replacePairing by rememberSaveable { mutableStateOf(false) }
     var remoteSettings by remember { mutableStateOf(state.settings) }; var personality by rememberSaveable { mutableStateOf("") }; var defaultModel by rememberSaveable { mutableStateOf("") }; var searchProvider by rememberSaveable { mutableStateOf("auto") }; var settingsDirty by rememberSaveable { mutableStateOf(false) }; var settingsConflict by rememberSaveable { mutableStateOf(false) }; var baselineRevision by rememberSaveable { mutableStateOf("0") }; var loading by remember { mutableStateOf(false) }; var error by remember { mutableStateOf<String?>(null) }; var feedback by remember { mutableStateOf<String?>(null) }
     val permissions = state.permissions; val paused = permissions["paused"]?.jsonPrimitive?.booleanOrNull == true; val categories = permissions["categories"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }; val caps = permissions["caps"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
     fun applySettings(value: JsonObject) { remoteSettings = value; personality = value["personality"]?.jsonPrimitive?.contentOrNull.orEmpty(); defaultModel = value["defaultModel"]?.jsonPrimitive?.contentOrNull.orEmpty(); searchProvider = value["webSearch"]?.jsonObject?.get("provider")?.jsonPrimitive?.contentOrNull ?: "auto"; baselineRevision = value["revision"]?.jsonPrimitive?.contentOrNull ?: "0"; settingsDirty = false; settingsConflict = false }
@@ -796,6 +825,11 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
     LaunchedEffect(state.settings, state.connection is ConnectionState.Online) { if (state.supports("settings.get")) { loading = true; runCatching { repository.request("settings.get", buildJsonObject {}).jsonObject }.onSuccess(::receiveSettings).onFailure { error = it.message }; loading = false } else receiveSettings(state.settings) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) ContextCompat.startForegroundService(context, Intent(context, MonitoringService::class.java)) }
+    if (replacePairing) {
+        val desktop = state.desktop
+        if (desktop != null) PairingScreen(repository, state, activity, desktop) { replacePairing = false }
+        return
+    }
     if (showMemory) { Column(Modifier.fillMaxSize()) { Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) { IconButton({ showMemory = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to settings") }; Text("Settings", style = MaterialTheme.typography.titleMedium) }; MemoryScreen(repository, state, activity) }; return }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Text("Desktop policy", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
@@ -825,6 +859,8 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
         item { ListItem(headlineContent = { Text("Notification controls") }, supportingContent = { Text("Lock-screen content is redacted") }, modifier = Modifier.clickable { context.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName).putExtra(Settings.EXTRA_CHANNEL_ID, MonitoringService.CHANNEL)) }) }
         item { HorizontalDivider(); Spacer(Modifier.height(8.dp)); MobileMaintenanceSection() }
         item { ListItem(headlineContent = { Text(state.desktop?.desktopName.orEmpty()) }, supportingContent = { Text("Device ${state.desktop?.deviceId?.take(8)} · pinned TLS identity") }, leadingContent = { Icon(Icons.Default.Home, null) }) }
+        item { OutlinedButton({ replacePairing = true }, enabled = repository.replacementBlocker() == null) { Text("Replace pairing from this desktop") } }
+        repository.replacementBlocker()?.let { blocker -> item { Text(blocker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) } }
         item { OutlinedButton({ confirmForget = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Forget this desktop") } }
     }
     if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text("Forget desktop?") }, text = { Text("This removes the encrypted cache and both phone keys. Pairing is required again.") }, confirmButton = { Button({ scope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Forget") } }, dismissButton = { TextButton({ confirmForget = false }) { Text("Cancel") } })
@@ -904,6 +940,12 @@ private fun PermissionReductionPanel(repository: CereRepository, state: MobileSt
 @Composable private fun StructuredObject(value: JsonObject) { Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { value.forEach { (key, item) -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text(key.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.widthIn(min = 88.dp)); SelectionContainer { Text(if (item is JsonPrimitive) item.content else item.toString(), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)) } } } } }
 
 private fun authenticate(activity: FragmentActivity, title: String, action: PreparedAction, repository: CereRepository, success: (JsonElement) -> Unit, failure: (String) -> Unit) {
+    if (!action.requiresUserAuthentication) {
+        activity.lifecycleScope.launch {
+            runCatching { repository.completeAction(action, repository.signWithoutAuthentication(action)) }.onSuccess(success).onFailure { failure(it.message ?: "Action failed") }
+        }
+        return
+    }
     val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {
         override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
             activity.lifecycleScope.launch {

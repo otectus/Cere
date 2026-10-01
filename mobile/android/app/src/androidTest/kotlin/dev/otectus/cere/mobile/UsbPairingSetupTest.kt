@@ -10,6 +10,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.otectus.cere.mobile.data.CompletedPairing
 import dev.otectus.cere.mobile.data.ConnectionState
 import dev.otectus.cere.mobile.data.PendingPairing
+import dev.otectus.cere.mobile.protocol.ActionAuthentication
+import dev.otectus.cere.mobile.protocol.WireCodec
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -19,6 +21,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -30,6 +33,7 @@ class UsbPairingSetupTest {
         assumeTrue("Run explicitly against the owner's paired desktop", expected != null)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
+        requireCellularAndVpnIfRequested(context)
         val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
         val repository = (activity.application as CereApp).repository
@@ -45,7 +49,9 @@ class UsbPairingSetupTest {
             keys.getKey(alias, null), android.security.keystore.KeyInfo::class.java,
         ).isUserAuthenticationRequired
         check(!requiresAuthentication(desktop.connectionAlias)) { "Ordinary sends must not prompt for authentication" }
-        check(requiresAuthentication(desktop.actionAlias)) { "Sensitive actions must retain authentication" }
+        check(requiresAuthentication(desktop.actionAlias) == (desktop.actionAuthentication == ActionAuthentication.BIOMETRIC)) {
+            "Action key authentication does not match the paired policy"
+        }
         val testTranscript = "Cere USB connection-key signing check".toByteArray()
         val signature = repository.pairingManager().connectionSignature(desktop.connectionAlias).run {
             update(testTranscript); sign()
@@ -60,7 +66,16 @@ class UsbPairingSetupTest {
             repository.state.first { it.connection is ConnectionState.Online && it.projects.isNotEmpty() }
         } }
         check(online != null) { "Connection failed: ${repository.state.value.connection}; ${repository.state.value.lastError}" }
-        println("USB_VERIFY: connection key signed without a prompt; sensitive key requires authentication; LAN online; sessions=${online.sessions.size}; projects=${online.projects.size}")
+        if (desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) {
+            val method = InstrumentationRegistry.getArguments().getString("cereSyntheticSensitiveMethod")
+            val rawParams = InstrumentationRegistry.getArguments().getString("cereSyntheticSensitiveParams")
+            if (method != null && rawParams != null) runBlocking {
+                val action = repository.prepareAction(method, WireCodec.json.parseToJsonElement(rawParams).jsonObject)
+                check(!action.requiresUserAuthentication) { "Trusted action unexpectedly requested phone authentication" }
+                repository.completeAction(action, repository.signWithoutAuthentication(action))
+            }
+        }
+        println("USB_VERIFY: connection and ${desktop.actionAuthentication} action keys signed under policy; VPN/LAN online; sessions=${online.sessions.size}; projects=${online.projects.size}")
     }
 
     @Test fun pairFromExplicitUsbOffer() {
@@ -76,23 +91,15 @@ class UsbPairingSetupTest {
         Thread.sleep(1_000)
         instrumentation.waitForIdleSync()
         val repository = (activity.application as CereApp).repository
-        val damaged = repository.state.value.desktop
-        if (damaged != null) {
-            check(InstrumentationRegistry.getArguments().getString("cereReplaceMissingKeys") == damaged.deviceId) {
-                "Replacing an existing pairing requires its explicit device ID"
-            }
-            val keys = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-            check(!keys.containsAlias(damaged.connectionAlias) && !keys.containsAlias(damaged.actionAlias)) {
-                "Setup must preserve a pairing with intact private keys"
-            }
-            check(repository.state.value.sessions.isEmpty() && repository.state.value.pendingCommands.isEmpty()) {
-                "Repair must preserve any existing session cache or pending commands"
-            }
-            runBlocking { repository.forget() }
-            Thread.sleep(1_000)
-            instrumentation.waitForIdleSync()
+        val existing = repository.state.value.desktop
+        val cachedSessionIds = repository.state.value.sessions.map { it.id }.toSet()
+        val cachedDrafts = repository.state.value.drafts
+        val cachedAttachmentIds = repository.state.value.attachments.map { it.id }.toSet()
+        val expectedDesktopId = InstrumentationRegistry.getArguments().getString("cereExpectedDesktopId")
+        if (existing != null) {
+            check(expectedDesktopId == existing.desktopId) { "Replacement requires the explicit current desktop ID" }
+            check(repository.replacementBlocker() == null) { repository.replacementBlocker()!! }
         }
-        check(repository.state.value.desktop == null) { "A desktop is already paired; setup must preserve it" }
         val manager = repository.pairingManager()
         val responseFile = File(context.filesDir, "usb-pairing-response.json")
         val confirmedFile = File(context.filesDir, "usb-pairing-desktop-confirmed")
@@ -101,25 +108,39 @@ class UsbPairingSetupTest {
         val failure = AtomicReference<Throwable>()
         val authenticated = CountDownLatch(1)
         var pending: PendingPairing? = null
+        var committed = false
         var dialog: AlertDialog? = null
+        fun publish(completed: CompletedPairing) {
+            runBlocking { repository.stagePairing(completed) }
+            result.set(completed)
+            responseFile.writeText(buildJsonObject {
+                put("response", completed.responseUri); put("sas", completed.sas)
+                put("deviceId", completed.desktop.deviceId)
+                completed.replacesDeviceId?.let { put("replacesDeviceId", it) }
+                put("actionAuthentication", completed.desktop.actionAuthentication.name.lowercase().replace('_', '-'))
+            }.toString())
+            dialog = AlertDialog.Builder(activity).setTitle("Compare with Cere Desktop")
+                .setMessage(completed.sas + "\n\nWaiting for confirmation on the connected PC…")
+                .setCancelable(false).show()
+        }
         try {
             instrumentation.runOnMainSync {
                 try {
-                    val prepared = manager.prepare(manager.parseAndVerify(offer), Build.MODEL.take(48))
+                    val prepared = manager.prepare(manager.parseAndVerify(offer), Build.MODEL.take(48), existing)
                     pending = prepared
+                    if (prepared.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) {
+                        val completed = manager.completeWithoutAuthentication(prepared)
+                        publish(completed)
+                        authenticated.countDown()
+                        return@runOnMainSync
+                    }
                     val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {
                         override fun onAuthenticationSucceeded(auth: BiometricPrompt.AuthenticationResult) {
                             try {
                                 val signature = checkNotNull(auth.cryptoObject?.signature)
                                 signature.update(prepared.transcript)
                                 val completed = manager.complete(prepared, signature.sign())
-                                result.set(completed)
-                                responseFile.writeText(buildJsonObject {
-                                    put("response", completed.responseUri); put("sas", completed.sas)
-                                }.toString())
-                                dialog = AlertDialog.Builder(activity).setTitle("Compare with Cere Desktop")
-                                    .setMessage(completed.sas + "\n\nWaiting for confirmation on the connected PC…")
-                                    .setCancelable(false).show()
+                                publish(completed)
                             } catch (error: Throwable) { failure.set(error) }
                             finally { authenticated.countDown() }
                         }
@@ -141,16 +162,80 @@ class UsbPairingSetupTest {
             while (!confirmedFile.exists() && System.nanoTime() < deadline) Thread.sleep(250)
             check(confirmedFile.exists()) { "Desktop SAS confirmation timed out" }
             runBlocking { repository.completePairing(completed) }
+            committed = true
+            if (existing != null) {
+                check(repository.state.value.sessions.map { it.id }.toSet() == cachedSessionIds) { "Replacement discarded cached sessions" }
+                check(repository.state.value.drafts == cachedDrafts) { "Replacement discarded or changed drafts" }
+                check(repository.state.value.attachments.map { it.id }.toSet() == cachedAttachmentIds) { "Replacement discarded local images" }
+            }
             instrumentation.runOnMainSync {
                 dialog?.dismiss()
                 ContextCompat.startForegroundService(activity, Intent(activity, MonitoringService::class.java))
             }
             runBlocking { withTimeout(45_000) { repository.state.first { it.connection is ConnectionState.Online && it.projects.isNotEmpty() } } }
-            println("USB_SETUP: authenticated, desktop confirmed, paired cache saved, LAN online")
+            println("USB_SETUP: ${completed.desktop.actionAuthentication} proof created, desktop confirmed, encrypted cache preserved, VPN/LAN online")
         } finally {
-            if (repository.state.value.desktop == null) pending?.let(manager::cancel)
+            // Once the public response is durably staged its desktop outcome may
+            // be ambiguous. Preserve it and both new aliases for explicit resume.
+            if (!committed && repository.state.value.stagedPairing == null) pending?.let(manager::cancel)
             instrumentation.runOnMainSync { dialog?.dismiss() }
-            responseFile.delete(); confirmedFile.delete()
+            if (committed) { responseFile.delete(); confirmedFile.delete() }
         }
+    }
+
+    /** Resume after force-stop/process death once a replacement response was durably staged. */
+    @Test fun resumeStagedPairing() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val expectedDesktopId = InstrumentationRegistry.getArguments().getString("cereExpectedDesktopId")
+        assumeTrue("Run explicitly with the current desktop ID", expectedDesktopId != null)
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+        val repository = (activity.application as CereApp).repository
+        val expectedDeviceId = InstrumentationRegistry.getArguments().getString("cereExpectedDeviceId")
+        val restored = runBlocking { withTimeout(10_000) {
+            repository.state.first { it.restoreReady }
+        } }
+        val oldDesktop = checkNotNull(restored.desktop)
+        check(oldDesktop.desktopId == expectedDesktopId)
+        val completed = restored.stagedPairing
+        if (completed == null) {
+            check(expectedDeviceId != null && oldDesktop.deviceId == expectedDeviceId) {
+                "No staged response exists and the committed device does not match cereExpectedDeviceId"
+            }
+            val keys = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            check(keys.containsAlias(oldDesktop.connectionAlias) && keys.containsAlias(oldDesktop.actionAlias)) {
+                "Committed replacement keys are missing"
+            }
+            instrumentation.runOnMainSync { ContextCompat.startForegroundService(activity, Intent(activity, MonitoringService::class.java)) }
+            runBlocking { withTimeout(45_000) { repository.state.first { it.connection is ConnectionState.Online && it.projects.isNotEmpty() } } }
+            println("USB_RESUME: ambiguous confirmation had already committed expected device; keys survived and connection reached Online")
+            return
+        }
+        if (expectedDeviceId != null) check(completed.desktop.deviceId == expectedDeviceId) { "Staged replacement device does not match cereExpectedDeviceId" }
+        check(completed.replacesDeviceId == oldDesktop.deviceId)
+        val keys = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        check(keys.containsAlias(oldDesktop.connectionAlias) && keys.containsAlias(oldDesktop.actionAlias))
+        check(keys.containsAlias(completed.desktop.connectionAlias) && keys.containsAlias(completed.desktop.actionAlias)) {
+            "Process restart lost staged replacement aliases"
+        }
+        val responseFile = File(context.filesDir, "usb-pairing-response.json")
+        val confirmedFile = File(context.filesDir, "usb-pairing-desktop-confirmed")
+        responseFile.writeText(buildJsonObject {
+            put("response", completed.responseUri); put("sas", completed.sas)
+            put("deviceId", completed.desktop.deviceId)
+            put("replacesDeviceId", completed.replacesDeviceId)
+            put("actionAuthentication", completed.desktop.actionAuthentication.name.lowercase().replace('_', '-'))
+        }.toString())
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(120)
+        while (!confirmedFile.exists() && System.nanoTime() < deadline) Thread.sleep(250)
+        check(confirmedFile.exists()) {
+            "Desktop confirmation timed out; staged response and aliases were preserved for another resume"
+        }
+        runBlocking { repository.completePairing(completed) }
+        instrumentation.runOnMainSync { ContextCompat.startForegroundService(activity, Intent(activity, MonitoringService::class.java)) }
+        runBlocking { withTimeout(45_000) { repository.state.first { it.connection is ConnectionState.Online && it.projects.isNotEmpty() } } }
+        responseFile.delete(); confirmedFile.delete()
+        println("USB_RESUME: staged response and both key pairs survived process death; replacement committed and reached Online")
     }
 }

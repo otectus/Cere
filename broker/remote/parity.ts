@@ -10,8 +10,6 @@ import { remoteError } from '../execution.ts';
 export class Parity {
   router:Router;
   history=new Map<string,{deviceId:string;projectId:string;nativeId:string;title:string;expiresAt:number}>();
-  lastHistory=new Map<string,number>();
-  lastMemory=new Map<string,number>();
   constructor(router:Router){this.router=router;}
   handoff(device:Device,id:string) {
     const r=this.router,session=r.session(device,id);
@@ -32,8 +30,8 @@ export class Parity {
     if(method==='sessions.history') {
       r.require(device,'providers.execute');r.require(device,'chat.read');const project=r.project(device,p.projectId);
       const controller=new AbortController(),executionId=randomUUID(),check=()=>{r.current(device);controller.signal.throwIfAborted();if(r.core.settings.paused)throw remoteError('POLICY_PAUSED','Native provider access is paused.');};check();
-      if(Date.now()-(this.lastHistory.get(device.id)||0)<5000||[...r.actions.values()].some(a=>a.deviceId===device.id))throw remoteError('RATE_LIMITED','Wait before refreshing native history.');
-      this.lastHistory.set(device.id,Date.now());r.actions.set(executionId,{deviceId:device.id,controller,check});
+      if([...r.actions.values()].some(a=>a.deviceId===device.id))throw remoteError('SESSION_BUSY','Wait for this device’s active desktop operation.');
+      r.actions.set(executionId,{deviceId:device.id,controller,check});
       try {
       const rows=await r.core.history('codex',controller.signal);check();
       for(const [id,value]of this.history)if(value.expiresAt<Date.now()||value.deviceId===device.id)this.history.delete(id);
@@ -58,8 +56,7 @@ export class Parity {
       const write=['memory.forget','memory.clear','memory.forgetPreview'].includes(method);r.require(device,write?'memory.write':'memory.read');const session=r.session(device,p.sessionId);
       if(session.provider!=='ollama')throw remoteError('SCOPE_DENIED','Memory requires an approved Ollama scope.');
       const controller=new AbortController(),executionId=randomUUID(),check=()=>{r.current(device);controller.signal.throwIfAborted();if(!r.core.settings.memory.enabled||r.core.settings.paused)throw remoteError('POLICY_PAUSED','Memory is disabled or paused.');};check();
-      if([...r.actions.values()].some(a=>a.deviceId===device.id)||Date.now()-(this.lastMemory.get(device.id)||0)<1500)throw remoteError('RATE_LIMITED','Wait before starting another memory operation.');
-      this.lastMemory.set(device.id,Date.now());
+      if([...r.actions.values()].some(a=>a.deviceId===device.id))throw remoteError('SESSION_BUSY','Wait for this device’s active desktop operation.');
       r.actions.set(executionId,{deviceId:device.id,controller,check});
       try {
         if(method==='memory.erasureStatus') {

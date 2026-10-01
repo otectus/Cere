@@ -27,7 +27,7 @@ jobs:
           curl --fail --silent --show-error "https://nodejs.org/dist/v$(node --version | cut -c2-)/node-$(node --version)-headers.tar.gz" -o /tmp/node-headers.tar.gz
           tar -xzf /tmp/node-headers.tar.gz -C /tmp
           g++ -std=c++17 -shared -fPIC -I"/tmp/node-$(node --version)/include/node" native/peercred.cpp -o build/cere-peercred.node
-      - run: node --test tests/remote.test.ts tests/remote-process.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
+      - run: node --test tests/remote.test.ts tests/remote-rate-limits.test.ts tests/remote-process.test.ts tests/send-queue.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
   android:
     runs-on: ubuntu-24.04
     timeout-minutes: 40

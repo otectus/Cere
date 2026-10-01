@@ -28,8 +28,8 @@ CDialog {
     // Reset before the popup becomes visible, so a reopened inspector never shows stale enabled controls.
     onAboutToShow:{result={};inspected={};preview={};erasureJob="";policy={};loadPolicy();call("health",{})}
     onSessionIdChanged:preview={}
-    CText { text:"Graph memory inspector";font.pixelSize:20;font.weight:Font.DemiBold }
-    CText { text:"Review sources, temporal history, task episodes and current workspace. Changes use the selected conversation’s project scope.";color:Theme.muted;font.pixelSize:12 }
+    CText { text:"Graph memory inspector";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+    CText { text:"Review sources, temporal history, task episodes and current workspace. Changes use the selected conversation’s project scope.";color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout {
         Layout.fillWidth:true
         CButton { text:"Health";enabled:inspector.pending<0;onClicked:inspector.call("health",{}) }
@@ -48,7 +48,7 @@ CDialog {
         ColumnLayout {
             required property var modelData
             Layout.fillWidth:true
-            CText { text:modelData.text;font.pixelSize:12 }
+            CText { text:modelData.text;font.pixelSize:Theme.secondary }
             CButton { text:"Inspect evidence and history";onClicked:inspector.openRecord(modelData.id) }
         }
     }
@@ -59,15 +59,15 @@ CDialog {
         CButton { objectName:"graphMemoryInspect";text:"Inspect";enabled:inspector.pending<0&&record.text.length>0;onClicked:{inspector.preview={};inspector.call("inspect",{id:record.text})} }
         CButton { objectName:"graphMemoryPreviewForget";text:"Preview forgetting";enabled:inspector.pending<0&&record.text.length>0;onClicked:{inspector.preview={};inspector.previewTarget=record.text;inspector.call("forget_preview",{id:record.text})} }
     }
-    CText { objectName:"graphMemoryForgetImpact";visible:inspector.previewCurrent;text:"Forgetting "+(inspector.preview.selector?.kind||"record").replace("_"," ")+" "+inspector.preview.id+" suppresses "+inspector.preview.count+" records and dependent copies immediately. Physical purge waits for database acknowledgements.";color:Theme.amber;font.pixelSize:12;wrapMode:Text.Wrap }
+    CText { objectName:"graphMemoryForgetImpact";visible:inspector.previewCurrent;text:"Forgetting "+(inspector.preview.selector?.kind||"record").replace("_"," ")+" "+inspector.preview.id+" suppresses "+inspector.preview.count+" records and dependent copies immediately. Physical purge waits for database acknowledgements.";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CButton { objectName:"graphMemoryForget";visible:inspector.previewCurrent;text:"Forget "+inspector.preview.id;danger:true;enabled:inspector.pending<0&&inspector.previewCurrent;onClicked:inspector.call("forget",{id:inspector.preview.id,expected_revision:inspector.preview.revision,selection:inspector.preview.selection}) }
     CButton { visible:!!inspector.erasureJob;text:"Check purge progress";onClicked:inspector.call("erasure_status",{job_id:inspector.erasureJob}) }
     CText { text:"Details";font.weight:Font.DemiBold }
-    CText { visible:inspector.result?.recorded_only===true;text:"Identity decision recorded. It does not change entity resolution yet.";color:Theme.amber;font.pixelSize:12 }
-    TextArea { objectName:"graphMemoryDetails";Layout.fillWidth:true;Layout.preferredHeight:240;readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;text:JSON.stringify(inspector.result,null,2);textFormat:TextEdit.PlainText;color:Theme.text;font.pixelSize:11;background:Rectangle{color:Theme.input;radius:7} }
+    CText { visible:inspector.result?.recorded_only===true;text:"Identity decision recorded. It does not change entity resolution yet.";color:Theme.amber;font.pixelSize:Theme.secondary }
+    CTextArea { objectName:"graphMemoryDetails";Layout.fillWidth:true;Layout.preferredHeight:240;readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;text:JSON.stringify(inspector.result,null,2);textFormat:TextEdit.PlainText;color:Theme.text;font.pixelSize:Theme.caption }
     CText { text:"Correction / resolution";font.weight:Font.DemiBold }
-    CText { text:"Inspect an assertion to load its complete claim and revision. Change only what you intend to correct, and supply a source observation with an exact quotation. Dates are half-open UTC microsecond bounds. Ambiguous changes remain reviewable candidates.";color:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap }
-    TextArea { id:mutation;objectName:"graphMemoryMutation";Layout.fillWidth:true;Layout.preferredHeight:160;wrapMode:TextEdit.Wrap;selectByMouse:true;textFormat:TextEdit.PlainText;color:Theme.text;font.pixelSize:11;placeholderText:'{"id":"…","expected_revision":1,"claim":{},"witness":{"observation_id":"…","quote":"…"}}';background:Rectangle{color:Theme.input;radius:7} }
+    CText { text:"Inspect an assertion to load its complete claim and revision. Change only what you intend to correct, and supply a source observation with an exact quotation. Dates are half-open UTC microsecond bounds. Ambiguous changes remain reviewable candidates.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+    CTextArea { id:mutation;objectName:"graphMemoryMutation";Layout.fillWidth:true;Layout.preferredHeight:160;wrapMode:TextEdit.Wrap;selectByMouse:true;textFormat:TextEdit.PlainText;color:Theme.text;font.pixelSize:Theme.caption;placeholderText:'{"id":"…","expected_revision":1,"claim":{},"witness":{"observation_id":"…","quote":"…"}}' }
     RowLayout {
         Layout.fillWidth:true
         CButton { objectName:"graphMemoryCorrect";text:"Correct";enabled:inspector.pending<0;onClicked:inspector.mutate("correct") }
@@ -75,14 +75,14 @@ CDialog {
         CButton { text:"Archive episode";enabled:inspector.pending<0&&record.text.length>0;onClicked:{inspector.preview={};inspector.call("consolidate",{id:record.text})} }
     }
     CText { text:"Collector policy";font.weight:Font.DemiBold }
-    CText { visible:!inspector.policyLoaded;text:inspector.policyRequest>=0?"Loading the saved collector policy…":"The saved collector policy could not be loaded; controls stay disabled.";color:Theme.muted;font.pixelSize:12 }
+    CText { visible:!inspector.policyLoaded;text:inspector.policyRequest>=0?"Loading the saved collector policy…":"The saved collector policy could not be loaded; controls stay disabled.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { objectName:"policyHyprland";text:"Observe Hyprland workspace";enabled:inspector.policyLoaded;checked:inspector.policy.hyprland_enabled===true;onClicked:inspector.updatePolicy({hyprland_enabled:checked}) }
     CCheckBox { objectName:"policyFish";text:"Enable Fish events";enabled:inspector.policyLoaded;checked:inspector.policy.fish_enabled===true;onClicked:inspector.updatePolicy({fish_enabled:checked}) }
     CCheckBox { objectName:"policyKitty";text:"Inspect configured Kitty endpoint";enabled:inspector.policyLoaded;checked:inspector.policy.kitty_enabled===true;onClicked:inspector.updatePolicy({kitty_enabled:checked}) }
     CCheckBox { objectName:"policyTitles";text:"Capture titles of approved applications";enabled:inspector.policyLoaded;checked:inspector.policy.capture_titles===true;onClicked:inspector.updatePolicy({capture_titles:checked}) }
     CField { id:titleApps;objectName:"policyTitleApplications";Layout.fillWidth:true;enabled:inspector.policyLoaded;placeholderText:"Application classes for titles, comma-separated (for example kitty)";Accessible.name:"Approved title applications";text:(inspector.policy.title_applications||[]).join(", ") }
     CButton { text:"Save title applications";enabled:inspector.policyLoaded;onClicked:inspector.updatePolicy({title_applications:titleApps.text.split(",").map(s=>s.trim()).filter(s=>s.length)}) }
-    CText { text:"Titles are captured only when title capture is on and the window’s application class is listed.";color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap }
+    CText { text:"Titles are captured only when title capture is on and the window’s application class is listed.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     CCheckBox { objectName:"policyHistory";text:"Retain workspace history";enabled:inspector.policyLoaded;checked:inspector.policy.history_enabled===true;onClicked:inspector.updatePolicy({history_enabled:checked}) }
     CField { id:roots;objectName:"policyRoots";Layout.fillWidth:true;enabled:inspector.policyLoaded;placeholderText:"Approved roots (JSON array of absolute paths)";Accessible.name:"Approved filesystem roots";text:JSON.stringify(inspector.policy.approved_roots||[]) }
     CButton { text:"Save roots";enabled:inspector.policyLoaded;onClicked:{try{inspector.updatePolicy({approved_roots:JSON.parse(roots.text)})}catch(e){inspector.error="Enter a JSON array of absolute paths."}} }
@@ -91,7 +91,7 @@ CDialog {
         CButton { text:"Rebuild graph";enabled:inspector.pending<0;onClicked:inspector.call("rebuild",{backend:"graph"}) }
         CButton { text:"Rebuild vectors";enabled:inspector.pending<0;onClicked:inspector.call("rebuild",{backend:"vector"}) }
     }
-    CText { visible:!!inspector.error;text:inspector.error;color:Theme.danger;font.pixelSize:12;wrapMode:Text.Wrap }
+    CText { visible:!!inspector.error;text:inspector.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CButton { text:"Done";onClicked:inspector.close() }
     Connections { target:App;function onResult(id,value){
         if(id===inspector.policyRequest){

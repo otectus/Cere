@@ -239,3 +239,36 @@ test('explicit search works for plain chat models; disabled tools and Stop remai
   let reached=false;f.core.web=new WebSearch(async(_url,guard)=>{reached=true;return await new Promise((_resolve,reject)=>guard.addEventListener('abort',()=>reject(guard.reason),{once:true}));});
   await f.core.send({id:s.id,text:'Find more',webSearch:true});await until(()=>reached);await f.core.stop(s.id);assert.equal(f.core.store.session(s.id).status,'interrupted');assert.equal(f.requests.length,1);
 });
+
+test('extraction model defaults, persists, and switches the model dispatched by the memory service', async t => {
+  const f = await fixture(t), core = f.core, service = core.memory.service;
+  clearInterval(service.timer);
+  await core.memory.ready;
+  assert.equal(core.settings.memory.extractionModel, 'nemotron-3-super');
+  assert.equal(service.configuration.extraction_model, 'nemotron-3-super');
+  for (const name of ['nemotron-3-super', 'nemotron-3-ultra', 'glm-5.3-flash']) {
+    f.models.push({ model: name + ':cloud', capabilities: ['completion'], digest: 'a'.repeat(64), remote_host: 'https://ollama.com' } as any);
+  }
+  f.onChat = (_body, res) => res.end(JSON.stringify({ message: { content: '{"entities":[],"assertions":[]}' } }));
+  const results: any[] = [], original = service.canonical.call.bind(service.canonical);
+  t.mock.method(service.canonical, 'call', async (method: string, params: any = {}) => {
+    if (method === 'extraction_next') return { id: 'run', observation_id: 'source', source_revision: 1, role: 'user', sensitivity: 'cloud_allowed', text: 'Use Ruff.' };
+    if (method === 'extraction_result') { results.push(params); return {}; }
+    if (method === 'apply_extraction') return {};
+    return original(method, params);
+  });
+  await service.extraction();
+  for (const model of ['nemotron-3-ultra:cloud', 'glm-5.3-flash']) {
+    await core.updateSettings({ memory: { extractionModel: model } });
+    await until(() => service.configuration.extraction_model === model);
+    assert.equal(service.extractor, undefined, 'changing the model discards the previous adapter');
+    await service.extraction();
+  }
+  assert.deepEqual(results.map(result => result.identity?.model), ['nemotron-3-super:cloud', 'nemotron-3-ultra:cloud', 'glm-5.3-flash:cloud']);
+  assert.deepEqual(f.requests.map(body => body.model), ['nemotron-3-super:cloud', 'nemotron-3-super:cloud', 'nemotron-3-ultra:cloud', 'nemotron-3-ultra:cloud', 'glm-5.3-flash:cloud', 'glm-5.3-flash:cloud']);
+  const reopened = new Store(f.directory);
+  try { assert.equal(reopened.settings().memory.extractionModel, 'glm-5.3-flash'); }
+  finally { reopened.close(); }
+  await assert.rejects(core.updateSettings({ memory: { extractionModel: '' } }), /extraction model/);
+  assert.equal(core.settings.memory.extractionModel, 'glm-5.3-flash');
+});

@@ -4,6 +4,7 @@ import type { Session, Settings, ToolDefinition } from './types.ts';
 import type { Store } from './store.ts';
 import { ollamaHost, ollamaJson, modelRoute } from './ollama.ts';
 import type { ModelRoute } from './ollama.ts';
+import { defaultExtractionModel } from './graph-memory/models.ts';
 import { MemoryService } from './graph-memory/service.ts';
 import { predicates } from './graph-memory/contracts.ts';
 
@@ -118,7 +119,7 @@ export class Memory {
   async configure() {
     const s = this.settings();
     await this.service.call('configure', { enabled: s.memory.enabled, paused: s.paused, host: s.ollama.host,
-      embedding_model: s.memory.model, extraction_model: s.memory.extractionModel || 'gpt-oss:20b-cloud',
+      embedding_model: s.memory.model, extraction_model: s.memory.extractionModel || defaultExtractionModel,
       allow_cloud_extraction: s.memory.allowCloudExtraction ?? true, allow_cloud_memory: s.memory.allowCloudMemory ?? false });
   }
   invalidate() { this.revision++; this.controller.abort(new Error('Memory settings changed')); this.controller = new AbortController(); this.packets.clear(); void this.ready.then(() => this.configure()).catch(e => this.setStatus('degraded', e.message)); }

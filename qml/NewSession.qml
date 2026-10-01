@@ -60,20 +60,20 @@ CDialog {
         customModel.text="";temporary.checked=projectSettings&&!!imported.temporary;tools.checked=projectSettings&&!!imported.tools;trust.checked=projectSettings&&!!imported.trusted;favorite.checked=!!project.favorite;handoff.checked=false;error="";modelError=""
         Qt.callLater(()=>sessionTitle.forceActiveFocus())
     }
-    CText { text:popup.projectSettings?"Project settings":popup.imported.nativeId?"Continue a CLI session":"Start a conversation";font.pixelSize:22;font.weight:Font.DemiBold }
-    CText { text:popup.projectSettings?"New sessions inherit these defaults. Existing conversations keep their settings.":popup.imported.nativeId?"Review the details before bringing this session into Cere.":"Name the conversation, then choose where and how it should run.";color:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap }
-    CText { text:popup.projectSettings?"Project name":"Title (optional)";color:Theme.muted;font.pixelSize:12 }
+    CText { text:popup.projectSettings?"Project settings":popup.imported.nativeId?"Continue a CLI session":"Start a conversation";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
+    CText { text:popup.projectSettings?"New sessions inherit these defaults. Existing conversations keep their settings.":popup.imported.nativeId?"Review the details before bringing this session into Cere.":"Name the conversation, then choose where and how it should run.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+    CText { text:popup.projectSettings?"Project name":"Title (optional)";color:Theme.muted;font.pixelSize:Theme.secondary }
     CField {
         id:sessionTitle;objectName:"sessionTitle";Layout.fillWidth:true;maximumLength:100
         placeholderText:popup.projectSettings?"Project name":"Untitled session";Accessible.name:popup.projectSettings?"Project name":"Session title"
     }
     CCheckBox { id:favorite;objectName:"projectFavorite";visible:popup.projectSettings;text:"Keep this project at the top" }
-    CText { text:"Provider";color:Theme.muted;font.pixelSize:12 }
+    CText { text:"Provider";color:Theme.muted;font.pixelSize:Theme.secondary }
     CComboBox {
         id:provider;objectName:"sessionProvider";Layout.fillWidth:true;model:["Codex","Claude Code","Ollama","AntiGravity","OpenAI API","Claude API","Google AI API"];enabled:!popup.imported.nativeId;Accessible.name:"Session provider"
         onActivated:{customModel.text="";tools.checked=false;if(popup.projectSettings)trust.checked=false;popup.desiredModel="";popup.desiredEffort="";popup.chooseModel("","");popup.refreshModels()}
     }
-    CText { text:!popup.projectSettings&&popup.isConversation&&!tools.checked?"Project folder (optional)":"Project folder";color:Theme.muted;font.pixelSize:12 }
+    CText { text:!popup.projectSettings&&popup.isConversation&&!tools.checked?"Project folder (optional)":"Project folder";color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout {
         Layout.fillWidth:true
         CField { id:folder;objectName:"sessionProjectPath";Layout.fillWidth:true;placeholderText:"Absolute project path";Accessible.name:"Project folder";readOnly:popup.projectSettings&&!!popup.project.cwd }
@@ -81,7 +81,7 @@ CDialog {
     }
     RowLayout {
         Layout.fillWidth:true
-        CText { text:"Model";color:Theme.muted;font.pixelSize:12;Layout.fillWidth:true }
+        CText { text:"Model";color:Theme.muted;font.pixelSize:Theme.secondary;Layout.fillWidth:true }
         CButton { objectName:"sessionModelsRefresh";text:popup.capability.modelsStatus==="loading"?"Loading…":"Refresh";enabled:App.connected&&popup.capability.modelsStatus!=="loading";onClicked:popup.refreshModels() }
     }
     CComboBox {
@@ -89,25 +89,25 @@ CDialog {
         onActivated:{if(!popup.isApi&&!popup.effectiveModel?.capabilities?.includes("tools"))tools.checked=false;popup.desiredModel=currentValue||"";popup.desiredEffort="";popup.chooseEffort("")}
     }
     CField { id:customModel;objectName:"sessionCustomModel";visible:popup.isApi;Layout.fillWidth:true;maximumLength:512;placeholderText:"Or enter an API model ID";Accessible.name:"Custom API model ID" }
-    CText { visible:popup.isApi;text:"Uses your API key from Settings → Connections. API usage may incur charges. Desktop only.";color:Theme.muted;font.pixelSize:12 }
-    CText { visible:popup.providerName==="antigravity";text:"Uses your agy sign-in. Actions needing approval may be skipped by headless mode. Images are not supported.";color:Theme.muted;font.pixelSize:12 }
-    CText { visible:!popup.isOllama&&popup.selectedModel&&!!popup.selectedModel.description;text:popup.selectedModel?popup.selectedModel.description:"";color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap }
-    CText { visible:!popup.isConversation;text:"Effort";color:Theme.muted;font.pixelSize:12 }
+    CText { visible:popup.isApi;text:"Uses your API key from Settings → Connections. API usage may incur charges. Desktop only.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { visible:popup.providerName==="antigravity";text:"Uses your agy sign-in. Actions needing approval may be skipped by headless mode. Images are not supported.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { visible:!popup.isOllama&&popup.selectedModel&&!!popup.selectedModel.description;text:popup.selectedModel?popup.selectedModel.description:"";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+    CText { visible:!popup.isConversation;text:"Effort";color:Theme.muted;font.pixelSize:Theme.secondary }
     CComboBox {
         id:reasoningEffort;visible:!popup.isConversation;objectName:"sessionEffort";Layout.fillWidth:true;model:popup.effortOptions;textRole:"displayName";valueRole:"id";Accessible.name:"Session effort"
         onActivated:popup.desiredEffort=currentValue||""
     }
-    CText { visible:!!reasoningEffort.currentValue&&reasoningEffort.currentIndex>=0&&!!popup.effortOptions[reasoningEffort.currentIndex].description;text:reasoningEffort.currentIndex>=0?(popup.effortOptions[reasoningEffort.currentIndex].description||""):"";color:Theme.muted;font.pixelSize:11;wrapMode:Text.Wrap }
-    CText { visible:popup.isOllama;text:popup.effectiveModel?.description||(popup.capability.modelsStatus==="ready"?"No chat model selected. Choose a model above or pull one with Ollama and Refresh.":"Connect to Ollama in Settings → Connections.");color:Theme.muted;font.pixelSize:12 }
+    CText { visible:!!reasoningEffort.currentValue&&reasoningEffort.currentIndex>=0&&!!popup.effortOptions[reasoningEffort.currentIndex].description;text:reasoningEffort.currentIndex>=0?(popup.effortOptions[reasoningEffort.currentIndex].description||""):"";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+    CText { visible:popup.isOllama;text:popup.effectiveModel?.description||(popup.capability.modelsStatus==="ready"?"No chat model selected. Choose a model above or pull one with Ollama and Refresh.":"Connect to Ollama in Settings → Connections.");color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { id:temporary;objectName:"temporarySession";visible:!popup.imported.nativeId;text:"Temporary conversation";onClicked:if(checked)tools.checked=false }
-    CText { visible:temporary.checked;text:"Cere keeps this text conversation in broker memory until you close it or the broker exits. Files, memory and Cere tools are unavailable. Native CLIs and external providers may retain their own histories.";color:Theme.amber;font.pixelSize:12 }
+    CText { visible:temporary.checked;text:"Cere keeps this text conversation in broker memory until you close it or the broker exits. Files, memory and Cere tools are unavailable. Native CLIs and external providers may retain their own histories.";color:Theme.amber;font.pixelSize:Theme.secondary }
     CCheckBox { id:tools;objectName:"sessionTools";visible:popup.isConversation;text:"Enable desktop tools and delegation";enabled:!temporary.checked&&(popup.isApi||!!popup.effectiveModel?.capabilities?.includes("tools")) }
-    CText { visible:popup.isConversation;text:tools.checked?"Uses categories enabled in Settings → AI assistance. Delegated tasks ask for review unless CLI permission bypass is enabled.":"Web search and memory follow Settings. Desktop access stays off.";color:Theme.muted;font.pixelSize:12 }
+    CText { visible:popup.isConversation;text:tools.checked?"Uses categories enabled in Settings → AI assistance. Delegated tasks ask for review unless CLI permission bypass is enabled.":"Web search and memory follow Settings. Desktop access stays off.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { id:trust;objectName:"sessionTrust";visible:(popup.projectSettings||!App.state.settings?.bypassCliPermissions)&&(!popup.isConversation||tools.checked);text:popup.projectSettings?(popup.isConversation?"Allow desktop tools for new sessions in this project":"Trust this project’s CLI configuration for new sessions"):popup.isApi?"Allow this conversation to use the enabled desktop tool categories":"I trust this project’s CLI configuration and hooks" }
-    CText { visible:popup.projectSettings&&trust.visible;text:"Saved trust applies to this project’s new sessions. Tool approval settings still apply.";color:Theme.muted;font.pixelSize:11 }
+    CText { visible:popup.projectSettings&&trust.visible;text:"Saved trust applies to this project’s new sessions. Tool approval settings still apply.";color:Theme.muted;font.pixelSize:Theme.caption }
     CCheckBox { id:handoff;visible:!!popup.imported.nativeId;text:"I stopped the external session before handing it over" }
-    CText { visible:!!popup.imported.nativeId;text:"Cere continues the provider’s history. Close its terminal session before handing it over.";color:Theme.muted;font.pixelSize:12 }
-    CText { objectName:"newSessionError";visible:popup.error.length>0||popup.modelError.length>0;text:popup.error||popup.modelError;color:Theme.danger;font.pixelSize:12;wrapMode:Text.Wrap }
+    CText { visible:!!popup.imported.nativeId;text:"Cere continues the provider’s history. Close its terminal session before handing it over.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { objectName:"newSessionError";visible:popup.error.length>0||popup.modelError.length>0;text:popup.error||popup.modelError;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     footerContent:Component { RowLayout {
         Layout.fillWidth:true
         CButton { Layout.fillWidth:true;text:"Cancel";enabled:popup.requestId<0;onClicked:popup.close() }

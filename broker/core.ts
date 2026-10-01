@@ -23,6 +23,7 @@ import { WebSearch, webDefinitions, webUrl, searchProviders } from './web.ts';
 import { Memory, memoryDefinitions } from './memory.ts';
 import { defaultPersonality, personalityMaxLength, validatePersonality } from './personality.ts';
 import { validateAnswers, claudeQuestions } from './questions.ts';
+import { SendQueue } from './send-queue.ts';
 import { ordinarySettings, busy, remoteError } from './execution.ts';
 import type { RemoteExecution } from './execution.ts';
 import { Speech, listVoices, validateVoice, voiceDirectories, ttsTestLine } from './tts.ts';
@@ -81,6 +82,7 @@ export class Core extends EventEmitter {
   elevenlabs:ElevenLabs; speech: Speech; transcription:Transcription; indextts:IndexTTS;
   speechResponses = new Map<string, string>();
   sending = new Set<string>();
+  sendQueue: SendQueue;
   stopping = new Map<string, Promise<boolean>>();
   delegations = new Map<string, Set<string>>(); closed = false;
   web = new WebSearch(); webController = new AbortController(); memory: Memory;
@@ -122,11 +124,13 @@ export class Core extends EventEmitter {
       memoryActive: () => this.settingsFor(s.id).memory.enabled && this.memory.active(), completed: (text, answer, signal) => this.settingsFor(s.id).memory.enabled && this.memoryWritable(s.id) ? this.memory.capture(s, text, answer, signal, () => this.memoryAuthorized(s.id, true, signal)) : Promise.resolve(),
       search: (query, signal) => { if (!this.settingsFor(s.id).webSearch.enabled) throw new Error('Web scope denied'); return this.webCall('web_search', { query }, signal); },
     }));
+    this.sendQueue = new SendQueue(this);
     for (const s of store.sessions()) if (['starting','working','waiting','stopping'].includes(s.status)) {
       s.status = 'interrupted'; delete s.activity;
       s.agents = s.agents?.map(a => this.agentActive(a) ? {...a, status:'interrupted', updated:Date.now()} : a); s.error = 'Cere restarted. The previous turn was not replayed.'; store.saveSession(s);
       for (const agent of s.agents || []) if (agent.status === 'interrupted') this.recordAgent(s.id,agent);
     }
+    for (const s of store.sessions()) this.sendQueue.recover(s.id);
     this.completions=store.get<any[]>('completionInbox',[]).flatMap(row=>{const message=store.messageById(row.messageId);try{const s=store.session(row.sessionId);return[{...row,message:message||{id:'',sessionId:s.id,role:'assistant',text:'This run finished without a final message.',time:row.time}}];}catch{return[];}});
     this.flush();
     this.ticker = setInterval(() => void this.checkTimers(), 1000); this.ticker.unref();
@@ -165,17 +169,18 @@ export class Core extends EventEmitter {
   }
   async sendRemote(p: any, execution: RemoteExecution, beforeAccept?:()=>void, onDispatched?:()=>void, onAccepted?:()=>void, onRejected?:()=>void) {
     const initial=this.store.session(p.id);
-    if(initial.draftAttachments?.length)throw remoteError('REVISION_CONFLICT','This desktop draft has attachments. Review or send it from the desktop before sending from mobile.');
+    if(!p.queuedMessageId && initial.draftAttachments?.length)throw remoteError('REVISION_CONFLICT','This desktop draft has attachments. Review or send it from the desktop before sending from mobile.');
+    if (!p.queuedMessageId && this.sendQueue.shouldQueue(initial)) return this.sendQueue.add(p, execution, beforeAccept, onAccepted);
     if (this.sending.has(p.id) || this.stopping.has(p.id) || busy(initial)) throw remoteError('SESSION_BUSY', 'This session is busy.');
     this.sending.add(p.id);
     try {
       await this.disconnect(p.id);
       const session = this.store.session(p.id);
-      if ((session.draftRevision || '0') !== p.expectedDraftRevision || (session.configRevision || '0') !== p.expectedConfigRevision) throw remoteError('REVISION_CONFLICT', 'The desktop draft or configuration changed.');
+      if ((!p.queuedMessageId && (session.draftRevision || '0') !== p.expectedDraftRevision) || (session.configRevision || '0') !== p.expectedConfigRevision) throw remoteError('REVISION_CONFLICT', 'The desktop draft or configuration changed.');
       if (!this.remoteAuthority?.(execution, session)) throw remoteError('AUTH_REVOKED','Remote authority changed.');
       this.updateSession(p.id, { remote:structuredClone(execution), effectivePolicy:['ollama','claude'].includes(session.provider)?'restricted':'unknown', turnId:p.turnId });
       return await this.sendTurn(p,beforeAccept,onDispatched,onAccepted,onRejected);
-    } finally { this.sending.delete(p.id); }
+    } finally { this.sending.delete(p.id); this.sendQueue.kick(p.id); }
   }
   draft(id: string, text: string, expectedRevision?: string, scroll?: number, attachmentIds?:unknown, view?:unknown) {
     const session = this.store.session(id);
@@ -458,11 +463,23 @@ export class Core extends EventEmitter {
       const response = this.speechResponses.get(id); this.speechResponses.delete(id);
       if (status === 'idle' && response && !session.pinned && !this.deliveredReplies.get(id)?.has(reply?.id || '') && session.mode === 'managed' && !session.parentId && !session.remote && !this.closed && this.settings.speechProviders[session.provider]!==false) this.speech.speak(this.speechText(response),false,undefined,undefined,undefined,session.provider);
       this.settledReplies.delete(id); this.deliveredReplies.delete(id);
+      if (status === 'idle') this.sendQueue.kick(id);
+      else this.sendQueue.cancel(id, 'The previous turn ended; copy this message to send it again');
     }
+  }
+  automaticallyApprove(id: string, approval: Pick<Approval, 'kind' | 'choices'>): boolean {
+    let settings: Settings;
+    try { settings = id ? this.settingsFor(id) : this.settings; } catch { return false; }
+    const remote = id ? this.store.session(id).remote : undefined;
+    // The owner's explicit CLI switch also covers authorized mobile-origin requests.
+    // Execution still uses ordinarySettings: device scopes and native sandboxes stay intact.
+    const cli = remote && this.settings.bypassCliPermissions && remote.caps.includes('approvals.provider')
+      && remote.caps.includes('providers.execute');
+    return autoApprove(cli ? {...settings, bypassCliPermissions:true} : settings, approval);
   }
   approval(sessionId: string, p: Omit<Approval,'id'|'sessionId'|'time'>): Promise<any> {
     // Automatic allows are marked so the caller revalidates that authority before acting.
-    if (autoApprove(sessionId ? this.settingsFor(sessionId) : this.settings, p)) return Promise.resolve({ choice: 'allow', automatic: true });
+    if (this.automaticallyApprove(sessionId, p)) return Promise.resolve({ choice: 'allow', automatic: true });
     const value = { ...p, sessionId, id: randomUUID(), time: Date.now() };
     return new Promise(resolve => {
       this.approvals.set(value.id, { value, resolve });
@@ -500,15 +517,16 @@ export class Core extends EventEmitter {
       this.draft(p.id, '', p.expectedDraftRevision);
       return this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):ttsTestLine, true);
     }
+    if (!p.queuedMessageId && this.sendQueue.shouldQueue(this.store.session(p.id))) return this.sendQueue.add(p);
     if(this.sending.has(p.id) || this.stopping.has(p.id))throw new Error('This session is busy. Stop it or wait for completion.');
     this.sending.add(p.id);
-    try { return await this.sendTurn(p); } finally { this.sending.delete(p.id); }
+    try { return await this.sendTurn(p); } finally { this.sending.delete(p.id); this.sendQueue.kick(p.id); }
   }
   async sendTurn(p: any, beforeAccept?:()=>void, onDispatched?:()=>void, onAccepted?:()=>void, onRejected?:()=>void) {
     let s = this.store.session(p.id);
     const powerAtStart=this.power.effective(s);
     const authorizeDispatch=()=>{this.settingsFor(s.id);if(powerAtStart.leaseId&&this.power.effective(this.store.session(s.id)).leaseId!==powerAtStart.leaseId)throw new Error('Power authorization expired before the provider accepted this turn');beforeAccept?.();};
-    if (p.expectedDraftRevision !== undefined && !p.turnId && p.expectedDraftRevision !== (s.draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed on another client. Review before sending.');
+    if (p.expectedDraftRevision !== undefined && !p.turnId && !p.queuedMessageId && p.expectedDraftRevision !== (s.draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed on another client. Review before sending.');
     const effective = this.settingsFor(p.id);
     if(s.remote&&(isApiProvider(s.provider)||s.provider==='antigravity'))throw new Error('This provider is currently available on the desktop only');
     if(s.remote&&s.provider!=='ollama'&&effective.paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
@@ -534,7 +552,7 @@ export class Core extends EventEmitter {
     }
     if (images.length > 4) throw new Error('Attach at most four images');
     this.settingsFor(s.id); // Recheck after every asynchronous attachment validation.
-    if (p.expectedDraftRevision !== undefined && p.expectedDraftRevision !== (this.store.session(s.id).draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed during send validation.');
+    if (!p.queuedMessageId && p.expectedDraftRevision !== undefined && p.expectedDraftRevision !== (this.store.session(s.id).draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed during send validation.');
     // A very fast provider can emit and flush its first reply before its start
     // acknowledgement returns. Reserve an earlier timestamp for the deferred
     // remote user row so transcript ordering still reflects the turn.
@@ -547,9 +565,9 @@ export class Core extends EventEmitter {
     s = this.updateSession(s.id, { status: 'starting', activity: 'thinking', error: undefined, agents:[], turnId:p.turnId || randomUUID() });
     const submittedDraftRevision=s.draftRevision;
     if(!remoteAcceptance)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
-    if(!remoteAcceptance)this.putMessage({ id: randomUUID(), sessionId: s.id, role: 'user', text: p.text + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
+    if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: randomUUID(), sessionId: s.id, role: 'user', text: p.text + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
     let accepted=!remoteAcceptance;
-    const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;s=this.updateSession(s.id,{draft:'',view:undefined});this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
+    const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;if(p.queuedMessageId)return;s=this.updateSession(s.id,{draft:'',view:undefined});this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
     try {
       let memorySignal: AbortSignal | undefined;
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && effective.memory.enabled && this.memory.active()) {
@@ -569,7 +587,7 @@ export class Core extends EventEmitter {
         const live = () => this.generations.get(s.id) === generation;
         const hooks: Hooks = { token, restrictive:!!s.remote, policy:verified => { if (live()) this.updateSession(s.id, {effectivePolicy:verified ? 'restricted' : 'unknown'}); }, personality: () => this.settings.personality,
           bypassCliPermissions: () => this.settingsFor(s.id).bypassCliPermissions,
-          automaticApprovalValid: kind => {try{return live()&&!this.terminal.has(s.id)&&autoApprove(this.settingsFor(s.id),{kind,choices:['allow']});}catch{return false;}},
+          automaticApprovalValid: kind => {try{return live()&&!this.terminal.has(s.id)&&this.automaticallyApprove(s.id,{kind,choices:['allow']});}catch{return false;}},
           event: e => { if (live()) this.event(s.id,e); }, native: nativeId => { if (live()) this.updateSession(s.id,{nativeId}); },
           approve: value => live() && !this.terminal.has(s.id) ? this.approval(s.id,value) : Promise.resolve({choice:'deny',cancelled:true}) };
         this.adapters.set(s.id, this.factory(s, hooks));
@@ -580,7 +598,7 @@ export class Core extends EventEmitter {
       if(!accepted)throw new Error('Provider did not confirm that it accepted the turn.');
       if(!remoteAcceptance){
         this.store.set('submission:'+s.id,{turnId:s.turnId,time:Date.now(),state:'accepted'});
-        if(this.store.session(s.id).draftRevision===submittedDraftRevision)this.updateSession(s.id,{draft:'',draftAttachments:[],view:undefined});
+        if(!p.queuedMessageId && this.store.session(s.id).draftRevision===submittedDraftRevision)this.updateSession(s.id,{draft:'',draftAttachments:[],view:undefined});
         this.attachments.prune(s.id);
       }
       if (this.store.session(s.id).status === 'starting') this.updateSession(s.id, { status: 'working' });
@@ -594,12 +612,14 @@ export class Core extends EventEmitter {
     }
   }
   async stop(id: string): Promise<boolean> {
+    this.sendQueue.cancel(id, 'Stopped before sending; copy this message to send it again');
     this.speech.stopSession(id);
     const existing = this.stopping.get(id); if (existing) return existing;
     const pending = Promise.resolve().then(() => this.stopTurn(id)).finally(() => this.stopping.delete(id));
     this.stopping.set(id, pending); return pending;
   }
   async stopAndClose(id:string) {
+    this.sendQueue.cancel(id, 'Authorization ended before sending');
     const wasActive=busy(this.store.session(id));
     const adapter=this.adapters.get(id);
     this.cancelApprovals(id);this.abortActions(id,new Error('Power access ended'));
@@ -786,7 +806,7 @@ export class Core extends EventEmitter {
     await this.telemetry.configure(next.telemetry);
     if (!next.speechEnabled || next.quiet || next.speechVolume===0 || 'voice' in patch) this.speech.stop();
     // Resolve only matching permission requests; input questions must never receive invented answers.
-    for (const { value } of [...this.approvals.values()]) if ((!value.sessionId || !this.store.session(value.sessionId).remote) && autoApprove(next, value)) this.answer({ id: value.id, choice: 'allow' }, true);
+    for (const { value } of [...this.approvals.values()]) if (this.automaticallyApprove(value.sessionId, value)) this.answer({ id: value.id, choice: 'allow' }, true);
     this.store.set('settingsRevision', String(BigInt(this.store.get('settingsRevision', '0')) + 1n));
     this.changed();
     if (hostChanged) { this.capabilities.ollama = {}; void this.refreshProviderModels('ollama').catch(() => {}); }
@@ -1236,7 +1256,7 @@ export class Core extends EventEmitter {
           const tool = actionDefinitions.find(d => p.args.tool_name === 'mcp__cere__' + d.name.replaceAll('.', '_'));
           const kind = tool ? (tool.category === 'scripts' ? 'cli' : 'desktop') : 'provider';
           const answer = await this.approval(id, { kind, title:`Allow Claude to use ${String(p.args.tool_name || 'a tool')}?`, detail:JSON.stringify(p.args.input || {},null,2), choices:['allow','deny'] });
-          return answer.choice === 'allow' && (!answer.automatic || this.tokens.get(p.token) === id && autoApprove(this.settingsFor(id),{kind,choices:['allow']})) ? { behavior:'allow', updatedInput:p.args.input || {} } : { behavior:'deny', message:'Declined in Cere or automatic permission was revoked' };
+          return answer.choice === 'allow' && (!answer.automatic || this.tokens.get(p.token) === id && this.automaticallyApprove(id,{kind,choices:['allow']})) ? { behavior:'allow', updatedInput:p.args.input || {} } : { behavior:'deny', message:'Declined in Cere or automatic permission was revoked' };
         }
         if (memoryDefinitions.some(d => d.name === p.name)) {
           const controller = new AbortController(), active = this.actionControllers.get(id) || new Set<AbortController>();
@@ -1251,6 +1271,7 @@ export class Core extends EventEmitter {
   }
   async close() {
     this.closed = true;
+    for (const session of this.store.sessions()) this.sendQueue.cancel(session.id, 'Cere closed before sending');
     await this.telemetry.close();
     this.workflows.close();this.utilities.close();await this.transcription.close();await this.power.close();
     const speechClosed = this.speech.close(); this.speechResponses.clear();

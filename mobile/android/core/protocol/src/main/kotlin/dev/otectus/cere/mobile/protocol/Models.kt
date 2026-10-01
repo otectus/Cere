@@ -1,12 +1,19 @@
 package dev.otectus.cere.mobile.protocol
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 const val PROTOCOL_VERSION = 1
 const val PROTOCOL_MIN = 0
 const val PROTOCOL_MAX = 0
+
+@Serializable
+enum class ActionAuthentication {
+    @SerialName("biometric") BIOMETRIC,
+    @SerialName("trusted-device") TRUSTED_DEVICE,
+}
 
 @Serializable
 data class Hello(
@@ -57,6 +64,7 @@ data class Welcome(
     val limits: Limits = Limits(),
     val brokerBuild: String? = null,
     val sendAuthentication: String = "action-key",
+    val actionAuthentication: ActionAuthentication = ActionAuthentication.BIOMETRIC,
 )
 
 @Serializable
@@ -120,6 +128,8 @@ data class Session(
     val remoteRestricted: Boolean = true,
     val turnId: String? = null,
     val canSend: Boolean = false,
+    val canQueue: Boolean = false,
+    val queuedCount: Int = 0,
     val canConfigure: Boolean = false,
     val pinned: Boolean = false,
     val archived: Boolean = false,
@@ -187,6 +197,7 @@ data class ApprovalQuestion(
 data class Approval(
     val id: String,
     val sessionId: String,
+    val parentSessionIds: List<String> = emptyList(),
     val kind: String,
     val title: String,
     val detail: String? = null,

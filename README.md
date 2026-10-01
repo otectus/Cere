@@ -1,5 +1,9 @@
 # Cere
 
+[Download Cere Mobile 0.1.3 for Android](https://github.com/otectus/Cere/releases/download/mobile-dev-v0.1.3/cere-mobile-v0.1.3-debug.apk) · [Development release and checksums](https://github.com/otectus/Cere/releases/tag/mobile-dev-v0.1.3)
+
+This development APK updates the existing Cere Mobile debug app in place. It includes approval synchronization fixes; removing desktop rate limits also requires the matching broker source from this repository. Android 11 or newer is required. See [mobile setup](docs/mobile/SETUP.md) for pairing.
+
 Workspace telemetry is available as an opt-in Linux feature under Settings.
 See [setup, privacy boundaries, shell hooks and measurements](docs/workspace-telemetry.md).
 

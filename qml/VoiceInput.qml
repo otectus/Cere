@@ -37,13 +37,13 @@ CButton {
 
     CDialog {
         id:review;objectName:"transcriptionReview"
-        CText { text:"Review voice input";font.pixelSize:20;font.weight:Font.DemiBold }
-        CText { text:"Edit the local transcript before inserting it. Nothing is sent automatically.";color:Theme.muted;font.pixelSize:12;wrapMode:Text.Wrap }
-        CText { visible:voiceInput.resultSessionId!==voiceInput.sessionId;text:"This transcript belongs to another session. Return to that session before inserting it.";color:Theme.amber;font.pixelSize:12;wrapMode:Text.Wrap }
-        TextArea {
+        CText { text:"Review voice input";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { text:"Edit the local transcript before inserting it. Nothing is sent automatically.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+        CText { visible:voiceInput.resultSessionId!==voiceInput.sessionId;text:"This transcript belongs to another session. Return to that session before inserting it.";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+        CTextArea {
             id:transcript;objectName:"transcriptionText";Layout.fillWidth:true;Layout.preferredHeight:180
             wrapMode:TextEdit.Wrap;selectByMouse:true;color:Theme.text;font.family:Theme.font
-            Accessible.name:"Editable voice transcript";background:Rectangle{color:Theme.input;radius:7}
+            Accessible.name:"Editable voice transcript"
         }
         RowLayout {
             Layout.fillWidth:true
