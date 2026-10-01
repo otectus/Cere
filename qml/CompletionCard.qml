@@ -5,12 +5,13 @@ ColumnLayout {
     id: card
     property var completion: ({})
     spacing: 10
-    CText {
+    SessionIdentity {
         objectName: "completionRequester"
         Layout.fillWidth: true
-        text: (card.completion.title || "Conversation") + " · " + (card.completion.provider || "")
-              + " · " + (card.completion.sessionId || "").slice(0, 8) + "\n" + (card.completion.cwd || "")
-        color: Theme.muted; font.pixelSize: 11
+        provider: card.completion.provider || ""
+        sessionId: card.completion.sessionId || ""
+        title: card.completion.title || "Conversation"
+        cwd: card.completion.cwd || ""
     }
     RowLayout {
         Layout.fillWidth: true

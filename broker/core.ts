@@ -8,7 +8,7 @@ import { join, isAbsolute, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { Store } from './store.ts';
 import { autoApprove, bypassCategory, categoryEnabled } from './permissions.ts';
-import type { Session, Settings, Message, Approval, Adapter, ProviderEvent, Provider, ModelOption, AgentActivity, RunCompletion } from './types.ts';
+import type { Session, Settings, Message, Approval, Adapter, ProviderEvent, Provider, ModelOption, AgentActivity, RunCompletion, DraftView } from './types.ts';
 import { CodexAdapter, ClaudeAdapter, claudeRestrictedHelp, providerExecutable } from './providers.ts';
 import type { Hooks } from './providers.ts';
 import { transportMessage, messagePage, messageChunk } from './transcript.ts';
@@ -48,6 +48,17 @@ import { configuration as telemetryConfiguration } from './telemetry/paths.ts';
 
 const untitledSession = 'Untitled session';
 const sessionTitle = (value: unknown) => String(value ?? '').trim().slice(0,100) || untitledSession;
+/** Validates the desktop view record; cursor positions are clamped to the draft text. */
+export function draftView(value: unknown, text: string): DraftView {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid draft view');
+  const v = value as Record<string, unknown>;
+  const position = (n: unknown) => typeof n === 'number' && Number.isFinite(n) ? Math.min(text.length, Math.max(0, Math.trunc(n))) : 0;
+  const offset = typeof v.anchorOffset === 'number' && Number.isFinite(v.anchorOffset) ? Math.max(-1e6, Math.min(1e6, Math.round(v.anchorOffset))) : 0;
+  return { cursor: position(v.cursor), selectionStart: position(v.selectionStart), selectionEnd: position(v.selectionEnd),
+    webSearch: v.webSearch === true, activityExpanded: v.activityExpanded === true,
+    anchorId: typeof v.anchorId === 'string' && v.anchorId.length <= 200 ? v.anchorId : '', anchorOffset: offset, atEnd: v.atEnd !== false,
+    focus: v.focus === 'composer' ? 'composer' : '' };
+}
 
 const bodyMoodNames = new Set(Object.keys(JSON.parse(readFileSync(new URL('../assets/motions.json', import.meta.url), 'utf8')).bodyMoods.moods));
 
@@ -166,12 +177,17 @@ export class Core extends EventEmitter {
       return await this.sendTurn(p,beforeAccept,onDispatched,onAccepted,onRejected);
     } finally { this.sending.delete(p.id); }
   }
-  draft(id: string, text: string, expectedRevision?: string, scroll?: number, attachmentIds?:unknown) {
+  draft(id: string, text: string, expectedRevision?: string, scroll?: number, attachmentIds?:unknown, view?:unknown) {
     const session = this.store.session(id);
     if (typeof text !== 'string' || text.length > 100000) throw new Error('Invalid draft');
     if (expectedRevision !== undefined && expectedRevision !== (session.draftRevision || '0')) throw remoteError('REVISION_CONFLICT', 'Draft changed on another client. Your local draft is retained.');
     const draftAttachments=attachmentIds===undefined?session.draftAttachments:this.attachments.resolve(id,attachmentIds);
-    const saved=this.updateSession(id, {draft:text,draftAttachments, ...(scroll === undefined ? {} : {scroll})});
+    const views=view===undefined?{}:{view:draftView(view,text)};
+    // Moving between the compact panel and the workspace keeps the session's place in recent order.
+    if(view!==undefined&&text===session.draft&&JSON.stringify(draftAttachments||[])===JSON.stringify(session.draftAttachments||[])){
+      const saved={...session,...views,...(scroll === undefined ? {} : {scroll})};this.store.saveSession(saved);this.changed();return saved;
+    }
+    const saved=this.updateSession(id, {draft:text,draftAttachments, ...(scroll === undefined ? {} : {scroll}), ...views});
     this.attachments.prune(id);return saved;
   }
   panel(owner: string, visible: boolean) {
@@ -533,7 +549,7 @@ export class Core extends EventEmitter {
     if(!remoteAcceptance)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
     if(!remoteAcceptance)this.putMessage({ id: randomUUID(), sessionId: s.id, role: 'user', text: p.text + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
     let accepted=!remoteAcceptance;
-    const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;s=this.updateSession(s.id,{draft:''});this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
+    const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;s=this.updateSession(s.id,{draft:'',view:undefined});this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
     try {
       let memorySignal: AbortSignal | undefined;
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && effective.memory.enabled && this.memory.active()) {
@@ -564,7 +580,7 @@ export class Core extends EventEmitter {
       if(!accepted)throw new Error('Provider did not confirm that it accepted the turn.');
       if(!remoteAcceptance){
         this.store.set('submission:'+s.id,{turnId:s.turnId,time:Date.now(),state:'accepted'});
-        if(this.store.session(s.id).draftRevision===submittedDraftRevision)this.updateSession(s.id,{draft:'',draftAttachments:[]});
+        if(this.store.session(s.id).draftRevision===submittedDraftRevision)this.updateSession(s.id,{draft:'',draftAttachments:[],view:undefined});
         this.attachments.prune(s.id);
       }
       if (this.store.session(s.id).status === 'starting') this.updateSession(s.id, { status: 'working' });
@@ -1043,7 +1059,7 @@ export class Core extends EventEmitter {
       // Byte-bounded pages, newest first by cursor; clients load older pages on request.
       case 'session.messages': this.flush(); return messagePage(this.store, p.id, p.before, p.maxBytes);
       case 'session.messageText': this.flush(); return messageChunk(this.store, p.id, p.messageId, p.offset);
-      case 'session.draft': return this.draft(p.id, p.text, p.expectedRevision, Number(p.scroll) || 0,p.attachmentIds);
+      case 'session.draft': return this.draft(p.id, p.text, p.expectedRevision, Number(p.scroll) || 0,p.attachmentIds,p.view);
       case 'attachments.import': {const asset=await this.attachments.import(p.sessionId,p.path);this.changed();return asset;}
       case 'attachments.remove': return this.attachments.remove(p.sessionId,p.id);
       case 'attachments.keepInDraft': {const s=this.store.session(p.sessionId),assets=this.attachments.resolve(s.id,[p.attachmentId]);if(!(s.draftAttachments||[]).some(a=>a.id===p.attachmentId)){const next=[...(s.draftAttachments||[]),...assets];this.attachments.resolve(s.id,next.map(a=>a.id));s.draftAttachments=next;this.store.saveSession(s);this.changed();}return s;}

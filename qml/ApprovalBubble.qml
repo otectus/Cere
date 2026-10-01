@@ -11,6 +11,9 @@ Item {
     property var replies:[]
     property var currentReply:null
     property bool followLatest:true
+    // Set by this process's controller the moment a panel shows or hides, ahead of the broker's echo.
+    property bool panelOpen:false
+    onPanelOpenChanged:syncApprovals()
     readonly property int replyIndex:currentReply?replies.findIndex(reply=>reply.id===currentReply.id):-1
     readonly property bool needsInput:approvals.length>0
     readonly property color accent:needsInput?Theme.amber:currentReply?Theme.cyan:Theme.success
@@ -28,8 +31,7 @@ Item {
         onHoveredChanged:if(!hovered&&bubble.followLatest)bubble.syncApprovals()
     }
     function syncApprovals() {
-        const panelVisible=App.state.panels?.ui||App.state.panels?.overlay
-        const next=panelVisible?[]:(App.state.approvals||[])
+        const next=panelOpen?[]:(App.state.approvals||[])
         if(JSON.stringify(next)!==JSON.stringify(approvals))approvals=next
         const finished=(App.state.completions||[]).filter(completion=>!completion.companion)
         if(JSON.stringify(finished)!==JSON.stringify(completions))completions=finished

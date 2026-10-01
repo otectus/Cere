@@ -39,7 +39,8 @@ class UiCheck : public QObject {
     QTemporaryDir data;
     QProcess ollamaFixture;
     std::unique_ptr<Controller> app;
-    QQuickWindow *window=nullptr;
+    // Views are deleted when the interface switches surfaces; a guarded pointer never dangles.
+    QPointer<QQuickWindow> window;
     QString sessionId;
     QUrl openedMessageLink;
     QQuickItem *item(const QString &name){
@@ -54,6 +55,11 @@ class UiCheck : public QObject {
             if(y<10||y>parent->height()-10){parent->setProperty("contentY",std::clamp(parent->property("contentY").toDouble()+y-parent->height()/2,0.,parent->property("contentHeight").toDouble()-parent->height()));QTest::qWait(60);}
         }
         QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());QTest::qWait(120);
+    }
+    // Opens a conversation tool from its row, or from More when a short page folds the row away (F-03).
+    void tool(const QString &row,const QString &entry){
+        if(item(row)){click(row);return;}
+        click("conversationMore");QTRY_VERIFY2(item(entry),qPrintable(entry));click(entry);
     }
     void capture(const QString &name){QVERIFY2(window,"no window to capture");QDir().mkpath("/tmp/cere-ui-evidence");QVERIFY(window->grabWindow().save("/tmp/cere-ui-evidence/"+name+".png"));}
     QJsonDocument hypr(const QStringList &args){QProcess p;p.start("hyprctl",args);if(!p.waitForFinished(2000))return {};return QJsonDocument::fromJson(p.readAllStandardOutput());}
@@ -87,6 +93,8 @@ class UiCheck : public QObject {
     }return {};}
 private slots:
     void recordMessageLink(const QUrl &url){openedMessageLink=url;}
+    // A failed check must not leave the next one without a window to drive.
+    void init(){if(app&&!window)restoreWorkspace();}
     void initTestCase(){
         qputenv("CERE_TTS_DISABLED","1"); // UI fixtures must never speak on the user's speakers.
         // The broker and overlay host inherit this, so an offscreen run is fully isolated.
@@ -171,7 +179,7 @@ private slots:
         click("tab_Chat");
         const auto originalId=app->selectedId();
         item("composer")->setProperty("text","Keep this API draft");
-        click("ollamaModelOptions");QTRY_VERIFY(item("conversationCustomModel"));
+        tool("ollamaModelOptions","menuModelOptions");QTRY_VERIFY(item("conversationCustomModel"));
         QVERIFY(!item("conversationEffort"));
         item("conversationCustomModel")->setProperty("text","another-api-model");
         QTRY_VERIFY(item("ollamaSessionSave")->isEnabled());click("ollamaSessionSave");
@@ -189,7 +197,7 @@ private slots:
         const auto rows=app->transcript()->rowCount();const auto nativeId=app->session().value("nativeId").toString();
         QVERIFY(!nativeId.isEmpty());
         item("composer")->setProperty("text","My next message");
-        click("ollamaModelOptions");auto picker=item("ollamaSessionModel");QVERIFY(picker);
+        tool("ollamaModelOptions","menuModelOptions");auto picker=item("ollamaSessionModel");QVERIFY(picker);
         QTRY_COMPARE(picker->property("count").toInt(),3);
         QCOMPARE(item("conversationEffort")->property("currentValue").toString(),QString("high"));
         picker->setProperty("currentIndex",2);QVERIFY(QMetaObject::invokeMethod(picker,"activated",Q_ARG(int,2)));
@@ -485,13 +493,13 @@ Unicode: café ✦ 日本語
         item("renameSessionTitle")->setProperty("text","  Renamed conversation  ");
         click("saveSessionTitle");
         QTRY_COMPARE(app->session().value("title").toString(),QString("Renamed conversation"));
-        click("ollamaModelOptions");auto picker=item("ollamaSessionModel");QVERIFY(picker);
+        tool("ollamaModelOptions","menuModelOptions");auto picker=item("ollamaSessionModel");QVERIFY(picker);
         QTRY_COMPARE(picker->property("count").toInt(),2);
         picker->setProperty("currentIndex",1);QVERIFY(QMetaObject::invokeMethod(picker,"activated",Q_ARG(int,1)));
         QVERIFY(!item("ollamaSessionTools")->isEnabled());capture("ollama-model-options");
         click("ollamaSessionSave");QTRY_COMPARE(app->session().value("model").toString(),QString("fixture-plain:latest"));
         QCOMPARE(app->state().value("settings").toMap().value("ollama").toMap().value("model").toString(),QString("fixture-chat:latest"));
-        click("chatHandoff");QCOMPARE(item("handoffProvider")->property("count").toInt(),6);
+        tool("chatHandoff","menuHandoff");QCOMPARE(item("handoffProvider")->property("count").toInt(),6);
         QVERIFY(item("handoffTrust"));QVERIFY(!item("handoffCreate")->isEnabled());
         item("handoffTrust")->setProperty("checked",true);click("handoffCreate");
         QTRY_COMPARE(app->session().value("provider").toString(),QString("codex"));
@@ -535,7 +543,10 @@ Unicode: café ✦ 日本語
         QTRY_VERIFY(app->messages().size()>=3);
         bool linked=false;for(const auto &message:app->messages())if(!message.toMap().value("sources").toList().isEmpty())linked=true;
         QVERIFY(linked);QVERIFY(!item("searchThisTurn")->property("checked").toBool());capture("web-search-conversation");
-        auto send=item("sendMessage");QVERIFY(send);QVERIFY(send->mapToScene(QPointF(0,send->height())).y()<window->height());
+        auto send=item("sendMessage");
+        QVERIFY2(send,qPrintable(QString("status=%1 activity=%2 messages=%3 roles=%4").arg(app->session().value("status").toString(),app->session().value("activity").toString()).arg(app->messages().size())
+            .arg([&]{QStringList roles;for(const auto &m:app->messages())roles<<m.toMap().value("role").toString();return roles.join(",");}())));
+        QVERIFY(send->mapToScene(QPointF(0,send->height())).y()<window->height());
     }
     void questionsAndAgentActivity(){
         click("tab_Chat");
@@ -637,6 +648,7 @@ Unicode: café ✦ 日本語
         workspace=nullptr;app->togglePanel();QTRY_VERIFY(!bubble());
         app->closePanel();QTRY_VERIFY(bubble());
         window=bubble();const auto second=requests().first().toMap().value("id").toString();
+        QTest::qWait(250); // the bubble grows to fit its card, as for the first request above
         click("approval_"+second+"_deny");
         QTRY_VERIFY(requests().isEmpty());QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
         dismissCompletions();QTRY_VERIFY(!bubble());
@@ -1702,9 +1714,13 @@ Unicode: café ✦ 日本語
             QVERIFY(mic->mapToScene(QPointF()).x()<send->mapToScene(QPointF()).x());
             QCOMPARE(mic->mapToScene(QPointF()).y(),send->mapToScene(QPointF()).y());
             QVERIFY(!item("openWorkflows"));
-            auto card=item("composerCard"),row=item("conversationTools"),area=item("conversationArea");QVERIFY(card&&row&&area);
-            QVERIFY(row->mapToScene(QPointF()).y()>=card->mapToScene(QPointF(0,card->height())).y());
-            QVERIFY(row->mapToScene(QPointF(0,row->height())).y()<panel.height());QVERIFY(area->height()>24);
+            auto card=item("composerCard"),row=item("conversationTools"),more=item("conversationMore"),area=item("conversationArea");
+            QVERIFY(card&&area&&(row||more));
+            // A full-height panel keeps the tools row; a short one folds it into More beside Send (F-03).
+            if(size.height()>=860)QVERIFY(row);
+            if(row){QVERIFY(row->mapToScene(QPointF()).y()>=card->mapToScene(QPointF(0,card->height())).y());QVERIFY(row->mapToScene(QPointF(0,row->height())).y()<panel.height());}
+            else QCOMPARE(more->mapToScene(QPointF()).y(),send->mapToScene(QPointF()).y());
+            QVERIFY(area->height()>=120);
             if(size.width()==440){
                 QCOMPARE(item("chatHandoff")->mapToScene(QPointF()).y(),item("contextDrawerButton")->mapToScene(QPointF()).y());
                 capture("compact-clean-composer");
@@ -1765,7 +1781,7 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE_WITH_TIMEOUT(app->session().value("draftAttachments").toList().size(),1,5000);
         const auto asset=app->session().value("draftAttachments").toList().first().toMap();
         QVERIFY(item("attachmentChip_"+asset.value("id").toString()));
-        click("contextDrawerButton");QTRY_VERIFY(item("closeContextDrawer"));capture("context-drawer");click("closeContextDrawer");
+        tool("contextDrawerButton","menuContext");QTRY_VERIFY(item("closeContextDrawer"));capture("context-drawer");click("closeContextDrawer");
         app->closePanel();restoreWorkspace();QTRY_COMPARE(app->session().value("draftAttachments").toList().size(),1);
         QCOMPARE(item("composer")->property("text").toString(),QString("A draft with an attachment"));
         QTest::keyClick(window,Qt::Key_K,Qt::ControlModifier);QTRY_VERIFY(item("commandPaletteSearch"));
@@ -1879,6 +1895,15 @@ Unicode: café ✦ 日本語
         item("composer")->setProperty("text","saved on destruction");
         app->closePanel();app->togglePanel();QTRY_VERIFY(titled("Cere Panel"));
         QTRY_COMPARE(saved(),QString("saved on destruction"));
+        // F-14: an edit typed while an earlier save is still in flight survives an immediate Expand,
+        // even though Expand destroys this editor before that save returns.
+        window=titled("Cere Panel");QTRY_VERIFY(item("composer"));
+        item("composer")->setProperty("text","saved first");
+        QVERIFY(QMetaObject::invokeMethod(item("chatView"),"saveDraft",Q_ARG(QVariant,false),Q_ARG(QVariant,false)));
+        item("composer")->setProperty("text","typed during that save");
+        restoreWorkspace();
+        QTRY_COMPARE(saved(),QString("typed during that save"));
+        QTRY_COMPARE(item("composer")->property("text").toString(),QString("typed during that save"));
     }
     // F-036: the compact panel fits short, narrow and negative-origin outputs.
     void compactPanelFitsEveryOutput(){
@@ -1893,9 +1918,26 @@ Unicode: café ✦ 日本語
             app->togglePanel();QQuickWindow *panel=nullptr;QTRY_VERIFY2((panel=titled("Cere Panel")),qPrintable(where));
             const QRect area=screen->availableGeometry().adjusted(12,40,-12,-12);
             QTRY_VERIFY2(area.contains(panel->geometry()),qPrintable(QString("%1 panel %2,%3 %4x%5").arg(where).arg(panel->x()).arg(panel->y()).arg(panel->width()).arg(panel->height())));
-            QVERIFY2(panel->width()<=440&&panel->height()<=720,qPrintable(where));
+            QVERIFY2(panel->width()<=440&&panel->height()<=860,qPrintable(where));
             // Compact navigation still works at the capped size.
             window=panel;QTest::qWait(100);click("tab_Sessions");QVERIFY2(item("newSession"),qPrintable(where));
+        }
+    }
+    // F-04: without always-on-top the compact panel is a normal window, so Hyprland must float it
+    // at its compact size beside the pet instead of tiling it.
+    void compactPanelFloatsWithoutAlwaysOnTop(){
+        if(!qGuiApp->platformName().startsWith("wayland")||qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))QSKIP("Needs the live Hyprland compositor");
+        const auto restore=qScopeGuard([&]{app->closePanel();app->rpc("settings.update",{{"topmost",true}});restoreWorkspace();});
+        app->rpc("settings.update",{{"topmost",false},{"roaming",false},{"hidden",false}});QTest::qWait(600);
+        auto client=[&]{for(const auto value:hypr({"-j","clients"}).array()){const auto w=value.toObject();if(w["pid"].toInteger()==QCoreApplication::applicationPid()&&w["title"].toString()=="Cere Panel")return w;}return QJsonObject();};
+        for(int round=0;round<2;++round){ // a hidden window is a new window to Hyprland when it returns
+            app->closePanel();QTest::qWait(300);app->togglePanel();
+            QTRY_VERIFY_WITH_TIMEOUT(client()["floating"].toBool(),3000);
+            const auto w=client();const auto at=w["at"].toArray(),size=w["size"].toArray();
+            const QRect geometry(at[0].toInt(),at[1].toInt(),size[0].toInt(),size[1].toInt());
+            QVERIFY2(geometry.width()<=440&&geometry.height()<=860,qPrintable(QString("panel %1x%2").arg(geometry.width()).arg(geometry.height())));
+            bool onOutput=false;for(auto screen:qGuiApp->screens())if(screen->geometry().contains(geometry))onOutput=true;
+            QVERIFY2(onOutput,qPrintable(QString("panel at %1,%2").arg(geometry.x()).arg(geometry.y())));
         }
     }
     // F-037: roaming crosses output seams without jumps at every scale.
@@ -2038,9 +2080,14 @@ private:
         QString name=focused->objectName();for(auto p=focused->parentItem();name.isEmpty()&&p;p=p->parentItem())name=p->objectName();
         return QString(focused->metaObject()->className()).section('_',0,0)+":"+name;
     }
+    // The message whose part is at the top edge of the conversation (the gap between cards is skipped).
     QString topMessageId(){
         auto list=item("messageList");if(!list)return QString();
-        int index=-1;QMetaObject::invokeMethod(list,"indexAt",Q_RETURN_ARG(int,index),Q_ARG(double,12.),Q_ARG(double,list->property("contentY").toDouble()+12.));
+        int index=-1;
+        for(const double probe:{1.,list->property("spacing").toDouble()+2.}){
+            QMetaObject::invokeMethod(list,"indexAt",Q_RETURN_ARG(int,index),Q_ARG(double,list->width()/2),Q_ARG(double,list->property("contentY").toDouble()+probe));
+            if(index>=0)break;
+        }
         if(index<0)return QString();
         return app->transcript()->data(app->transcript()->index(index,0),Qt::UserRole+1).toMap().value("id").toString();
     }
@@ -2077,7 +2124,12 @@ private slots:
             note("ollama unreachable error shown",item("newSessionError")!=nullptr,item("newSessionError")?item("newSessionError")->property("text").toString():"no error text");
             QMetaObject::invokeMethod(dialog,"close");
         }else note("createSessionDialog found",false);
-        call("settings.update",{{"ollama",ollama}});
+        // The broker refuses a default model until the restored host's catalog has refreshed.
+        call("settings.update",{{"ollama",QVariantMap{{"host",ollama.value("host")}}}});
+        call("provider.models",{{"provider","ollama"}});
+        if(!ollama.value("model").toString().isEmpty())
+            note("ollama model restored",!call("settings.update",{{"ollama",QVariantMap{{"model",ollama.value("model")}}}}).contains("error"));
+        note("ollama host restored",app->state().value("settings").toMap().value("ollama").toMap().value("host")==ollama.value("host"));
         reviewWorkspace();saveNotes("review-empty-states");
     }
     void reviewLongContent(){
@@ -2193,10 +2245,17 @@ private slots:
         const auto path=data.path()+"/transition-note.txt";{QFile f(path);f.open(QIODevice::WriteOnly);f.write("kept");}
         app->attachImage(path);note("attachment imported",waitFor([&]{return item("chatView")&&item("chatView")->property("attachments").toList().size()==1;},5000));
         if(auto web=item("searchThisTurn"))web->setProperty("checked",true);else note("web toggle visible",false);
-        if(auto list=item("messageList")){list->setProperty("contentY",std::max(0.,list->property("contentHeight").toDouble()-list->height())*0.5);QTest::qWait(300);}
+        if(auto list=item("messageList")){
+            // Flick back to the middle of the conversation, as a reader would.
+            const double target=list->property("originY").toDouble()+std::max(0.,list->property("contentHeight").toDouble()-list->height())*0.5;
+            for(int i=0;i<80&&list->property("contentY").toDouble()>target;++i){QMetaObject::invokeMethod(list,"flick",Q_ARG(double,0.),Q_ARG(double,5000.));QTest::qWait(100);}
+            QMetaObject::invokeMethod(list,"cancelFlick");QTest::qWait(500);
+            note("reading earlier messages",!item("chatView")->property("follow").toBool(),QString("contentY=%1 target=%2").arg(list->property("contentY").toDouble()).arg(target));
+        }
         QString anchor=topMessageId();for(int i=0;i<10&&anchor.isEmpty();++i){QTest::qWait(100);anchor=topMessageId();}
         note("scroll anchor recorded",!anchor.isEmpty(),anchor);
         QTest::qWait(900); // let the debounced draft save finish before the first transition
+        QStringList lost; // F-01 regression: every switch keeps the composer and the reading position
         auto snapshot=[&](const QString &surface,int cycle){
             auto c=item("composer"),chat=item("chatView"),web=item("searchThisTurn");
             const auto approvals=app->state().value("approvals").toList();
@@ -2208,6 +2267,18 @@ private slots:
                 {"approvalCards",approvals.isEmpty()?-1:count("approvalRequester_"+approvals.first().toMap().value("id").toString())},
                 {"bubbleVisible",titled("Cere Approval")!=nullptr},{"windows",visibleWindows().join("+")},{"status",app->session().value("status").toString()}};
             reviewNotes.append(s);qInfo().noquote()<<"REVIEW transition"<<QJsonDocument(s).toJson(QJsonDocument::Compact);
+            if(cycle>0){
+                QStringList fields;
+                if(s["text"].toString()!=text)fields<<"text";
+                if(s["cursor"].toInt()!=10||s["selectionStart"].toInt()!=6||s["selectionEnd"].toInt()!=10)fields<<"cursor/selection";
+                if(s["attachments"].toInt()!=1)fields<<"attachments";
+                if(!s["web"].toBool())fields<<"Search web";
+                if(!s["anchorKept"].toBool())fields<<"top message "+s["topMessage"].toString();
+                // Cycle 7 leaves the compact panel on Sessions, so the workspace has no editor to return to.
+                if(!(cycle==7&&surface=="workspace")&&s["focus"].toString()!="TextArea:composer")fields<<"focus "+s["focus"].toString();
+                if(s["windows"].toString().contains('+'))fields<<"windows "+s["windows"].toString();
+                if(!fields.isEmpty())lost<<QString("%1 %2: %3").arg(surface).arg(cycle).arg(fields.join(", "));
+            }
         };
         snapshot("workspace-initial",0);
         auto loaded=[&]{auto c=item("composer");return c&&c->property("text").toString()==text;};
@@ -2224,7 +2295,7 @@ private slots:
             if(cycle==1)capture("review-transition-workspace");
             snapshot("workspace",cycle);
         }
-        note("transition cycles complete",true);
+        note("transition cycles complete",lost.isEmpty(),lost.join("; "));
         if(auto c=item("composer"))c->setProperty("text","");
         if(auto chat=item("chatView"))chat->setProperty("attachments",QVariantList{});
         QTest::qWait(900);
@@ -2242,12 +2313,17 @@ private slots:
             QJsonObject s{{"surface",surface},{"cycle",-1},{"text",c?c->property("text").toString():"missing"},{"status",app->session().value("status").toString()},{"stopVisible",item("stopMessage")!=nullptr},{"activityExpanded",panel?panel->property("expanded").toBool():false},{"focus",focusName()},{"windows",visibleWindows().join("+")}};
             reviewNotes.append(s);qInfo().noquote()<<"REVIEW streaming transition"<<QJsonDocument(s).toJson(QJsonDocument::Compact);
         };
-        reviewCompact();waitFor([&]{auto c=item("composer");return c&&c->property("text").toString()=="typed while streaming";},3000);QTest::qWait(200);streamSnapshot("compact");capture("review-streaming-transition-compact");
-        reviewWorkspace();waitFor([&]{auto c=item("composer");return c&&c->property("text").toString()=="typed while streaming";},3000);QTest::qWait(200);streamSnapshot("workspace");capture("review-streaming-transition-workspace");
+        auto streaming=[&](const QString &surface){
+            auto c=item("composer"),panel=item("activityPanel");
+            if(!c||c->property("text").toString()!="typed while streaming"||!panel||!panel->property("expanded").toBool()||!item("stopMessage"))lost<<"mid-stream "+surface;
+        };
+        reviewCompact();waitFor([&]{auto c=item("composer");return c&&c->property("text").toString()=="typed while streaming";},3000);QTest::qWait(200);streamSnapshot("compact");streaming("compact");capture("review-streaming-transition-compact");
+        reviewWorkspace();waitFor([&]{auto c=item("composer");return c&&c->property("text").toString()=="typed while streaming";},3000);QTest::qWait(200);streamSnapshot("workspace");streaming("workspace");capture("review-streaming-transition-workspace");
         waitFor([&]{return app->session().value("status").toString()=="idle";},10000);
         if(auto c=item("composer"))c->setProperty("text","");
         for(const auto &r:app->state().value("approvals").toList())call("approval.answer",{{"id",r.toMap().value("id")},{"choice","deny"}});
         saveNotes("review-transitions");
+        QVERIFY2(lost.isEmpty(),qPrintable(lost.join("; ")));
     }
     void reviewResponsiveness(){
         app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
@@ -2364,7 +2440,7 @@ private slots:
     }
     void reviewSurfacesAtScale(){
         app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
-        QQuickWindow *original=window;
+        QQuickWindow *original=window;QStringList unreachable;
         if(!longSession.isEmpty()){app->select(longSession);QTest::qWait(400);}
         for(auto screen:qGuiApp->screens()){
             const auto g=screen->availableGeometry();
@@ -2377,14 +2453,19 @@ private slots:
                 capture(tag);
                 int outside=0;std::function<void(QQuickItem*)> bounds=[&](QQuickItem *node){if(!node->isVisible())return;const QByteArray type=node->metaObject()->className();if(type.startsWith("CButton_")||type.startsWith("CField_")||type.startsWith("CComboBox_")||type.startsWith("CCheckBox_")){const auto p=node->mapToItem(view.rootObject(),QPointF());if(p.x()<-1||p.x()+node->width()>view.width()+1)++outside;}for(auto c:node->childItems())bounds(c);};
                 bounds(view.rootObject());
-                auto tools=item("conversationTools"),card=item("composerCard"),area=item("conversationArea");
+                auto tools=item("conversationTools"),card=item("composerCard"),area=item("conversationArea"),page=item("chatPage"),more=item("conversationMore");
                 const double toolsBottom=tools?tools->mapToScene(QPointF(0,tools->height())).y():-1,cardBottom=card?card->mapToScene(QPointF(0,card->height())).y():-1;
-                note(tag,outside==0&&(!tools||toolsBottom<=view.height()+1),QString("size=%1x%2 dpr=%3 controlsOutsideX=%4 toolsBottom=%5 composerBottom=%6 conversationHeight=%7").arg(view.width()).arg(view.height()).arg(view.devicePixelRatio()).arg(outside).arg(toolsBottom).arg(cardBottom).arg(area?area->height():-1));
+                // F-03: the tools are either in their row or behind More, and anything below the window scrolls into view.
+                const double lowest=std::max(toolsBottom,cardBottom);
+                const bool reachable=(tools||more)&&(lowest<=view.height()+1||(page&&page->property("interactive").toBool()));
+                note(tag,outside==0&&reachable,QString("size=%1x%2 dpr=%3 controlsOutsideX=%4 toolsBottom=%5 composerBottom=%6 conversationHeight=%7 folded=%8 pageScrolls=%9").arg(view.width()).arg(view.height()).arg(view.devicePixelRatio()).arg(outside).arg(toolsBottom).arg(cardBottom).arg(area?area->height():-1).arg(more!=nullptr).arg(page&&page->property("interactive").toBool()));
+                if(outside!=0||!reachable)unreachable<<tag;
                 if(file=="Workspace.qml"){view.resize(720,580);QTest::qWait(400);capture(tag+"-min");outside=0;bounds(view.rootObject());note(tag+"-min",outside==0,QString("controlsOutsideX=%1").arg(outside));}
                 view.hide();
             }
         }
         window=original;saveNotes("review-scales");
+        QVERIFY2(unreachable.isEmpty(),qPrintable(unreachable.join(", ")));
     }
     void reviewWorkflows(){
         app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true},{"webSearch",QVariantMap{{"enabled",true}}}});
@@ -2439,7 +2520,7 @@ private slots:
         reviewCompact();QTest::qWait(300);capture("review-workflow-error-compact");
         note("error banner in compact",!app->session().value("error").toString().isEmpty());
         // Handoff from the compact panel.
-        click("chatHandoff");QTest::qWait(300);note("handoff dialog open",item("handoffCreate")!=nullptr);capture("review-workflow-handoff-compact");
+        tool("chatHandoff","menuHandoff");QTest::qWait(300);note("handoff dialog open",item("handoffCreate")!=nullptr);capture("review-workflow-handoff-compact");
         if(auto trust=item("handoffTrust")){trust->setProperty("checked",true);}
         if(auto create=item("handoffCreate")){note("handoff create enabled",create->isEnabled());const auto previous=app->selectedId();QMetaObject::invokeMethod(create,"clicked");
             note("handoff session created with draft",waitFor([&]{return app->selectedId()!=previous&&item("composer")&&item("composer")->property("text").toString().startsWith("Continue this work");},8000),item("composer")?item("composer")->property("text").toString().left(60):"");

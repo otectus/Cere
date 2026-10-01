@@ -30,6 +30,15 @@ export type Session = {
   folderId?: string; pinned?: boolean; archived?: boolean; readAt?: number; unread?:boolean;
   draftAttachments?: Attachment[];
   temporary?: boolean;
+  view?: DraftView;
+};
+/** Desktop composer and reading position, carried between the compact panel and the workspace. */
+export type DraftView = {
+  cursor: number; selectionStart: number; selectionEnd: number;
+  webSearch: boolean; activityExpanded: boolean;
+  // The message at the top of the conversation; the offset is how far into it, in ten-thousandths of its height.
+  anchorId: string; anchorOffset: number; atEnd: boolean;
+  focus: '' | 'composer';
 };
 export type Attachment = { id: string; path: string; name: string; mime: string; kind: 'image' | 'text'; size: number; sha256: string };
 export type SessionFolder = { id: string; name: string; revision: string; created: number; updated: number };

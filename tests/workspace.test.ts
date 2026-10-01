@@ -52,6 +52,23 @@ test('attachment drafts are revisioned, owned and immutable across source change
   await writeFile(attachment.path,'Tampered copy');await assert.rejects(core.attachments.content(session.id,[attachment.id]),/changed/);
   assert.equal(saved.draftRevision,'2');
 });
+test('draft views travel with the draft without reordering sessions or bumping its revision',async t=>{
+  const {core,session}=await setup(t);
+  const view={cursor:4,selectionStart:2,selectionEnd:6,webSearch:true,activityExpanded:true,anchorId:'message-7',anchorOffset:38.6,atEnd:false,focus:'composer'};
+  const saved=await core.rpc('session.draft',{id:session.id,text:'Read this part',attachmentIds:[],expectedRevision:'0',view});
+  assert.deepEqual(saved.view,{...view,anchorOffset:39});assert.equal(saved.draftRevision,'1');
+  // Moving between surfaces saves only the view: no new draft revision and no new place in recent order.
+  core.store.saveSession({...core.store.session(session.id),updated:1000});
+  const moved=await core.rpc('session.draft',{id:session.id,text:'Read this part',attachmentIds:[],expectedRevision:'1',view:{...view,atEnd:true,anchorId:''}});
+  assert.equal(moved.draftRevision,'1');assert.equal(moved.updated,1000);assert.equal(moved.view.atEnd,true);
+  // Positions are clamped to the draft, unknown fields dropped, and malformed views refused.
+  const clamped=await core.rpc('session.draft',{id:session.id,text:'Hi',attachmentIds:[],view:{cursor:99,selectionStart:-4,selectionEnd:1.7,focus:'elsewhere',extra:true}});
+  assert.deepEqual(clamped.view,{cursor:2,selectionStart:0,selectionEnd:1,webSearch:false,activityExpanded:false,anchorId:'',anchorOffset:0,atEnd:true,focus:''});
+  await assert.rejects(core.rpc('session.draft',{id:session.id,text:'Hi',view:'cursor'}),/Invalid draft view/);
+  // Sending consumes the draft and its view, so a stale Search web choice never reaches the next message.
+  await core.send({id:session.id,text:'Hi',expectedDraftRevision:core.store.session(session.id).draftRevision});
+  assert.equal(core.store.session(session.id).draft,'');assert.equal(core.store.session(session.id).view,undefined);
+});
 test('failed local submissions preserve recoverable text without replaying a provider call',async t=>{
   const {core,session}=await setup(t,true);
   const draft=await core.rpc('session.draft',{id:session.id,text:'A valuable draft',attachmentIds:[]});

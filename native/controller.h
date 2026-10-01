@@ -133,6 +133,10 @@ public:
     Q_INVOKABLE void openCompanionReply(const QString &replyId);
     Q_INVOKABLE QVariantMap questionDraft(const QString &approvalId) const { return m_questionDrafts.value(approvalId); }
     Q_INVOKABLE void setQuestionDraft(const QString &approvalId, const QVariantMap &answers);
+    // Row of a message in the conversation view, or -1 while it is not loaded.
+    Q_INVOKABLE int transcriptRow(const QString &messageId) const;
+    // Sends a draft save once the save it depends on succeeds, even if its editor is gone by then.
+    Q_INVOKABLE void deferDraft(int afterRequest, const QVariantMap &params);
     // The pet's current logical placement in global coordinates (diagnostics and tests).
     QPoint petPosition() const { return m_petPosition; }
     void start(bool show);
@@ -164,6 +168,7 @@ private:
     QVariantMap m_state, m_animations;
     QVariantList m_messages;
     QHash<QString,QVariantMap> m_questionDrafts;
+    QHash<int,QVariantMap> m_deferredDrafts;
     TranscriptModel m_transcript;
     TranscriptFilter m_replies{false},m_activity{true};
     QHash<int,QString> m_requests;
@@ -215,6 +220,7 @@ private:
     void failPendingRequests(const QString &message);
     void updateMask();
     void positionPanel();
+    void floatPanel();
     void syncApprovalBubble();
     void positionApprovalBubble();
     void roam();

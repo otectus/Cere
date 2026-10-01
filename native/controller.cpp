@@ -167,7 +167,7 @@ void Controller::connectBroker(){
 }
 void Controller::failPendingRequests(const QString &message){
     const auto pending=std::exchange(m_requests,{});
-    m_messagesRequest=-1;m_olderRequest=-1;m_copies.clear();m_liveMessages.clear();
+    m_messagesRequest=-1;m_olderRequest=-1;m_copies.clear();m_liveMessages.clear();m_deferredDrafts.clear();
     for(auto it=pending.cbegin();it!=pending.cend();++it)emit result(it.key(),QVariantMap{{"error",message},{"code","CONNECTION_LOST"}});
 }
 // Refetches the newest transcript page without clearing the selection or composer.
@@ -224,7 +224,7 @@ void Controller::receive(){
                 const auto error=object["error"].toObject();
                 if(id==m_messagesRequest)m_messagesRequest=-1;
                 if(id==m_olderRequest)m_olderRequest=-1;
-                m_copies.remove(id);
+                m_copies.remove(id);m_deferredDrafts.remove(id);
                 notify(error["message"].toString());emit result(id,QVariantMap{{"error",error["message"].toString()},{"code",error["code"].toString()}});continue;
             }
             auto value=object["result"].toVariant();
@@ -280,6 +280,7 @@ void Controller::receive(){
             }
             if(method=="session.create")select(value.toMap().value("id").toString());
             emit result(id,value);
+            if(m_deferredDrafts.contains(id)){auto params=m_deferredDrafts.take(id);params["expectedRevision"]=value.toMap().value("draftRevision");rpc("session.draft",params);}
         }else{
             QString method=object["method"].toString();auto params=object["params"].toObject().toVariantMap();
             if(method=="state")applyState(params);
@@ -360,6 +361,14 @@ void Controller::setQuestionDraft(const QString &approvalId,const QVariantMap &a
     for(const auto &entry:m_state.value("approvals").toList())if(entry.toMap().value("id").toString()==approvalId){pending=true;break;}
     if(!pending||m_questionDrafts.value(approvalId)==answers)return;
     m_questionDrafts.insert(approvalId,answers);emit questionDraftsChanged();
+}
+int Controller::transcriptRow(const QString &messageId) const{
+    for(int row=0;row<m_replies.rowCount();++row)if(m_replies.data(m_replies.index(row,0),Qt::UserRole+1).toMap().value("id").toString()==messageId)return row;
+    return -1;
+}
+void Controller::deferDraft(int afterRequest,const QVariantMap &params){
+    // Without its predecessor there is no confirmed revision to build on; never save blind.
+    if(m_requests.contains(afterRequest))m_deferredDrafts.insert(afterRequest,params);
 }
 void Controller::select(const QString &id){if(m_selected==id)return;m_selected=id;m_messages.clear();m_olderCursor=0;m_olderRequest=-1;m_transcript.reset({});emit messagesChanged();emit stateChanged();reloadMessages();publishAttention();refreshMotion();}
 QQuickView *Controller::view(const QString &file,bool layer,const QString &title){
@@ -539,14 +548,33 @@ void Controller::dockPet(const QString &edge){
 void Controller::resizePet(qreal factor){rpc("settings.update",{{"scale",std::clamp(factor,.5,3.)}});}
 void Controller::togglePanel(){
     if(m_panel&&m_panel->isVisible()){closePanel();return;}
-    if(m_panel&&m_expanded){delete m_panel;m_panel=nullptr;}
+    if(m_panel&&m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}
     m_expanded=false;if(!m_panel)m_panel=view("Panel.qml",m_overlay,"Cere Panel");
     stopRoaming(true);
     // One placement rectangle sizes and positions the panel, so short outputs stay valid.
-    m_panel->resize(Placement::compactPanel(m_screen?m_screen->availableGeometry():QRect(0,0,464,912),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860)).size());positionPanel();m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");
+    m_panel->resize(Placement::compactPanel(m_screen?m_screen->availableGeometry():QRect(0,0,464,912),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860)).size());positionPanel();m_panel->show();m_panel->requestActivate();floatPanel();refreshMotion();preview("listen");
 }
-void Controller::positionPanel(){if(!m_panel||m_expanded||!m_screen)return;auto g=m_screen->geometry();const auto rect=Placement::compactPanel(m_screen->availableGeometry(),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860));if(m_panel->size()!=rect.size())m_panel->resize(rect.size());const int x=rect.x(),y=rect.y();m_panel->setScreen(m_screen);
-    if(m_overlay&&qGuiApp->platformName().startsWith("wayland")){auto shell=LayerShellQt::Window::get(m_panel);shell->setScreen(m_screen);shell->setDesiredSize(m_panel->size());shell->setMargins({x-g.x(),y-g.y(),0,0});}else m_panel->setPosition(x,y);
+void Controller::positionPanel(){if(!m_panel||m_expanded||!m_screen)return;auto g=m_screen->geometry();const auto rect=Placement::compactPanel(m_screen->availableGeometry(),m_petPosition,m_pet?m_pet->size():QSize(192,208),QSize(440,860));
+    const bool layer=m_overlay&&qGuiApp->platformName().startsWith("wayland");
+    // The output comes first: moving between scales resizes a window to keep its physical size.
+    m_panel->setScreen(m_screen);
+    // An ordinary window cannot place itself on Wayland: a fixed size lets Hyprland keep it
+    // compact once floated, and the compositor moves it beside the pet.
+    if(!layer&&qGuiApp->platformName().startsWith("wayland")){m_panel->setMaximumSize(QSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX));m_panel->setMinimumSize(rect.size());m_panel->setMaximumSize(rect.size());}
+    if(m_panel->size()!=rect.size())m_panel->resize(rect.size());const int x=rect.x(),y=rect.y();
+    if(layer){auto shell=LayerShellQt::Window::get(m_panel);shell->setScreen(m_screen);shell->setDesiredSize(m_panel->size());shell->setMargins({x-g.x(),y-g.y(),0,0});return;}
+    m_panel->setPosition(x,y);
+    if(m_panel->isVisible()&&qGuiApp->platformName().startsWith("wayland")&&!qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))
+        hyprDispatch(QString("hl.dsp.window.move({window=\"title:^Cere Panel$\",x=%1,y=%2,relative=false})").arg(x).arg(y).toUtf8(),QString("movewindowpixel exact %1 %2,title:^Cere Panel$").arg(x).arg(y).toUtf8());
+}
+// Without always-on-top the compact panel is a normal window; Hyprland would otherwise tile it.
+void Controller::floatPanel(){
+    if(m_overlay||m_expanded||!m_panel||!qGuiApp->platformName().startsWith("wayland")||qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))return;
+    QTimer::singleShot(100,this,[this]{
+        if(!m_panel||m_expanded||!m_panel->isVisible())return;
+        hyprDispatch("hl.dsp.window.float({window=\"title:^Cere Panel$\",action=\"set\"})","setfloating title:^Cere Panel$");
+        positionPanel();
+    });
 }
 void Controller::syncApprovalBubble(){
     const auto panels=m_state.value("panels").toMap();
@@ -558,6 +586,7 @@ void Controller::syncApprovalBubble(){
     const bool hasApprovals=!m_state.value("approvals").toList().isEmpty();
     const bool show=connected()&&m_pet&&m_pet->isVisible()&&!m_dragging
         &&(hasReplies||(!panelVisible&&(hasApprovals||hasCompletion)));
+    if(m_bubble&&m_bubble->rootObject())m_bubble->rootObject()->setProperty("panelOpen",panelVisible);
     if(!show){if(m_bubble)m_bubble->hide();return;}
     if(!m_bubble){
         m_bubble=view("ApprovalBubble.qml",m_overlay,"Cere Approval");
@@ -567,7 +596,10 @@ void Controller::syncApprovalBubble(){
         connect(m_bubble,&QWindow::visibilityChanged,this,[this]{
             QTimer::singleShot(0,this,&Controller::syncApprovalBubble);
         });
-        if(m_bubble->rootObject())connect(m_bubble->rootObject(),&QQuickItem::implicitHeightChanged,this,&Controller::positionApprovalBubble);
+        if(m_bubble->rootObject()){
+            m_bubble->rootObject()->setProperty("panelOpen",panelVisible);
+            connect(m_bubble->rootObject(),&QQuickItem::implicitHeightChanged,this,&Controller::positionApprovalBubble);
+        }
     }
     // Passive replies must not take the keyboard from the user's current app.
     // Layer-shell already uses on-demand focus with activate-on-show disabled.
@@ -605,9 +637,9 @@ void Controller::positionApprovalBubble(){
     }
 }
 void Controller::closePanel(){emit flushDrafts();if(m_panel)m_panel->hide();refreshMotion();}
-void Controller::restorePanel(){if(!m_panel){togglePanel();return;}m_panel->show();m_panel->requestActivate();refreshMotion();}
+void Controller::restorePanel(){if(!m_panel){togglePanel();return;}m_panel->show();m_panel->requestActivate();floatPanel();refreshMotion();}
 void Controller::expand(){emit flushDrafts();rpc("ui.expand");}
-void Controller::showWorkspace(){stopRoaming(true);if(m_panel&&!m_expanded){delete m_panel;m_panel=nullptr;}m_expanded=true;if(!m_panel){m_panel=view("Workspace.qml",false,"Cere");m_panel->resize(1040,780);m_panel->setMinimumSize({720,580});connect(m_panel,&QWindow::visibleChanged,this,[this]{refreshMotion();});}m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");}
+void Controller::showWorkspace(){stopRoaming(true);if(m_panel&&!m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}m_expanded=true;if(!m_panel){m_panel=view("Workspace.qml",false,"Cere");m_panel->resize(1040,780);m_panel->setMinimumSize({720,580});connect(m_panel,&QWindow::visibleChanged,this,[this]{refreshMotion();});}m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");}
 void Controller::copy(const QString &text){QGuiApplication::clipboard()->setText(text);notify("Copied to clipboard");preview("copy");}
 void Controller::openPath(const QString &path){QDesktopServices::openUrl(QUrl::fromLocalFile(path));}
 void Controller::formatMessage(QQuickTextDocument *quickDocument){

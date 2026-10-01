@@ -139,43 +139,40 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: 8
             Rectangle {
-                Layout.preferredWidth: identity.implicitWidth + 12
+                Layout.alignment: Qt.AlignTop
+                Layout.preferredWidth: badge.implicitWidth + 12
                 Layout.preferredHeight: 22
                 radius: 5
                 color: card.isQuestion ? "#173746" : "#3a3021"
                 border.color: card.isQuestion ? Theme.cyan : Theme.amber
                 CText {
-                    id: identity
+                    id: badge
                     anchors.centerIn: parent
                     text: card.isQuestion ? "QUESTION" : "PERMISSION"
                     color: card.isQuestion ? Theme.cyan : Theme.amber
-                    font.pixelSize: 9
+                    font.pixelSize: 11
                     font.bold: true
                     font.letterSpacing: 1
                 }
             }
-            Text {
+            // A response answers exactly this requester, so every line stays readable.
+            SessionIdentity {
                 objectName: "approvalRequester_" + card.approvalId
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                text: card.requester
-                    ? card.requester.provider.toUpperCase() + " · " + card.requester.title + " · " + card.requester.id.slice(0, 8) + "\n" + card.requester.cwd
-                    : card.approval.sessionId
-                        ? "Ended conversation · " + card.approval.sessionId.slice(0, 8)
-                        : "Cere desktop · manual request"
-                textFormat: Text.PlainText
-                color: Theme.muted
-                font.pixelSize: 11
-                elide: Text.ElideMiddle
-                maximumLineCount: 2
-                wrapMode: Text.Wrap
+                provider: card.requester ? card.requester.provider : ""
+                sessionId: card.requester ? card.requester.id : ""
+                title: card.requester ? card.requester.title : ""
+                cwd: card.requester ? card.requester.cwd : ""
+                fallback: card.approval.sessionId ? "Ended conversation · " + card.approval.sessionId.slice(0, 8) : "Cere desktop · manual request"
             }
             CButton {
+                Layout.alignment: Qt.AlignTop
                 visible: !!card.requester && App.selectedId !== card.approval.sessionId
                 text: "Open"
-                implicitHeight: 26
+                implicitHeight: 28
                 help: "Open the requesting conversation"
                 onClicked: App.selectedId = card.approval.sessionId
             }

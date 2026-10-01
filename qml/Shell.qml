@@ -237,6 +237,11 @@ Rectangle {
         }
     }
     Connections { target:App;function onAttachmentRequested(path){shell.page=0} }
+    // The compact panel is for a quick ask: opening it puts the keyboard in the composer.
+    Connections {
+        target:shell.Window.window
+        function onVisibleChanged(){if(shell.Window.window&&shell.Window.window.visible&&!shell.expanded&&shell.page===0)Qt.callLater(()=>conversation.focusComposer())}
+    }
     NewSession { id:newSession;objectName:"createSessionDialog";onSessionOpened:shell.openConversation() }
     PermissionCenter { id:permissionCenter }
     Workflows { id:workflows;onSessionRequested:id=>{App.selectedId=id;shell.openConversation()} }
