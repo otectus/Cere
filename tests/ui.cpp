@@ -16,6 +16,7 @@
 #include <QTextFragment>
 #include <QTextTable>
 #include <QTextList>
+#include <QAbstractTextDocumentLayout>
 #include <QScreen>
 #include <QQmlContext>
 #include <QQmlExpression>
@@ -130,6 +131,12 @@ private slots:
         QVERIFY(search->mapToScene(QPointF()).y()>=0);
         search->setProperty("text","no-such-setting");QTRY_COMPARE(picker->property("count").toInt(),0);
         search->setProperty("text","");QTRY_COMPARE(picker->property("count").toInt(),11);
+        // F-05: the pairing response editor is a plain TextArea; Tab leaves it and inserts nothing.
+        auto pairing=item("pairingResponse");QVERIFY(pairing);
+        pairing->forceActiveFocus();QTRY_VERIFY(pairing->hasActiveFocus());
+        QTest::keyClick(window,Qt::Key_Tab);
+        QTRY_VERIFY2(!pairing->hasActiveFocus(),"Tab stayed in the pairing response editor");
+        QVERIFY2(pairing->property("text").toString().isEmpty(),"Tab inserted text into the pairing response editor");
         scroll->setProperty("contentY",0);click("tab_Chat");
     }
     void workspaceTelemetryControls(){
@@ -1991,6 +1998,25 @@ Unicode: café ✦ 日本語
             QVERIFY2(onOutput,qPrintable(QString("panel at %1,%2").arg(geometry.x()).arg(geometry.y())));
         }
     }
+    // F-09: without always-on-top the approval bubble is a normal window, yet it must not take the
+    // keyboard from the application the user is typing in.
+    void approvalBubbleNeverTakesFocus(){
+        if(!qGuiApp->platformName().startsWith("wayland")||qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))QSKIP("Needs the live Hyprland compositor");
+        const auto restore=qScopeGuard([&]{
+            for(const auto &r:app->state().value("approvals").toList())call("approval.answer",{{"id",r.toMap().value("id")},{"choice","deny"}});
+            app->rpc("settings.update",{{"topmost",true},{"quiet",false},{"reducedMotion",false}});restoreWorkspace();
+        });
+        app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true},{"hidden",false}});QTest::qWait(600);
+        const auto session=createSession("codex","Bubble focus");QVERIFY(!session.isEmpty());
+        app->closePanel();QTest::qWait(600);
+        auto active=[&]{return hypr({"-j","activewindow"}).object().value("title").toString();};
+        const QString before=active();
+        call("session.send",{{"id",session},{"text","approval"}});
+        QQuickWindow *bubble=nullptr;QTRY_VERIFY_WITH_TIMEOUT((bubble=titled("Cere Approval")),8000);
+        QTest::qWait(900);
+        QVERIFY2(active()!="Cere Approval",qPrintable("Hyprland gave the bubble the keyboard; active before: "+before));
+        QVERIFY2(!bubble->isActive(),"the bubble became the active window");
+    }
     // F-037: roaming crosses output seams without jumps at every scale.
     void roamingPlacementIsContinuousAcrossOutputs(){
         QList<QPair<QScreen*,QScreen*>> seams;
@@ -2207,17 +2233,30 @@ private slots:
         waitFor([&]{return app->session().value("status").toString()=="idle"&&app->messages().size()>=2;},10000);QTest::qWait(500);
         for(const auto &m:app->messages())if(m.toMap().value("role")=="assistant"&&m.toMap().value("text").toString().contains("Review fixture"))richMessageId=m.toMap().value("id").toString();
         note("rich reply persisted",!richMessageId.isEmpty());
+        QStringList wideProse; // F-10: prose wraps within the visible width; only code and tables may reach past it
         auto inspect=[&](const QString &label){
             auto viewport=item("messageViewport_"+richMessageId),body=item("messageBody_"+richMessageId);
-            if(!viewport||!body){note(label+" rich message visible",false);return;}
+            if(!viewport||!body){note(label+" rich message visible",false);wideProse<<label+" missing";return;}
             const double content=viewport->property("contentWidth").toDouble();
-            note(label+" rich message width",true,QString("viewport=%1 content=%2 body=%3 overflow=%4").arg(viewport->width()).arg(content).arg(body->width()).arg(content>viewport->width()+1));
+            auto document=body->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+            double widestProse=0;int proseBlocks=0;
+            for(auto block=document->begin();block.isValid();block=block.next()){
+                const auto format=block.blockFormat();
+                if(format.hasProperty(QTextFormat::BlockCodeFence)||format.hasProperty(QTextFormat::BlockCodeLanguage)||QTextCursor(block).currentTable()||!block.layout())continue;
+                const auto rect=document->documentLayout()->blockBoundingRect(block);++proseBlocks;
+                // An empty line has no extent, wherever Qt places it.
+                for(int i=0;i<block.layout()->lineCount();++i){const auto line=block.layout()->lineAt(i);if(line.naturalTextWidth()>0)widestProse=std::max(widestProse,rect.x()+line.x()+line.naturalTextWidth());}
+            }
+            const bool fits=proseBlocks>0&&widestProse<=viewport->width()+1;
+            note(label+" rich message width",fits,QString("viewport=%1 content=%2 body=%3 overflow=%4 widestProse=%5 proseBlocks=%6").arg(viewport->width()).arg(content).arg(body->width()).arg(content>viewport->width()+1).arg(widestProse).arg(proseBlocks));
+            if(!fits)wideProse<<QString("%1 prose %2 > %3").arg(label).arg(widestProse).arg(viewport->width());
         };
         window->resize(1040,780);QTest::qWait(400);inspect("workspace 1040");capture("review-rich-reply-workspace-1040");
         window->resize(720,580);QTest::qWait(500);inspect("workspace 720");capture("review-rich-reply-workspace-720");
         window->resize(1040,780);QTest::qWait(300);
         reviewCompact();waitFor([&]{return item("messageBody_"+richMessageId)!=nullptr;});QTest::qWait(400);inspect("compact 440");capture("review-rich-reply-compact");
         reviewWorkspace();saveNotes("review-long-content");
+        if(!richMessageId.isEmpty())QVERIFY2(wideProse.isEmpty(),qPrintable(wideProse.join("; ")));
     }
     void reviewApprovalsAndKeyboard(){
         app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
@@ -2236,6 +2275,12 @@ private slots:
         for(int i=0;i<60;++i){QTest::keyClick(window,Qt::Key_Tab);QTest::qWait(15);const auto name=focusName();chain<<name;if(name==first&&i>2)break;}
         note("compact tab chain from composer",true,first+" > "+chain.join(" > "));
         note("composer text after Tab",composer&&composer->property("text").toString().isEmpty(),composer?composer->property("text").toString():"missing");
+        // F-05: Tab leaves the composer at once, inserts nothing, and comes back around (no trap).
+        QVERIFY2(composer&&composer->property("text").toString().isEmpty(),"Tab inserted text into the composer");
+        QVERIFY2(!chain.isEmpty()&&chain.first()!=first,qPrintable("Tab stayed in "+first));
+        QVERIFY2(chain.contains(first),qPrintable("Tab never returned to the composer: "+chain.join(" > ")));
+        composer->forceActiveFocus();QTest::keyClick(window,Qt::Key_Backtab);QTest::qWait(15);
+        QVERIFY2(focusName()!=first&&composer->property("text").toString().isEmpty(),qPrintable("Shift+Tab stayed in the composer: "+focusName()));
         if(composer)composer->setProperty("text","");
         if(!requests().isEmpty()){
             const auto allowId=requests().first().toMap().value("id").toString();
@@ -2253,7 +2298,7 @@ private slots:
         if(bubble){
             window=bubble;QTest::qWait(500);capture("review-approvals-bubble");
             note("bubble has no default-focused control",!bubble->activeFocusItem()||bubble->activeFocusItem()==bubble->contentItem(),focusName());
-            note("bubble is the active window",bubble->isActive());
+            note("bubble leaves the keyboard alone",!bubble->isActive());
             QTest::keyClick(window,Qt::Key_Tab);QTest::qWait(30);note("bubble first Tab target",true,focusName());
             const int before=requests().size();QTest::keyClick(window,Qt::Key_Return);QTest::qWait(500);
             note("Enter in bubble does not approve",requests().size()==before,focusName());
@@ -2439,7 +2484,11 @@ private slots:
                 const bool control=type.startsWith("CButton_")||type.startsWith("CActionRow_")||type.startsWith("CField_")||type.startsWith("CComboBox_")||type.startsWith("CSpinBox_")||type.startsWith("CCheckBox_")||type.startsWith("CSlider_")||type.startsWith("CScrollBar_")||type.startsWith("CerePortrait_")||type.startsWith("VoiceInput_")||type.startsWith("QQuickTextArea")||type.startsWith("QQuickTextField")||type.startsWith("QQuickScrollBar")||type.startsWith("QQuickCheckBox")||type.startsWith("QQuickButton")||type.startsWith("QQuickSlider")||type.startsWith("QQuickSpinBox")||type.startsWith("QQuickComboBox");
                 if(control){
                     ++total;QString name;int role=0;
-                    if(auto iface=QAccessible::queryAccessibleInterface(node)){name=iface->text(QAccessible::Name);role=int(iface->role());}
+                    if(auto iface=QAccessible::queryAccessibleInterface(node)){
+                        name=iface->text(QAccessible::Name);role=int(iface->role());
+                        // Qt drops the name of password fields; screen readers announce their description instead.
+                        if(name.isEmpty()&&iface->state().passwordEdit)name=iface->text(QAccessible::Description);
+                    }
                     const bool tiny=node->width()<24||node->height()<24;if(tiny)++small;if(name.trimmed().isEmpty())++unnamed;
                     rows.append(QJsonObject{{"type",QString(type).section('_',0,0)},{"objectName",node->objectName()},{"name",name},{"role",role},{"w",node->width()},{"h",node->height()},{"focusable",node->activeFocusOnTab()},{"tiny",tiny}});
                     if(!type.startsWith("QQuickScrollBar")&&!type.startsWith("CScrollBar_"))return; // inner labels are not separate targets
@@ -2452,7 +2501,11 @@ private slots:
         };
         inventory("workspace-chat");click("tab_Desktop");QTest::qWait(600);inventory("workspace-desktop");click("tab_Settings");QTest::qWait(300);inventory("workspace-settings");click("tab_Sessions");QTest::qWait(300);inventory("workspace-sessions");click("tab_Chat");
         reviewCompact();QTest::qWait(300);inventory("compact-chat");click("tab_Desktop");QTest::qWait(600);inventory("compact-desktop");click("tab_Chat");
-        reviewWorkspace();saveNotes("review-accessibility");
+        reviewWorkspace();
+        // F-08 and F-18: every control, including scroll bars and API key fields, has an accessible name.
+        QStringList unnamed;for(const auto &value:reviewNotes){const auto s=value.toObject();if(s["unnamed"].toInt()>0)for(const auto &row:s["rows"].toArray())if(row.toObject()["name"].toString().trimmed().isEmpty())unnamed<<s["surface"].toString()+":"+row.toObject()["type"].toString()+":"+row.toObject()["objectName"].toString();}
+        saveNotes("review-accessibility");
+        QVERIFY2(unnamed.isEmpty(),qPrintable(unnamed.join(", ")));
     }
     void reviewLiveOutputs(){
         if(!qGuiApp->platformName().startsWith("wayland"))QSKIP("Layer-shell surfaces need the live compositor");
@@ -2511,7 +2564,14 @@ private slots:
                 const bool reachable=(tools||more)&&(lowest<=view.height()+1||(page&&page->property("interactive").toBool()));
                 note(tag,outside==0&&reachable,QString("size=%1x%2 dpr=%3 controlsOutsideX=%4 toolsBottom=%5 composerBottom=%6 conversationHeight=%7 folded=%8 pageScrolls=%9").arg(view.width()).arg(view.height()).arg(view.devicePixelRatio()).arg(outside).arg(toolsBottom).arg(cardBottom).arg(area?area->height():-1).arg(more!=nullptr).arg(page&&page->property("interactive").toBool()));
                 if(outside!=0||!reachable)unreachable<<tag;
-                if(file=="Workspace.qml"){view.resize(720,580);QTest::qWait(400);capture(tag+"-min");outside=0;bounds(view.rootObject());note(tag+"-min",outside==0,QString("controlsOutsideX=%1").arg(outside));}
+                if(file=="Workspace.qml"){
+                    // F-07: at the 720x520 minimum every control stays inside or scrolls into view.
+                    view.resize(720,520);QTest::qWait(400);capture(tag+"-min");outside=0;bounds(view.rootObject());
+                    auto minCard=item("composerCard"),minPage=item("chatPage");
+                    const bool minReachable=minCard&&(minCard->mapToScene(QPointF(0,minCard->height())).y()<=view.height()+1||(minPage&&minPage->property("interactive").toBool()));
+                    note(tag+"-min",outside==0&&minReachable,QString("controlsOutsideX=%1 composerReachable=%2").arg(outside).arg(minReachable));
+                    if(outside!=0||!minReachable)unreachable<<tag+"-min";
+                }
                 view.hide();
             }
         }

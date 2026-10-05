@@ -43,7 +43,10 @@ CSection {
         Layout.fillWidth:true;Layout.preferredHeight:100;clip:true;contentWidth:availableWidth
         ScrollBar.horizontal.policy:ScrollBar.AlwaysOff
         ScrollBar.vertical:CScrollBar{}
-        TextArea { id:response;wrapMode:TextEdit.Wrap;selectByMouse:true;placeholderText:"Paste the phone’s public signed response";color:Theme.text;font.pixelSize:12;Accessible.name:"Phone pairing response";onTextChanged:remote.review=({});background:Rectangle{color:Theme.input} }
+        TextArea { id:response;objectName:"pairingResponse";wrapMode:TextEdit.Wrap;selectByMouse:true;placeholderText:"Paste the phone’s public signed response";color:Theme.text;font.pixelSize:12;Accessible.name:"Phone pairing response";onTextChanged:remote.review=({});background:Rectangle{color:Theme.input}
+            // Tab and Shift+Tab move between controls, as in CTextArea.
+            Keys.onTabPressed:event=>{const next=response.nextItemInFocusChain(true);if(next&&next!==response)next.forceActiveFocus(Qt.TabFocusReason);event.accepted=true}
+            Keys.onBacktabPressed:event=>{const previous=response.nextItemInFocusChain(false);if(previous&&previous!==response)previous.forceActiveFocus(Qt.BacktabFocusReason);event.accepted=true} }
     }
     CButton { text:"Verify phone response";enabled:remote.requestId<0&&response.text.trim().length>0;onClicked:remote.call("remote.reviewPair",{response:response.text.trim()}) }
     CText { visible:!!remote.review.sas;text:(remote.review.name||"Phone")+" · Compare both screens:\n"+(remote.review.sas||"")+"\n"+(remote.review.actionAuthentication==="trusted-device"?"Trusted phone: no fingerprint or PIN":"Actions require fingerprint or PIN");color:Theme.cyan;font.pixelSize:16 }

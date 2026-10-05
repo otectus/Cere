@@ -113,7 +113,8 @@ public:
     Q_INVOKABLE QVariantMap clipboardContent();
     Q_INVOKABLE void openPath(const QString &path);
     Q_INVOKABLE void openMessageLink(const QString &link, const QString &directory);
-    Q_INVOKABLE void formatMessage(QQuickTextDocument *document);
+    // proseWidth: the visible width; paragraphs wrap there even when a table or code block is wider.
+    Q_INVOKABLE void formatMessage(QQuickTextDocument *document, qreal proseWidth=0);
     Q_INVOKABLE QString chooseFolder();
     Q_INVOKABLE QString chooseImage();
     Q_INVOKABLE QString chooseFile();
@@ -137,6 +138,8 @@ public:
     Q_INVOKABLE int transcriptRow(const QString &messageId) const;
     // Sends a draft save once the save it depends on succeeds, even if its editor is gone by then.
     Q_INVOKABLE void deferDraft(int afterRequest, const QVariantMap &params);
+    // The approval bubble takes keyboard focus only while the pointer is over it.
+    Q_INVOKABLE void setBubbleFocusable(bool focusable);
     // The pet's current logical placement in global coordinates (diagnostics and tests).
     QPoint petPosition() const { return m_petPosition; }
     void start(bool show);
@@ -169,6 +172,7 @@ private:
     QVariantList m_messages;
     QHash<QString,QVariantMap> m_questionDrafts;
     QHash<int,QVariantMap> m_deferredDrafts;
+    bool m_bubbleFocusable=false;
     TranscriptModel m_transcript;
     TranscriptFilter m_replies{false},m_activity{true};
     QHash<int,QString> m_requests;

@@ -37,18 +37,21 @@ Rectangle {
                 property bool formatting:false
                 property real overflowWidth:0
                 function expandForOverflow(){if(contentWidth>width+1)overflowWidth=Math.ceil(contentWidth)}
+                // Prose is formatted to the visible width; only code and tables reach past it.
                 function formatDocument(){
                     if(formatting||card.message.role==="tool")return
-                    formatting=true;App.formatMessage(textDocument);formatting=false
+                    formatting=true;App.formatMessage(textDocument,messageViewport.width);formatting=false
                 }
                 onTextChanged:{if(!formatting)overflowWidth=0;formatDocument()}
+                onWidthChanged:Qt.callLater(formatDocument)
                 onContentWidthChanged:Qt.callLater(expandForOverflow)
                 Component.onCompleted:formatDocument()
                 // The item must cover the table so Qt paints columns reached by scrolling.
                 width:Math.max(messageViewport.width,overflowWidth)
                 text:card.message.text
-                // Keep Markdown tables readable; Wrap can crush columns down to single letters.
-                readOnly:true;selectByMouse:true;wrapMode:card.message.role==="tool"?TextEdit.Wrap:TextEdit.WordWrap
+                // Long URLs and paths break where they must instead of widening the message. Table
+                // columns still keep their longest word, so a table too wide for the view scrolls.
+                readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap
                 textFormat:card.message.role==="tool"?TextEdit.PlainText:TextEdit.MarkdownText
                 color:Theme.text;selectionColor:Theme.selected;selectedTextColor:Theme.text
                 font.pixelSize:Theme.message;font.family:card.message.role==="tool"?"monospace":Theme.font

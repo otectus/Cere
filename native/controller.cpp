@@ -8,6 +8,9 @@
 #include <QQuickTextDocument>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QTextTable>
+#include <QFontMetricsF>
+#include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -30,6 +33,7 @@
 #include <QFileInfo>
 #include <QUuid>
 #include <algorithm>
+#include <cmath>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -67,9 +71,13 @@ static QByteArray hyprQuery(const QByteArray &command){
     while(socket.waitForReadyRead(50)){response+=socket.readAll();if(socket.state()!=QLocalSocket::ConnectedState)break;}
     response+=socket.readAll();return response;
 }
+static bool hyprLua(){static const bool lua=hyprQuery("/eval assert(hl and hl.dsp)").trimmed()=="ok";return lua;}
 static void hyprDispatch(const QByteArray &lua,const QByteArray &legacy){
-    static const bool hasLua=hyprQuery("/eval assert(hl and hl.dsp)").trimmed()=="ok";
-    hyprQuery(hasLua?"/dispatch "+lua:"/dispatch "+legacy);
+    hyprQuery(hyprLua()?"/dispatch "+lua:"/dispatch "+legacy);
+}
+// A named runtime rule for one of Cere's own windows; it lasts until the compositor reloads.
+static void hyprRule(const QByteArray &lua,const QByteArray &legacy){
+    hyprQuery(hyprLua()?"/eval "+lua:"/keyword "+legacy);
 }
 
 Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent),m_root(root),m_overlay(overlay) {
@@ -601,12 +609,16 @@ void Controller::syncApprovalBubble(){
             connect(m_bubble->rootObject(),&QQuickItem::implicitHeightChanged,this,&Controller::positionApprovalBubble);
         }
     }
-    // Passive replies must not take the keyboard from the user's current app.
-    // Layer-shell already uses on-demand focus with activate-on-show disabled.
+    // Neither replies nor requests take the keyboard from the user's current app: the bubble is
+    // answered with the pointer, or from a panel, and accepts focus only while the pointer is over
+    // it (setBubbleFocusable). Layer-shell already uses on-demand focus without activate-on-show.
     if(!m_overlay||!qGuiApp->platformName().startsWith("wayland"))
-        m_bubble->setFlag(Qt::WindowDoesNotAcceptFocus,!(hasApprovals&&!panelVisible));
+        m_bubble->setFlag(Qt::WindowDoesNotAcceptFocus,!m_bubbleFocusable);
     positionApprovalBubble();
     if(!m_bubble->isVisible()||m_bubble->visibility()==QWindow::Minimized){
+        // Hyprland focuses every new window; this one must open without taking the keyboard.
+        if(!m_overlay&&qGuiApp->platformName().startsWith("wayland")&&!qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))
+            hyprRule("hl.window_rule({name=\"cere-approval-bubble\",match={title=\"^Cere Approval$\"},no_initial_focus=true})","windowrulev2 noinitialfocus,title:^(Cere Approval)$");
         m_bubble->showNormal();
         if(!m_overlay&&qGuiApp->platformName().startsWith("wayland"))QTimer::singleShot(100,this,[this]{
             if(!m_bubble||!m_bubble->isVisible())return;
@@ -614,6 +626,11 @@ void Controller::syncApprovalBubble(){
             positionApprovalBubble();
         });
     }
+}
+void Controller::setBubbleFocusable(bool focusable){
+    if(m_bubbleFocusable==focusable)return;
+    m_bubbleFocusable=focusable;
+    if(m_bubble&&(!m_overlay||!qGuiApp->platformName().startsWith("wayland")))m_bubble->setFlag(Qt::WindowDoesNotAcceptFocus,!focusable);
 }
 void Controller::positionApprovalBubble(){
     if(!m_bubble||!m_screen||!m_bubble->rootObject())return;
@@ -639,12 +656,47 @@ void Controller::positionApprovalBubble(){
 void Controller::closePanel(){emit flushDrafts();if(m_panel)m_panel->hide();refreshMotion();}
 void Controller::restorePanel(){if(!m_panel){togglePanel();return;}m_panel->show();m_panel->requestActivate();floatPanel();refreshMotion();}
 void Controller::expand(){emit flushDrafts();rpc("ui.expand");}
-void Controller::showWorkspace(){stopRoaming(true);if(m_panel&&!m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}m_expanded=true;if(!m_panel){m_panel=view("Workspace.qml",false,"Cere");m_panel->resize(1040,780);m_panel->setMinimumSize({720,580});connect(m_panel,&QWindow::visibleChanged,this,[this]{refreshMotion();});}m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");}
+void Controller::showWorkspace(){stopRoaming(true);if(m_panel&&!m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}m_expanded=true;if(!m_panel){m_panel=view("Workspace.qml",false,"Cere");m_panel->resize(1040,780);m_panel->setMinimumSize({720,520});connect(m_panel,&QWindow::visibleChanged,this,[this]{refreshMotion();});}m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");}
 void Controller::copy(const QString &text){QGuiApplication::clipboard()->setText(text);notify("Copied to clipboard");preview("copy");}
 void Controller::openPath(const QString &path){QDesktopServices::openUrl(QUrl::fromLocalFile(path));}
-void Controller::formatMessage(QQuickTextDocument *quickDocument){
+// Prose may break a long URL or path anywhere, but a table column keeps its widest word, as
+// with word wrapping: columns grow toward their natural width as the view allows, and a table
+// that still does not fit scrolls horizontally instead of crushing words into letters.
+static void fitTable(QTextTable *table,const QFont &base,qreal available){
+    static const QRegularExpression space("\\s+");
+    const int columns=table->columns();
+    QList<qreal> least(columns,0),natural(columns,0);
+    for(int row=0;row<table->rows();++row)for(int column=0;column<columns;++column){
+        const auto cell=table->cellAt(row,column);
+        if(!cell.isValid()||cell.column()!=column||cell.columnSpan()!=1)continue;
+        for(auto it=cell.begin();!it.atEnd();++it){
+            const auto block=it.currentBlock();qreal line=0;
+            for(auto part=block.begin();!part.atEnd();++part){
+                const auto fragment=part.fragment();if(!fragment.isValid())continue;
+                const QFontMetricsF metrics(fragment.charFormat().font().resolve(base));
+                line+=metrics.horizontalAdvance(fragment.text());
+                for(const auto &word:fragment.text().split(space,Qt::SkipEmptyParts))least[column]=std::max(least[column],metrics.horizontalAdvance(word));
+            }
+            natural[column]=std::max(natural[column],line);
+        }
+    }
+    auto format=table->format();
+    const qreal chrome=2*(format.cellPadding()+format.border())+format.cellSpacing()+2;
+    qreal leastSum=0,naturalSum=0;
+    for(int column=0;column<columns;++column){natural[column]=std::max(natural[column],least[column]);leastSum+=least[column]+chrome;naturalSum+=natural[column]+chrome;}
+    QList<QTextLength> widths;
+    for(int column=0;column<columns;++column){
+        const qreal share=naturalSum<=available?1:leastSum>=available?0:(available-leastSum)/std::max<qreal>(1,naturalSum-leastSum);
+        widths<<QTextLength(QTextLength::FixedLength,std::ceil(least[column]+(natural[column]-least[column])*share)+chrome);
+    }
+    if(format.columnWidthConstraints()!=widths){format.setColumnWidthConstraints(widths);table->setFormat(format);}
+}
+void Controller::formatMessage(QQuickTextDocument *quickDocument,qreal proseWidth){
     if(!quickDocument)return;
     auto document=quickDocument->textDocument();
+    // A wide table or code block widens the whole document; a right margin keeps every other
+    // block at the visible width so reading never needs horizontal scrolling.
+    const qreal overflow=proseWidth>0&&document->textWidth()>proseWidth?std::floor(document->textWidth()-proseWidth):0;
     QTextCursor edit(document);edit.beginEditBlock();
     for(auto block=document->begin();block.isValid();block=block.next()){
         auto format=block.blockFormat();
@@ -652,8 +704,10 @@ void Controller::formatMessage(QQuickTextDocument *quickDocument){
         format.setTopMargin(block==document->begin()?0:code||block.textList()?2:format.headingLevel()?12:8);
         format.setBottomMargin(code?2:0);
         if(code){format.setBackground(QColor("#0d131c"));format.setLeftMargin(8);format.setRightMargin(8);}
+        else if(!QTextCursor(block).currentTable())format.setRightMargin(overflow);
         QTextCursor cursor(block);cursor.setBlockFormat(format);
     }
+    if(proseWidth>0)for(auto frame:document->rootFrame()->childFrames())if(auto table=qobject_cast<QTextTable*>(frame))fitTable(table,document->defaultFont(),proseWidth);
     edit.endEditBlock();
 }
 void Controller::openMessageLink(const QString &link,const QString &directory){

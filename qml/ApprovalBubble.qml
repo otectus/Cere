@@ -28,7 +28,8 @@ Item {
     }
     HoverHandler {
         id:reading
-        onHoveredChanged:if(!hovered&&bubble.followLatest)bubble.syncApprovals()
+        // Pointing at the bubble is the deliberate act that lets it take the keyboard.
+        onHoveredChanged:{App.setBubbleFocusable(hovered);if(!hovered&&bubble.followLatest)bubble.syncApprovals()}
     }
     function syncApprovals() {
         const next=panelOpen?[]:(App.state.approvals||[])

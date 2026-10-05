@@ -351,12 +351,15 @@ Item {
             id:composerViewport;anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top;anchors.bottom:composerActions.top;anchors.margins:12;clip:true
             contentWidth:availableWidth;ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar{}
             TextArea {
-                id: composer; objectName:"composer"; enabled: !!App.session.id && !chat.linked; placeholderText: chat.linked ? "Continue in the linked terminal" : App.session.id ? "Tell me what you have in mind…" : "Start a session to send a message"
+                id: composer; objectName:"composer"; enabled: !!App.session.id && !chat.linked; placeholderText: chat.linked ? "Continue in the linked terminal" : !App.session.id ? "Start a session to send a message" : chat.width>=480 ? "Tell me what you have in mind…" : "Enter sends · Shift+Enter for a new line"
                 color: Theme.text; placeholderTextColor: Theme.muted; selectionColor: Theme.selected; font.pixelSize: Theme.message; font.family: Theme.font
                 // Moving to another control keeps the selection, so it survives switching surfaces too.
                 wrapMode: TextEdit.Wrap; selectByMouse: true; persistentSelection: true; background: null
                 onTextChanged: { if(App.session.id&&!chat.loadingDraft)draftTimer.restart() }
                 onCursorPositionChanged: if(!chat.restoringView&&!chat.loadingDraft)chat.viewPristine=false
+                // Tab and Shift+Tab move on to the composer's buttons and back; they never insert a tab.
+                Keys.onTabPressed: event => { const next=composer.nextItemInFocusChain(true); if(next&&next!==composer)next.forceActiveFocus(Qt.TabFocusReason); event.accepted=true }
+                Keys.onBacktabPressed: event => { const previous=composer.nextItemInFocusChain(false); if(previous&&previous!==composer)previous.forceActiveFocus(Qt.BacktabFocusReason); event.accepted=true }
                 Keys.onPressed: event => {
                     if(event.matches(StandardKey.Paste)){chat.pasteClipboard();event.accepted=true}
                     else if((event.key===Qt.Key_Return||event.key===Qt.Key_Enter)&&!composer.inputMethodComposing&&!(event.modifiers&Qt.ShiftModifier)){
@@ -375,7 +378,7 @@ Item {
         CButton { visible:attachments.length>0;text:chat.width>=480?"Clear":"×";help:"Clear image attachments";onClicked:attachments=[] }
         CCheckBox { id:searchThisTurn;objectName:"searchThisTurn";visible:["ollama","openai","anthropic","google"].includes(App.session.provider)&&App.state.settings?.webSearch?.enabled===true;text:chat.width>=480?"Search web":"Web";enabled:(!chat.busy||chat.canSendWhileBusy)&&!App.state.settings?.paused;Accessible.name:"Search web for this message";Accessible.description:"Search uses the next message as a public query, up to 500 characters";ToolTip.visible:hovered;ToolTip.text:Accessible.description;onToggled:chat.viewPristine=false }
         Item { Layout.fillWidth:true;Layout.minimumWidth:0 }
-        Text { visible:chat.width>=480;text:"Shift+Enter · new line";color:Theme.muted;font.pixelSize:Theme.caption }
+        Text { visible:chat.width>=480;text:"Enter sends · Shift+Enter new line";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
         CButton {
             id:moreTools;objectName:"conversationMore";visible:chat.toolsFolded&&!!App.session.id
             implicitWidth:implicitHeight;leftPadding:9;rightPadding:9;quiet:true
