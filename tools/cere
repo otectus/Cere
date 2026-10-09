@@ -16,7 +16,8 @@ case "${1:-}" in
     ;;
   toggle|show)
     if node "$root/broker/cli.ts" "${1}"; then exit 0; fi
-    exec "$prefix/lib/cere/cere" --root "$root" --show
+    # Start the interface when it is not running: toggle opens the compact panel, show the workspace.
+    exec "$prefix/lib/cere/cere" --root "$root" "--${1}"
     ;;
   *) exec "$prefix/lib/cere/cere" --root "$root" "$@" ;;
 esac

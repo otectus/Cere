@@ -1,0 +1,92 @@
+[
+    {
+        "check": "workflow attachment imported",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "send enabled with draft",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "message sent from compact",
+        "detail": "0",
+        "ok": true
+    },
+    {
+        "check": "composer cleared after send",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "attachments cleared after send",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "web toggle reset after send",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "eight attachments accepted, ninth refused",
+        "detail": "count=8 error=Choose up to eight attachments.",
+        "ok": true
+    },
+    {
+        "check": "cleared attachments persisted",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "near-limit image attachment",
+        "detail": "bytes=16729823 accepted=1 error=",
+        "ok": true
+    },
+    {
+        "check": "over-limit file refused",
+        "detail": "Choose a file smaller than 20 MiB",
+        "ok": true
+    },
+    {
+        "check": "stop interrupts the turn",
+        "detail": "working",
+        "ok": true
+    },
+    {
+        "check": "provider error state",
+        "detail": "working · ",
+        "ok": true
+    },
+    {
+        "check": "error banner in compact",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "handoff dialog open",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "handoff create enabled",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "handoff session created with draft",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "setting toggled from compact",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "timer started from compact",
+        "detail": "",
+        "ok": false
+    }
+]

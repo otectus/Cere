@@ -9,10 +9,11 @@
 | Neo4j driver | 6.2.0, exact package lock |
 | Zod | 4.6.5, exact package lock |
 | Ollama | 0.34.4 in live adapter validation |
-| Extraction | `gpt-oss:20b-cloud` |
-| Extraction digest tested | `9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae` |
+| Extraction default | `nemotron-3-super`, not yet evaluated |
+| Extraction evaluated | `gpt-oss:20b-cloud` |
+| Extraction digest tested | `9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae` (`gpt-oss:20b-cloud`) |
 | Extraction prompt / parser | `cere-extraction-v2` / `zod-4-v2` |
-| Protocol / ontology / SQLite schema | 1 / 1 / checksum-verified migration 1 |
+| Protocol / ontology / SQLite schema | 1 / 1 / checksum-verified migrations 1–2 |
 
 The deployment Compose file pins image digests. The native fallback launcher verifies archive SHA-256 hashes. Java 21 or newer is needed by the native Neo4j distribution. See the [adapter validation](adapters-validation.md) for exact live evidence and upstream references.
 

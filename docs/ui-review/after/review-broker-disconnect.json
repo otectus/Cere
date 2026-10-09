@@ -1,0 +1,32 @@
+[
+    {
+        "check": "isolated broker pid found",
+        "detail": "1008380",
+        "ok": true
+    },
+    {
+        "check": "ui noticed the disconnect",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "composer state while disconnected",
+        "detail": "enabled=1",
+        "ok": true
+    },
+    {
+        "check": "send disabled while disconnected",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "ui relaunched the broker and reconnected",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "turn status after restart",
+        "detail": "interrupted · warning:  · error: Cere restarted. The previous turn was not replayed.",
+        "ok": true
+    }
+]

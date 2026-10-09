@@ -1,0 +1,82 @@
+[
+    {
+        "check": "six pending approvals",
+        "detail": "6",
+        "ok": true
+    },
+    {
+        "check": "workspace shows the last requester",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "compact tab chain from composer",
+        "detail": "TextArea:composer > CButton:composerCard > CButton:pasteClipboard > CButton:conversationMore > VoiceInput:voiceRecord > CButton:stopMessage > HeaderPortrait:cerePortrait > CButton:openCommandPalette > CButton:shellPermissionCenter > CButton:expandWindow > CButton:tab_Chat > CButton:tab_Sessions > CButton:tab_Projects > CButton:tab_Desktop > CButton:tab_Settings > TextArea:globalApprovals > CButton:approval_126d09a1-d3ea-48ca-ade9-952614292675_allow > CButton:approval_126d09a1-d3ea-48ca-ade9-952614292675_deny > CButton:approval_126d09a1-d3ea-48ca-ade9-952614292675_cancel > TextArea:globalApprovals > CButton:approval_ff205c41-942a-4553-92f8-388bf8b468e9_allow > CButton:approval_ff205c41-942a-4553-92f8-388bf8b468e9_deny > CButton:approval_ff205c41-942a-4553-92f8-388bf8b468e9_cancel > CButton:globalApprovals > TextArea:globalApprovals > CButton:approval_18147776-7192-4696-bbfc-e57d34b53161_allow > CButton:approval_18147776-7192-4696-bbfc-e57d34b53161_deny > CButton:approval_18147776-7192-4696-bbfc-e57d34b53161_cancel > CButton:globalApprovals > TextArea:globalApprovals > CButton:approval_ba6dc6fc-2b1c-4e12-be0d-0d48d4cb0fa9_allow > CButton:approval_ba6dc6fc-2b1c-4e12-be0d-0d48d4cb0fa9_deny > CButton:approval_ba6dc6fc-2b1c-4e12-be0d-0d48d4cb0fa9_cancel > CButton:globalApprovals > TextArea:globalApprovals > CButton:approval_83687754-49af-4f2b-a3e6-45125f0aefb2_allow > CButton:approval_83687754-49af-4f2b-a3e6-45125f0aefb2_deny > CButton:approval_83687754-49af-4f2b-a3e6-45125f0aefb2_cancel > CButton:globalApprovals > TextArea:globalApprovals > CButton:approval_eccf7994-78e2-497e-b061-eef10a74b935_allow > CButton:approval_eccf7994-78e2-497e-b061-eef10a74b935_deny > CButton:approval_eccf7994-78e2-497e-b061-eef10a74b935_cancel > CButton:backToSessions > CButton:renameSession > CButton:copyMessage_68ae11e5-21a1-4f87-863b-c76c35f7cbed > CButton:messageActions_68ae11e5-21a1-4f87-863b-c76c35f7cbed > TextArea:messageBody_68ae11e5-21a1-4f87-863b-c76c35f7cbed > CButton:activityToggle > TextArea:composer",
+        "ok": true
+    },
+    {
+        "check": "composer text after Tab",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Enter on focused Allow does not approve",
+        "detail": "before=6 after=6",
+        "ok": true
+    },
+    {
+        "check": "Space on focused Allow approves",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "bubble has no default-focused control",
+        "detail": "QQuickLoader:approvalBubble",
+        "ok": false
+    },
+    {
+        "check": "bubble leaves the keyboard alone",
+        "detail": "",
+        "ok": false
+    },
+    {
+        "check": "bubble first Tab target",
+        "detail": "TextArea:approvalBubble",
+        "ok": true
+    },
+    {
+        "check": "Enter in bubble does not approve",
+        "detail": "TextArea:approvalBubble",
+        "ok": true
+    },
+    {
+        "check": "rename dialog open",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Escape closes the dialog only",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Escape on Settings returns to Chat",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Escape on Chat hides the window",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "Escape does not stop the running turn",
+        "detail": "waiting",
+        "ok": false
+    },
+    {
+        "check": "draft survives Escape",
+        "detail": "Escape keeps this draft",
+        "ok": true
+    }
+]

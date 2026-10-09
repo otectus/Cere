@@ -1,16 +1,30 @@
 import { providerIds } from './provider-catalog.ts';
 import { createHash,randomUUID } from 'node:crypto';
-import { existsSync,readFileSync,writeFileSync,renameSync,unlinkSync,lstatSync,chmodSync,rmSync } from 'node:fs';
-import { readFile,writeFile,mkdir,copyFile,stat,rm } from 'node:fs/promises';
+import { existsSync,readFileSync,writeFileSync,renameSync,unlinkSync,lstatSync,chmodSync,rmSync,constants } from 'node:fs';
+import { readFile,writeFile,mkdir,copyFile,stat,rm,readdir,lstat } from 'node:fs/promises';
 import { join,dirname,basename,resolve } from 'node:path';
 import { Store } from './store.ts';
 import { privateDir } from './paths.ts';
-import { defaultSettings } from './types.ts';
+import { RemoteStore } from './remote/store.ts';
+import type { Settings } from './types.ts';
 import type { Core } from './core.ts';
 const digest=(data:string|Buffer)=>createHash('sha256').update(data).digest('hex');
 const registry=(directory:string)=>readFileSync(join(directory,'graph-memory','erasure-registry.jsonl'));
 const journalPath=(directory:string)=>join(dirname(directory),'.'+basename(directory)+'-recovery.json');
 const privateFile=(path:string)=>{const s=lstatSync(path);if(!s.isFile()||s.isSymbolicLink()||s.uid!==process.getuid?.()||(s.mode&0o077))throw new Error('Recovery file must be owned by you and private');};
+/** This machine's configuration, secrets and phone pairings; a backup never supplies them. */
+const machineMeta=['indextts.voices','workflow:recipe-definitions','desktopProfilePrevious','memory-pending-erasure','graph-memory-migrated',
+  'remoteConfig','remoteDesktopId','remoteSchema','remoteLineage','remoteCursorKey'];
+const machineTables=[['remote_devices','id,data'],['remote_commands','device,id,digest,method,data,time'],['remote_audit','seq,time,data']] as const;
+/** Copies regular, owner-private files only; links and foreign files stay behind. */
+async function carryPrivateFiles(from:string,to:string,names?:string[]){
+  let entries:string[];try{entries=names||await readdir(from);}catch(error:any){if(error.code==='ENOENT')return;throw error;}
+  for(const name of entries){
+    const source=join(from,name);let info;try{info=await lstat(source);}catch(error:any){if(error.code==='ENOENT')continue;throw error;}
+    if(!info.isFile()||info.uid!==process.getuid?.())continue;
+    privateDir(to);const target=join(to,name);await copyFile(source,target,constants.COPYFILE_EXCL);chmodSync(target,0o600);
+  }
+}
 /** Run only after verifying no broker owns the socket, before opening any database. */
 export function activatePendingRecovery(directory:string){
   directory=resolve(directory);const journal=journalPath(directory);if(!existsSync(journal))return false;
@@ -76,7 +90,9 @@ export class Recovery {
       const contentAllowed=registryDigest===manifest.registryDigest;
       const review:Review={id:randomUUID(),directory,manifest,digest:digest(JSON.stringify(manifest)),registryDigest,expires:Date.now()+300000,includeContent:p.includeContent===true&&manifest.includeContent,contentAllowed};
       this.reviews.clear();this.reviews.set(review.id,review);
-      return{id:review.id,digest:review.digest,folders:data.folders.length,sessions:review.includeContent&&contentAllowed?data.sessions.length:0,messages:review.includeContent&&contentAllowed?data.messages.length:0,memory:review.includeContent,contentAllowed,warning:contentAllowed?'Restored sessions stay interrupted and tools stay paused.':'Forgetting records differ: conversation text, drafts, attachments and notes will be omitted. Memory restore applies the current forgetting registry.',restartRequired:true};
+      return{id:review.id,digest:review.digest,folders:data.folders.length,sessions:review.includeContent&&contentAllowed?data.sessions.length:0,messages:review.includeContent&&contentAllowed?data.messages.length:0,memory:review.includeContent,contentAllowed,warning:contentAllowed?'Restored sessions stay interrupted and tools stay paused.':'Forgetting records differ: conversation text, drafts, attachments and notes will be omitted. Memory restore applies the current forgetting registry.',
+        kept:'This computer keeps its connections, API keys, paired phones, voice profiles, personality and other preferences. Tools stay paused and project grants are cleared until you resume them.',
+        replaced:review.includeContent&&contentAllowed?'Conversations, drafts, notes, project capsules and memory come from the backup.':review.includeContent?'Memory comes from the backup with current forgetting applied; conversations, drafts and notes are omitted.':'This restore includes no conversations, drafts or notes, so the restored profile starts without them. Current memory is kept.',restartRequired:true};
     }
     if(method==='recovery.cancel'){
       if(this.restartTimer)clearTimeout(this.restartTimer);this.restartTimer=undefined;
@@ -108,14 +124,27 @@ export class Recovery {
             for(const a of data.attachments){if(!ids.has(a.sessionId)||!/^[a-f0-9-]{36}$/.test(a.id))throw new Error('Invalid attachment backup');const bytes=await readFile(join(review.directory,'attachments',a.id));if(digest(bytes)!==a.sha256)throw new Error('Attachment backup changed');privateDir(join(stage,'draft-attachments'));const path=join(directory,'draft-attachments',a.id);await writeFile(join(stage,'draft-attachments',a.id),bytes,{mode:0o600,flag:'wx'});const asset={...a,path};delete asset.sessionId;store.set('attachment:'+a.id,{sessionId:a.sessionId,asset});const s=store.session(a.sessionId);s.draftAttachments=[...s.draftAttachments||[],asset];store.saveSession(s);}
             store.set('utilityEntries',data.notes||[]);for(const capsule of data.capsules||[]){if(typeof capsule.key!=='string'||!capsule.key.startsWith('capsule:'))throw new Error('Invalid capsule backup');store.set(capsule.key,capsule.value);}
           }
-          // Restore only display preferences. Credential-bearing and executable settings are excluded.
-          const settings={...structuredClone(defaultSettings),paused:true,profile:'manual',categories:[],grants:[],speechEnabled:false,memory:{...defaultSettings.memory,enabled:false}};
+          // A backup supplies only display preferences. Everything else is this machine's saved
+          // configuration, so connections and preferences survive; tools stay paused and grants end.
+          const settings:Partial<Settings>={...structuredClone(this.core.store.get<Partial<Settings>>('settings',{})),paused:true,grants:[]};
           if(Number.isFinite(data.settings?.interfaceScale)&&data.settings.interfaceScale>=.8&&data.settings.interfaceScale<=1.5)settings.interfaceScale=data.settings.interfaceScale;
           if(Number.isFinite(data.settings?.scale)&&data.settings.scale>=.5&&data.settings.scale<=3)settings.scale=data.settings.scale;
           if(typeof data.settings?.reducedMotion==='boolean')settings.reducedMotion=data.settings.reducedMotion;
           const homes=data.settings?.homePositions;if(homes&&typeof homes==='object'&&!Array.isArray(homes)&&Object.keys(homes).length<=32&&Object.entries(homes).every(([key,value]:[string,any])=>key.length<=200&&value&&[value.x,value.y].every(n=>Number.isFinite(n)&&n>=0&&n<=1)))settings.homePositions=homes;
-          store.set('settings',settings);store.set('recoverySource',{created:review.manifest.created,restored:Date.now(),historyOmitted:!review.contentAllowed});
+          store.set('settings',settings);store.set('settingsRevision',String(BigInt(this.core.store.get('settingsRevision','0'))+1n));
+          for(const key of machineMeta){const value=this.core.store.get<unknown>(key,undefined);if(value!==undefined)store.set(key,value);}
+          new RemoteStore(store);
+          for(const [table,columns] of machineTables){
+            if(!this.core.store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))continue;
+            const insert=store.db.prepare(`INSERT OR REPLACE INTO ${table}(${columns}) VALUES (${columns.split(',').map(()=>'?').join(',')})`);
+            for(const row of this.core.store.db.prepare(`SELECT ${columns} FROM ${table}`).all())insert.run(...columns.split(',').map(column=>row[column] as any));
+          }
+          // Phones replace their cached transcripts: the conversations now come from the backup.
+          store.set('transcriptEpoch',randomUUID());
+          store.set('recoverySource',{created:review.manifest.created,restored:Date.now(),historyOmitted:!review.contentAllowed});
         }finally{store.close();}
+        await carryPrivateFiles(join(directory,'credentials'),join(stage,'credentials'),['provider-credentials.json']);
+        await carryPrivateFiles(join(directory,'remote-identity'),join(stage,'remote-identity'));
         if(digest(registry(directory))!==review.registryDigest)throw new Error('Forgetting records changed while staging; review again');
         const intent={stage,previous:directory+'-previous-'+randomUUID(),registryDigest:review.registryDigest};writeFileSync(journalPath(directory),JSON.stringify(intent),{mode:0o600,flag:'wx'});
         this.reviews.delete(review.id);this.staging=false;

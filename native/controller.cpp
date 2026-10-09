@@ -31,12 +31,15 @@
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QFileInfo>
+#include <QLockFile>
+#include <QSysInfo>
 #include <QUuid>
 #include <algorithm>
 #include <cmath>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <signal.h>
 #include "placement.h"
 
 bool Controller::trustedBroker(qintptr descriptor,uint expectedUid){
@@ -99,15 +102,17 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
         if(!trustedBroker(m_socket.socketDescriptor(),::getuid())){
             m_socket.abort();notify("Cere refused a broker socket owned by another user.");m_retry.start(1500);return;
         }
+        m_disconnected.invalidate();
         rpc("subscribe",{{"role",m_overlay?"overlay":"ui"}});emit stateChanged();
     });
     connect(&m_socket,&QLocalSocket::disconnected,this,[this]{
         // Every request in flight ends exactly once; none is replayed, since its
         // outcome is unknown. Framing restarts with the next connection.
         m_buffer.clear();failPendingRequests("Connection lost; the operation outcome was not confirmed.");
+        if(!m_disconnected.isValid())m_disconnected.start();
         stopRoaming(false);refreshMotion();emit stateChanged();m_retry.start(1500);
     });
-    connect(&m_socket,&QLocalSocket::errorOccurred,this,[this]{m_retry.start(1500);emit stateChanged();});
+    connect(&m_socket,&QLocalSocket::errorOccurred,this,[this]{if(!m_disconnected.isValid())m_disconnected.start();m_retry.start(1500);emit stateChanged();});
     connect(&m_retry,&QTimer::timeout,this,&Controller::connectBroker);
     m_toastTimer.setSingleShot(true); connect(&m_toastTimer,&QTimer::timeout,this,[this]{m_toast.clear();emit toastChanged();});
     m_motionTimer.setTimerType(Qt::PreciseTimer);m_motionTimer.setSingleShot(true); connect(&m_motionTimer,&QTimer::timeout,this,&Controller::restoreMotion);
@@ -124,8 +129,8 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
     });
     m_roamTimer.setInterval(200);
     connect(&m_roamTimer,&QTimer::timeout,this,&Controller::roam);
-    connect(qApp,&QGuiApplication::screenRemoved,this,[this]{stopRoaming(false);m_screen=nullptr;syncPet();refreshMotion();});
-    connect(qApp,&QGuiApplication::screenAdded,this,[this]{syncPet();});
+    connect(qApp,&QGuiApplication::screenRemoved,this,[this]{stopRoaming(false);m_screen=nullptr;m_placedPosition.clear();syncPet();refreshMotion();});
+    connect(qApp,&QGuiApplication::screenAdded,this,[this]{m_placedPosition.clear();syncPet();});
 }
 Controller::~Controller(){
     m_retry.stop();m_roamTimer.stop();m_motionTimer.stop();m_idleTimer.stop();m_toastTimer.stop();m_successTimer.stop();
@@ -143,20 +148,33 @@ QString Controller::runtimePath()const{
     const QString runtime=qEnvironmentVariable("XDG_RUNTIME_DIR");
     return (runtime.isEmpty()?QDir::tempPath()+"/cere-"+QString::number(::getuid()):runtime)+"/cere";
 }
-void Controller::start(bool show){
-    if(!m_overlay){
-        // Broker is independent of the UI. Development launches use the same entry point as the service.
-        bool managed=false;
-        const auto userData=QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-        const bool installed=(m_root=="/usr/share/cere"&&QFile::exists("/usr/lib/systemd/user/cere-broker.service"))||
-            (m_root==userData+"/cere"&&QFile::exists(userData+"/systemd/user/cere-broker.service"));
-        if(installed&&qEnvironmentVariable("CERE_STATE_DIR").isEmpty()&&qEnvironmentVariable("CERE_RUNTIME_DIR").isEmpty()){
+// The installed service owns the broker, unless an isolated state or runtime directory is in use.
+bool Controller::managedBroker()const{
+    const auto userData=QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    const bool installed=(m_root=="/usr/share/cere"&&QFile::exists("/usr/lib/systemd/user/cere-broker.service"))||
+        (m_root==userData+"/cere"&&QFile::exists(userData+"/systemd/user/cere-broker.service"));
+    return installed&&qEnvironmentVariable("CERE_STATE_DIR").isEmpty()&&qEnvironmentVariable("CERE_RUNTIME_DIR").isEmpty();
+}
+// Broker is independent of the UI. Development launches use the same entry point as the service;
+// a second broker for the same runtime waits for the first one's lock and leaves it running.
+void Controller::launchBroker(bool initial){
+    m_lastLaunch.start();
+    if(managedBroker()){
+        if(initial){
             QProcess environment;environment.start("systemctl",{"--user","import-environment","WAYLAND_DISPLAY","DISPLAY","HYPRLAND_INSTANCE_SIGNATURE"});environment.waitForFinished(2000);
-            QProcess service;service.start("systemctl",{"--user","start","cere-broker.service"});managed=service.waitForFinished(3000)&&service.exitCode()==0;
-        }
-        if(!managed){QProcess broker;broker.setProgram(QStandardPaths::findExecutable("node"));broker.setArguments({m_root+"/broker/main.ts"});broker.setStandardOutputFile(QProcess::nullDevice());broker.setStandardErrorFile(QProcess::nullDevice());broker.startDetached();}
+            QProcess service;service.start("systemctl",{"--user","start","cere-broker.service"});
+            if(service.waitForFinished(3000)&&service.exitCode()==0)return;
+        }else if(QProcess::startDetached("systemctl",{"--user","start","--no-block","cere-broker.service"}))return;
+    }
+    QProcess broker;broker.setProgram(QStandardPaths::findExecutable("node"));broker.setArguments({m_root+"/broker/main.ts"});broker.setStandardOutputFile(QProcess::nullDevice());broker.setStandardErrorFile(QProcess::nullDevice());broker.startDetached();
+}
+void Controller::start(bool show,bool toggle){
+    m_pendingToggle=toggle;
+    if(!m_overlay){
+        launchBroker(true);
         m_overlayProcess=new QProcess(this);m_overlayProcess->setProgram(qEnvironmentVariable("CERE_HOST_EXEC",QCoreApplication::applicationFilePath()));
-        m_overlayProcess->setArguments({"--overlay","--root",m_root});m_overlayProcess->setProcessChannelMode(QProcess::ForwardedChannels);m_overlayProcess->start();
+        QStringList overlayArguments{"--overlay","--root",m_root};if(toggle)overlayArguments<<"--toggle";
+        m_overlayProcess->setArguments(overlayArguments);m_overlayProcess->setProcessChannelMode(QProcess::ForwardedChannels);m_overlayProcess->start();
         m_tray=new QSystemTrayIcon(QIcon(m_root+"/assets/cere-emblem.png"),this);m_tray->setToolTip("Cere · your desktop companion");
         auto menu=new QMenu();menu->addAction("Open Cere",this,[this]{expand();});menu->addAction("Show / hide",this,[this]{auto s=m_state.value("settings").toMap();rpc("settings.update",{{"hidden",!s.value("hidden").toBool()}});});
         menu->addAction("Pause AI actions",this,[this]{rpc("settings.update",{{"paused",true}});});
@@ -169,6 +187,9 @@ void Controller::start(bool show){
 }
 void Controller::connectBroker(){
     if(m_socket.state()==QLocalSocket::ConnectedState||m_socket.state()==QLocalSocket::ConnectingState)return;
+    // A broker that stopped (a crash, a manual stop, a restart that did not come back) is restarted
+    // by the interface process; launches are spaced so a slow start is not raced.
+    if(!m_overlay&&m_disconnected.isValid()&&m_disconnected.elapsed()>=6000&&(!m_lastLaunch.isValid()||m_lastLaunch.elapsed()>=15000))launchBroker(false);
     const auto runtime=runtimePath();
     if(QFileInfo::exists(runtime)&&!privateRuntime(runtime)){notify("Cere's runtime directory is not private to you; refusing to connect.");m_retry.start(5000);return;}
     m_socket.abort();m_socket.connectToServer(runtime+"/broker.sock");
@@ -228,6 +249,8 @@ void Controller::receive(){
     while((newline=m_buffer.indexOf('\n'))>=0){auto line=m_buffer.left(newline);m_buffer.remove(0,newline+1);auto object=QJsonDocument::fromJson(line).object();
         if(object.contains("id")){
             int id=object["id"].toInt();QString method=m_requests.take(id);
+            // A saved offline draft is done; a refused one stays for its conversation's composer.
+            if(m_offlineFlushes.contains(id)){const auto sessionId=m_offlineFlushes.take(id);if(!object.contains("error"))m_offlineDrafts.remove(sessionId);}
             if(object.contains("error")){
                 const auto error=object["error"].toObject();
                 if(id==m_messagesRequest)m_messagesRequest=-1;
@@ -252,6 +275,16 @@ void Controller::receive(){
                 if(method=="subscribe"&&m_panel){
                     rpc("ui.panel",{{"owner",m_overlay?"overlay":"ui"},{"visible",m_panel->isVisible()&&m_panel->visibility()!=QWindow::Minimized}});
                     publishAttention();
+                }
+                if(method=="subscribe"){
+                    flushOfflineDrafts();
+                    // `cere toggle` started this interface: the process that owns the compact panel opens it.
+                    const auto settings=m_state.value("settings").toMap();
+                    if(m_pendingToggle&&settings.value("topmost",true).toBool()==m_overlay){
+                        if(settings.value("hidden").toBool())rpc("settings.update",{{"hidden",false}});
+                        togglePanel();
+                    }
+                    m_pendingToggle=false;
                 }
             }
             if(method=="session.messages"&&id==m_messagesRequest){
@@ -411,7 +444,13 @@ void Controller::syncPet(){
     QScreen *target=m_screen;if(!target)return;
     if(!m_dragging&&!m_roamStep)for(auto screen:qGuiApp->screens())if(screen->name()==p.value("output").toString())target=screen;
     auto g=target->geometry();
-    if(!m_dragging&&!m_roamStep&&!m_settling)placePet(g.topLeft()+QPoint(qRound(p.value("x",.86).toDouble()*std::max(0,g.width()-m_pet->width())),qRound(p.value("y",.78).toDouble()*std::max(0,g.height()-m_pet->height()))),target,false);
+    // Only a changed saved position, size or output layout moves the pet. Re-applying an older saved
+    // position on every unrelated state update would snap a pet that just roamed or settled back to it.
+    if(!m_pendingPosition.isEmpty()&&p==m_pendingPosition){m_placedPosition=p;m_placedArea=g;m_pendingPosition.clear();}
+    if(!m_dragging&&!m_roamStep&&!m_settling&&(p!=m_placedPosition||scale!=m_placedScale||g!=m_placedArea)){
+        placePet(g.topLeft()+QPoint(qRound(p.value("x",.86).toDouble()*std::max(0,g.width()-m_pet->width())),qRound(p.value("y",.78).toDouble()*std::max(0,g.height()-m_pet->height()))),target,false);
+        m_placedPosition=p;m_placedScale=scale;m_placedArea=g;m_pendingPosition.clear();
+    }
     updateMask();if(!m_pet->isVisible()){m_pet->show();if(!m_overlay&&qGuiApp->platformName().startsWith("wayland")){
         QTimer::singleShot(150,this,[this]{hyprDispatch("hl.dsp.window.float({window=\"title:^Cere Pet$\",action=\"set\"})","setfloating title:^Cere Pet$");placePet(m_petPosition,m_screen,false);});
     }}
@@ -481,10 +520,13 @@ void Controller::placePet(QPoint global,QScreen *screen,bool persist,bool roamin
     global=Placement::pet(global,m_pet->size(),g,roaming?Placement::Mode::Roaming:Placement::Mode::Resting);
     if(m_screen!=screen){m_pet->hide();m_screen=screen;}
     m_petPosition=global;m_pet->setScreen(screen);
+    // With per-output QPA scaling, changing a created window's screen rescales its logical size
+    // without moving it. The configured size stays authoritative for the follower and placement.
+    if(const QSize size=m_pet->minimumSize();!size.isEmpty()&&m_pet->size()!=size)m_pet->resize(size);
     if(m_overlay&&qGuiApp->platformName().startsWith("wayland")){
         auto shell=LayerShellQt::Window::get(m_pet);shell->setScreen(screen);shell->setDesiredSize(m_pet->size());shell->setMargins(QMargins(global.x()-g.x(),global.y()-g.y(),0,0));
     }else {m_pet->setPosition(global);if(m_pet->isVisible()&&qGuiApp->platformName().startsWith("wayland"))hyprDispatch(QString("hl.dsp.window.move({window=\"title:^Cere Pet$\",x=%1,y=%2,relative=false})").arg(global.x()).arg(global.y()).toUtf8(),QString("movewindowpixel exact %1 %2,title:^Cere Pet$").arg(global.x()).arg(global.y()).toUtf8());}
-    if(persist){QVariantMap p{{"output",screen->name()},{"x",double(global.x()-g.x())/std::max(1,g.width()-m_pet->width())},{"y",double(global.y()-g.y())/std::max(1,g.height()-m_pet->height())}};rpc("settings.update",{{"position",p}});}
+    if(persist){QVariantMap p{{"output",screen->name()},{"x",double(global.x()-g.x())/std::max(1,g.width()-m_pet->width())},{"y",double(global.y()-g.y())/std::max(1,g.height()-m_pet->height())}};rpc("settings.update",{{"position",p}});m_pendingPosition=p;}
     syncPetMirror(roaming);
     if(m_panel&&m_panel->isVisible()&&!m_expanded)positionPanel();
     if(m_bubble&&m_bubble->isVisible())positionApprovalBubble();
@@ -655,7 +697,37 @@ void Controller::positionApprovalBubble(){
 }
 void Controller::closePanel(){emit flushDrafts();if(m_panel)m_panel->hide();refreshMotion();}
 void Controller::restorePanel(){if(!m_panel){togglePanel();return;}m_panel->show();m_panel->requestActivate();floatPanel();refreshMotion();}
-void Controller::expand(){emit flushDrafts();rpc("ui.expand");}
+void Controller::expand(){
+    emit flushDrafts();
+    if(connected()){rpc("ui.expand");return;}
+    // Without the broker the interface process opens its own workspace; the overlay asks it to.
+    if(!m_overlay){showWorkspace();return;}
+    if(signalInterface(runtimePath(),SIGUSR1)){closePanel();return;}
+    notify("Cere is reconnecting to her session broker.");
+}
+void Controller::showWorkspaceLocally(){if(!m_overlay)showWorkspace();}
+bool Controller::signalInterface(const QString &runtime,int signal){
+    QLockFile lock(runtime+"/ui.lock");qint64 pid=0;QString host,application;
+    if(!lock.getLockInfo(&pid,&host,&application)||pid<=1||pid==QCoreApplication::applicationPid()||host!=QSysInfo::machineHostName()||application!="cere")return false;
+    // A recycled process ID never receives the signal: it must still be this user's Cere.
+    const QFileInfo process("/proc/"+QString::number(pid));
+    if(!process.exists()||process.ownerId()!=::getuid()||QFileInfo(process.filePath()+"/exe").symLinkTarget()!=QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath())return false;
+    return ::kill(pid_t(pid),signal)==0;
+}
+void Controller::keepOfflineDraft(const QString &sessionId,const QVariantMap &params){if(!sessionId.isEmpty())m_offlineDrafts.insert(sessionId,params);}
+QVariantMap Controller::takeOfflineDraft(const QString &sessionId){return m_offlineDrafts.take(sessionId);}
+// After reconnecting, drafts typed offline are saved against the revision they were edited from.
+// A conversation changed elsewhere meanwhile keeps its offline text for the composer's conflict choice.
+void Controller::flushOfflineDrafts(){
+    const auto sessions=m_state.value("sessions").toList();
+    for(auto it=m_offlineDrafts.cbegin();it!=m_offlineDrafts.cend();++it){
+        if(m_offlineFlushes.values().contains(it.key()))continue;
+        QVariantMap session;for(const auto &entry:sessions)if(entry.toMap().value("id").toString()==it.key()){session=entry.toMap();break;}
+        if(session.isEmpty()||session.value("draftRevision").toString()!=it.value().value("expectedRevision").toString())continue;
+        auto params=it.value();params.remove("attachments");params["id"]=it.key();
+        const int id=rpc("session.draft",params);if(id>=0)m_offlineFlushes.insert(id,it.key());
+    }
+}
 void Controller::showWorkspace(){stopRoaming(true);if(m_panel&&!m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}m_expanded=true;if(!m_panel){m_panel=view("Workspace.qml",false,"Cere");m_panel->resize(1040,780);m_panel->setMinimumSize({720,520});connect(m_panel,&QWindow::visibleChanged,this,[this]{refreshMotion();});}m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");}
 void Controller::copy(const QString &text){QGuiApplication::clipboard()->setText(text);notify("Copied to clipboard");preview("copy");}
 void Controller::openPath(const QString &path){QDesktopServices::openUrl(QUrl::fromLocalFile(path));}

@@ -361,6 +361,16 @@ export class ClaudeAdapter implements Adapter {
     return true;
   }
   async send(text: string, images: string[] = [], options: SendOptions = {}) {
+    // Two print-mode processes must never resume one Claude session at once: a previous
+    // turn's process that is still exiting finishes, or is stopped, before the next starts.
+    const previous = this.process;
+    if (previous && !previous.closed) {
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([new Promise<void>(resolve => { if (previous.closed) resolve(); else previous.once('exit', () => resolve()); }),
+        new Promise<void>(resolve => { timer = setTimeout(resolve, 5000); timer.unref(); })]);
+      if (timer) clearTimeout(timer);
+      if (!previous.closed) await previous.close();
+    }
     const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--forward-subagent-text', '--permission-prompts', 'host', '--permission-prompt-tool', 'mcp__cere__approve', '--mcp-config', JSON.stringify({ mcpServers: { cere: mcpConfig(this.hooks.token, this.session.id) } })];
     if (this.hooks.restrictive) {
       // Restricted mode ignores user/project/local settings, refuses permission

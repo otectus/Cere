@@ -108,6 +108,8 @@ Item {
     property var settlingAnchor:null
     property var trackedAnchor:({anchorId:"",anchorOffset:0,atEnd:true})
     function activityStatus() {
+        // The last known turn may have ended while the broker was away; never show it as live.
+        if (!App.connected) return "Connection lost — reconnecting…"
         if (App.session.status === "stopping") return "Stopping…"
         if (pendingQuestions.length) return pendingQuestions.length === 1 ? "Waiting for your answer…" : "Waiting for your answers…"
         if (pendingApprovals.length) return "Waiting for permission…"
@@ -126,11 +128,25 @@ Item {
         default: return App.session.status === "waiting" ? "Waiting for your input…" : "Working on it…"
         }
     }
-    function loadDraft(){loadingDraft=true;draftRevision=App.session.draftRevision||"0";draftBaseline=App.session.draft||"";if(composer.text!==draftBaseline)composer.text=draftBaseline;attachments=App.session.draftAttachments||[];attachmentBaseline=JSON.stringify(attachmentIds());draftConflict=false;loadingDraft=false;draftTimer.stop();recoverable={};inspectRecovery()}
+    function loadDraft(){loadingDraft=true;draftRevision=App.session.draftRevision||"0";draftBaseline=App.session.draft||"";if(composer.text!==draftBaseline)composer.text=draftBaseline;attachments=App.session.draftAttachments||[];attachmentBaseline=JSON.stringify(attachmentIds());draftConflict=false;loadingDraft=false;draftTimer.stop();recoverable={};inspectRecovery();restoreOfflineDraft()}
+    // Text typed in this conversation while the broker was away comes back to its composer.
+    function restoreOfflineDraft(){
+        const offline=App.takeOfflineDraft(draftSession)
+        if(offline.text===undefined)return
+        loadingDraft=true;composer.text=offline.text;attachments=offline.attachments||[];loadingDraft=false
+        // Changed elsewhere meanwhile: keep this text and let the reader choose Keep mine or Reload.
+        if(offline.expectedRevision!==draftRevision){draftConflict=true;draftTimer.stop()}
+        else if(App.connected)draftTimer.restart()
+    }
     // flush: the surface is hiding or closing, so a save waiting on another hands over to the controller.
     // previous: the selection already moved on, so the reading position comes from the tracked anchor.
     function saveDraft(flush,previous){
-        if(!draftSession||!App.connected||draftConflict||importingAttachments)return
+        if(!draftSession||draftConflict||importingAttachments)return
+        if(!App.connected){
+            // Held by this window's process until the broker returns or this conversation opens again.
+            if(draftDirty())App.keepOfflineDraft(draftSession,{text:composer.text,attachmentIds:attachmentIds(),attachments:attachments,expectedRevision:draftRevision,scroll:previous?0:scroll.contentY,view:viewState(previous)})
+            return
+        }
         const view=viewState(previous),key=viewKey(view),textDirty=draftDirty()
         if(!textDirty&&key===viewBaseline)return
         const ids=attachmentIds(),params={id:draftSession,text:composer.text,attachmentIds:ids,scroll:previous?0:scroll.contentY,view:view}
@@ -324,17 +340,29 @@ Item {
     }
     CText { visible:!!chat.attachmentError;text:chat.attachmentError;color:Theme.danger;Layout.fillWidth:true;font.pixelSize:Theme.secondary }
     Flickable {
-        visible:chat.attachments.length>0;Layout.fillWidth:true;Layout.preferredHeight:68;contentWidth:attachmentRow.width;clip:true
-        Row {
+        id:attachmentScroll;objectName:"attachmentStrip"
+        // Wide windows wrap chips onto a second row; narrow ones scroll sideways with a visible bar.
+        readonly property bool wraps:chat.width>=640
+        visible:chat.attachments.length>0;Layout.fillWidth:true
+        Layout.preferredHeight:Math.min(attachmentRow.height,wraps?128:60)+(contentWidth>width?14:0)
+        contentWidth:attachmentRow.width;contentHeight:attachmentRow.height;clip:true
+        flickableDirection:wraps?Flickable.VerticalFlick:Flickable.HorizontalFlick
+        ScrollBar.horizontal:CScrollBar { policy:attachmentScroll.contentWidth>attachmentScroll.width?ScrollBar.AlwaysOn:ScrollBar.AsNeeded }
+        ScrollBar.vertical:CScrollBar {}
+        Flow {
             id:attachmentRow;spacing:8
+            width:attachmentScroll.wraps?attachmentScroll.width:Math.max(0,chat.attachments.length*188-8)
             Repeater {
                 model:chat.attachments
                 Rectangle {
                     required property var modelData;required property int index
                     objectName:"attachmentChip_"+modelData.id
                     width:180;height:60;radius:Theme.radiusControl;color:Theme.surface;border.color:Theme.border
+                    Accessible.role:Accessible.StaticText;Accessible.name:"Attachment "+modelData.name
+                    HoverHandler { id:chipHover }
+                    ToolTip.visible:chipHover.hovered;ToolTip.delay:500;ToolTip.text:modelData.name+" · "+Math.ceil(modelData.size/1024)+" KiB"
                     Image { x:4;y:4;width:48;height:48;fillMode:Image.PreserveAspectFit;visible:parent.modelData.kind==="image";source:visible?"file://"+parent.modelData.path:"";asynchronous:true }
-                    Text { x:parent.modelData.kind==="image"?58:8;y:8;width:90;text:parent.modelData.name;elide:Text.ElideMiddle;color:Theme.text;font.pixelSize:Theme.caption }
+                    Text { x:parent.modelData.kind==="image"?58:8;y:8;width:parent.width-x-36;text:parent.modelData.name;elide:Text.ElideMiddle;color:Theme.text;font.pixelSize:Theme.caption }
                     Text { x:parent.modelData.kind==="image"?58:8;y:30;text:Math.ceil(parent.modelData.size/1024)+" KiB";color:Theme.muted;font.pixelSize:Theme.caption }
                     CButton { anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;text:"×";quiet:true;implicitWidth:28;Accessible.name:"Remove "+parent.modelData.name;onClicked:chat.attachments=chat.attachments.filter((a,i)=>i!==parent.index) }
                 }
@@ -375,7 +403,7 @@ Item {
         spacing:6
         CButton { text:chat.width>=480?"Attach":"";iconName:"image";quiet:true;help:"Attach an image or text file";Accessible.name:"Attach a file";enabled:!!App.session.id&&!App.session.temporary&&attachments.length<8;onClicked:{const p=App.chooseFile();if(p)chat.importAttachment(p)} }
         CButton { objectName:"pasteClipboard";text:"Paste";quiet:true;help:"Paste text, images or files (Ctrl+V)";enabled:composer.enabled;onClicked:chat.pasteClipboard() }
-        CButton { visible:attachments.length>0;text:chat.width>=480?"Clear":"×";help:"Clear image attachments";onClicked:attachments=[] }
+        CButton { visible:attachments.length>0;text:chat.width>=480?"Clear":"×";help:"Clear attachments";Accessible.name:"Clear attachments";onClicked:attachments=[] }
         CCheckBox { id:searchThisTurn;objectName:"searchThisTurn";visible:["ollama","openai","anthropic","google"].includes(App.session.provider)&&App.state.settings?.webSearch?.enabled===true;text:chat.width>=480?"Search web":"Web";enabled:(!chat.busy||chat.canSendWhileBusy)&&!App.state.settings?.paused;Accessible.name:"Search web for this message";Accessible.description:"Search uses the next message as a public query, up to 500 characters";ToolTip.visible:hovered;ToolTip.text:Accessible.description;onToggled:chat.viewPristine=false }
         Item { Layout.fillWidth:true;Layout.minimumWidth:0 }
         Text { visible:chat.width>=480;text:"Enter sends · Shift+Enter new line";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
@@ -390,7 +418,7 @@ Item {
             id:voiceInput;sessionId:App.selectedId;available:composer.enabled
             onTranscriptionAccepted:text=>{composer.insert(composer.cursorPosition,(composer.text?"\n":"")+text);composer.forceActiveFocus()}
         }
-        CButton { objectName:"stopMessage";visible:chat.busy;text:"Stop";implicitWidth:64;leftPadding:6;rightPadding:6;font.pixelSize:Theme.body;help:"Stop";Accessible.name:"Stop";danger:true;onClicked:App.rpc("session.stop",{id:App.selectedId}) }
+        CButton { objectName:"stopMessage";visible:chat.busy;enabled:App.connected;text:"Stop";implicitWidth:64;leftPadding:6;rightPadding:6;font.pixelSize:Theme.body;help:App.connected?"Stop":"Stop is available once Cere reconnects";Accessible.name:"Stop";danger:true;onClicked:App.rpc("session.stop",{id:App.selectedId}) }
         CButton {
             id:sendButton;objectName:"sendMessage";visible:!chat.busy||chat.canSendWhileBusy
             implicitWidth:implicitHeight;leftPadding:9;rightPadding:9
@@ -466,6 +494,8 @@ Item {
                 if(!chat.draftDirty()||(composer.text===(App.session.draft||"")&&JSON.stringify(chat.attachmentIds())===JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id))))chat.loadDraft()
                 else {chat.draftConflict=true;draftTimer.stop();return}
             }
+            // Text typed while the broker was away is saved once it is back, by this live composer.
+            if(App.connected&&!chat.draftConflict&&chat.draftDirty()){App.takeOfflineDraft(chat.draftSession);if(!draftTimer.running)draftTimer.restart()}
             // The surface this one replaced may save its view just after this one opened.
             const incoming=chat.viewKey(App.session.view)
             if(incoming!==chat.remoteView){
@@ -478,7 +508,8 @@ Item {
             const requests=Object.assign({},chat.draftRequests);delete requests[id];chat.draftRequests=requests
             if(pending.session!==chat.draftSession)return
             // A view-only save never blocks the draft; the newer draft arrives with the next state.
-            if(value?.error){if(!pending.viewOnly){chat.draftConflict=true;draftTimer.stop()}return}
+            // A lost connection is not a conflict: the text stays dirty and is saved after reconnecting.
+            if(value?.error){if(value.code!=="CONNECTION_LOST"&&!pending.viewOnly){chat.draftConflict=true;draftTimer.stop()}return}
             chat.draftRevision=value.draftRevision||"0";chat.draftBaseline=pending.text;chat.attachmentBaseline=pending.attachments
             chat.viewBaseline=pending.view;chat.remoteView=chat.viewKey(value.view)
             if(pending.deferred)return

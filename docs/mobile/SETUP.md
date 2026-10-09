@@ -52,7 +52,7 @@ sudo ufw allow in on DESKTOP_INTERFACE proto tcp from PHONE_IP to DESKTOP_IP por
 
 This rule needs updating if DHCP changes either address. A changed desktop address also needs an updated signed pairing endpoint. A successful TCP probe alone does not prove authentication: verify **Online** on Android and that the same phone appears in desktop `remote status` under `connected`.
 
-If the app reports missing pairing keys, install the corrected build, revoke that device on desktop, then use **Forget desktop** and pair again. Android Keystore private keys cannot be reconstructed from the saved public pairing details. A connection limit can temporarily mask the first failure after repeated retries; stop monitoring for one minute before checking a single new attempt.
+If the app reports missing pairing keys, install the corrected build, revoke that device on desktop, then use **Forget desktop** and pair again. Android Keystore private keys cannot be reconstructed from the saved public pairing details. Reconnects are not rate-limited, but the desktop accepts at most ten simultaneous phone connections. Connections that drop without closing are cleared within two minutes, so after many interrupted retries, wait that long before checking a single new attempt.
 
 ## Manage access
 

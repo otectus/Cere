@@ -55,7 +55,6 @@ ColumnLayout {
     PageScroll {
         id:settingsScroll;objectName:"settingsScroll"
         Layout.fillWidth:true;Layout.fillHeight:true;maximumContentWidth:820
-    TelemetrySettings { id:telemetrySection;backend:App;Layout.fillWidth:true }
     CSection {
         id:companionSection
         title:"Companion"
@@ -87,7 +86,6 @@ ColumnLayout {
     }
     PersonalitySettings { id:personalitySection }
     VoiceSettings { id:voiceSection }
-    RemoteSettings { id:remoteSection }
     CSection {
         id:motionSection
         title:"Motion & expressions"
@@ -146,6 +144,7 @@ ColumnLayout {
         CText { visible:settingsView.settings.quiet||settingsView.settings.reducedMotion||settingsView.settings.hidden;text:"Show Cere and turn off quiet mode and reduced motion to preview expressions.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CButton { text:settingsView.settings.hidden?"Show Cere":"Hide Cere";onClicked:settingsView.update({hidden:!settingsView.settings.hidden}) }
     }
+    RemoteSettings { id:remoteSection }
     CSection {
         id:assistanceSection
         title:"AI assistance"
@@ -235,6 +234,7 @@ ColumnLayout {
         ApiConnection { provider:"google";label:"Google AI API" }
     }
     KnowledgeSettings { id:knowledgeSection }
+    TelemetrySettings { id:telemetrySection;backend:App;Layout.fillWidth:true }
     CSection {
         id:applicationSection
         title:"Application"

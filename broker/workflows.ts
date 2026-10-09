@@ -247,6 +247,11 @@ export class Workflows {
     const key='workflow-run:'+sessionId,run=this.core.store.get<any>(key,null);if(run){run.state='finished';run.finished=Date.now();this.core.store.set(key,run)}
   }
 
+  /** A deleted conversation leaves no result card or pending check behind. */
+  forgetSession(sessionId:string){
+    this.checks.get(sessionId)?.abort(new Error('Conversation deleted'));this.checks.delete(sessionId);
+    const rows=this.resultRows();if(rows.some(row=>row.sessionId===sessionId))this.saveResults(rows.filter(row=>row.sessionId!==sessionId));
+  }
   private resultRows(){return this.core.store.get<ResultRecord[]>(resultStoreKey,[])}
   private saveResults(rows:ResultRecord[]){this.core.store.set(resultStoreKey,rows.sort((a,b)=>b.time-a.time).slice(0,500));this.core.changed()}
   private resultId(session:Session,message?:Message){return `${session.id}:${message?.turnId||session.turnId||message?.id||'latest'}`}

@@ -60,6 +60,39 @@ for(const provider of apiProviders)test(`${provider}: truncated stream never com
   await f.adapter.send('Hi');await f.adapter.task;
   assert.equal(f.output.at(-1).type,'error');assert.match(f.output.at(-1).text,/disconnected/);assert.equal(f.calls.length,0);assert.equal(requests,1);
 });
+const outputLimitEvents=(provider:ApiProvider):any[]=>provider==='openai'?[
+  {type:'response.output_text.delta',delta:'Partial answer'},
+  {type:'response.incomplete',response:{status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Partial answer'}]},{type:'function_call',call_id:'cut',name:'check',arguments:'{"val'}]}},
+]:provider==='anthropic'?[
+  {type:'content_block_start',index:0,content_block:{type:'thinking',thinking:''}},
+  {type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'Working it out'}},
+  {type:'content_block_delta',index:0,delta:{type:'signature_delta',signature:'sig-kept'}},
+  {type:'content_block_start',index:1,content_block:{type:'text',text:''}},
+  {type:'content_block_delta',index:1,delta:{type:'text_delta',text:'Partial answer'}},
+  {type:'content_block_start',index:2,content_block:{type:'tool_use',id:'cut',name:'check',input:{}}},
+  {type:'content_block_delta',index:2,delta:{type:'input_json_delta',partial_json:'{"val'}},
+  {type:'message_delta',delta:{stop_reason:'max_tokens'}},{type:'message_stop'},
+]:[{candidates:[{content:{role:'model',parts:[{text:'Partial answer'}]}}]},{candidates:[{content:{role:'model',parts:[{functionCall:{id:'cut',name:'check',args:{}}}]},finishReason:'MAX_TOKENS'}]}];
+for(const provider of apiProviders)test(`${provider}: a reply cut at the output limit stays in the transcript and model history and runs no tool`,async t=>{
+  const bodies:any[]=[];const f=await fixture(t,provider,async(_url,init)=>{bodies.push(JSON.parse(String(init?.body)));return sse(outputLimitEvents(provider));});
+  await f.adapter.send('Write a long answer');await f.adapter.task;
+  assert.equal(f.output.at(-1).type,'complete');assert.equal(f.calls.length,0);assert.equal(bodies.length,1);
+  const message=f.output.find(e=>e.type==='message');assert.match(message.text,/^Partial answer/);assert.match(message.text,/output limit/);
+  const reply=f.history().at(-1)!;assert.equal(reply.role,'assistant');assert.equal(reply.content,'Partial answer');assert.equal(reply.tool_calls,undefined);
+  assert.doesNotMatch(JSON.stringify(reply.providerData),/"cut"/);
+  if(provider==='anthropic'){assert.equal(bodies[0].max_tokens,4096);assert.match(JSON.stringify(reply.providerData),/sig-kept/);}
+});
+test('Claude API requests use the catalog output ceiling and context window',async t=>{
+  const models=await apiModels('anthropic',{key:()=> 'private',fetch:async()=>Response.json({data:[{id:'claude-test',display_name:'Claude Test',max_input_tokens:1000000,max_tokens:128000}],has_more:false})});
+  assert.equal(models[0].contextLength,1000000);assert.equal(models[0].maxOutputTokens,128000);
+  const bodies:any[]=[];let history:OllamaMessage[]=[];
+  const adapter=new ApiAdapter(session('anthropic'),{token:'test',native(){},event(){},approve:async()=>({choice:'deny'}),personality:()=> 'Helpful'},
+    {load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[],call:async()=>({})},
+    {key:()=> 'private',fetch:async(_url,init)=>{bodies.push(JSON.parse(String(init?.body)));return sse(events('anthropic'));}},{contextLength:models[0].contextLength,maxOutputTokens:models[0].maxOutputTokens});
+  t.after(()=>adapter.close());
+  await adapter.send('Hi');await adapter.task;
+  assert.equal(bodies[0].max_tokens,128000);assert.equal(adapter.contextLength,1000000);assert.equal(history.at(-1)?.content,'Hello 🌙');
+});
 for(const provider of apiProviders)test(`${provider}: transient failures retry only the HTTP attempt and never repeat completed tools`,async t=>{
   const bodies:string[]=[],waits:number[]=[];let attempt=0;
   const f=await fixture(t,provider,async(_url,init)=>{

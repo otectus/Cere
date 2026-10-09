@@ -5,6 +5,8 @@ import QtQuick.Layouts
 ColumnLayout {
     id:list
     property bool compact:false
+    // Narrow windows keep each row to one line of actions: the context menu (or its ⋯ button).
+    property bool rowActions:true
     property bool activeOnly:false
     property bool historyExpanded:false
     property string selectedFilter:"all"
@@ -78,6 +80,8 @@ ColumnLayout {
     }
     function focusSearch(){filter.forceActiveFocus()}
     function setFilter(id){selectedFilter=id;projectArchived=false;activeOnly=id==="working";refresh(true)}
+    // Deleting the folder being viewed shows every session again instead of an empty, mislabelled list.
+    onFoldersChanged:if(App.connected&&selectedFilter.startsWith("folder:")&&!folders.some(folder=>"folder:"+folder.id===selectedFilter))setFilter("all")
     function selectProject(cwd,archived){filter.text="";selectedFilter="project:"+cwd;projectArchived=!!archived;activeOnly=false;refresh(true);focusSearch()}
     function selectFolder(id){setFilter("folder:"+id)}
     function requestParams(before) {
@@ -184,7 +188,7 @@ ColumnLayout {
             required property var entry
             property var modelData:entry
             required property int index
-            width:sessionViewport.width-10;height:list.compact?72:116
+            width:sessionViewport.width-10;height:list.compact?72:list.rowActions?116:80
             CButton {
                 id:sessionRow
                 objectName:"session_"+sessionDelegate.modelData.id
@@ -208,13 +212,20 @@ ColumnLayout {
                         Text { visible:sessionDelegate.modelData.pinned===true;text:"★";color:Theme.amber;font.pixelSize:Theme.body;Accessible.ignored:true }
                         Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:(sessionDelegate.modelData.unread?"● ":"")+(sessionDelegate.modelData.title||"Untitled session");maximumLineCount:1;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;textFormat:Text.PlainText }
                         Rectangle { width:6;height:6;radius:3;color:list.pendingInputCount(sessionDelegate.modelData)>0?Theme.amber:["starting","working","stopping"].indexOf(sessionDelegate.modelData.status)>=0?Theme.cyan:Theme.line }
+                        CButton {
+                            visible:!list.compact&&!list.rowActions;objectName:"sessionMore_"+sessionDelegate.modelData.id
+                            implicitWidth:32;implicitHeight:28;leftPadding:6;rightPadding:6;quiet:true
+                            help:"Rename, organize or delete";Accessible.name:"Actions for "+(sessionDelegate.modelData.title||"Untitled session")
+                            contentItem:CIcon { name:"more";color:Theme.text }
+                            onClicked:{const corner=mapToItem(sessionRow,0,height);list.openSessionMenu(sessionDelegate.modelData,sessionRow,corner.x,corner.y)}
+                        }
                     }
                     Text { Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight;text:sessionDelegate.modelData.provider.charAt(0).toUpperCase()+sessionDelegate.modelData.provider.slice(1)+" · "+list.statusLabel(sessionDelegate.modelData);color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
                     Text { visible:!list.compact;Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideMiddle;text:sessionDelegate.modelData.cwd||"";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption;textFormat:Text.PlainText }
                 }
             }
             RowLayout {
-                visible:!list.compact;anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;height:36;spacing:6
+                visible:!list.compact&&list.rowActions;anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;height:36;spacing:6
                 CButton { objectName:"pinSession_"+sessionDelegate.modelData.id;text:sessionDelegate.modelData.pinned?"Unpin":"Pin";help:"Pinned replies appear beside Cere and are read aloud when voice is enabled.";quiet:true;implicitHeight:32;onClicked:list.organize(sessionDelegate.modelData,{pinned:!sessionDelegate.modelData.pinned}) }
                 CComboBox {
                     objectName:"moveSession_"+sessionDelegate.modelData.id;Layout.fillWidth:true;implicitHeight:32
@@ -273,6 +284,42 @@ ColumnLayout {
         CMenuSeparator {}
         CMenuItem { objectName:"sessionContextPin";text:list.contextSession.pinned?"Unpin":"Pin";onTriggered:list.organize(list.contextSession,{pinned:!list.contextSession.pinned}) }
         CMenuItem { objectName:"sessionContextArchive";text:list.contextSession.archived?"Unarchive":"Archive";onTriggered:list.organize(list.contextSession,{archived:!list.contextSession.archived}) }
+        CMenuSeparator {}
+        CMenuItem { objectName:"sessionContextDelete";text:list.contextSession.temporary?"Discard…":"Delete…";enabled:["starting","working","waiting","stopping"].indexOf(list.contextSession.status)<0;onTriggered:deleteSession.openFor(list.contextSession) }
+    }
+    CDialog {
+        id:deleteSession;objectName:"sessionDeleteDialog"
+        property var session:({})
+        property string error:""
+        property int requestId:-1
+        function openFor(value){session=value;error="";open()}
+        closePolicy:requestId>=0?Popup.NoAutoClose:Popup.CloseOnEscape|Popup.CloseOnPressOutside
+        CText { text:deleteSession.session.temporary?"Discard conversation":"Delete conversation";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
+        CText {
+            Layout.fillWidth:true;wrapMode:Text.Wrap
+            text:"“"+(deleteSession.session.title||"Untitled session")+"” and its transcript, draft, attachments and result cards are removed from Cere. This cannot be undone."
+                +(deleteSession.session.temporary?"":" Memory saved from it stays until you forget it in Memory, and the provider’s own history is unchanged.")
+        }
+        CText { visible:deleteSession.error.length>0;text:deleteSession.error;color:Theme.danger;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        RowLayout {
+            Layout.fillWidth:true
+            CButton { text:"Cancel";Layout.fillWidth:true;enabled:deleteSession.requestId<0;onClicked:deleteSession.close() }
+            CButton {
+                objectName:"sessionDeleteConfirm";text:deleteSession.requestId>=0?"Deleting…":deleteSession.session.temporary?"Discard":"Delete";danger:true;Layout.fillWidth:true
+                enabled:App.connected&&deleteSession.requestId<0
+                onClicked:deleteSession.requestId=deleteSession.session.temporary?App.rpc("session.discardTemporary",{id:deleteSession.session.id}):App.rpc("session.delete",{id:deleteSession.session.id,confirmed:true})
+            }
+        }
+        Connections {
+            target:App
+            function onResult(id,value){
+                if(id!==deleteSession.requestId)return;deleteSession.requestId=-1
+                if(value?.error){deleteSession.error=String(value.error.message||value.error);return}
+                // A deleted conversation never stays selected behind an empty composer.
+                if(App.selectedId===deleteSession.session.id){const next=(App.state.sessions||[]).find(s=>s.id!==deleteSession.session.id);App.select(next?next.id:"")}
+                deleteSession.close();list.refresh(true)
+            }
+        }
     }
     CDialog {
         id:renameSession;objectName:"sessionContextRenameDialog"

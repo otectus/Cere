@@ -1,0 +1,27 @@
+[
+    {
+        "check": "fresh state has no sessions",
+        "detail": "34",
+        "ok": false
+    },
+    {
+        "check": "compact initial focus",
+        "detail": "TextArea:composer",
+        "ok": true
+    },
+    {
+        "check": "ollama unreachable error shown",
+        "detail": "Cannot reach Ollama at http://127.0.0.1:9. Check the server and connection settings. fetch failed",
+        "ok": true
+    },
+    {
+        "check": "ollama model restored",
+        "detail": "",
+        "ok": true
+    },
+    {
+        "check": "ollama host restored",
+        "detail": "",
+        "ok": true
+    }
+]

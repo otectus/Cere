@@ -175,6 +175,20 @@ test('Claude launches in bypass mode only when selected and disables its optiona
   assert.equal(second[second.indexOf('--resume') + 1], 'claude-permission-thread');
 });
 
+test('Claude never starts a second print process while the previous turn is still exiting', async t => {
+  const f = await fixture(t); const previous = process.env.CERE_FIXTURE_LINGER_MS; process.env.CERE_FIXTURE_LINGER_MS = '600';
+  t.after(() => { if (previous === undefined) delete process.env.CERE_FIXTURE_LINGER_MS; else process.env.CERE_FIXTURE_LINGER_MS = previous; });
+  const events: any[] = [];
+  const adapter = new ClaudeAdapter({ ...f.session, provider: 'claude' }, { token: 'fixture', event: event => events.push(event), native() {}, async approve() {} });
+  t.after(() => adapter.close());
+  await adapter.send('first'); const first = adapter.process!;
+  while (!events.some(e => e.type === 'complete')) await new Promise(r => setTimeout(r, 10));
+  assert.equal(first.closed, false, 'the fixture is still exiting after its result');
+  await adapter.send('second'); await once(adapter.process!, 'exit');
+  const lifecycle = (await f.messages()).filter(m => m.lifecycle).map(m => m.lifecycle);
+  assert.deepEqual(lifecycle, ['start', 'exit', 'start', 'exit']);
+});
+
 test('Claude remote sessions use the enforceable restricted CLI boundary', async t => {
   const f=await fixture(t);let verified=false;
   const adapter=new ClaudeAdapter({...f.session,provider:'claude'},{token:'fixture',event(){},native(){},async approve(){return{choice:'deny'};},restrictive:true,policy:value=>{verified=value;},bypassCliPermissions:()=>true});

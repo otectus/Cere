@@ -62,9 +62,15 @@ Rectangle {
     Shortcut { sequence: "Ctrl+,"; onActivated: shell.navigate(3) }
     readonly property bool wide: expanded && width >= 920
     readonly property string statusText: !App.connected ? "Reconnecting…" : approvals.length ? approvals.length+" waiting for input" : busySessions ? busySessions+" conversations working" : "Ready when you are"
+    readonly property bool bypassActive: settings.bypassCliPermissions||settings.bypassComputerPermissions
+    readonly property string permissionText: settings.paused?"Tools paused":bypassActive?[settings.bypassCliPermissions?"CLI bypass":"",settings.bypassComputerPermissions?"Computer bypass":""].filter(s=>s).join(" · "):settings.profile==="manual"?"Manual desktop controls":settings.profile==="broad"?"Broad control · project grants apply":(settings.categories||[]).length+" AI desktop categories enabled"
+    // Paused tools and permission bypasses stay visible in the one-row compact header.
+    readonly property string compactStatus: statusText+(settings.paused||bypassActive?" · "+permissionText:"")
+    // The conversation's own error banner already says what failed there.
+    readonly property bool toastVisible: App.toast.length>0&&!(page===0&&App.toast===(App.session.error||""))
     component HeaderPortrait: CerePortrait {
-        Layout.preferredWidth: 64
-        Layout.preferredHeight: 64
+        Layout.preferredWidth: shell.wide ? 64 : 56
+        Layout.preferredHeight: shell.wide ? 64 : 56
         settings: shell.settings
         session: App.session
         messages: App.messages
@@ -138,7 +144,7 @@ Rectangle {
         ColumnLayout {
             Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumWidth:0
             Layout.margins:shell.wide?24:14
-            spacing:shell.wide?16:10
+            spacing:shell.wide?16:8
             RowLayout {
                 visible:!shell.wide
                 Layout.fillWidth:true;spacing:10
@@ -146,13 +152,19 @@ Rectangle {
                 ColumnLayout {
                     Layout.fillWidth:true;Layout.minimumWidth:0;spacing:2
                     Text { text:"CERE";color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.wordmark;font.weight:Font.Bold;font.letterSpacing:3 }
-                    CText { text:shell.statusText;color:Theme.muted;font.pixelSize:Theme.caption;maximumLineCount:1;elide:Text.ElideRight }
+                    CText { objectName:"compactStatus";Layout.fillWidth:true;text:shell.compactStatus;color:!App.connected||settings.paused||shell.bypassActive?Theme.amber:Theme.muted;font.pixelSize:Theme.caption;maximumLineCount:1;elide:Text.ElideRight;Accessible.name:text }
                 }
                 CButton {
                     objectName:"openCommandPalette";implicitWidth:40;implicitHeight:40;leftPadding:10;rightPadding:10
                     quiet:true;help:"Search Cere (Ctrl+K)";Accessible.name:"Search Cere"
                     contentItem:CIcon { name:"search";color:Theme.text }
                     onClicked:commandPalette.openPalette()
+                }
+                CButton {
+                    objectName:"shellPermissionCenter";implicitWidth:40;implicitHeight:40;leftPadding:10;rightPadding:10
+                    quiet:true;help:"Permissions · "+shell.permissionText;Accessible.name:"Permissions"
+                    contentItem:CIcon { name:"shield";color:settings.paused||shell.bypassActive?Theme.amber:Theme.text }
+                    onClicked:permissionCenter.open()
                 }
                 CButton { objectName:"expandWindow";text:expanded?"Hide":"Expand";iconName:expanded?"hide":"expand";quiet:true;onClicked:expanded?App.closePanel():App.expand() }
             }
@@ -212,28 +224,33 @@ Rectangle {
                     anchors.fill:parent;currentIndex:shell.page
                     transform:Translate { x:shell.pageOffset }
                     Chat { id:conversation;showBackButton:!shell.wide;onBackRequested:shell.showSessions();onCreateRequested:newSession.open() }
-                    SessionList { id:sessionsPage;onSessionActivated:shell.openConversation();onCreateRequested:newSession.open() }
+                    SessionList { id:sessionsPage;rowActions:shell.wide;onSessionActivated:shell.openConversation();onCreateRequested:newSession.open() }
                     Desktop { id:desktop;onSettingsRequested:shell.navigate(3) }
                     Settings { id:settingsPage }
                     Projects { id:projectsPage;onSessionActivated:shell.openConversation();onProjectRequested:(cwd,archived)=>{shell.page=1;sessionsPage.selectProject(cwd,archived)} }
                 }
-            }
-            Rectangle {
-                visible:App.toast.length>0;Layout.fillWidth:true;implicitHeight:toastText.implicitHeight+20
-                radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.border
-                Text { id:toastText;anchors.fill:parent;anchors.margins:10;text:App.toast;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;maximumLineCount:5;elide:Text.ElideRight }
+                // Notices float over the page instead of pushing it down. They take no input, so the
+                // controls beneath stay usable, and fade while the pointer is over them.
+                Rectangle {
+                    objectName:"toast";visible:shell.toastVisible;z:10;opacity:toastHover.hovered?0.2:1
+                    anchors.top:parent.top;anchors.left:parent.left;anchors.right:parent.right;anchors.margins:8
+                    implicitHeight:toastText.implicitHeight+20
+                    radius:Theme.radiusControl;color:Theme.raised;border.color:Theme.borderStrong
+                    Accessible.role:Accessible.AlertMessage;Accessible.name:App.toast
+                    Text { id:toastText;anchors.fill:parent;anchors.margins:10;text:App.toast;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;maximumLineCount:5;elide:Text.ElideRight }
+                    HoverHandler { id:toastHover }
+                }
             }
             RowLayout {
-                Layout.fillWidth:true;spacing:8
+                visible:shell.wide;Layout.fillWidth:true;spacing:8
                 CIcon { name:"settings";Layout.preferredWidth:16;Layout.preferredHeight:16;color:settings.paused?Theme.amber:Theme.muted }
                 Text {
-                    property bool bypass:settings.bypassCliPermissions||settings.bypassComputerPermissions
-                    text:settings.paused?"Tools paused":bypass?[settings.bypassCliPermissions?"CLI bypass":"",settings.bypassComputerPermissions?"Computer bypass":""].filter(s=>s).join(" · "):settings.profile==="manual"?"Manual desktop controls":settings.profile==="broad"?"Broad control · project grants apply":(settings.categories||[]).length+" AI desktop categories enabled"
-                    color:bypass?Theme.amber:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
+                    text:shell.permissionText
+                    color:shell.bypassActive?Theme.amber:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
                     Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight
                 }
                 Text { text:App.connected?"Connected":"Offline";color:App.connected?Theme.success:Theme.amber;font.family:Theme.font;font.pixelSize:Theme.caption }
-                CButton { objectName:"shellPermissionCenter";text:"Permissions";quiet:true;implicitHeight:30;onClicked:permissionCenter.open() }
+                CButton { objectName:"shellPermissionCenter";visible:shell.wide;text:"Permissions";quiet:true;implicitHeight:30;onClicked:permissionCenter.open() }
             }
         }
     }

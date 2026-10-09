@@ -28,7 +28,7 @@ Run the separately authorized real cloud extraction sample with:
 CERE_ALLOW_CLOUD_EVAL=1 node benchmarks/memory/evaluate-extraction.ts
 ```
 
-This command dispatches five synthetic statements to the configured `gpt-oss:20b-cloud` model. It never uses user or local-only sources. The environment flag is required to prevent accidental cloud execution.
+This command dispatches five synthetic statements to `gpt-oss:20b-cloud`, the model it is configured for. That is not the current default extraction model (`nemotron-3-super`), which has not been evaluated yet. It never uses user or local-only sources. The environment flag is required to prevent accidental cloud execution.
 
 ## Metric status
 

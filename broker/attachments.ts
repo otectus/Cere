@@ -10,7 +10,8 @@ import type { Attachment } from './types.ts';
 export class Attachments {
   store: Store;
   constructor(store: Store) { this.store=store; }
-  async import(sessionId: string, path: unknown): Promise<Attachment> {
+  /** imageRefusal: why this conversation cannot take an image, checked before anything is stored. */
+  async import(sessionId: string, path: unknown, imageRefusal = ''): Promise<Attachment> {
     const session=this.store.session(sessionId);
     if(session.temporary)throw new Error('Temporary conversations currently accept pasted text only; files would require retained attachment storage');
     if (typeof path!=='string'||path.length>4096) throw new Error('Choose a local file');
@@ -21,6 +22,7 @@ export class Attachments {
     let kind: Attachment['kind']='text', mime='text/plain', extension='.txt';
     const metadata=await sharp(bytes,{limitInputPixels:40_000_000}).metadata().catch(()=>null);
     if (metadata && ['png','jpeg','webp'].includes(metadata.format||'')) {
+      if (imageRefusal) throw new Error(imageRefusal);
       kind='image';mime='image/'+metadata.format;extension='.'+metadata.format;
     } else {
       if (bytes.length>256*1024) throw new Error('Text attachments must be smaller than 256 KiB');
@@ -66,6 +68,14 @@ export class Attachments {
   private referenced(sessionId:string,id:string){
     const session=this.store.session(sessionId),submission=this.store.get<any>('submission:'+sessionId,null);
     return ['starting','working','waiting','stopping'].includes(session.status)||session.draftAttachments?.some(a=>a.id===id)||submission?.attachmentIds?.includes(id)||this.store.get<any[]>('sendQueue:'+sessionId,[]).some(entry=>entry.params.attachmentIds?.includes(id));
+  }
+  /** Deletes every private copy owned by a session that is being removed. */
+  removeSession(sessionId:string){
+    for(const row of this.store.db.prepare("SELECT key,value FROM meta WHERE key LIKE 'attachment:%'").all()){
+      const entry=JSON.parse(String(row.value));if(entry.sessionId!==sessionId)continue;
+      try{unlinkSync(entry.asset.path);}catch(error:any){if(error.code!=='ENOENT')throw error;}
+      this.store.db.prepare('DELETE FROM meta WHERE key=?').run(String(row.key));
+    }
   }
   /** Called after references change. Failed deletion retains its metadata for retry. */
   prune(sessionId:string){

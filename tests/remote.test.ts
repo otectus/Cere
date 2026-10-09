@@ -541,3 +541,10 @@ test('mobile Ollama follow-ups queue with signed deduplication, keep draft CAS, 
   assert.equal(f.core.store.messages(session.id).filter(m=>m.role==='user').length,2);
   await client.request('sessions.stop',{sessionId:session.id},randomUUID());
 });
+test('mobile rename follows the desktop title rule',async t=>{
+  const f=await fixture(t);const s=await f.core.create({provider:'codex',cwd:f.directory,trusted:true,title:'Original'});
+  const renamed=await f.gateway.router.dispatch(f.device,'sessions.rename',{sessionId:s.id,title:'  Spaced title  ',expectedRevision:f.core.store.session(s.id).revision});
+  assert.equal(renamed.title,'Spaced title');
+  const blank=await f.gateway.router.dispatch(f.device,'sessions.rename',{sessionId:s.id,title:'   ',expectedRevision:f.core.store.session(s.id).revision});
+  assert.equal(blank.title,'Untitled session');
+});

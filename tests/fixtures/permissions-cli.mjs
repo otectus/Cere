@@ -17,8 +17,14 @@ if (args.includes('app-server')) {
     if (m.method === 'thread/list') reply({ data: [{ id: 'fixture-history-thread', name: 'Fixture history', cwd: process.cwd() }] });
   });
 } else if (args.includes('-p')) {
+  log({ lifecycle: 'start', pid: process.pid });
+  process.on('exit', () => log({ lifecycle: 'exit', pid: process.pid }));
   const promptIndex=args.indexOf('--append-system-prompt-file');
   if(promptIndex>=0){const path=args[promptIndex+1];log({personality:readFileSync(path,'utf8'),path,mode:statSync(path).mode&0o777});}
   process.stdin.resume();
-  process.stdin.on('end', () => send({ type: 'result', session_id: 'claude-permission-thread', is_error: false }));
+  process.stdin.on('end', () => {
+    send({ type: 'result', session_id: 'claude-permission-thread', is_error: false });
+    // A real CLI can take a moment to exit after its result.
+    if (process.env.CERE_FIXTURE_LINGER_MS) setTimeout(() => {}, Number(process.env.CERE_FIXTURE_LINGER_MS));
+  });
 }

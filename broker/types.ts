@@ -11,6 +11,8 @@ export type ModelOption = {
   id: string; displayName: string; description: string; efforts: EffortOption[];
   defaultEffort: string; isDefault: boolean; resolvedModel?: string;
   capabilities?: string[]; cloud?: boolean; contextLength?: number;
+  /** The provider's advertised output-token ceiling, when its catalog states one. */
+  maxOutputTokens?: number;
 };
 export type Status = 'idle' | 'starting' | 'working' | 'waiting' | 'stopping' | 'error' | 'interrupted' | 'disconnected';
 export type SessionActivity = 'thinking' | 'speaking' | 'working' | 'delegating' | 'waitingForAgents' | 'compacting' | 'planning';
@@ -100,8 +102,12 @@ export type SendOptions = {
   onAccepted?: () => void;
   /** The provider positively rejected the dispatched turn without starting it. */
   onRejected?: () => void;
+  /** The provider accepted the turn. Unlike onAccepted, send() does not wait for it. */
+  acknowledged?: () => void;
 };
 export interface Adapter {
+  /** Refuses input this provider cannot accept, before the turn is recorded or dispatched. */
+  preflight?(images: string[], signal: AbortSignal): Promise<void>;
   send(text: string, images?: string[], options?: SendOptions): Promise<void>;
   interrupt(): Promise<void>;
   close(): Promise<void>;

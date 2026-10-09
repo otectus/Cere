@@ -66,6 +66,7 @@ class UiCheck : public QObject {
     QJsonDocument hypr(const QStringList &args){QProcess p;p.start("hyprctl",args);if(!p.waitForFinished(2000))return {};return QJsonDocument::fromJson(p.readAllStandardOutput());}
     // Offscreen runs own a virtual pointer and never reach the live compositor.
     bool offscreen(){return qGuiApp->platformName()=="offscreen";}
+    bool liveHyprland(){return qGuiApp->platformName().startsWith("wayland")&&!qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE");}
     QPoint pointer(){if(offscreen())return QCursor::pos();const auto p=hypr({"-j","cursorpos"}).object();return {p["x"].toInt(),p["y"].toInt()};}
     void movePointer(QPoint point){if(offscreen()){QCursor::setPos(point);return;}hypr({"dispatch",QString("hl.dsp.cursor.move({x=%1,y=%2})").arg(point.x()).arg(point.y())});}
     QQuickWindow *titled(const QString &title){for(auto w:qGuiApp->allWindows())if(w->title()==title&&w->isVisible())return qobject_cast<QQuickWindow*>(w);return nullptr;}
@@ -460,8 +461,11 @@ Unicode: café ✦ 日本語
         click("tab_Chat");
     }
     void projectAndDraft(){
+        // Wait for the new session itself: an earlier check may have left another one selected.
+        const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","UI integration test"}});
-        QTRY_VERIFY(!app->selectedId().isEmpty());sessionId=app->selectedId();
+        QTRY_VERIFY(!app->selectedId().isEmpty()&&app->selectedId()!=previous);sessionId=app->selectedId();
+        QTRY_COMPARE(app->session().value("id").toString(),sessionId);
         auto composer=item("composer");QVERIFY(composer);composer->setProperty("text","A draft that must survive session switching.");
         app->rpc("session.create",{{"provider","claude"},{"cwd",data.path()},{"trusted",true},{"title","Second session"}});
         QTRY_VERIFY(app->selectedId()!=sessionId);app->select(sessionId);
@@ -916,6 +920,8 @@ Unicode: café ✦ 日本語
         window=original;layout.hide();
     }
     void spotifyPlaybackRoundTrip(){
+        // The session bus is not isolated: an offscreen run must never drive the user's player.
+        if(offscreen())QSKIP("Controls the live Spotify player");
         click("tab_Desktop");item("desktopSearch")->setProperty("text","spotify");
         auto desktop=item("desktopPage");QVERIFY(desktop);
         QTRY_VERIFY(desktop->property("mediaRequest").toInt()<0);
@@ -938,6 +944,7 @@ Unicode: café ✦ 日本語
         capture("spotify-controls");item("desktopSearch")->setProperty("text","");
     }
     void captureEditorRoundTrip(){
+        if(!liveHyprland())QSKIP("Needs the live Hyprland compositor");
         click("tab_Desktop");
         item("desktopSearch")->setProperty("text","satty");QTest::qWait(150);
         for(const bool save:{true,false}){
@@ -975,6 +982,7 @@ Unicode: café ✦ 日本語
         item("desktopSearch")->setProperty("text","");
     }
     void mouseFollowing(){
+        if(!liveHyprland())QSKIP("Needs the live Hyprland compositor");
         const auto originalPointer=pointer();
         const auto cleanup=qScopeGuard([&]{app->rpc("settings.update",{{"roaming",false},{"quiet",false},{"topmost",true}});app->setPetInteracting(false);movePointer(originalPointer);app->expand();QTest::qWait(200);});
         auto screen=window->screen();const auto g=screen->geometry();
@@ -1006,6 +1014,7 @@ Unicode: café ✦ 日本語
         QTest::qWait(200);const auto panel=floatingPet();QTest::qWait(500);QCOMPARE(floatingPet(),panel);
     }
     void mouseFollowingAcrossOutputs(){
+        if(!liveHyprland())QSKIP("Needs the live Hyprland compositor");
         if(qGuiApp->screens().size()<2)QSKIP("Requires two outputs");
         const auto originalPointer=pointer();
         const auto cleanup=qScopeGuard([&]{app->rpc("settings.update",{{"roaming",false}});movePointer(originalPointer);app->expand();QTest::qWait(200);});
@@ -1035,6 +1044,7 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE(app->state().value("settings").toMap().value("position").toMap().value("output").toString(),target->name());
     }
     void overlayAndFloatingModes(){
+        if(!liveHyprland())QSKIP("Needs the live Hyprland compositor");
         app->rpc("settings.update",{{"scale",1.5},{"topmost",false}});
         QTRY_VERIFY_WITH_TIMEOUT(([&]{for(auto w:qGuiApp->allWindows())if(w->title()=="Cere Pet"&&w->isVisible())return true;return false;})(),5000);
         app->rpc("settings.update",{{"topmost",true},{"scale",1.0}});
@@ -1076,8 +1086,10 @@ Unicode: café ✦ 日本語
             QVERIFY(pet->grabWindow().save(QString("/tmp/cere-ui-evidence/pet-%1-percent.png").arg(qRound(scale*100))));
         }
         // Exercise the broker event path (the same route used by the other UI process).
-        app->rpc("settings.update",{{"reducedMotion",false},{"scale",1.5}});
-        QTRY_VERIFY(app->motion()!="quiet");
+        // The broker answers requests concurrently: wait for the setting before animating.
+        QVERIFY(!call("settings.update",{{"reducedMotion",false},{"scale",1.5}}).contains("error"));
+        QTRY_VERIFY(!app->state().value("settings").toMap().value("reducedMotion").toBool());
+        QTRY_VERIFY(app->motion()!="quiet"&&app->motion()!="wake");
         app->rpc("ui.animate",{{"name","celebrate"}});
         QTRY_COMPARE(app->motion(),QString("celebrate"));
         QTest::qWait(600);QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/pet-celebrate.png"));
@@ -1376,6 +1388,7 @@ Unicode: café ✦ 日本語
         capture("expressive-settings");
     }
     void fullscreenOverlay(){
+        if(!liveHyprland())QSKIP("Needs the live Hyprland compositor");
         app->rpc("settings.update",{{"position",QVariantMap{{"output",window->screen()->name()},{"x",.85},{"y",.75}}}});
         window->showFullScreen();QTest::qWait(600);
         QProcess p;p.start("hyprctl",{"-j","layers"});QVERIFY(p.waitForFinished(2000));
@@ -1391,7 +1404,8 @@ Unicode: café ✦ 日本語
     //   QT_QPA_PLATFORM=offscreen:configfile=tests/fixtures/offscreen-screens.json build/cere-ui-check SLOT...
     // F-042 policy display, F-006 forget binding, F-019 correction round trip.
     void graphInspectorPolicyForgetAndCorrection(){
-        const auto restore=qScopeGuard([&]{restoreWorkspace();});
+        // Memory recall changes later fixture prompts, so it is switched back off (the default).
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"memory",QVariantMap{{"enabled",false}}}});restoreWorkspace();});
         click("tab_Chat");const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","ollama"},{"model","fixture-plain:latest"},{"cwd",data.path()},{"title","Graph inspector check"}});
         QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
@@ -1855,13 +1869,27 @@ Unicode: café ✦ 日本語
         const auto target=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Context target"}}).value("id").toString();
         const auto current=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Keep current conversation"}}).value("id").toString();
         QVERIFY(!target.isEmpty()&&!current.isEmpty());app->select(current);
-        auto session=[&]{for(const auto &entry:app->state().value("sessions").toList())if(entry.toMap().value("id")==target)return entry.toMap();return QVariantMap{};};
+        auto session=[&]{
+            for(const auto &entry:app->state().value("sessions").toList())if(entry.toMap().value("id")==target)return entry.toMap();
+            // Archived conversations leave the broker state unless a window has them selected.
+            for(const auto &entry:call("sessions.list",{{"archived",true},{"limit",200}}).value("sessions").toList())if(entry.toMap().value("id")==target)return entry.toMap();
+            return QVariantMap{};
+        };
         auto row=[&](const QString &viewport)->QQuickItem*{
             auto root=item(viewport);if(!root)return nullptr;
             std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem *node)->QQuickItem*{
                 if(node->isVisible()&&node->objectName()=="session_"+target)return node;
                 for(auto child:node->childItems())if(auto found=find(child))return found;return nullptr;
-            };return find(root);
+            };
+            if(auto found=find(root))return found;
+            // Earlier checks can leave pinned sessions above the target, so scroll its row into view.
+            QQuickItem *list=root->parentItem();while(list&&!list->property("filtered").isValid())list=list->parentItem();
+            if(!list)return nullptr;
+            auto rows=list->property("filtered");if(rows.metaType()==QMetaType::fromType<QJSValue>())rows=rows.value<QJSValue>().toVariant();
+            const auto entries=rows.toList();
+            for(int index=0;index<entries.size();++index)if(entries[index].toMap().value("id")==target)
+                QMetaObject::invokeMethod(root,"positionViewAtIndex",Q_ARG(int,index),Q_ARG(int,1));
+            return find(root);
         };
         auto openMenu=[&](const QString &viewport){
             QTest::qWait(180); // Let the prior dialog close and the catalog refresh settle.
@@ -1898,6 +1926,13 @@ Unicode: café ✦ 日本語
         QTRY_VERIFY(row("sessionList"));auto control=row("sessionList");QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());
         QTRY_COMPARE(app->selectedId(),target);QTRY_VERIFY(item("composer"));
         QVERIFY(!call("folders.delete",{{"id",folder.value("id")},{"expectedRevision",folder.value("revision")}}).contains("error"));
+        // F10: Delete… asks first, then removes the open conversation and moves the selection off it.
+        click("tab_Sessions");QTRY_VERIFY(row("sessionList"));control=row("sessionList");
+        QTest::mouseClick(window,Qt::RightButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());
+        QTRY_VERIFY(item("sessionContextDelete"));click("sessionContextDelete");
+        QTRY_VERIFY(item("sessionDeleteConfirm"));QVERIFY(!session().isEmpty());
+        click("sessionDeleteConfirm");
+        QTRY_VERIFY(session().isEmpty());QTRY_VERIFY(!row("sessionList"));QTRY_VERIFY(app->selectedId()!=target);
     }
     void projectCapsulesAndRecipeReview(){
         const auto source=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Workflow check"}});
@@ -1984,7 +2019,7 @@ Unicode: café ✦ 日本語
     // F-04: without always-on-top the compact panel is a normal window, so Hyprland must float it
     // at its compact size beside the pet instead of tiling it.
     void compactPanelFloatsWithoutAlwaysOnTop(){
-        if(!qGuiApp->platformName().startsWith("wayland")||qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))QSKIP("Needs the live Hyprland compositor");
+        if(!liveHyprland())QSKIP("Needs the live Hyprland compositor");
         const auto restore=qScopeGuard([&]{app->closePanel();app->rpc("settings.update",{{"topmost",true}});restoreWorkspace();});
         app->rpc("settings.update",{{"topmost",false},{"roaming",false},{"hidden",false}});QTest::qWait(600);
         auto client=[&]{for(const auto value:hypr({"-j","clients"}).array()){const auto w=value.toObject();if(w["pid"].toInteger()==QCoreApplication::applicationPid()&&w["title"].toString()=="Cere Panel")return w;}return QJsonObject();};
@@ -2001,7 +2036,7 @@ Unicode: café ✦ 日本語
     // F-09: without always-on-top the approval bubble is a normal window, yet it must not take the
     // keyboard from the application the user is typing in.
     void approvalBubbleNeverTakesFocus(){
-        if(!qGuiApp->platformName().startsWith("wayland")||qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))QSKIP("Needs the live Hyprland compositor");
+        if(!liveHyprland())QSKIP("Needs the live Hyprland compositor");
         const auto restore=qScopeGuard([&]{
             for(const auto &r:app->state().value("approvals").toList())call("approval.answer",{{"id",r.toMap().value("id")},{"choice","deny"}});
             app->rpc("settings.update",{{"topmost",true},{"quiet",false},{"reducedMotion",false}});restoreWorkspace();
@@ -2031,6 +2066,10 @@ Unicode: café ✦ 日本語
         const auto restore=qScopeGuard([&]{app->rpc("settings.update",{{"roaming",false},{"scale",1.0},{"topmost",true}});app->setPetInteracting(false);movePointer(originalPointer);restoreWorkspace();});
         QQuickWindow backdrop;backdrop.setTitle("Cere Follow Check");backdrop.setMinimumSize({180,80});backdrop.setMaximumSize({180,80});backdrop.resize(180,80);backdrop.show();backdrop.requestActivate();
         app->closePanel();
+        // A reply or completion bubble beside the pet pauses following; earlier checks may have left some.
+        for(const auto &entry:app->state().value("completions").toList())call("completion.dismiss",{{"id",entry.toMap().value("id")}});
+        for(const auto &entry:app->state().value("companionReplies").toList())call("companion.dismiss",{{"id",entry.toMap().value("id")}});
+        QTRY_VERIFY(!titled("Cere Approval"));
         const double tolerance=3; // Rounding plus one timer tick of scheduling slack.
         bool cancelled=false;
         for(const auto &[source,target]:seams)for(const double scale:{.5,1.,3.}){
@@ -2047,10 +2086,13 @@ Unicode: café ✦ 日本語
             bool straddled=false,settled=false;
             auto sample=[&](const char *phase){
                 const QPoint now=app->petPosition();const qint64 at=clock.elapsed();
-                const double step=QLineF(last,now).length(),bound=75*(at-sampled)/1000.+tolerance;
+                const QRect rect(now,size);if(rect.intersects(a)&&rect.intersects(b))straddled=true;
+                // Speed is measured over about 100 ms, allowing the one frame that straddles the window
+                // start (each frame advances at most 50 ms of motion). A jump never fits the bound.
+                if(at-sampled<96)return QString();
+                const double step=QLineF(last,now).length(),bound=75*((at-sampled)/1000.+.05)+tolerance;
                 const QString error=step<=bound?QString():QString("%1 %2: moved %3 px in %4 ms").arg(where,phase).arg(step).arg(at-sampled);
                 last=now;sampled=at;
-                const QRect rect(now,size);if(rect.intersects(a)&&rect.intersects(b))straddled=true;
                 return error;
             };
             while(clock.elapsed()<45000){
@@ -2065,9 +2107,14 @@ Unicode: café ✦ 日本語
                     QTRY_COMPARE(app->state().value("settings").toMap().value("position").toMap().value("output").toString(),holder->name());
                     app->rpc("settings.update",{{"roaming",true}});
                 }
-                if(b.contains(QRect(app->petPosition(),size))&&app->motion()!="runLeft"&&app->motion()!="runRight"){settled=true;break;}
+                // A pet larger than the output covers it fully in that dimension (Short150 at 300%).
+                if((QRect(app->petPosition(),size)&b).size()==size.boundedTo(b.size())&&app->motion()!="runLeft"&&app->motion()!="runRight"){settled=true;break;}
             }
-            QVERIFY2(straddled,qPrintable(where));QVERIFY2(settled,qPrintable(where));
+            // The pet only roams when it may idle, so a failure names what held it.
+            int busy=0;for(const auto &entry:app->state().value("sessions").toList())if(QStringList{"working","starting","stopping"}.contains(entry.toMap().value("status").toString()))++busy;
+            const QString held=QString(" (motion %1; %2 approvals, %3 busy, %4 completions, %5 pinned replies)").arg(app->motion()).arg(app->state().value("approvals").toList().size()).arg(busy)
+                .arg(app->state().value("completions").toList().size()).arg(app->state().value("companionReplies").toList().size());
+            QVERIFY2(straddled,qPrintable(where+held));QVERIFY2(settled,qPrintable(where+held));
         }
         QVERIFY(cancelled);
     }
@@ -2544,8 +2591,10 @@ private slots:
     }
     void reviewSurfacesAtScale(){
         app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
-        QQuickWindow *original=window;QStringList unreachable;
-        if(!longSession.isEmpty()){app->select(longSession);QTest::qWait(400);}
+        QQuickWindow *original=window;QStringList unreachable,cramped;
+        // Run on its own, the review still needs a conversation for the composer and its tools.
+        const QString reviewed=longSession.isEmpty()?createSession("ollama","Scale review","fixture-chat:latest"):longSession;
+        if(!reviewed.isEmpty()){app->select(reviewed);QTest::qWait(400);}
         for(auto screen:qGuiApp->screens()){
             const auto g=screen->availableGeometry();
             for(const QString file:{"Panel.qml","Workspace.qml"}){
@@ -2564,6 +2613,8 @@ private slots:
                 const bool reachable=(tools||more)&&(lowest<=view.height()+1||(page&&page->property("interactive").toBool()));
                 note(tag,outside==0&&reachable,QString("size=%1x%2 dpr=%3 controlsOutsideX=%4 toolsBottom=%5 composerBottom=%6 conversationHeight=%7 folded=%8 pageScrolls=%9").arg(view.width()).arg(view.height()).arg(view.devicePixelRatio()).arg(outside).arg(toolsBottom).arg(cardBottom).arg(area?area->height():-1).arg(more!=nullptr).arg(page&&page->property("interactive").toBool()));
                 if(outside!=0||!reachable)unreachable<<tag;
+                // F-11: at 860 px the compact panel keeps at least 420 px for the conversation.
+                if(file=="Panel.qml"&&view.height()>=860&&(!area||area->height()<420))cramped<<QString("%1 (%2 px)").arg(tag).arg(area?area->height():0.);
                 if(file=="Workspace.qml"){
                     // F-07: at the 720x520 minimum every control stays inside or scrolls into view.
                     view.resize(720,520);QTest::qWait(400);capture(tag+"-min");outside=0;bounds(view.rootObject());
@@ -2577,6 +2628,7 @@ private slots:
         }
         window=original;saveNotes("review-scales");
         QVERIFY2(unreachable.isEmpty(),qPrintable(unreachable.join(", ")));
+        QVERIFY2(cramped.isEmpty(),qPrintable("Compact conversation below 420 px: "+cramped.join(", ")));
     }
     void reviewWorkflows(){
         app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true},{"webSearch",QVariantMap{{"enabled",true}}}});
@@ -2673,12 +2725,56 @@ private slots:
         note("composer state while disconnected",true,item("composer")?QString("enabled=%1").arg(item("composer")->isEnabled()):"missing");
         note("send disabled while disconnected",!item("sendMessage")||!item("sendMessage")->isEnabled());
         reviewCompact();QTest::qWait(500);capture("review-broker-disconnected-compact");reviewWorkspace();
-        QProcess broker;broker.setProgram(QStandardPaths::findExecutable("node"));broker.setArguments({QString(CERE_SOURCE_DIR)+"/broker/main.ts"});broker.setStandardOutputFile(QProcess::nullDevice());broker.setStandardErrorFile(QProcess::nullDevice());broker.startDetached();
-        note("ui reconnected",waitFor([&]{return app->connected();},25000));
+        // The interface relaunches a broker that stays down (F9); the review never starts one itself.
+        note("ui relaunched the broker and reconnected",waitFor([&]{return app->connected();},40000));
         waitFor([&]{return app->session().value("status").toString()!="working";},10000);QTest::qWait(800);
         note("turn status after restart",true,app->session().value("status").toString()+" · warning: "+app->state().value("recoveryWarning").toString()+" · error: "+app->session().value("error").toString());
         capture("review-broker-reconnected-workspace");
         saveNotes("review-broker-disconnect");
+    }
+    // F-19: a notice floats over the page without moving it or taking clicks from the controls beneath.
+    // F-25: a provider error shown on the open conversation is not repeated as a notice there.
+    void noticesFloatOverPagesAndAreNotRepeated(){
+        const auto restore=qScopeGuard([&]{restoreWorkspace();});
+        restoreWorkspace();click("tab_Sessions");
+        auto create=item("newSession");QVERIFY(create);
+        const QPointF before=create->mapToScene(QPointF());
+        app->notify("Notice overlay check");QTRY_VERIFY(item("toast"));auto toast=item("toast");
+        QCOMPARE(create->mapToScene(QPointF()),before);
+        const QPointF covered=create->mapToScene(QPointF(create->width()/2,create->height()/2));
+        QVERIFY2(toast->mapRectToScene(QRectF(0,0,toast->width(),toast->height())).contains(covered),"The notice no longer covers New session; pick a covered control");
+        click("newSession");QTRY_VERIFY(item("sessionProvider"));QCOMPARE(app->toast(),QString("Notice overlay check"));
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("sessionProvider"));
+        click("tab_Chat");
+        const auto failing=createSession("codex","Notice duplicate check");QVERIFY(!failing.isEmpty());
+        app->select(failing);QTRY_COMPARE(app->selectedId(),failing);
+        QVERIFY(!call("session.send",{{"id",failing},{"text","acting-error"}}).contains("error"));
+        QTRY_COMPARE_WITH_TIMEOUT(app->session().value("error").toString(),QString("Fixture failure"),8000);
+        QTRY_COMPARE(app->toast(),QString("Fixture failure"));
+        QVERIFY(!item("toast"));
+        click("tab_Sessions");QTRY_VERIFY(item("toast"));
+    }
+    // F9: a draft edited while the broker is down is kept, the interface relaunches the broker on
+    // its own, and the kept draft is saved once it reconnects.
+    void offlineDraftSurvivesBrokerRelaunch(){
+        restoreWorkspace();click("tab_Chat");
+        const auto session=createSession("ollama","Offline draft","fixture-chat:latest");QVERIFY(!session.isEmpty());
+        app->select(session);QTRY_COMPARE(app->selectedId(),session);
+        QTRY_VERIFY(item("composer"));item("composer")->setProperty("text","Saved before the outage");
+        QTRY_COMPARE_WITH_TIMEOUT(app->session().value("draft").toString(),QString("Saved before the outage"),5000);
+        QFile pidFile(data.path()+"/runtime/broker.pid");QVERIFY(pidFile.open(QIODevice::ReadOnly));
+        const int pid=pidFile.readAll().trimmed().toInt();QVERIFY(pid>1);
+        QCOMPARE(::kill(pid,SIGTERM),0);
+        QTRY_VERIFY_WITH_TIMEOUT(!app->connected(),8000);
+        auto composer=item("composer");QVERIFY(composer);
+        composer->setProperty("text","Typed while the broker was down");
+        QTRY_VERIFY(!item("sendMessage")||!item("sendMessage")->isEnabled());
+        QTest::qWait(1200); // Longer than the draft save delay, so the edit is kept while offline.
+        QTRY_VERIFY_WITH_TIMEOUT(app->connected(),40000);
+        QTRY_COMPARE_WITH_TIMEOUT(app->session().value("draft").toString(),QString("Typed while the broker was down"),10000);
+        QCOMPARE(item("composer")->property("text").toString(),QString("Typed while the broker was down"));
+        QFile relaunched(data.path()+"/runtime/broker.pid");QVERIFY(relaunched.open(QIODevice::ReadOnly));
+        QVERIFY(relaunched.readAll().trimmed().toInt()!=pid);
     }
     void cleanupTestCase(){
         QString runtime=data.path()+"/runtime";

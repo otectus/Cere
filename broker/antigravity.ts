@@ -26,6 +26,7 @@ export class AntigravityAdapter implements Adapter {
   process?: RpcProcess; task?: Promise<void>; stopped=false;
   readonly session: Session; readonly hooks: Hooks;
   constructor(session: Session, hooks: Hooks) {this.session=session;this.hooks=hooks;}
+  async preflight(images: string[]) {if(images.length)throw new Error('AntiGravity headless input supports text attachments only. Use an API provider for images.');}
   async send(text: string, images: string[] = [], options: SendOptions = {}) {
     if(this.task)throw new Error('This AntiGravity session is busy');
     if(this.hooks.restrictive)throw new Error('AntiGravity is available on the desktop only; its CLI cannot confirm Cere’s remote permission policy');
@@ -45,7 +46,7 @@ export class AntigravityAdapter implements Adapter {
     const acceptance=new Promise<void>((resolve,reject)=>{resolveAccepted=resolve;rejectAccepted=reject;});
     // Desktop callers do not await an acknowledgement, but still observe failures via hooks.
     void acceptance.catch(()=>{});
-    const accept=()=>{if(!accepted){accepted=true;options.onAccepted?.();resolveAccepted();}};
+    const accept=()=>{if(!accepted){accepted=true;options.onAccepted?.();options.acknowledged?.();resolveAccepted();}};
     let timer: NodeJS.Timeout;
     const ids=new Map<number,string>(), replies=new Map<string,string>(), completed=new Set<string>(); let lastReply='';
     let finish!:(event:{type:string;text?:string})=>void;

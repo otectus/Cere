@@ -39,7 +39,8 @@ Rectangle {
                 function expandForOverflow(){if(contentWidth>width+1)overflowWidth=Math.ceil(contentWidth)}
                 // Prose is formatted to the visible width; only code and tables reach past it.
                 function formatDocument(){
-                    if(formatting||card.message.role==="tool")return
+                    // A deferred call can run after its window (and App) is gone.
+                    if(formatting||card.message.role==="tool"||typeof App==="undefined")return
                     formatting=true;App.formatMessage(textDocument,messageViewport.width);formatting=false
                 }
                 onTextChanged:{if(!formatting)overflowWidth=0;formatDocument()}

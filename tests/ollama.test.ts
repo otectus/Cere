@@ -97,7 +97,7 @@ test('all catalog metadata shapes use their full window for long turns and every
   }
 });
 
-test('context is refreshed after model changes and restart; genuine overflow keeps full history',async t=>{
+test('context is refreshed after model changes and restart; genuine overflow returns the turn to the draft',async t=>{
   const large={...model('large'),model_info:{'llama.context_length':32768}};
   const models=[large, {...model('small'),details:{context_length:4096},parameters:'num_ctx 131072'}];
   const f=await fixture(t,(_body,res)=>reply(res,'Answer'),models);
@@ -112,7 +112,11 @@ test('context is refreshed after model changes and restart; genuine overflow kee
   assert.equal(f.requests[2].options.num_ctx,4096);assert.ok(!f.requests[2].messages.some((m:any)=>m.content===text));
   await f.core.send({id:s.id,text});await finished(f.core,s.id);
   assert.equal(f.requests.length,3);assert.match(f.core.store.session(s.id).error!,/exceeds.*tokens; .*available for conversation/);
-  assert.equal(f.core.store.get<OllamaMessage[]>('ollama:'+s.id,[]).filter(m=>m.content===text).length,2);
+  // The model never received the oversized turn: its history is unchanged and the text is back in the draft.
+  assert.equal(f.core.store.get<OllamaMessage[]>('ollama:'+s.id,[]).filter(m=>m.content===text).length,1);
+  assert.equal(f.core.store.session(s.id).draft,text);assert.equal(f.core.store.get('submission:'+s.id,'absent'),null);
+  const notSent=f.core.store.messages(s.id).filter(m=>m.role==='user').at(-1)!;assert.equal(notSent.kind,'queue-cancelled');assert.match(notSent.text,/^Not sent — This turn exceeds.*back in your draft/s);
+  f.core.draft(s.id,'');
   await f.core.configureSession({id:s.id,model:'large',tools:false});
   large.model_info['llama.context_length']=65536;
   await f.core.send({id:s.id,text:'Continue with the larger model'});await finished(f.core,s.id);
@@ -252,10 +256,37 @@ test('approved images are encoded and persisted, unsupported models and non-imag
   const s=await session(f);await f.core.send({id:s.id,text:'Describe',images:[image]});await finished(f.core,s.id);
   assert.deepEqual(f.requests[0].messages.at(-1).images,[bytes.toString('base64')]);
   await assert.rejects(f.core.configureSession({id:s.id,model:'plain:latest',tools:false}),/contains images/);
-  await f.core.send({id:s.id,text:'Secret',images:[secret]});await finished(f.core,s.id);assert.match(f.core.store.session(s.id).error||'',/PNG/);assert.equal(f.requests.length,1);
-  const plain=await f.core.create({provider:'ollama',model:'plain:latest'});await f.core.send({id:plain.id,text:'Image',images:[image]});await finished(f.core,plain.id);assert.match(f.core.store.session(plain.id).error||'',/does not support images/);
+  // Refused before anything is recorded: no transcript row, no provider request, no status change.
+  const rows=f.core.store.messages(s.id).length;
+  await assert.rejects(f.core.send({id:s.id,text:'Secret',images:[secret]}),/PNG/);assert.equal(f.requests.length,1);
+  assert.equal(f.core.store.messages(s.id).length,rows);assert.equal(f.core.store.session(s.id).status,'idle');
+  const plain=await f.core.create({provider:'ollama',model:'plain:latest'});
+  await assert.rejects(f.core.send({id:plain.id,text:'Image',images:[image]}),/does not support images/);
+  assert.equal(f.core.store.messages(plain.id).length,0);assert.equal(f.core.store.session(plain.id).status,'idle');
 });
 
+test('a desktop turn rejected before Ollama accepts it returns to the draft with its attachments',async t=>{
+  const f=await fixture(t,(_b,res,index)=>{if(index===0){res.statusCode=400;res.end(JSON.stringify({error:'bad request'}));}else res.end('{"message":{"content":"Partial"},"done":false}\n');});
+  const s=await session(f),note=join(f.directory,'note.txt');await writeFile(note,'Attached reference');
+  const asset=await f.core.attachments.import(s.id,note);f.core.draft(s.id,'Please read the note',undefined,undefined,[asset.id]);
+  await f.core.send({id:s.id,text:'Please read the note',attachmentIds:[asset.id],expectedDraftRevision:f.core.store.session(s.id).draftRevision});await finished(f.core,s.id);
+  const returned=f.core.store.session(s.id);
+  assert.equal(returned.status,'error');assert.equal(returned.draft,'Please read the note');assert.deepEqual(returned.draftAttachments?.map(a=>a.id),[asset.id]);
+  assert.deepEqual(f.core.store.get<OllamaMessage[]>('ollama:'+s.id,[]),[],'the model never received the rejected turn');
+  const row=f.core.store.messages(s.id).find(m=>m.role==='user')!;assert.equal(row.kind,'queue-cancelled');assert.match(row.text,/^Not sent — Ollama \(400\): bad request.*back in your draft/s);
+  // A failure after the provider accepted the turn keeps the conversation as sent.
+  await f.core.send({id:s.id,text:'Please read the note',attachmentIds:[asset.id],expectedDraftRevision:f.core.store.session(s.id).draftRevision});await finished(f.core,s.id);
+  assert.equal(f.core.store.session(s.id).draft,'');assert.equal(f.core.store.get<OllamaMessage[]>('ollama:'+s.id,[]).filter(m=>m.role==='user').length,1);
+});
+test('image attachments are refused as they are added when the conversation cannot take images',async t=>{
+  const f=await fixture(t),image=join(f.directory,'pixel.png'),note=join(f.directory,'note.txt');
+  await writeFile(image,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64'));await writeFile(note,'Plain text works everywhere');
+  const plain=await f.core.create({provider:'ollama',model:'plain:latest',cwd:f.directory});
+  await assert.rejects(f.core.rpc('attachments.import',{sessionId:plain.id,path:image}),/does not accept images/);
+  assert.equal(f.core.store.session(plain.id).draftAttachments?.length||0,0);
+  assert.equal((await f.core.rpc('attachments.import',{sessionId:plain.id,path:note})).kind,'text');
+  const vision=await session(f);assert.equal((await f.core.rpc('attachments.import',{sessionId:vision.id,path:image})).kind,'image');
+});
 test('model changes require an idle session, preserve defaults, and tool mode needs project trust',async t=>{
   const f=await fixture(t),s=await session(f);
   await assert.rejects(f.core.configureSession({id:s.id,model:'chat:latest',tools:true}),/trust/);

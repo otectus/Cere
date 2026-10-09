@@ -138,11 +138,20 @@ public:
     Q_INVOKABLE int transcriptRow(const QString &messageId) const;
     // Sends a draft save once the save it depends on succeeds, even if its editor is gone by then.
     Q_INVOKABLE void deferDraft(int afterRequest, const QVariantMap &params);
+    // Unsaved text from a conversation left while the broker was unreachable; saved on reconnect,
+    // or handed back to the composer that opens the conversation first.
+    Q_INVOKABLE void keepOfflineDraft(const QString &sessionId, const QVariantMap &params);
+    Q_INVOKABLE QVariantMap takeOfflineDraft(const QString &sessionId);
     // The approval bubble takes keyboard focus only while the pointer is over it.
     Q_INVOKABLE void setBubbleFocusable(bool focusable);
     // The pet's current logical placement in global coordinates (diagnostics and tests).
     QPoint petPosition() const { return m_petPosition; }
-    void start(bool show);
+    // toggle: open (or close) the compact panel once connected, as `cere toggle` does.
+    void start(bool show, bool toggle=false);
+    // Shows the workspace in this process even while the broker is unreachable.
+    void showWorkspaceLocally();
+    // Signals the running interface process named by its instance lock.
+    static bool signalInterface(const QString &runtime, int signal);
     // The broker is trusted only when its socket belongs to the expected user.
     static bool trustedBroker(qintptr descriptor, uint expectedUid);
     static bool privateRuntime(const QString &path);
@@ -172,6 +181,11 @@ private:
     QVariantList m_messages;
     QHash<QString,QVariantMap> m_questionDrafts;
     QHash<int,QVariantMap> m_deferredDrafts;
+    QHash<QString,QVariantMap> m_offlineDrafts;
+    QHash<int,QString> m_offlineFlushes;
+    // How long the broker has been unreachable, and when this interface last started one.
+    QElapsedTimer m_disconnected, m_lastLaunch;
+    bool m_pendingToggle=false;
     bool m_bubbleFocusable=false;
     TranscriptModel m_transcript;
     TranscriptFilter m_replies{false},m_activity{true};
@@ -212,9 +226,17 @@ private:
     QSystemTrayIcon *m_tray=nullptr;
     QProcess *m_overlayProcess=nullptr;
     QPoint m_dragOffset, m_petPosition;
+    // The saved position, scale and output area last applied to the pet, and a position this host
+    // saved that the broker has not echoed yet. Unrelated or stale state updates leave the pet alone.
+    QVariantMap m_placedPosition, m_pendingPosition;
+    qreal m_placedScale=0;
+    QRect m_placedArea;
     QSize m_maskSize;
     QPointer<QScreen> m_screen;
     void connectBroker();
+    bool managedBroker() const;
+    void launchBroker(bool initial);
+    void flushOfflineDrafts();
     void receive();
     void applyState(const QVariantMap &state);
     void syncPet();

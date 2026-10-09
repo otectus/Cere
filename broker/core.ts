@@ -48,7 +48,8 @@ import { TelemetryService } from './telemetry/service.ts';
 import { configuration as telemetryConfiguration } from './telemetry/paths.ts';
 
 const untitledSession = 'Untitled session';
-const sessionTitle = (value: unknown) => String(value ?? '').trim().slice(0,100) || untitledSession;
+/** One title rule for every client: trimmed, at most 100 characters, never blank. */
+export const sessionTitle = (value: unknown) => String(value ?? '').trim().slice(0,100) || untitledSession;
 /** Validates the desktop view record; cursor positions are clamped to the draft text. */
 export function draftView(value: unknown, text: string): DraftView {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid draft view');
@@ -98,6 +99,8 @@ export class Core extends EventEmitter {
   factory: (s: Session, h: Hooks) => Adapter;
   modelLoader: (provider: Provider, host?: string) => Promise<ModelOption[]>; modelGenerations = new Map<Provider,number>();
   nativeMemoryTurns = new Map<string, { text: string; turnId?: string; controller: AbortController; epoch: AbortSignal }>();
+  /** Desktop turns their provider has not yet accepted; one that ends first returns to the draft. */
+  unacknowledged = new Map<string, { turnId: string; messageId: string; text: string; attachmentIds: string[]; returned?: boolean }>();
   memoryCaptures = new Set<Promise<unknown>>();
   constructor(store = new Store(), factory?: (s: Session, h: Hooks) => Adapter, modelLoader = discoverProviderModels) {
     super(); this.store = store; this.settings = store.settings(); this.credentials = new ProviderCredentials(join(store.directory, 'credentials')); this.modelLoader = modelLoader === discoverProviderModels ? (provider, host) => isApiProvider(provider) ? apiModels(provider, {key:()=>this.credentials.key(provider)}) : discoverProviderModels(provider,host) : modelLoader;
@@ -138,8 +141,8 @@ export class Core extends EventEmitter {
   }
   conversationAdapter(s: Session, h: Hooks, context: import('./ollama.ts').OllamaContext): Adapter {
     if (isApiProvider(s.provider)) {
-      const provider=s.provider;
-      return new ApiAdapter(s,h,context,{key:()=>this.credentials.key(provider)},this.capabilities[provider]?.models?.find((m:ModelOption)=>m.id===s.model)?.contextLength);
+      const provider=s.provider,model:ModelOption|undefined=this.capabilities[provider]?.models?.find((m:ModelOption)=>m.id===s.model);
+      return new ApiAdapter(s,h,context,{key:()=>this.credentials.key(provider)},{contextLength:model?.contextLength,maxOutputTokens:model?.maxOutputTokens});
     }
     if (s.provider === 'ollama') return new OllamaAdapter(s,h,context);
     throw new Error('Unsupported conversation provider');
@@ -457,6 +460,7 @@ export class Core extends EventEmitter {
       } else this.speech.stopSession(id);
       this.finishNativeMemory(session, status === 'idle' ? this.turnReplies.get(id)?.text || '' : undefined);
       this.turnReplies.delete(id);
+      if (status === 'idle') this.unacknowledged.delete(id); else this.returnUnacknowledged(id, e.type === 'error' ? e.text || 'The provider reported an error.' : 'Stopped before the provider accepted it.');
       this.updateSession(id, { status, unread:true,error: e.type === 'error' ? e.text : undefined });
       this.attachments.prune(id);
       this.emit('notice', { kind: e.type === 'error' ? 'error' : interrupted ? 'interrupted' : 'complete', sessionId: id, text: e.type === 'error' ? e.text : interrupted ? (e.text || 'Task interrupted') : 'Task complete' });
@@ -553,6 +557,10 @@ export class Core extends EventEmitter {
     if (images.length > 4) throw new Error('Attach at most four images');
     this.settingsFor(s.id); // Recheck after every asynchronous attachment validation.
     if (!p.queuedMessageId && p.expectedDraftRevision !== undefined && p.expectedDraftRevision !== (this.store.session(s.id).draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed during send validation.');
+    // Input the destination cannot take is refused before anything is recorded or sent.
+    await this.preflight(s, images);
+    this.settingsFor(s.id);
+    if (!p.queuedMessageId && p.expectedDraftRevision !== undefined && p.expectedDraftRevision !== (this.store.session(s.id).draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed during send validation.');
     // A very fast provider can emit and flush its first reply before its start
     // acknowledgement returns. Reserve an earlier timestamp for the deferred
     // remote user row so transcript ordering still reflects the turn.
@@ -565,7 +573,12 @@ export class Core extends EventEmitter {
     s = this.updateSession(s.id, { status: 'starting', activity: 'thinking', error: undefined, agents:[], turnId:p.turnId || randomUUID() });
     const submittedDraftRevision=s.draftRevision;
     if(!remoteAcceptance)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
-    if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: randomUUID(), sessionId: s.id, role: 'user', text: p.text + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
+    const userMessageId=randomUUID();
+    if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', text: p.text + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
+    // HTTP providers and AntiGravity accept a turn from their stream, after send() returns.
+    const tracked=!remoteAcceptance&&!p.queuedMessageId&&(s.provider==='ollama'||s.provider==='antigravity'||isApiProvider(s.provider));
+    if(tracked)this.unacknowledged.set(s.id,{turnId:s.turnId!,messageId:userMessageId,text:userText,attachmentIds:attached.assets.map(a=>a.id)});
+    const acknowledged=()=>{const turn=this.unacknowledged.get(s.id);if(!turn||turn.turnId!==s.turnId||turn.returned)return;this.unacknowledged.delete(s.id);this.store.set('submission:'+s.id,{turnId:s.turnId,time:Date.now(),state:'accepted'});this.attachments.prune(s.id);};
     let accepted=!remoteAcceptance;
     const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;if(p.queuedMessageId)return;s=this.updateSession(s.id,{draft:'',view:undefined});this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
     try {
@@ -581,25 +594,18 @@ export class Core extends EventEmitter {
           providerText = context + '\n\n' + providerText;
         } else memorySignal = controller.signal;
       }
-      if (!this.adapters.has(s.id)) {
-        const token = randomBytes(32).toString('hex'); this.tokens.set(token, s.id);
-        const generation = (this.generations.get(s.id) || 0) + 1; this.generations.set(s.id, generation);
-        const live = () => this.generations.get(s.id) === generation;
-        const hooks: Hooks = { token, restrictive:!!s.remote, policy:verified => { if (live()) this.updateSession(s.id, {effectivePolicy:verified ? 'restricted' : 'unknown'}); }, personality: () => this.settings.personality,
-          bypassCliPermissions: () => this.settingsFor(s.id).bypassCliPermissions,
-          automaticApprovalValid: kind => {try{return live()&&!this.terminal.has(s.id)&&this.automaticallyApprove(s.id,{kind,choices:['allow']});}catch{return false;}},
-          event: e => { if (live()) this.event(s.id,e); }, native: nativeId => { if (live()) this.updateSession(s.id,{nativeId}); },
-          approve: value => live() && !this.terminal.has(s.id) ? this.approval(s.id,value) : Promise.resolve({choice:'deny',cancelled:true}) };
-        this.adapters.set(s.id, this.factory(s, hooks));
-      }
+      this.ensureAdapter(s);
       if(s.remote&&s.provider!=='ollama'&&this.settingsFor(s.id).paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
       authorizeDispatch();
-      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined });
+      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:tracked?acknowledged:undefined });
       if(!accepted)throw new Error('Provider did not confirm that it accepted the turn.');
       if(!remoteAcceptance){
-        this.store.set('submission:'+s.id,{turnId:s.turnId,time:Date.now(),state:'accepted'});
-        if(!p.queuedMessageId && this.store.session(s.id).draftRevision===submittedDraftRevision)this.updateSession(s.id,{draft:'',draftAttachments:[],view:undefined});
-        this.attachments.prune(s.id);
+        const turn=this.unacknowledged.get(s.id),returned=!!turn&&turn.turnId===s.turnId&&turn.returned===true;
+        if(returned)this.unacknowledged.delete(s.id);
+        // A tracked turn stays recoverable until its provider accepts it.
+        else if(!tracked)this.store.set('submission:'+s.id,{turnId:s.turnId,time:Date.now(),state:'accepted'});
+        if(!returned && !p.queuedMessageId && this.store.session(s.id).draftRevision===submittedDraftRevision)this.updateSession(s.id,{draft:'',draftAttachments:[],view:undefined});
+        if(!returned)this.attachments.prune(s.id);
       }
       if (this.store.session(s.id).status === 'starting') this.updateSession(s.id, { status: 'working' });
       return true;
@@ -610,6 +616,47 @@ export class Core extends EventEmitter {
       const adapter = this.adapters.get(s.id); this.adapters.delete(s.id); await adapter?.close();
       throw e;
     }
+  }
+  /** Why a conversation cannot take image attachments, when its provider or model says so. */
+  imageRefusal(s: Session) {
+    if (s.provider === 'antigravity') return 'AntiGravity accepts text attachments only. Use an API provider or an Ollama model with Images for pictures.';
+    if (s.provider !== 'ollama' || !s.ollama || ollamaHost(this.settings.ollama.host) !== s.ollama.host) return '';
+    const model = (this.capabilities.ollama?.models as ModelOption[] | undefined)?.find(m => m.id === s.model);
+    return model?.capabilities?.length && !model.capabilities.includes('vision') ? `${s.model} does not accept images. Choose a model with Images, or attach text.` : '';
+  }
+  /** Refuses input the destination cannot accept, before a turn is recorded or dispatched. */
+  async preflight(s: Session, images: string[]) {
+    await this.ensureAdapter(s).preflight?.(images, AbortSignal.timeout(30000));
+  }
+  /** The session's provider adapter, created with callbacks bound to its current generation. */
+  ensureAdapter(s: Session): Adapter {
+    const existing = this.adapters.get(s.id); if (existing) return existing;
+    const token = randomBytes(32).toString('hex'); this.tokens.set(token, s.id);
+    const generation = (this.generations.get(s.id) || 0) + 1; this.generations.set(s.id, generation);
+    const live = () => this.generations.get(s.id) === generation;
+    const hooks: Hooks = { token, restrictive:!!s.remote, policy:verified => { if (live()) this.updateSession(s.id, {effectivePolicy:verified ? 'restricted' : 'unknown'}); }, personality: () => this.settings.personality,
+      bypassCliPermissions: () => this.settingsFor(s.id).bypassCliPermissions,
+      automaticApprovalValid: kind => {try{return live()&&!this.terminal.has(s.id)&&this.automaticallyApprove(s.id,{kind,choices:['allow']});}catch{return false;}},
+      event: e => { if (live()) this.event(s.id,e); }, native: nativeId => { if (live()) this.updateSession(s.id,{nativeId}); },
+      approve: value => live() && !this.terminal.has(s.id) ? this.approval(s.id,value) : Promise.resolve({choice:'deny',cancelled:true}) };
+    const adapter = this.factory(s, hooks); this.adapters.set(s.id, adapter); return adapter;
+  }
+  /**
+   * A desktop turn that ended before its provider accepted it never reached the model: its
+   * transcript row says so and the message returns to an empty draft (or stays recoverable).
+   */
+  private returnUnacknowledged(id: string, reason: string) {
+    const turn = this.unacknowledged.get(id), session = this.store.session(id);
+    if (!turn || turn.returned || turn.turnId !== session.turnId) return;
+    turn.returned = true;
+    const message = this.store.messageById(turn.messageId);
+    let restored = session.draft === turn.text && JSON.stringify((session.draftAttachments || []).map(a => a.id)) === JSON.stringify(turn.attachmentIds);
+    if (!restored && !session.draft && !session.draftAttachments?.length) {
+      try { this.draft(id, turn.text, undefined, undefined, turn.attachmentIds); restored = true; } catch {}
+    }
+    this.store.set('submission:' + id, restored ? null : { text: turn.text, attachmentIds: turn.attachmentIds, turnId: turn.turnId, time: Date.now(), state: 'uncertain' });
+    // Same wording and kind as a cancelled queued message, on every client.
+    if (message) this.putMessage({ ...message, kind: 'queue-cancelled', text: `Not sent — ${reason.trim()} ${restored ? 'The message is back in your draft.' : 'Recover it from the conversation menu.'}\n\n${message.text}` });
   }
   async stop(id: string): Promise<boolean> {
     this.sendQueue.cancel(id, 'Stopped before sending; copy this message to send it again');
@@ -637,6 +684,7 @@ export class Core extends EventEmitter {
   }
   private finishInterruptedTurn(id:string) {
     this.pendingCompletions.delete(id);this.flush();this.cancelApprovals(id);
+    this.returnUnacknowledged(id,'Stopped before the provider accepted it.');
     this.workflows.finish(id);
     const session=this.store.session(id);
     this.workflows.observeResult(session,this.turnReplies.get(id),'interrupted');
@@ -992,6 +1040,42 @@ export class Core extends EventEmitter {
       return this.updateSession(s.id,{model:modelId,effort,...(local?{ollama:{...s.ollama!,tools}}:api?{api:{tools}}:{}),error:undefined});
     } finally { this.sending.delete(p.id); }
   }
+  /**
+   * Deletes a saved conversation: transcript, draft, attachments, queued and recovery records,
+   * completions, bookmarks and result cards. Memory derived from it stays under Forget.
+   */
+  async deleteSession(p: any) {
+    const s = this.store.session(p.id);
+    if (p.confirmed !== true) throw new Error('Confirm deleting this conversation');
+    if (s.temporary) throw new Error('Discard temporary conversations instead');
+    if (busy(s) || this.sending.has(s.id) || this.stopping.has(s.id) || (s.agents || []).some(a => this.agentActive(a)) || [...this.approvals.values()].some(a => a.value.sessionId === s.id))
+      throw new Error('Stop this conversation before deleting it');
+    if (this.power.effective(s).leaseId) throw new Error('End this conversation’s power session before deleting it');
+    if (this.store.sessions().some(child => child.parentId === s.id && busy(child))) throw new Error('Stop its delegated conversations before deleting it');
+    await this.disconnect(s.id);
+    this.sendQueue.cancel(s.id, 'Conversation deleted');
+    this.workflows.finish(s.id); this.workflows.forgetSession(s.id);
+    this.attachments.removeSession(s.id);
+    this.store.deleteSession(s.id);
+    for (const map of [this.settledReplies, this.deliveredReplies, this.turnReplies, this.speechResponses, this.pendingCompletions, this.unacknowledged, this.delegations, this.generations]) map.delete(s.id);
+    for (const children of this.delegations.values()) children.delete(s.id);
+    this.terminal.delete(s.id); this.memory.packets.delete(s.id);
+    this.completions = this.completions.filter(c => c.sessionId !== s.id); this.persistCompletions(); this.clearCompanion(s.id);
+    for (const row of this.store.db.prepare("SELECT key,value FROM meta WHERE key LIKE 'memory-review:%'").all()) {
+      const proposals = JSON.parse(String(row.value)) as { sessionId: string }[];
+      if (proposals.some(proposal => proposal.sessionId === s.id)) this.store.set(String(row.key), proposals.filter(proposal => proposal.sessionId !== s.id));
+    }
+    const navigation = this.store.get<{ favorites: string[]; recents: string[] }>('navigation', { favorites: [], recents: [] });
+    if ([...navigation.favorites, ...navigation.recents].includes('session:' + s.id))
+      this.store.set('navigation', { favorites: navigation.favorites.filter(id => id !== 'session:' + s.id), recents: navigation.recents.filter(id => id !== 'session:' + s.id) });
+    for (const child of this.store.sessions()) if (child.parentId === s.id) this.updateSession(child.id, { parentId: undefined });
+    for (const owner of ['ui', 'overlay'] as const) if (this.attention[owner].sessionId === s.id) {
+      this.attention[owner] = { owner, sessionId: '', listening: false };
+      this.emit('ui', { command: 'attention', ...this.attention[owner] });
+    }
+    this.changed();
+    return true;
+  }
   checkingTimers = false;
   async checkTimers() {
     if (this.checkingTimers||this.recovery.pending) return;
@@ -1075,12 +1159,13 @@ export class Core extends EventEmitter {
       case 'session.stop': return this.stop(p.id);
       case 'session.disconnect': return this.disconnect(p.id);
       case 'session.discardTemporary': {const s=this.store.session(p.id);if(!s.temporary)throw new Error('This is a saved conversation');await this.stopAndClose(s.id);this.completions=this.completions.filter(c=>c.sessionId!==s.id);this.clearCompanion(s.id);this.settledReplies.delete(s.id);this.deliveredReplies.delete(s.id);this.store.discardTemporary(s.id);this.changed();return true;}
+      case 'session.delete': return this.deleteSession(p);
       case 'session.detachRemote': { await this.disconnect(p.id); return this.updateSession(p.id,{remote:undefined,effectivePolicy:undefined}); }
       // Byte-bounded pages, newest first by cursor; clients load older pages on request.
       case 'session.messages': this.flush(); return messagePage(this.store, p.id, p.before, p.maxBytes);
       case 'session.messageText': this.flush(); return messageChunk(this.store, p.id, p.messageId, p.offset);
       case 'session.draft': return this.draft(p.id, p.text, p.expectedRevision, Number(p.scroll) || 0,p.attachmentIds,p.view);
-      case 'attachments.import': {const asset=await this.attachments.import(p.sessionId,p.path);this.changed();return asset;}
+      case 'attachments.import': {const asset=await this.attachments.import(p.sessionId,p.path,this.imageRefusal(this.store.session(p.sessionId)));this.changed();return asset;}
       case 'attachments.remove': return this.attachments.remove(p.sessionId,p.id);
       case 'attachments.keepInDraft': {const s=this.store.session(p.sessionId),assets=this.attachments.resolve(s.id,[p.attachmentId]);if(!(s.draftAttachments||[]).some(a=>a.id===p.attachmentId)){const next=[...(s.draftAttachments||[]),...assets];this.attachments.resolve(s.id,next.map(a=>a.id));s.draftAttachments=next;this.store.saveSession(s);this.changed();}return s;}
       case 'session.recovery': return this.store.get('submission:'+this.store.session(p.id).id,null);

@@ -68,20 +68,22 @@ ColumnLayout {
                 color:Theme.selected
                 Text { anchors.centerIn:parent;text:"⌁";color:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.page;font.weight:Font.DemiBold }
             }
+            // Title and status share one line; actions wrap below so narrow panels never clip them.
             ColumnLayout {
-                Layout.fillWidth:true;Layout.minimumWidth:0;spacing:3
-                CButton { text:"Offline tools";onClicked:utilityShelf.open() }
-                CText { text:"Desktop";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
-                CText { text:desktop.width>=500?"Your apps, windows, sound, and everyday actions.":"Your everyday controls.";color:Theme.muted;font.pixelSize:Theme.secondary }
-            }
-            ColumnLayout {
-                spacing:5;Layout.alignment:Qt.AlignVCenter
+                Layout.fillWidth:true;Layout.minimumWidth:0;spacing:6
                 RowLayout {
-                    Layout.alignment:Qt.AlignRight;spacing:6
+                    Layout.fillWidth:true;spacing:6
+                    CText { text:"Desktop";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
+                    Item { Layout.fillWidth:true }
                     Rectangle { Layout.preferredWidth:8;Layout.preferredHeight:8;radius:4;color:App.connected?Theme.success:Theme.muted }
                     CText { text:App.connected?"Ready":"Offline";color:App.connected?Theme.success:Theme.muted;font.pixelSize:Theme.caption }
                 }
-                CButton { text:desktop.loading?"Loading…":"Refresh";help:"Refresh applications, windows and volume";onClicked:desktop.refresh();enabled:App.connected&&!desktop.loading }
+                CText { Layout.fillWidth:true;wrapMode:Text.Wrap;text:desktop.width>=500?"Your apps, windows, sound, and everyday actions.":"Your everyday controls.";color:Theme.muted;font.pixelSize:Theme.secondary }
+                Flow {
+                    Layout.fillWidth:true;spacing:6
+                    CButton { objectName:"desktopOfflineTools";text:"Offline tools";onClicked:utilityShelf.open() }
+                    CButton { objectName:"desktopRefresh";text:desktop.loading?"Loading…":"Refresh";help:"Refresh applications, windows and volume";onClicked:desktop.refresh();enabled:App.connected&&!desktop.loading }
+                }
             }
         }
     }

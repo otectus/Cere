@@ -36,6 +36,6 @@ test('reviewed backup restores content without credentials or active authority a
   assert.equal(core.recovery.pending,true);assert.equal(core.memory.service.recoveryFrozen,true);await assert.rejects(core.rpc('session.draft',{id:session.id,text:'Racing draft'}),/Recovery is pending/);
   await assert.rejects(core.rpc('memory.forget',{sessionId:session.id,id:'racing-forget'}),/Recovery is pending/);
   const activation=await activating;assert.equal(activation.restarting,true);await core.close();
-  assert.equal(activatePendingRecovery(dir),true);const restored=new Store(dir);try{assert.equal(restored.session(session.id).draft,'Keep this draft');assert.equal(restored.session(session.id).nativeId,null);assert.equal(restored.settings().paused,true);assert.deepEqual(restored.settings().grants,[]);assert.equal(restored.get('remoteCursorKey','absent'),'absent');}finally{restored.close();}
+  assert.equal(activatePendingRecovery(dir),true);const restored=new Store(dir);try{assert.equal(restored.session(session.id).draft,'Keep this draft');assert.equal(restored.session(session.id).nativeId,null);assert.equal(restored.settings().paused,true);assert.deepEqual(restored.settings().grants,[]);assert.equal(restored.get('remoteCursorKey','absent'),'secret-key','this machine keeps its own phone state; the backup never carried it');}finally{restored.close();}
   t.after(()=>rm(activation.previous,{recursive:true,force:true}));
 });

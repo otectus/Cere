@@ -2,7 +2,7 @@ import { randomUUID, createHmac } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
-import type { Core } from '../core.ts';
+import { sessionTitle, type Core } from '../core.ts';
 import type { Session, Approval } from '../types.ts';
 import { ordinarySettings, remoteError, busy } from '../execution.ts';
 import type { RemoteExecution } from '../execution.ts';
@@ -170,7 +170,7 @@ export class Router {
       case 'sessions.rename': {
         this.require(device,'chat.write');const s=this.session(device,p.sessionId);
         if((s.revision||'0')!==p.expectedRevision)throw remoteError('REVISION_CONFLICT','Session changed. Review its current title.');
-        return this.sessionDto(device,this.core.updateSession(s.id,{title:p.title}));
+        return this.sessionDto(device,this.core.updateSession(s.id,{title:sessionTitle(p.title)}));
       }
       case 'sessions.organize': {
         this.require(device,'chat.write');const s=this.session(device,p.sessionId);

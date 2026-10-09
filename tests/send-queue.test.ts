@@ -10,7 +10,7 @@ import { mobilePage } from '../broker/remote/transcript.ts';
 
 async function fixture(t:any) {
   const directory=await mkdtemp(join(tmpdir(),'cere-queue-')), sent:string[]=[],hooks=new Map<string,Hooks>();
-  const core=new Core(new Store(directory),(s,h)=>{hooks.set(s.id,h);return{async send(text,_images,options){options?.beforeAccept?.();sent.push(text);options?.onAccepted?.();},async interrupt(){h.event({type:'interrupted'});},async close(){}};});
+  const core=new Core(new Store(directory),(s,h)=>{hooks.set(s.id,h);return{async send(text,_images,options){options?.beforeAccept?.();sent.push(text);options?.onAccepted?.();options?.acknowledged?.();},async interrupt(){h.event({type:'interrupted'});},async close(){}};});
   t.after(async()=>{await core.close();await rm(directory,{recursive:true,force:true});});
   core.capabilities.ollama={modelsStatus:'ready',models:[{id:'fixture',displayName:'Fixture',description:'',efforts:[],defaultEffort:'',isDefault:true}]};
   await core.updateSettings({memory:{enabled:false}});

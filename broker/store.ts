@@ -61,6 +61,17 @@ export class Store {
     for(const row of this.volatile.prepare('SELECT key,value FROM meta').all())if(String(row.key).includes(id)||JSON.parse(String(row.value))?.sessionId===id)this.volatile.prepare('DELETE FROM meta WHERE key=?').run(String(row.key));
     this.volatile.prepare('DELETE FROM sessions WHERE id=?').run(id);this.sessionsRevision++;this.catalogRevision++;
   }
+  /** Removes a saved session with its transcript, bookmarks and session-keyed records, atomically. */
+  deleteSession(id: string) {
+    if (this.temporary(id)) throw new Error('Discard temporary conversations instead');
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
+      this.db.prepare('DELETE FROM message_bookmarks WHERE session_id=?').run(id);
+      for (const prefix of ['submission:','sendQueue:','sendQueueDispatch:','ollama:','api:','link:','workflow-run:','recalled:']) this.db.prepare('DELETE FROM meta WHERE key=?').run(prefix + id);
+      if (!Number(this.db.prepare('DELETE FROM sessions WHERE id=?').run(id).changes)) throw new Error('Session no longer exists');
+    });
+    this.sessionsRevision++; this.catalogRevision++;
+  }
   settings(): Settings {
     const saved = this.get<Partial<Settings>>('settings', {});
     return { ...structuredClone(defaultSettings), ...saved,

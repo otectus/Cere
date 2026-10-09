@@ -54,8 +54,11 @@ export async function apiModels(provider: ApiProvider, access: ApiAccess): Promi
       if (typeof id !== 'string' || !id || models.some(m => m.id === id)) continue;
       if (provider === 'google' && !entry.supportedGenerationMethods?.includes('generateContent')) continue;
       if (provider === 'openai' && (!/^(gpt-|chatgpt-|o[1-9])/.test(id) || /(?:audio|realtime|transcribe|tts|image|search|deep-research)/.test(id))) continue;
+      // Google states inputTokenLimit/outputTokenLimit; Anthropic states max_input_tokens/max_tokens.
+      const input = provider === 'google' ? entry.inputTokenLimit : provider === 'anthropic' ? entry.max_input_tokens : undefined;
+      const output = provider === 'google' ? entry.outputTokenLimit : provider === 'anthropic' ? entry.max_tokens : undefined;
       models.push({ id, displayName: entry.display_name || entry.displayName || id, description: entry.description || providerLabels[provider], efforts: [], defaultEffort:'', isDefault:false, cloud:true,
-        ...(Number.isSafeInteger(entry.inputTokenLimit) ? {contextLength:entry.inputTokenLimit} : {}) });
+        ...(Number.isSafeInteger(input) && input > 0 ? {contextLength:input} : {}), ...(Number.isSafeInteger(output) && output > 0 ? {maxOutputTokens:output} : {}) });
     }
     cursor = provider === 'google' ? value.nextPageToken || '' : provider === 'anthropic' && value.has_more ? value.last_id || '' : '';
     if (!cursor) return models.sort((a,b) => a.id.localeCompare(b.id));
@@ -117,24 +120,34 @@ export function portableApiHistory(messages: OllamaMessage[]): OllamaMessage[] {
     return plain.content || plain.images?.length ? [plain] : [];
   });
 }
+export type ApiLimits = { contextLength?: number; maxOutputTokens?: number };
+/** Anthropic requires an output ceiling; this applies only when its catalog states none. */
+export const fallbackOutputTokens = 4096;
+/** A reply cut at the output ceiling is kept, minus any unfinished tool request or unsigned reasoning. */
+function truncatedProviderData(provider: ApiProvider, data: any[]): any[] {
+  if (provider === 'openai') return data.filter(item => item?.type !== 'function_call');
+  if (provider === 'anthropic') return data.filter(block => block && block.type !== 'tool_use' && (block.type !== 'thinking' || typeof block.signature === 'string' && block.signature));
+  return data.filter(part => part && !part.functionCall);
+}
 export class ApiAdapter extends OllamaAdapter {
-  provider: ApiProvider; access: ApiAccess;
-  constructor(session: Session, hooks: Hooks, context: OllamaContext, access: ApiAccess, contextLength?: number) {
+  provider: ApiProvider; access: ApiAccess; maxOutputTokens = fallbackOutputTokens;
+  constructor(session: Session, hooks: Hooks, context: OllamaContext, access: ApiAccess, limits: ApiLimits = {}) {
     super(session,hooks,context); this.provider=session.provider as ApiProvider; this.access=access; this.cloud=true; this.label=providerLabels[this.provider];
-    if (contextLength && contextLength>2048) this.contextLength=contextLength;
+    if (limits.contextLength && limits.contextLength>2048) this.contextLength=limits.contextLength;
+    if (limits.maxOutputTokens && limits.maxOutputTokens>=1024) this.maxOutputTokens=limits.maxOutputTokens;
   }
   override async stream(_host: string, messages: OllamaMessage[], tools: OllamaTool[], signal: AbortSignal, _contextSize: number, sources: Source[], acceptance: SendOptions = {}) {
     const provider=this.provider, instructions=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n');
     const history=input(provider,messages), functions=tools.map(t=>t.function);
     let path: string, body: any;
     if (provider==='openai') { path='responses'; body={model:this.session.model,instructions,input:history,stream:true,store:false,include:['reasoning.encrypted_content'],...(tools.length?{tools:functions.map(f=>({type:'function',...f,strict:false}))}:{})}; }
-    else if (provider==='anthropic') { path='messages'; body={model:this.session.model,system:instructions,messages:mergeRoles(history,'content'),stream:true,max_tokens:4096,...(tools.length?{tools:functions.map(f=>({name:f.name,description:f.description,input_schema:f.parameters}))}:{})}; }
+    else if (provider==='anthropic') { path='messages'; body={model:this.session.model,system:instructions,messages:mergeRoles(history,'content'),stream:true,max_tokens:this.maxOutputTokens,...(tools.length?{tools:functions.map(f=>({name:f.name,description:f.description,input_schema:f.parameters}))}:{})}; }
     else { path=`models/${encodeURIComponent(this.session.model.replace(/^models\//,''))}:streamGenerateContent?alt=sse`; body={systemInstruction:{parts:[{text:instructions}]},contents:mergeRoles(history,'parts'),...(tools.length?{tools:[{functionDeclarations:functions.map(f=>({name:f.name,description:f.description,parametersJsonSchema:f.parameters}))}]}:{})}; }
     const timeout=new AbortController(); let timer: NodeJS.Timeout;
     const reset=()=>{clearTimeout(timer); timer=setTimeout(()=>timeout.abort(new Error(`${this.label} stopped responding for three minutes`)),180000);timer.unref();}; reset();
     const combined=AbortSignal.any([signal,timeout.signal]);
     const reply: OllamaMessage={role:'assistant',content:'',providerData:[]}, id=randomUUID();
-    let done=false; const blocks: any[]=[]; const fragments=new Map<number,string>();
+    let done=false, truncated=false; const blocks: any[]=[]; const fragments=new Map<number,string>();
     const delta=(text: unknown)=>{if(typeof text==='string'&&text){reply.content+=text;this.hooks.event({type:'delta',id,text,data:{sources:[...sources]}});}};
     try {
       const retryId=randomUUID();
@@ -150,7 +163,8 @@ export class ApiAdapter extends OllamaAdapter {
         if(provider==='openai') {
           if(value.type==='response.output_text.delta') delta(value.delta);
           if(value.type==='response.refusal.delta') delta(value.delta);
-          if(value.type==='response.failed'||value.type==='response.incomplete') throw new Error(`${this.label} did not complete the response (${value.type.split('.')[1]}).`);
+          if(value.type==='response.incomplete'&&value.response?.incomplete_details?.reason==='max_output_tokens'){reply.providerData=value.response?.output||[];truncated=true;done=true;}
+          else if(value.type==='response.failed'||value.type==='response.incomplete') throw new Error(`${this.label} did not complete the response (${value.type.split('.')[1]}).`);
           if(value.type==='response.completed') { if(value.response?.status && value.response.status!=='completed')throw new Error('API response was not completed');reply.providerData=value.response?.output || [];done=true; }
         } else if(provider==='anthropic') {
           if(value.type==='content_block_start') {blocks[value.index]={...value.content_block}; if(value.content_block?.type==='text')delta(value.content_block.text);}
@@ -162,16 +176,25 @@ export class ApiAdapter extends OllamaAdapter {
             if(d?.type==='thinking_delta')block.thinking=(block.thinking||'')+d.thinking;
             if(d?.type==='signature_delta')block.signature=(block.signature||'')+d.signature;
           }
-          if(value.type==='message_delta' && value.delta?.stop_reason && !['end_turn','tool_use','stop_sequence'].includes(value.delta.stop_reason)) throw new Error(`${this.label} stopped before finishing (${value.delta.stop_reason})`);
-          if(value.type==='message_stop'){for(const [index,args]of fragments)blocks[index].input=argumentsObject(args);reply.providerData=blocks;done=true;}
+          if(value.type==='message_delta' && value.delta?.stop_reason==='max_tokens') truncated=true;
+          else if(value.type==='message_delta' && value.delta?.stop_reason==='refusal') throw new Error(`${this.label} declined to continue this reply.`);
+          else if(value.type==='message_delta' && value.delta?.stop_reason && !['end_turn','tool_use','stop_sequence'].includes(value.delta.stop_reason)) throw new Error(`${this.label} stopped before finishing (${value.delta.stop_reason})`);
+          if(value.type==='message_stop'){if(!truncated)for(const [index,args]of fragments)blocks[index].input=argumentsObject(args);reply.providerData=blocks;done=true;}
         } else {
           if(value.promptFeedback?.blockReason)throw new Error(`${this.label} blocked this request`);
           const candidate=value.candidates?.[0];
           for(const part of candidate?.content?.parts||[]) {reply.providerData!.push(part);if(!part.thought)delta(part.text);}
-          if(candidate?.finishReason){if(candidate.finishReason!=='STOP')throw new Error(`${this.label} stopped before finishing (${candidate.finishReason})`);done=true;}
+          if(candidate?.finishReason){if(candidate.finishReason==='MAX_TOKENS')truncated=true;else if(candidate.finishReason!=='STOP')throw new Error(`${this.label} stopped before finishing (${candidate.finishReason})`);done=true;}
         }
       },reset);
       combined.throwIfAborted(); if(!done)throw new Error(`${this.label} disconnected before completing its response`);
+      if(truncated){
+        // The visible answer and the model's history agree: both keep the text it wrote.
+        if(!reply.content)throw new Error(`${this.label} reached this model’s output limit before writing an answer. Ask a narrower question or choose a model with a larger output limit.`);
+        reply.providerData=truncatedProviderData(provider,reply.providerData||[]);
+        this.hooks.event({type:'message',id,text:reply.content+'\n\n*[Stopped at this model’s output limit. Ask Cere to continue.]*',data:{sources:[...sources]}});
+        return reply;
+      }
       const calls=provider==='openai'?reply.providerData!.filter(p=>p.type==='function_call').map(p=>({id:p.call_id,name:p.name,args:p.arguments}))
         :provider==='anthropic'?reply.providerData!.filter(p=>p.type==='tool_use').map(p=>({id:p.id,name:p.name,args:p.input}))
         :reply.providerData!.filter(p=>p.functionCall).map(p=>({id:p.functionCall.id,name:p.functionCall.name,args:p.functionCall.args}));

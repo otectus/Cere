@@ -1,0 +1,43 @@
+name: Cere desktop checks
+on:
+  pull_request:
+    paths-ignore: ['mobile/**', 'docs/**', '**/*.md']
+  push:
+    branches: [main, master]
+    paths-ignore: ['mobile/**', 'docs/**', '**/*.md']
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    # Cere targets Arch's current Qt and layer-shell-qt, which Ubuntu does not ship.
+    container: archlinux:base-devel
+    steps:
+      - name: Install build and test dependencies
+        run: pacman -Syu --noconfirm --needed git cmake ninja nodejs npm python qt6-base qt6-declarative layer-shell-qt adwaita-fonts fish zsh xorg-server-xvfb
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - name: Native and QML component tests
+        # The offscreen platform creates the avatar check's OpenGL context through an X display.
+        run: xvfb-run -a ctest --test-dir build --output-on-failure
+      - name: Offscreen interface checks
+        env:
+          QT_QUICK_BACKEND: software
+          QT_QUICK_CONTROLS_STYLE: Basic
+        # Every assertion slot plus the scale review; the other review slots only record screenshots.
+        # Slots that need the live Hyprland compositor or desktop session skip themselves offscreen.
+        # The workspace expression names the host path in a container job, so the path is set here.
+        run: |
+          export QT_QPA_PLATFORM="offscreen:configfile=$GITHUB_WORKSPACE/tests/fixtures/offscreen-scales.json"
+          ./build/cere-ui-check -functions > "$RUNNER_TEMP/ui-functions"
+          mapfile -t slots < <(sed -n 's/()$//p' "$RUNNER_TEMP/ui-functions" | grep -v '^review')
+          test "${#slots[@]}" -gt 0
+          ./build/cere-ui-check "${slots[@]}" reviewSurfacesAtScale

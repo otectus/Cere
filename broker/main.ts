@@ -8,10 +8,25 @@ import { Core } from './core.ts';
 import { JsonLines } from './wire.ts';
 import { requirePeerCredentials, sameUserPeer, trustedServer } from './peercred.ts';
 import { MobileGateway } from './remote/server.ts';
+import { linuxNative } from './telemetry/native.ts';
+/** systemd restarts the service for this status; see packaging/cere-broker.service. */
+const restartStatus = 75;
 requirePeerCredentials();
 process.umask(0o077);
 privateDir(paths().runtime);
 const path = socketPath();
+// One broker per runtime directory. A predecessor that is still exiting (a restart) or still
+// starting holds the lock briefly; a second launcher waits for it instead of racing it.
+await (async () => {
+  let native;
+  try { native = linuxNative(); } catch { console.error('Cere broker lock unavailable: the native helper is missing'); return; }
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (native.lock(join(paths().runtime, 'broker.lock')) >= 0) return;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  console.error('Another Cere broker owns this runtime directory; not starting a second one.');
+  process.exit(0);
+})();
 // A listening socket counts as a running broker only when its server is this user.
 async function occupied() {
   return new Promise<boolean>((resolve, reject) => {
@@ -74,6 +89,9 @@ core.on('restart',async()=>{
   if(closing)return;closing=true;
   for(const client of clients)client.destroy();server.close();await closeOwnedWork();
   await unlink(path).catch(()=>{});await unlink(join(paths().runtime,'broker.pid')).catch(()=>{});
+  // A service's own process restarts through systemd: a detached child would be stopped
+  // with the service's control group as soon as this process exits.
+  if(process.env.INVOCATION_ID&&process.env.SYSTEMD_EXEC_PID===String(process.pid))process.exit(restartStatus);
   const replacement=spawn(process.execPath,process.argv.slice(1),{env:process.env,stdio:'ignore',detached:true});replacement.unref();process.exit(0);
 });
 process.on('SIGTERM', () => void shutdown()); process.on('SIGINT', () => void shutdown());
