@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile, readFile, readdir, symlink, stat, chmod, copyFile, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readFile, readdir, symlink, stat, chmod, chown, copyFile, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
@@ -90,9 +90,12 @@ test('F-002 private directories reject foreign owners, shared-directory symlinks
   assert.equal((await stat(created)).mode & 0o777, 0o700);
   assert.equal((await stat(join(dir, 'a'))).mode & 0o777, 0o700);
   const uid = process.getuid!();
-  // A directory another user owns is rejected without modification.
+  // A directory another user owns is rejected without modification. Root-owned components are
+  // trusted, so a run as root (such as a CI container) hands the directory to an unprivileged owner.
   const foreign = join(dir, 'foreign'); await mkdir(foreign); await chmod(foreign, 0o755);
-  assert.throws(() => privateDir(join(foreign, 'cere'), uid + 1), /owned by another user/);
+  const owner = uid === 0 ? 65534 : uid;
+  if (uid === 0) await chown(foreign, owner, owner);
+  assert.throws(() => privateDir(join(foreign, 'cere'), owner + 1), /owned by another user/);
   assert.equal((await stat(foreign)).mode & 0o777, 0o755);
   assert.ok(!existsSync(join(foreign, 'cere')));
   // A symlinked base inside a shared sticky directory, and a non-sticky shared ancestor.

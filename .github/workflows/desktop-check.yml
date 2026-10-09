@@ -15,7 +15,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install build and test dependencies
-        run: pacman -Syu --noconfirm --needed git cmake ninja nodejs npm python qt6-base qt6-declarative layer-shell-qt adwaita-fonts fish zsh xorg-server-xvfb
+        run: pacman -Syu --noconfirm --needed git cmake ninja nodejs npm python qt6-base qt6-declarative layer-shell-qt adwaita-fonts fish zsh sox xorg-server-xvfb
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
