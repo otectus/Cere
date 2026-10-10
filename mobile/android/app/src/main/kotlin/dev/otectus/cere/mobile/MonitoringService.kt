@@ -8,14 +8,14 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.net.Uri
 import android.os.IBinder
-import androidx.core.app.NotificationCompat
 import dev.otectus.cere.mobile.data.ConnectionState
+import dev.otectus.cere.mobile.data.OfflineKind
 import dev.otectus.cere.mobile.protocol.Approval
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -24,89 +24,87 @@ class MonitoringService : Service() {
     private val repository get() = (application as CereApp).repository
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { repository.networkAvailable() }
+        override fun onLost(network: Network) { repository.networkLost() }
     }
+    // Approval ID → digest already announced. A request alerts once; a changed request alerts again.
+    private var announced = mapOf<String, String>()
+    private var lastStatus: String? = null
 
     override fun onCreate() {
         super.onCreate()
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Cere connection", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Shows when Cere is monitoring your paired desktop"
-            lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-            setShowBadge(false)
-        })
-        manager.createNotificationChannel(NotificationChannel(INBOX_CHANNEL, "Cere requests", NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "Approval and question requests from the paired Cere desktop"
-            lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-        })
-        startForeground(ID, notification("Connecting…"))
+        CereNotifications.ensureChannels(this)
+        startForeground(CereNotifications.MONITORING_ID, CereNotifications.monitoring(this, "Connecting…"))
         getSystemService(ConnectivityManager::class.java).requestNetwork(NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .build(), networkCallback)
         repository.startMonitoring()
-        scope.launch { repository.state.collectLatest { state ->
-            val text = when (val connection = state.connection) {
-                is ConnectionState.Online -> "Connected to ${connection.desktopName}"
-                is ConnectionState.Offline -> "Waiting for desktop"
-                is ConnectionState.Blocked -> "Connection blocked · open Cere"
-                ConnectionState.Authenticating -> "Authenticating…"
-                ConnectionState.Connecting -> "Connecting…"
-                ConnectionState.Unpaired -> "Pairing required"
+        val manager = getSystemService(NotificationManager::class.java)
+        scope.launch {
+            repository.state.map { statusText(it.connection) to it.approvals }.distinctUntilChanged().collect { (text, approvals) ->
+                if (text != lastStatus) { lastStatus = text; manager.notify(CereNotifications.MONITORING_ID, CereNotifications.monitoring(this@MonitoringService, text)) }
+                val current = approvals.associate { it.id to it.digest }
+                announced.keys.filterNot(current::containsKey).forEach { manager.cancel(CereNotifications.approvalId(it)) }
+                approvals.filter { announced[it.id] != it.digest }.forEach { manager.notify(CereNotifications.approvalId(it.id), CereNotifications.approval(this@MonitoringService, it)) }
+                announced = current
             }
-            manager.notify(ID, notification(text))
-            val active = state.approvals.map { it.id.hashCode() }.toSet()
-            shownApprovals.filterNot(active::contains).forEach { manager.cancel(it) }
-            shownApprovals = active
-            state.approvals.forEach { approval -> manager.notify(approval.id.hashCode(), approvalNotification(approval)) }
-        } }
+        }
+        scope.launch {
+            repository.notices.collect { notice ->
+                if (notice.kind != "timer" && repository.isShowing(notice.sessionId)) return@collect
+                CereNotifications.notice(this@MonitoringService, notice)?.let { (id, notification) -> manager.notify(id, notification) }
+            }
+        }
     }
 
-    override fun onDestroy() { runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }; scope.cancel(); repository.stopMonitoring(); super.onDestroy() }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
+        scope.cancel()
+        // Background monitoring ends; the app keeps its own connection while it is on screen.
+        repository.backgroundMonitoringStopped()
+        super.onDestroy()
+    }
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun notification(text: String): Notification {
-        val intent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        return NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_cere_notification)
-            .setContentTitle("Cere Mobile")
-            .setContentText(text)
-            .setContentIntent(intent)
-            .setOngoing(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setSilent(true)
-            .build()
+    private fun statusText(connection: ConnectionState) = when (connection) {
+        is ConnectionState.Online -> "Connected to ${connection.desktopName}"
+        is ConnectionState.Offline -> if (connection.kind == OfflineKind.Unreachable) "Waiting for desktop" else "Not connected"
+        is ConnectionState.Blocked -> "Connection needs attention · open Cere"
+        ConnectionState.Authenticating -> "Signing in…"
+        ConnectionState.Connecting -> "Connecting…"
+        ConnectionState.Unpaired -> "Pairing required"
     }
 
-    private fun approvalNotification(approval: Approval): Notification {
-        val review = PendingIntent.getActivity(this, approval.id.hashCode(), Intent(this, ReviewActivity::class.java).putExtra("approvalId", approval.id), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val deny = PendingIntent.getBroadcast(this, approval.id.hashCode(), Intent(this, DenyReceiver::class.java).setData(Uri.parse("cere://deny/${approval.id}")).putExtra("approvalId", approval.id), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        return NotificationCompat.Builder(this, INBOX_CHANNEL)
-            .setSmallIcon(R.drawable.ic_cere_notification)
-            .setContentTitle("Cere needs your review")
-            .setContentText("${approval.kind.replaceFirstChar(Char::uppercase)} · ${approval.title}")
-            .setContentIntent(review)
-            .addAction(android.R.drawable.ic_delete, "Deny", deny)
-            .setAutoCancel(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(NotificationCompat.Builder(this, INBOX_CHANNEL).setSmallIcon(R.drawable.ic_cere_notification).setContentTitle("Cere request").setContentText("Unlock to review").build())
-            .build()
-    }
-
-    private var shownApprovals: Set<Int> = emptySet()
-    companion object { const val CHANNEL = "cere-monitoring"; const val INBOX_CHANNEL = "cere-requests"; const val ID = 41 }
+    companion object { const val ACTION_STOP = "dev.otectus.cere.mobile.STOP_MONITORING" }
 }
 
+/** Denies from the notification. Bounded to the broadcast time budget; an unconfirmed deny says so. */
 class DenyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val approvalId = intent.getStringExtra("approvalId") ?: return
         val pending = goAsync(); val repository = (context.applicationContext as CereApp).repository
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            var approval: Approval? = null
             try {
-                val approval = withTimeoutOrNull(5_000) { repository.state.first { state -> state.approvals.any { it.id == approvalId } }.approvals.first { it.id == approvalId } } ?: return@launch
-                if (repository.state.value.supports("approvals.answer") && "deny" in approval.choices) repository.mutate("approvals.answer", buildJsonObject {
-                    put("approvalId", approval.id); put("revision", approval.revision); put("digest", approval.digest); put("choice", "deny"); put("answers", buildJsonObject {})
-                })
+                approval = withTimeoutOrNull(4_000) { repository.state.first { state -> state.supports("approvals.answer") && state.approvals.any { it.id == approvalId } }.approvals.first { it.id == approvalId } }
+                    ?: repository.state.value.approvals.firstOrNull { it.id == approvalId }
+                val target = approval ?: return@launch
+                if (!repository.state.value.supports("approvals.answer") || "deny" !in target.choices) { report(context, target, "Deny needs the desktop connection"); return@launch }
+                // A slow desktop still receives the answer; Cere reconciles its outcome after this returns.
+                val outcome = withTimeoutOrNull(4_500) { runCatching { repository.mutate("approvals.answer", buildJsonObject {
+                    put("approvalId", target.id); put("revision", target.revision); put("digest", target.digest); put("choice", "deny"); put("answers", buildJsonObject {})
+                }) } }
+                if (outcome == null || outcome.isFailure) report(context, target, "Deny not confirmed yet")
             } finally { pending.finish() }
         }
+    }
+
+    private fun report(context: Context, approval: Approval, problem: String) {
+        runCatching { context.getSystemService(NotificationManager::class.java).notify(CereNotifications.approvalId(approval.id), CereNotifications.approval(context, approval, problem)) }
     }
 }

@@ -1086,7 +1086,7 @@ export class Core extends EventEmitter {
         // cancelled during an earlier notification never produces a second notice.
         if (!this.store.removeTimer(t.id)) continue;
         if(t.repeatMinutes)this.store.timer({...t,due:Date.now()+t.repeatMinutes*60000});
-        this.emit('notice', { kind: 'timer', text: t.label }); this.changed();
+        this.emit('notice', { kind: 'timer', text: t.label, timerId: t.id, ...(t.remoteProjectId ? { remoteProjectId: t.remoteProjectId } : {}) }); this.changed();
         if(!this.settings.quiet)await exec('notify-send', ['--app-name=Cere', 'Cere · Timer', t.label], { timeout: 5000 }).catch(() => {});
       }
     } finally { this.checkingTimers = false; }

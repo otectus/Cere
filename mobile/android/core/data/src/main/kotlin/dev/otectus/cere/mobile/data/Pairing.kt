@@ -112,20 +112,23 @@ data class PendingPairing(
 )
 
 class PairingManager(private val context: Context) {
-    private val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    // Loaded on first use, which keeps the keystore read off the thread that creates the repository.
+    private val keys by lazy { KeyStore.getInstance("AndroidKeyStore").apply { load(null) } }
 
     fun parseAndVerify(uri: String): VerifiedPairingOffer {
-        require(uri.toByteArray().size <= 2_000) { "Pairing offer is too large" }
+        require(uri.toByteArray().size <= 2_000) { "This text is too long to be a Cere pairing offer." }
         val prefix = "cere-pair://v1/"
-        require(uri.startsWith(prefix)) { "Not a Cere pairing offer" }
-        val json = CanonicalJson.decodeBase64Url(uri.removePrefix(prefix)).decodeToString()
-        val offer = WireCodec.json.decodeFromString(PairingOffer.serializer(), json)
-        require(offer.type == "offer" && offer.v == 1)
-        require(offer.name.toByteArray().size <= 48 && offer.endpoints.size in 1..3)
-        require(offer.expiresAt > Instant.now().toEpochMilli()) { "Pairing offer expired" }
+        require(uri.startsWith(prefix)) { "This is not a Cere pairing offer. Copy the cere-pair://v1/ text from Desktop Settings → Cere Mobile." }
+        val json = runCatching { CanonicalJson.decodeBase64Url(uri.removePrefix(prefix)).decodeToString() }.getOrNull()
+        val offer = json?.let { runCatching { WireCodec.json.decodeFromString(PairingOffer.serializer(), it) }.getOrNull() }
+        requireNotNull(offer) { "This pairing offer is incomplete. Copy or scan the whole offer again." }
+        require(offer.type == "offer" && offer.v == 1) { "This is a pairing response or an unsupported offer. Use the offer shown in Desktop Settings." }
+        require(offer.name.toByteArray().size <= 48 && offer.endpoints.size in 1..3) { "This pairing offer has an invalid desktop name or address list." }
+        // The desktop enforces the five-minute lifetime itself; allow for a phone clock that runs ahead.
+        require(offer.expiresAt > Instant.now().toEpochMilli() - OFFER_CLOCK_TOLERANCE_MS) { "This pairing offer expired. Prepare a new offer on the desktop." }
         offer.endpoints.forEach {
-            val parsed = java.net.URI(it)
-            require(parsed.scheme == "wss" && parsed.path == "/mobile/v1" && it.toByteArray().size <= 96)
+            val parsed = runCatching { java.net.URI(it) }.getOrNull()
+            require(parsed != null && parsed.scheme == "wss" && parsed.path == "/mobile/v1" && it.toByteArray().size <= 96) { "This pairing offer contains an invalid desktop address." }
         }
         val certificate = CertificateFactory.getInstance("X.509").generateCertificate(ByteArrayInputStream(CanonicalJson.decodeBase64Url(offer.certificate)))
         require(CanonicalJson.base64Url(MessageDigest.getInstance("SHA-256").digest(certificate.publicKey.encoded)) == offer.spki) { "Certificate identity mismatch" }
@@ -216,7 +219,9 @@ class PairingManager(private val context: Context) {
 
     fun signConnection(alias: String, bytes: ByteArray) = sign(alias, bytes)
     fun connectionSignature(alias: String): Signature = signingSignature(alias)
-    fun actionSignature(alias: String): Signature = signingSignature(alias)
+    fun actionSignature(alias: String): Signature = try { signingSignature(alias) } catch (_: android.security.keystore.KeyPermanentlyInvalidatedException) {
+        throw PairingRepairException("A fingerprint or screen-lock change reset this phone's action key. On the desktop, choose Replace pairing for this phone; your drafts stay on the phone.")
+    }
     private fun signingSignature(alias: String): Signature = Signature.getInstance("SHA256withECDSA").apply { initSign(keys.getKey(alias, null) as java.security.PrivateKey) }
 
     fun hasSigningKeys(desktop: PairedDesktop): Boolean = runCatching {
@@ -271,5 +276,7 @@ internal object PairingAliasPolicy {
         }
     }
 }
+
+private const val OFFER_CLOCK_TOLERANCE_MS = 10 * 60_000L
 
 private val SAS_WORDS = listOf("acorn","amber","anchor","angel","apple","apron","arrow","atlas","autumn","badge","bamboo","barrel","basil","beach","beacon","bear","beetle","berry","birch","bird","bison","blade","bloom","blue","boat","bolt","book","boots","branch","brass","breeze","brick","bridge","brook","broom","brush","bubble","bucket","butter","button","cabin","cactus","cake","camel","candle","canoe","canyon","carrot","castle","cedar","cello","chalk","cherry","chest","circle","clay","cliff","clock","cloud","clover","coast","cocoa","comet","coral","cotton","cove","crane","creek","crown","crystal","cube","daisy","dawn","deer","delta","desert","diamond","dice","dolphin","dove","dragon","dream","drum","dune","eagle","earth","echo","elm","ember","emerald","feather","fern","field","finch","fire","fish","flag","flame","flint","flower","flute","foam","forest","fossil","fox","frost","fruit","garden","gate","gem","ghost","ginger","glass","globe","gold","goose","grape","grass","green","grove","guitar","gull","harbor","hare","harp","hawk","hazel","heart","hedge","heron","hill","hive","holly","honey","horse","ice","igloo","ink","iris","island","ivory","ivy","jade","jar","jasmine","jay","jelly","jewel","kettle","key","kite","kiwi","lake","lamb","lamp","lark","laurel","leaf","lemon","leopard","lilac","lime","lion","lizard","lotus","lynx","maple","marble","marsh","meadow","melon","mint","mirror","mist","moon","moss","moth","mountain","mouse","mushroom","nest","nettle","night","north","nut","oak","oasis","ocean","olive","onyx","opal","orange","orbit","orchid","otter","owl","palm","panda","paper","peach","pearl","pebble","pepper","pine","pink","pipe","plum","pond","poppy","pot","prism","pumpkin","purple","quail","quartz","queen","quilt","rabbit","rain","raven","reed","reef","ribbon","ridge","river","robin","rock","rose","ruby","sail","sage","sand","scarlet","sea","seal","seed","shell","shore","silver","sky","slate","snow","soap","sparrow","spice","spider","spring","spruce","square","squirrel","star","steel","stone","stork","storm","straw")

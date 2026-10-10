@@ -16,7 +16,7 @@ export class MediaStore {
   constructor(router:Router) {this.router=router;this.directory=join(router.core.store.directory,'remote-media');privateDir(this.directory);router.core.store.db.exec('CREATE TABLE IF NOT EXISTS remote_media(id TEXT PRIMARY KEY,data TEXT NOT NULL)');}
   all():Media[] {return this.router.core.store.db.prepare('SELECT data FROM remote_media').all().map(r=>JSON.parse(String(r.data)));}
   save(media:Media) {this.router.core.store.db.prepare('INSERT OR REPLACE INTO remote_media VALUES (?,?)').run(media.id,JSON.stringify(media));}
-  get(device:Device,id:string) {this.router.current(device);const media=this.all().find(m=>m.deviceId===device.id&&(m.id===id||m.uploadId===id));if(!media||media.expiresAt<Date.now())throw remoteError('ATTACHMENT_INVALID','Attachment is missing or expired.');this.router.session(device,media.sessionId);return media;}
+  get(device:Device,id:string) {this.router.current(device);const media=this.all().find(m=>m.deviceId===device.id&&(m.id===id||m.uploadId===id));if(!media||media.expiresAt<Date.now())throw remoteError('ATTACHMENT_INVALID','The desktop no longer has this image. Upload it again.');this.router.session(device,media.sessionId);return media;}
   dto(m:Media) {return {attachmentId:m.id,uploadId:m.uploadId,size:m.size,offset:m.offset,mime:m.mime,sha256:m.sha256,status:m.status,width:m.width,height:m.height,expiresAt:m.expiresAt};}
   async begin(device:Device,p:any) {
     this.router.require(device,'attachments.write');this.router.session(device,p.sessionId);

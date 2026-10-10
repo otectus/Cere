@@ -16,7 +16,7 @@ export const methods:Record<string,z.ZodType>={
   'sessions.history':z.strictObject({projectId}),
   'sessions.import':z.strictObject({historyId:uuid,externalWriterStopped:z.literal(true)}),
   'sessions.send':z.strictObject({sessionId,text:z.string().min(1).max(100000),attachments:z.array(uuid).max(4).default([]),webSearch:z.boolean().default(false),expectedDraftRevision:revision,expectedConfigRevision:revision}),
-  'sessions.stop':z.strictObject({sessionId}),'sessions.disconnect':z.strictObject({sessionId}),
+  'sessions.stop':z.strictObject({sessionId}),'sessions.disconnect':z.strictObject({sessionId}),'sessions.read':z.strictObject({sessionId}),
   'sessions.rename':z.strictObject({sessionId,title:z.string().min(1).max(100),expectedRevision:revision}),
   'sessions.organize':z.strictObject({sessionId,expectedRevision:revision,pinned:z.boolean().optional(),archived:z.boolean().optional()}).refine(p=>p.pinned!==undefined||p.archived!==undefined,'Choose a session organization change'),
   'drafts.get':z.strictObject({sessionId}),'drafts.put':z.strictObject({sessionId,text:z.string().max(100000),expectedRevision:revision}),
@@ -47,8 +47,8 @@ export const methods:Record<string,z.ZodType>={
   'memory.clear':z.strictObject({sessionId,confirmProjectId:projectId,selection:z.string().regex(/^[0-9a-f]{64}$/),expectedRevision:memoryRevision}),
   'memory.erasureStatus':z.strictObject({sessionId,jobId:uuid}),
 };
-export const mutations=new Set(['sessions.create','sessions.send','sessions.stop','sessions.disconnect','sessions.rename','sessions.organize','drafts.put','sessions.configure','sessions.handoffCreate','sessions.import','approvals.answer','permissions.pause','permissions.reduce','devices.selfRevoke','desktop.execute','timers.cancel','settings.patch','memory.save','memory.forget','memory.clear','attachments.begin','attachments.commit','attachments.abort']);
-const defensive=new Set(['sessions.stop','sessions.disconnect','sessions.rename','sessions.organize','drafts.put','permissions.pause','permissions.reduce','devices.selfRevoke','attachments.abort']);
+export const mutations=new Set(['sessions.create','sessions.send','sessions.stop','sessions.disconnect','sessions.read','sessions.rename','sessions.organize','drafts.put','sessions.configure','sessions.handoffCreate','sessions.import','approvals.answer','permissions.pause','permissions.reduce','devices.selfRevoke','desktop.execute','timers.cancel','settings.patch','memory.save','memory.forget','memory.clear','attachments.begin','attachments.commit','attachments.abort']);
+const defensive=new Set(['sessions.stop','sessions.disconnect','sessions.read','sessions.rename','sessions.organize','drafts.put','permissions.pause','permissions.reduce','devices.selfRevoke','attachments.abort']);
 export function needsProof(method:string,params:any) { return mutations.has(method) && !defensive.has(method) && !(method==='approvals.answer'&&['deny','cancel'].includes(params.choice)); }
 export function availableOperations(caps:string[]) {
   return Object.keys(methods).filter(method=>{

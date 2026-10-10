@@ -17,4 +17,5 @@ export function ordinarySettings(settings: Settings, execution?: RemoteExecution
   };
 }
 export function busy(session: Session) { return ['starting','working','waiting','stopping'].includes(session.status); }
-export function remoteError(code: string, message: string): Error & {code: string} { return Object.assign(new Error(message), {code}); }
+/** Messages passed here are written for people and may be shown verbatim on a paired phone. */
+export function remoteError(code: string, message: string): Error & {code: string; remote: true} { return Object.assign(new Error(message), {code, remote: true as const}); }

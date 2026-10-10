@@ -48,6 +48,7 @@ CSection {
             Keys.onTabPressed:event=>{const next=response.nextItemInFocusChain(true);if(next&&next!==response)next.forceActiveFocus(Qt.TabFocusReason);event.accepted=true}
             Keys.onBacktabPressed:event=>{const previous=response.nextItemInFocusChain(false);if(previous&&previous!==response)previous.forceActiveFocus(Qt.BacktabFocusReason);event.accepted=true} }
     }
+    CButton { text:"Load response file…";enabled:remote.requestId<0;Accessible.description:"Choose a text file the phone shared that contains its signed response";onClicked:{const p=App.chooseFile();if(p)remote.call("remote.readPairResponse",{path:p})} }
     CButton { text:"Verify phone response";enabled:remote.requestId<0&&response.text.trim().length>0;onClicked:remote.call("remote.reviewPair",{response:response.text.trim()}) }
     CText { visible:!!remote.review.sas;text:(remote.review.name||"Phone")+" · Compare both screens:\n"+(remote.review.sas||"")+"\n"+(remote.review.actionAuthentication==="trusted-device"?"Trusted phone: no fingerprint or PIN":"Actions require fingerprint or PIN");color:Theme.cyan;font.pixelSize:16 }
     CField { id:projects;Layout.fillWidth:true;placeholderText:"Approved project folders, separated by semicolons";Accessible.name:"Approved project paths separated by semicolons" }
@@ -101,6 +102,7 @@ CSection {
             if(operation==="remote.status"){remote.status=value;if(!addresses.text)addresses.text=(value.config?.addresses||[]).join(", ")}
             else if(operation==="remote.preparePair"){remote.offer=value;remote.review=({});compare.checked=false}
             else if(operation==="remote.reviewPair"){remote.review=value;compare.checked=false}
+            else if(operation==="remote.readPairResponse"){response.text=value.response||"";remote.review=({});compare.checked=false}
             else {if(operation==="remote.confirmPair"||operation==="remote.resetIdentity"){remote.offer=({});remote.review=({});response.text="";compare.checked=false;remote.replacingDevice=""}if(operation==="remote.updateDevice"||operation==="remote.resetIdentity")remote.editingDevice="";remote.reload()}
         }
     }

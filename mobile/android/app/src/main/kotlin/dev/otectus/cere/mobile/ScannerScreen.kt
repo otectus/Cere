@@ -55,9 +55,10 @@ private fun CameraPreview(onResult: (String) -> Unit) {
             val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
             analysis.setAnalyzer(executor) { image ->
                 try {
-                    val buffer = image.planes[0].buffer
+                    // Rows of the luminance plane can be padded beyond the image width.
+                    val plane = image.planes[0]; val buffer = plane.buffer
                     val bytes = ByteArray(buffer.remaining()).also(buffer::get)
-                    val source = PlanarYUVLuminanceSource(bytes, image.width, image.height, 0, 0, image.width, image.height, false)
+                    val source = PlanarYUVLuminanceSource(bytes, plane.rowStride, image.height, 0, 0, image.width, image.height, false)
                     val text = MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(source)), mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE))).text
                     if (text.startsWith("cere-pair://v1/") && delivered.compareAndSet(false, true)) view.post { onResult(text) }
                 } catch (_: NotFoundException) { } finally { image.close() }

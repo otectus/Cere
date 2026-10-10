@@ -290,6 +290,12 @@
       },
       "result": true
     },
+    "sessions.read": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": "session summary with unread:false; clears Unread for every client"
+    },
     "sessions.rename": {
       "params": {
         "sessionId": "uuid",
@@ -700,7 +706,8 @@
     "snapshot.changed (reconcile scoped snapshot, including resolved approvals)",
     "device.revoked",
     "remote.disabled",
-    "attachment.progress (data is upload DTO; cursor is opaque like other events)"
+    "attachment.progress (data is upload DTO; cursor is opaque like other events)",
+    "notice (data {kind:'complete'|'error'|'interrupted', sessionId, title} for in-scope sessions, or {kind:'timer', projectId, timerId, label} for timers set from this device's projects; text is generic and never carries provider error detail)"
   ],
   "notes": "All operations are capability negotiated. Absent operation must have no enabled control. Unsupported forms/unsafe active providers expose deny/Stop only. All mutation failures preserve drafts. Connection loss never queues a new action. On ambiguous mutation query commands.status with original ID. All snapshot arrays replace cached scope; removed resources must be purged. Reconnect always supports full scoped snapshot even without retained replay. No command retry with a new ID without review. TLS trust exactly paired SPKI and valid certificate/SAN. No network pairing endpoint. Session summaries set draftIncluded:false; fetch sessions.get before enabling Send. A positive draftAttachmentCount means the desktop draft must be reviewed there; mobile draft edits and sends do not discard those attachments. sync.open sessionIds is authoritative for cache removal; use sessions.list with nextSessionOffset to hydrate omitted summaries. Submitted Ollama image files can be removed after a completed turn because full image context is persisted. Native path inputs remain until session removal, local clear, or device revocation. Command outcomes are redacted across device scopeVersion changes. Memory invalidation clears retained result payloads. cacheEpoch changes clear phone transcript and transient memory views. Memory CAS revisions above 9007199254740991 are rejected.",
   "media": {

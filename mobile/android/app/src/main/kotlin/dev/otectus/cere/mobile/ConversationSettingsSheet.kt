@@ -1,16 +1,20 @@
 @file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package dev.otectus.cere.mobile
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import dev.otectus.cere.mobile.data.CereRepository
 import dev.otectus.cere.mobile.data.MobileState
+import dev.otectus.cere.mobile.protocol.Agent
 import dev.otectus.cere.mobile.protocol.ModelOption
 import dev.otectus.cere.mobile.protocol.Session
 import kotlinx.coroutines.CancellationException
@@ -21,17 +25,19 @@ import kotlinx.serialization.json.*
 internal fun ConversationSettingsSheet(repository: CereRepository, state: MobileState, session: Session,
     activity: FragmentActivity, close: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var title by remember(session.id) { mutableStateOf(session.title) }
+    var title by rememberSaveable(session.id) { mutableStateOf(session.title) }
     var models by remember(session.id) { mutableStateOf(emptyList<ModelOption>()) }
-    var model by remember(session.id) { mutableStateOf(session.model.orEmpty()) }
-    var effort by remember(session.id) { mutableStateOf(session.effort.orEmpty()) }
-    var tools by remember(session.id) { mutableStateOf(session.tools) }
-    var baseline by remember(session.id) { mutableStateOf(session.configRevision) }
+    var model by rememberSaveable(session.id) { mutableStateOf(session.model.orEmpty()) }
+    var effort by rememberSaveable(session.id) { mutableStateOf(session.effort.orEmpty()) }
+    var tools by rememberSaveable(session.id) { mutableStateOf(session.tools) }
+    var baseline by rememberSaveable(session.id) { mutableStateOf(session.configRevision) }
     var refresh by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var feedback by remember { mutableStateOf<String?>(null) }
     val canConfigure = session.canConfigure && state.supports("sessions.configure")
+    val idle = session.status !in setOf("starting", "working", "waiting", "stopping") && session.agents.none(Agent::isActive)
     val conflict = baseline != session.configRevision
     LaunchedEffect(session.id, refresh, canConfigure) {
         if (canConfigure) {
@@ -42,52 +48,57 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
             finally { loading = false }
         }
     }
-    fun organize(pinned: Boolean? = null, archived: Boolean? = null) {
-        submitting = true; error = null
+    fun run(method: String, params: JsonObject, done: String? = null, closeAfter: Boolean = true) {
+        submitting = true; error = null; feedback = null
         scope.launch {
             try {
-                repository.mutate("sessions.organize", buildJsonObject {
-                    put("sessionId", session.id); put("expectedRevision", session.revision)
-                    pinned?.let { put("pinned", it) }; archived?.let { put("archived", it) }
-                })
-                repository.selectSession(session.id); close()
-            } catch (failure: Exception) { error = failure.message }
+                repository.mutate(method, params, session.title)
+                repository.selectSession(session.id)
+                if (closeAfter) close() else feedback = done
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { error = failure.message }
             finally { submitting = false }
         }
     }
+    fun organize(pinned: Boolean? = null, archived: Boolean? = null) = run("sessions.organize", buildJsonObject {
+        put("sessionId", session.id); put("expectedRevision", session.revision)
+        pinned?.let { put("pinned", it) }; archived?.let { put("archived", it) }
+    })
     val selected = models.firstOrNull { it.id == model }
     val changed = model != session.model.orEmpty() || effort != session.effort.orEmpty() || tools != session.tools
+    fun chooseModel(option: ModelOption) { model = option.id; effort = option.defaultEffort; if ("tools" !in option.capabilities) tools = false }
     AlertDialog(onDismissRequest = { if (!submitting) close() }, title = { Text("Conversation settings") }, text = {
         Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("${session.provider} · ${session.project.orEmpty()}", style = MaterialTheme.typography.bodySmall)
             if (state.supports("sessions.rename")) {
-                OutlinedTextField(title, { title = it.take(100) }, label = { Text("Title") }, enabled = !submitting)
-                TextButton({ submitting = true; scope.launch {
-                    try {
-                        repository.mutate("sessions.rename", buildJsonObject { put("sessionId", session.id); put("title", title.trim()); put("expectedRevision", session.revision) })
-                        repository.selectSession(session.id); close()
-                    } catch (failure: Exception) { error = failure.message }
-                    finally { submitting = false }
-                } }, enabled = !submitting && title.isNotBlank() && title.trim() != session.title) { Text("Rename") }
+                OutlinedTextField(title, { title = it.take(100) }, label = { Text("Title") }, enabled = !submitting, singleLine = true, modifier = Modifier.fillMaxWidth())
+                TextButton({ run("sessions.rename", buildJsonObject { put("sessionId", session.id); put("title", title.trim()); put("expectedRevision", session.revision) }) },
+                    enabled = !submitting && title.isNotBlank() && title.trim() != session.title) { Text("Rename") }
             }
-            if (state.supports("sessions.organize")) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (state.supports("sessions.organize")) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton({ organize(pinned = !session.pinned) }, enabled = !submitting) { Text(if (session.pinned) "Unpin" else "Pin conversation") }
                 OutlinedButton({ organize(archived = !session.archived) }, enabled = !submitting) { Text(if (session.archived) "Unarchive" else "Archive") }
             }
+            if (state.supports("sessions.disconnect") && session.mode == "managed") {
+                HorizontalDivider()
+                Text("Provider connection", style = MaterialTheme.typography.titleMedium)
+                Text(if (idle) "Disconnect closes ${session.provider.replaceFirstChar(Char::uppercase)} for this conversation on the desktop. History stays, and it reconnects with the next message."
+                    else "Stop the active turn before disconnecting the provider.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton({ run("sessions.disconnect", buildJsonObject { put("sessionId", session.id) }, "Provider disconnected. It reconnects with your next message.", closeAfter = false) },
+                    enabled = !submitting && idle) { Text("Disconnect provider") }
+            }
             if (canConfigure) {
                 HorizontalDivider()
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Model", style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Model", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     TextButton({ refresh++ }, enabled = !loading && !submitting) { Text("Refresh models") }
                 }
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (!loading && models.isEmpty()) Text("No models loaded. Check this provider on your PC, then refresh.")
-                models.forEach { option ->
-                    FilterChip(model == option.id, {
-                        model = option.id; effort = option.defaultEffort
-                        if ("tools" !in option.capabilities) tools = false
-                    }, { Text(option.displayName) }, enabled = !submitting && !loading)
-                }
+                models.forEach { option -> Row(Modifier.fillMaxWidth().clickable(enabled = !submitting && !loading) { chooseModel(option) }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(model == option.id, { chooseModel(option) }, enabled = !submitting && !loading)
+                    Column { Text(option.displayName); if (option.description.isNotBlank()) Text(option.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                } }
                 selected?.efforts?.takeIf { it.isNotEmpty() }?.let { efforts ->
                     Text("Reasoning effort")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { efforts.forEach { option ->
@@ -103,6 +114,7 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
                 }
             } else Text("Model changes are unavailable while busy or outside this phone's provider access.")
             if ((session.draftAttachmentCount ?: 0) > 0) Text("This draft includes ${session.draftAttachmentCount} desktop attachment(s). Review them on the PC before sending.")
+            feedback?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }, confirmButton = {
@@ -113,7 +125,7 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
                 put("effort", effort); put("expectedConfigRevision", baseline)
             }, "Change conversation model", {
                 scope.launch { try { repository.selectSession(session.id); close() } finally { submitting = false } }
-            }, { error = it; submitting = false })
+            }, { error = it; submitting = false }, label = session.title)
         }, enabled = !submitting && !loading && !conflict && changed && selected != null) { Text("Review & apply") }
     }, dismissButton = { TextButton(close, enabled = !submitting) { Text("Close") } })
 }

@@ -548,3 +548,39 @@ test('mobile rename follows the desktop title rule',async t=>{
   const blank=await f.gateway.router.dispatch(f.device,'sessions.rename',{sessionId:s.id,title:'   ',expectedRevision:f.core.store.session(s.id).revision});
   assert.equal(blank.title,'Untitled session');
 });
+test('phones clear Unread, receive scoped completion and timer notices, and see authored error text',async t=>{
+  const f=await fixture(t),projectId=f.device.projects[0].id;
+  // Timers notices follow the timers category, so grant it before the phone signs in.
+  f.gateway.registry.saveDevice({...f.gateway.registry.live(f.device.id)!,categories:[...f.device.categories,'timers']});
+  const client=await connect(t,f);
+  const s=await f.core.create({provider:'codex',cwd:f.directory,trusted:true,title:'Notice fixture'});
+  f.core.updateSession(s.id,{unread:true});
+  await client.request('sync.open',{});
+  const read=await client.request('sessions.read',{sessionId:s.id},randomUUID());
+  assert.equal(read.result.unread,false);assert.equal(f.core.store.session(s.id).unread,false);
+  const outside=await mkdtemp(join(tmpdir(),'cere-notice-'));t.after(()=>rm(outside,{recursive:true,force:true}));
+  const hidden=await f.core.create({provider:'codex',cwd:outside,trusted:true,title:'Hidden'});
+  f.core.emit('notice',{kind:'complete',sessionId:hidden.id,text:'Task complete'});
+  f.core.emit('notice',{kind:'error',sessionId:s.id,text:'/home/secret/path failed'});
+  f.core.emit('notice',{kind:'approval',sessionId:s.id,text:'Allow?'});
+  f.core.emit('notice',{kind:'timer',text:'Tea',timerId:'t1',remoteProjectId:projectId});
+  f.core.emit('notice',{kind:'timer',text:'Desktop only',timerId:'t2'});
+  for(let n=0;n<100&&client.events.filter(e=>e.name==='notice').length<2;n++)await new Promise(r=>setTimeout(r,5));
+  assert.deepEqual(client.events.filter(e=>e.name==='notice').map(e=>e.data),[{kind:'error',sessionId:s.id,title:'Notice fixture'},{kind:'timer',projectId,timerId:'t1',label:'Tea'}]);
+  assert.ok(!JSON.stringify(client.events).includes('secret'));
+  // Authored broker errors reach the phone verbatim; parser and other errors stay generic.
+  const stale=await client.request('sessions.organize',{sessionId:s.id,expectedRevision:'999',pinned:true},randomUUID());
+  assert.equal(stale.error.code,'REVISION_CONFLICT');assert.equal(stale.error.message,'Session changed. Review its organization.');
+  const invalid=await client.request('sessions.read',{sessionId:'not-a-session'},randomUUID());
+  assert.equal(invalid.error.code,'INVALID_ARGUMENT');assert.match(invalid.error.message,/could not be completed/);
+  f.core.capabilities.claude={available:false,modelsStatus:'unavailable',models:[],remoteRestricted:false};
+  const snapshot=(await client.request('sync.open',{})).result;
+  assert.match(snapshot.providers.claude.remoteUnavailableReason,/not available on the desktop/);
+});
+test('a shared pairing response file is read only for its response URI',async t=>{
+  const f=await fixture(t),file=join(f.directory,'response.txt');
+  await writeFile(file,'Cere pairing response\ncere-pair://v1/abc_DEF-123\ntrailing words');
+  assert.deepEqual(await f.gateway.local('remote.readPairResponse',{path:file}),{response:'cere-pair://v1/abc_DEF-123'});
+  await writeFile(file,'no response here');
+  await assert.rejects(f.gateway.local('remote.readPairResponse',{path:file}),/does not contain a Cere pairing response/);
+});

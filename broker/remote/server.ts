@@ -3,6 +3,7 @@ import type { Server } from 'node:https';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { TextDecoder } from 'node:util';
+import { open } from 'node:fs/promises';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
 import type { Core } from '../core.ts';
@@ -35,7 +36,7 @@ export class MobileGateway {
       const device=this.registry.live(execution.deviceId);
       return !!device&&this.registry.config().enabled&&device.scopeVersion===execution.scopeVersion&&device.projects.some(p=>p.id===execution.projectId&&p.path===session.cwd)&&this.router.inScope(device,session);
     };
-    core.on('state',this.onState);core.on('message',this.onMessage);
+    core.on('state',this.onState);core.on('message',this.onMessage);core.on('notice',this.onNotice);
     this.heartbeat=setInterval(()=>{void this.maintain();},20000);this.heartbeat.unref();this.presence();
   }
   onState=()=> {
@@ -47,6 +48,23 @@ export class MobileGateway {
   onMessage=(message:any)=> {
     for(const peer of this.peers)if(peer.subscribed&&peer.device) {
       try{this.router.session(peer.device,message.sessionId);this.event(peer,'message.upsert',mobileMessage(this.core.store,message.sessionId,message.id));}catch{}
+    }
+  };
+  // Completion, failure and stop notices for in-scope sessions, plus timers this phone's projects set,
+  // so the phone can raise its own alerts. Text stays generic: provider error detail remains in Activity.
+  onNotice=(notice:any)=> {
+    for(const peer of this.peers)if(peer.subscribed&&peer.device) {
+      const device=peer.device;
+      try {
+        if(['complete','error','interrupted'].includes(notice?.kind)&&typeof notice.sessionId==='string') {
+          const session=this.router.session(device,notice.sessionId);
+          this.event(peer,'notice',{kind:notice.kind,sessionId:session.id,title:String(session.title||'').slice(0,100)});
+        } else if(notice?.kind==='timer'&&typeof notice.remoteProjectId==='string') {
+          const project=device.projects.find(p=>p.id===notice.remoteProjectId);
+          if(!project||!device.caps.includes('desktop.control')||!device.categories.includes('timers'))continue;
+          this.event(peer,'notice',{kind:'timer',projectId:project.id,timerId:String(notice.timerId||''),label:String(notice.text||'Timer').slice(0,200)});
+        }
+      } catch {}
     }
   };
   event(peer:Peer,name:string,data:any) {
@@ -251,6 +269,14 @@ export class MobileGateway {
     switch(method) {
       case 'remote.status':return {...this.core.remoteStatus as object,config:this.registry.config(),desktopId:this.identity.id,devices:this.registry.devices().map(({connectionKey,actionKey,...d})=>({...d,fingerprint:digest({connectionKey,actionKey})}))};
       case 'remote.preparePair':return this.pairing.prepare(params);
+      // A phone can share its public signed response as a text file; read only the response URI from it.
+      case 'remote.readPairResponse': {
+        const path=z.string().min(1).max(4096).parse(params.path),file=await open(path,'r');
+        let text='';try{const buffer=Buffer.alloc(16384);const {bytesRead}=await file.read(buffer,0,buffer.length,0);text=buffer.subarray(0,bytesRead).toString('utf8');}finally{await file.close();}
+        const response=text.match(/cere-pair:\/\/v1\/[A-Za-z0-9_-]+/)?.[0];
+        if(!response)throw new Error('This file does not contain a Cere pairing response.');
+        return {response};
+      }
       case 'remote.reviewPair': {const {response,sas,fingerprint,offer}=this.pairing.review(params.response);return {sas,fingerprint,name:response.name,actionAuthentication:offer.actionAuthentication||'biometric',replacesDeviceId:offer.replacesDeviceId};}
       case 'remote.confirmPair': {
         const device=this.pairing.confirm(params);
@@ -286,5 +312,5 @@ export class MobileGateway {
       default:throw new Error('Unknown remote management method');
     }
   }
-  async close() {this.closed=true;this.router.abortActions();clearInterval(this.heartbeat);if(this.stateTimer)clearTimeout(this.stateTimer);this.core.off('state',this.onState);this.core.off('message',this.onMessage);await this.stopListeners();}
+  async close() {this.closed=true;this.router.abortActions();clearInterval(this.heartbeat);if(this.stateTimer)clearTimeout(this.stateTimer);this.core.off('state',this.onState);this.core.off('message',this.onMessage);this.core.off('notice',this.onNotice);await this.stopListeners();}
 }

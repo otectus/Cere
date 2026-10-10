@@ -29,6 +29,11 @@ data class PendingCommand(
     val scopeVersion: String? = null,
     val sessionId: String? = null,
     val projectId: String? = null,
+    /** The exact request an approval answer targets; other requests in the session stay answerable. */
+    val approvalId: String? = null,
+    val approvalDigest: String? = null,
+    /** Short, non-sensitive label shown when the outcome needs review (a session title, a control name). */
+    val label: String? = null,
 )
 
 data class ReconciledCache(

@@ -43,7 +43,8 @@ class PrivateCacheUnavailableException(cause: Throwable) : IllegalStateException
 /** Private, credential-protected, AES-GCM sealed state. No plaintext cache or draft touches disk. */
 class SecureStore(context: Context) {
     private val app = context.applicationContext
-    private val file = AtomicFile(app.filesDir.resolve("cere-private-state.bin"))
+    // Resolved on first use, which is always on the IO dispatcher, not while the app object is created.
+    private val file by lazy { AtomicFile(app.filesDir.resolve("cere-private-state.bin")) }
     private val mutex = Mutex()
     private val alias = "cere.private.cache.v1"
 

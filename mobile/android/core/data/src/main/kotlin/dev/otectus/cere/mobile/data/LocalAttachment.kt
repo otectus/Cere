@@ -29,7 +29,15 @@ data class LocalAttachment(
     val committedOffset: Int = 0,
     val remoteStatus: String = "local",
     val reviewedAt: Long? = null,
-)
+    /** When the desktop discards this upload: 15 minutes while uploading, one hour once ready. */
+    val remoteExpiresAt: Long? = null,
+) {
+    /** Uploaded and still held by the desktop, so it can be attached to a send. */
+    fun readyAt(now: Long) = remoteAttachmentId != null && remoteStatus == "ready" && (remoteExpiresAt == null || remoteExpiresAt > now)
+
+    /** The desktop no longer has this upload; keep the private copy so it can be uploaded again. */
+    fun withoutRemote() = copy(remoteAttachmentId = null, uploadId = null, committedOffset = 0, remoteStatus = "local", remoteExpiresAt = null)
+}
 
 internal suspend fun decodePrivateImage(context: Context, sessionId: String, uri: Uri): Pair<LocalAttachment, ByteArray> = withContext(Dispatchers.IO) {
     val source = ImageDecoder.createSource(context.contentResolver, uri)

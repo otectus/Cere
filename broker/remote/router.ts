@@ -41,6 +41,7 @@ export class Router {
     if(!['ollama','codex','claude'].includes(id))return {remoteExecution:false,remoteUnavailableReason:'This provider is currently available on the desktop only.'};
     if(id==='ollama'&&!this.ollamaAllowed(device,this.core.settings.ollama.host))return {remoteExecution:false,remoteUnavailableReason:'This device is not granted the desktop Ollama server. Update device access on the desktop.'};
     if(id!=='ollama'&&!device.caps.includes('providers.execute'))return {remoteExecution:false,remoteUnavailableReason:'Native provider execution is not granted to this device.'};
+    if(id==='claude'&&p.available!==true)return {remoteExecution:false,remoteUnavailableReason:'Claude Code is not available on the desktop.'};
     if(id==='claude'&&p.remoteRestricted!==true)return {remoteExecution:false,remoteUnavailableReason:'Update Claude Code to a version with restricted mode before using it remotely.'};
     const remoteExecution=['ollama','codex','claude'].includes(id);
     return p.available===true?{remoteExecution}:{remoteExecution,remoteUnavailableReason:id==='ollama'?'Ollama is unavailable on the desktop. Refresh models after checking the configured server.':'Provider is unavailable on the desktop.'};
@@ -179,6 +180,8 @@ export class Router {
         const organized=await this.core.rpc('session.organize',{id:s.id,expectedRevision:p.expectedRevision,...(p.pinned===undefined?{}:{pinned:p.pinned}),...(p.archived===undefined?{}:{archived:p.archived})});
         return this.sessionDto(device,organized);
       }
+      // Opening a conversation on the phone clears Unread exactly as opening it on the desktop does.
+      case 'sessions.read': {const s=this.session(device,p.sessionId);if(!s.unread)return this.sessionDto(device,s,false);return this.sessionDto(device,await this.core.rpc('session.read',{id:s.id}),false);}
       case 'drafts.get': {const s=this.session(device,p.sessionId);return {text:s.draft,revision:s.draftRevision||'0'};}
       case 'drafts.put': {this.require(device,'chat.write');const current=this.session(device,p.sessionId);if(current.draftAttachments?.length&&p.text!==current.draft)throw remoteError('REVISION_CONFLICT','This desktop draft has attachments. Edit it from the desktop or remove those attachments first.');const s=this.core.draft(p.sessionId,p.text,p.expectedRevision);return {text:s.draft,revision:s.draftRevision||'0'};}
       case 'providers.models': {
@@ -290,6 +293,9 @@ export class Router {
 }
 export function safeError(error:any) {
   const code=typeof error?.code==='string'&&/^[A-Z_]+$/.test(error.code)?error.code:'INVALID_ARGUMENT';
-  const messages:Record<string,string>={INVALID_ARGUMENT:'The request could not be completed. Review the input and desktop diagnostics.',PROVIDER_POLICY_UNSAFE:'Provider restrictions could not be verified. Continue on the desktop.',REVISION_CONFLICT:'The resource changed. Reload and review before trying again.',SCOPE_DENIED:'This device does not have access to that operation.',SESSION_BUSY:'This session is busy. Stop it or wait.',APPROVAL_GONE:'This request has already ended.',AUTH_REVOKED:'Device access expired or was revoked.',OUTCOME_UNKNOWN:'The outcome is unknown; it will not be replayed.',CATEGORY_DISABLED:'This desktop category is disabled.',POLICY_PAUSED:'Desktop actions are paused.',IDEMPOTENCY_CONFLICT:'This command ID belongs to different input.'};
-  return {code,message:messages[code]||'The desktop could not complete this operation.',retryable:false};
+  const messages:Record<string,string>={INVALID_ARGUMENT:'The request could not be completed. Review the input and desktop diagnostics.',PROVIDER_POLICY_UNSAFE:'Provider restrictions could not be verified. Continue on the desktop.',REVISION_CONFLICT:'The resource changed. Reload and review before trying again.',SCOPE_DENIED:'This device does not have access to that operation.',SESSION_BUSY:'This session is busy. Stop it or wait.',APPROVAL_GONE:'This request has already ended.',AUTH_REVOKED:'Device access expired or was revoked.',OUTCOME_UNKNOWN:'The outcome is unknown; it will not be replayed.',CATEGORY_DISABLED:'This desktop category is disabled.',POLICY_PAUSED:'Desktop actions are paused.',IDEMPOTENCY_CONFLICT:'This command ID belongs to different input.',
+    ATTACHMENT_INVALID:'The desktop no longer has this image. Upload it again before sending.',LIMIT_EXCEEDED:'A desktop limit was reached. Wait for active work to finish or remove older items.',SCOPE_CHANGED:'This phone’s access changed. Reconnect to refresh it.',REMOTE_DISABLED:'Remote access is turned off on the desktop.',PAIRING_PENDING:'The desktop is finishing a pairing replacement. Try again shortly.',UNAUTHENTICATED:'The desktop could not verify this request. Review it and try again.',AUTH_EXPIRED:'This phone’s sign-in expired. Reconnecting.',DESKTOP_UNAVAILABLE:'That desktop item is no longer available. Refresh and try again.',DEPENDENCY_UNAVAILABLE:'A desktop service this needs is unavailable.',PROVIDER_UNAVAILABLE:'The provider is unavailable on the desktop.'};
+  // Messages written for remoteError are safe to show; anything else could carry local detail.
+  const authored=error?.remote===true&&typeof error.message==='string'?error.message.replace(/[\u0000-\u001f\u007f]+/g,' ').trim().slice(0,400):'';
+  return {code,message:authored||messages[code]||'The desktop could not complete this operation.',retryable:false};
 }

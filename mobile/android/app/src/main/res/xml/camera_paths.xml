@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-size camera captures land here briefly; the app re-encodes them into its encrypted store and deletes the file. -->
+<paths>
+    <cache-path name="camera" path="camera/" />
+</paths>

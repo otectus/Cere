@@ -22,22 +22,31 @@
         android:label="Cere Mobile"
         android:theme="@style/Theme.Cere"
         android:usesCleartextTraffic="false">
-        <activity android:name=".MainActivity" android:exported="true">
+        <!-- singleTop: shares and notification taps reach the open activity instead of stacking copies. -->
+        <!-- adjustResize: the app pads for the keyboard itself, so the window must not also be panned. -->
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
-        <activity android:name=".ReviewActivity" android:exported="false" />
         <service
             android:name=".MonitoringService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
         <receiver android:name=".DenyReceiver" android:exported="false" />
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.camera"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/camera_paths" />
+        </provider>
     </application>
 </manifest>

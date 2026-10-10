@@ -12,8 +12,8 @@ android {
         applicationId = "dev.otectus.cere.mobile"
         minSdk = 30
         targetSdk = 37
-        versionCode = 1003
-        versionName = "0.1.3"
+        versionCode = 1004
+        versionName = "0.1.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -23,6 +23,14 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        // Development snapshots: the optimized, non-debuggable release build under the
+        // development package and signer, so earlier development installs upgrade in place.
+        create("dev") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
         }
     }
 
