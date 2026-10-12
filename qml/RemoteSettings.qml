@@ -22,7 +22,7 @@ CSection {
     Flow {
         Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:8
         CButton { text:"Refresh";enabled:remote.requestId<0;onClicked:remote.reload() }
-        CButton { text:"Disable remote access now";danger:true;enabled:App.connected;onClicked:App.rpc("remote.off",{}) }
+        CButton { objectName:"disableRemote";text:"Disable remote access now";danger:true;enabled:App.connected;onClicked:App.rpc("remote.off",{}) }
         CButton { text:"Enable paired devices";enabled:remote.requestId<0&&(remote.status.devices||[]).some(d=>!d.revokedAt&&d.expiresAt>Date.now());onClicked:remote.call("remote.enable",{}) }
     }
     CText { text:"Disabling or revoking stops remote controlled work. Disconnecting a phone normally leaves accepted work running.";color:Theme.muted;font.pixelSize:12 }

@@ -1,298 +1,177 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "SettingsCatalog.js" as Catalog
+// Settings, one category at a time. SettingsCatalog.js lists the categories and their settings for
+// the rail or chips, the search and deep links. Every category page stays instantiated in one scroll
+// with only the current one visible, so pages keep their requests on load and their objectNames.
 ColumnLayout {
     id:settingsView
-    spacing:16
+    objectName:"settingsPage"
+    spacing:12
+    property string category:Catalog.lastCategory
+    property string pendingTarget:""
+    readonly property bool rail:width>=700
+    // Derived from a bool so the arrays below change only when speech availability does.
+    readonly property bool voiceAvailable:App.state.speech!==undefined
+    readonly property var hiddenCategories:voiceAvailable?[]:["voice"]
+    readonly property var current:Catalog.category(category)||Catalog.category(Catalog.defaultCategory)
+    readonly property string query:settingsSearch.text.trim()
+    readonly property var results:Catalog.search(query,hiddenCategories)
+    readonly property var pages:({companion:companionPage,personality:personalityPage,voice:voicePage,motion:motionPage,connections:connectionsPage,knowledge:knowledgePage,assistance:assistancePage,scripts:scriptsPage,mobile:mobilePage,telemetry:telemetryPage,application:applicationPage})
+    onCategoryChanged:{Catalog.remember(category);settingsScroll.contentY=0}
+    // A remembered category can be unavailable when this page is made (Voice before speech is ready).
+    onHiddenCategoriesChanged:if(hiddenCategories.indexOf(category)>=0)category=Catalog.defaultCategory
+    Component.onCompleted:if(hiddenCategories.indexOf(category)>=0)category=Catalog.defaultCategory
     function focusSearch(){settingsSearch.forceActiveFocus()}
-    property var settings:App.state.settings||({})
-    property var categoryNames:({apps:"Applications",files:"Files and folders",windows:"Windows and workspaces",audio:"Volume and mute",media:"Media playback",capture:"Screen captures",timers:"Timers",scripts:"Saved scripts",providers:"Provider orchestration"})
-    readonly property var navigationEntries:[
-        {label:"Companion",detail:"window, size, roaming, login",target:companionSection},
-        {label:"Personality",detail:"tone and response style",target:personalitySection},
-        {label:"Voice",detail:"voices, pitch, speed and volume",target:voiceSection},
-        {label:"Motion & expressions",detail:"animation, quiet mode, previews",target:motionSection},
-        {label:"Cere Mobile",detail:"pairing and remote access",target:remoteSection},
-        {label:"AI assistance",detail:"permissions, categories, grants",target:assistanceSection},
-        {label:"Saved scripts",detail:"commands and working folders",target:scriptsSection},
-        {label:"Connections",detail:"Ollama, Codex, Claude Code, AntiGravity, OpenAI API, Claude API, Google AI API, keys",target:connectionsSection},
-        {label:"Web search & memory",detail:"search providers and recall",target:knowledgeSection},
-        {label:"Workspace telemetry",detail:"workspaces, shell hooks, recent edits",target:telemetrySection},
-        {label:"Application",detail:"Hyprland shortcut and quit",target:applicationSection}
-    ]
-    readonly property string navigationQuery:settingsSearch.text.trim().toLowerCase()
-    readonly property var matchingNavigationEntries:navigationEntries.filter(entry=>(entry.target!==voiceSection||voiceSection.available)&&(!navigationQuery||(entry.label+" "+entry.detail).toLowerCase().indexOf(navigationQuery)>=0))
-    function update(value){return App.rpc("settings.update",value)}
-    function jumpTo(item){
-        if(!item)return
-        const point=item.mapToItem(settingsScroll,0,0)
-        settingsScroll.contentY=Math.max(0,Math.min(settingsScroll.contentHeight-settingsScroll.height,settingsScroll.contentY+point.y-12))
+    // Opens a category; with a target, the control with that objectName instead.
+    function open(id,target){
+        settingsSearch.text=""
+        if(target&&revealControl(target))return
+        if(Catalog.category(id)&&hiddenCategories.indexOf(id)<0)category=id
+    }
+    function openResult(result){if(result)open(result.category.id,result.setting?result.setting.target:"")}
+    // Shows the category holding a control, scrolls to it and focuses it; a brief outline marks it.
+    // A control in a part of the page that is switched off reveals that part instead.
+    function revealControl(name){
+        let id=Catalog.categoryOf(name)
+        if(!id)for(const key in pages)if(find(pages[key],name)){id=key;break}
+        if(!id||hiddenCategories.indexOf(id)>=0)return false
+        settingsSearch.text=""
+        category=id;pendingTarget=name
+        Qt.callLater(finishReveal)
+        return true
+    }
+    function find(item,name){
+        if(!item)return null
+        if(item.objectName===name)return item
+        for(let index=0;index<item.children.length;++index){const match=find(item.children[index],name);if(match)return match}
+        return null
+    }
+    // Lays the visible pages out now rather than at the next frame. The page was hidden a moment ago, and
+    // wrapped text learns its height only once it has its width, so passes repeat until the item holds still.
+    function settle(item){
+        const polish=node=>{if(!node.visible)return;node.ensurePolished();for(let index=0;index<node.children.length;++index)polish(node.children[index])}
+        let top=NaN
+        for(let pass=0;pass<4;++pass){
+            polish(settingsScroll.contentItem)
+            const y=item.mapToItem(settingsScroll.contentItem,0,0).y
+            if(y===top)break
+            top=y
+        }
+        return top
+    }
+    function finishReveal(){
+        const page=pages[category],target=find(page,pendingTarget);pendingTarget=""
+        let shown=target;while(shown&&shown!==page&&!shown.visible)shown=shown.parent
+        if(!shown)return
+        const top=settle(shown)
+        settingsScroll.contentY=Math.max(0,Math.min(settingsScroll.contentHeight-settingsScroll.height,top-Math.min(96,settingsScroll.height/4)))
+        if(shown===target&&target.activeFocusOnTab)target.forceActiveFocus(Qt.OtherFocusReason)
+        spotlight.show(shown)
+    }
+    ColumnLayout {
+        Layout.fillWidth:true;spacing:4
+        CText { text:"Settings";font.pixelSize:Theme.page;font.weight:Font.DemiBold;Accessible.role:Accessible.Heading }
+        // Narrow pages give this line to the chips; the category blurb below still speaks for her.
+        CText { visible:settingsView.rail;text:"Shape how Cere looks, speaks, connects, and acts on your desktop.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    }
+    CField {
+        id:settingsSearch;objectName:"settingsSearch";Layout.fillWidth:true
+        leftPadding:38;placeholderText:"Find a setting…";Accessible.name:"Find a setting"
+        CIcon { name:"search";x:12;anchors.verticalCenter:parent.verticalCenter;color:settingsSearch.activeFocus?Theme.cyan:Theme.muted }
+        onAccepted:settingsView.openResult(settingsView.results[0])
+        // Escape clears a search first; on an empty field it leaves Settings as before.
+        Keys.onEscapePressed:event=>{if(text.length){clear();event.accepted=true}else event.accepted=false}
+        Keys.onDownPressed:event=>{event.accepted=resultList.count>0;if(event.accepted){resultList.currentIndex=0;resultList.itemAtIndex(0).forceActiveFocus(Qt.TabFocusReason)}}
+    }
+    SettingsNav {
+        visible:!settingsView.rail&&!settingsView.query
+        rail:false;Layout.fillWidth:true;Layout.preferredHeight:implicitHeight
+        category:settingsView.category;hidden:settingsView.hiddenCategories
+        onSelected:id=>settingsView.open(id,"")
     }
     RowLayout {
-        Layout.fillWidth:true
+        Layout.fillWidth:true;Layout.fillHeight:true;spacing:12
+        SettingsNav {
+            visible:settingsView.rail
+            rail:true;Layout.preferredWidth:196;Layout.fillHeight:true
+            category:settingsView.category;hidden:settingsView.hiddenCategories
+            onSelected:id=>settingsView.open(id,"")
+        }
+        Rectangle { visible:settingsView.rail;Layout.fillHeight:true;implicitWidth:1;color:Theme.subtle }
         ColumnLayout {
-            Layout.fillWidth:true;spacing:4
-            CText { text:"Settings";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
-            CText { text:"Shape how Cere looks, speaks, connects, and acts on your desktop.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        }
-        CButton { text:"Backup";onClicked:recovery.open() }
-        CButton { text:"Health";onClicked:health.open() }
-    }
-    RowLayout {
-        Layout.fillWidth:true;spacing:8
-        CField {
-            id:settingsSearch;objectName:"settingsSearch";Layout.fillWidth:true;Layout.preferredWidth:1
-            placeholderText:"Find a setting…";Accessible.name:"Find a settings section"
-            onAccepted:if(settingsView.matchingNavigationEntries.length===1)settingsView.jumpTo(settingsView.matchingNavigationEntries[0].target)
-        }
-        CComboBox {
-            id:sectionPicker;objectName:"settingsSectionPicker";Layout.fillWidth:true;Layout.preferredWidth:1;Layout.minimumWidth:0
-            model:settingsView.matchingNavigationEntries;textRole:"label";Accessible.name:"Jump to settings section"
-            displayText:settingsView.navigationQuery?(count?count+" matching section"+(count===1?"":"s"):"No matching sections"):"Jump to section…"
-            onActivated:if(currentIndex>=0)settingsView.jumpTo(settingsView.matchingNavigationEntries[currentIndex].target)
-        }
-    }
-    PageScroll {
-        id:settingsScroll;objectName:"settingsScroll"
-        Layout.fillWidth:true;Layout.fillHeight:true;maximumContentWidth:820
-    CSection {
-        id:companionSection
-        title:"Companion"
-        CComboBox { model:["Normal","Focus","Gaming","Presentation"];currentIndex:["normal","focus","gaming","presentation"].indexOf(settingsView.settings.desktopProfile||"normal");Accessible.name:"Desktop profile";onActivated:settingsView.update({desktopProfile:["normal","focus","gaming","presentation"][currentIndex]}) }
-        CText { text:"Profiles coordinate visibility, speech, motion and ordinary notifications. Pending approvals remain available from Cere’s tray.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        RowLayout {
-            CText { text:"Interface size" }
-            CSlider { Layout.fillWidth:true;from:.8;to:1.5;stepSize:.1;value:settingsView.settings.interfaceScale||1;Accessible.name:"Interface size";onMoved:settingsView.update({interfaceScale:value}) }
-            CText { text:Math.round((settingsView.settings.interfaceScale||1)*100)+"%" }
-        }
-        Flow {
-            Layout.fillWidth:true;spacing:6
-            CButton { text:"Save monitor home";onClicked:App.saveHomePosition() }
-            CButton { text:"Go home";onClicked:App.goHomePosition() }
-            CButton { text:"Dock left";onClicked:App.dockPet("left") }
-            CButton { text:"Dock right";onClicked:App.dockPet("right") }
-        }
-        CCheckBox { text:"Always on top";checked:settingsView.settings.topmost===true;onClicked:settingsView.update({topmost:checked}) }
-        CText { text:"Keep Cere above your applications, including fullscreen windows.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        RowLayout {
-            Layout.fillWidth:true
-            CText { text:"Character size";font.pixelSize:Theme.secondary;Layout.fillWidth:false }
-            CSlider { Layout.fillWidth:true;Layout.minimumWidth:0;from:.5;to:3;stepSize:.25;value:settingsView.settings.scale||1;Accessible.name:"Character size";onMoved:App.resizePet(value) }
-            Text { text:Math.round((settingsView.settings.scale||1)*100)+"%";color:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.secondary }
-        }
-        CCheckBox { text:"Roaming · gently follow the mouse";checked:settingsView.settings.roaming===true;onClicked:settingsView.update({roaming:checked}) }
-        CText { visible:settingsView.settings.roaming;text:"She follows across your displays and stops short of the pointer. Hovering, dragging, open panels, fullscreen apps and active tasks pause her movement.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CCheckBox { text:"Start Cere at login";checked:App.autostartEnabled();onClicked:App.setAutostart(checked) }
-    }
-    PersonalitySettings { id:personalitySection }
-    VoiceSettings { id:voiceSection }
-    CSection {
-        id:motionSection
-        title:"Motion & expressions"
-        description:"A little attitude, a little grace. Make her movement feel like home."
-        CCheckBox { text:"Quiet mode";checked:settingsView.settings.quiet===true;onClicked:settingsView.update({quiet:checked}) }
-        CText { text:"Pause animations, spoken replies and ordinary notifications.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CCheckBox { objectName:"reducedMotion";text:"Reduce motion";checked:settingsView.settings.reducedMotion===true;onClicked:settingsView.update({reducedMotion:checked}) }
-        CText { text:"Use still poses for her current state. Breathing, blinking, transitions and roaming stop; permission requests stay visible.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        RowLayout {
-            Layout.fillWidth:true
-            CText { text:"Motion intensity";font.pixelSize:Theme.secondary;Layout.fillWidth:false }
-            CSlider {
-                objectName:"motionIntensity";Layout.fillWidth:true;Layout.minimumWidth:0
-                from:0;to:1;stepSize:.1;value:settingsView.settings.motionIntensity === undefined ? 0.7 : settingsView.settings.motionIntensity
-                enabled:!settingsView.settings.quiet&&!settingsView.settings.reducedMotion
-                Accessible.name:"Motion intensity";onMoved:settingsView.update({motionIntensity:Math.round(value*10)/10})
+            visible:settingsView.query.length>0
+            Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumWidth:0;spacing:8
+            CText {
+                objectName:"settingsResultSummary";color:Theme.muted;font.pixelSize:Theme.caption
+                text:settingsView.results.length?settingsView.results.length+(settingsView.results.length===1?" match":" matches")+" · Enter opens the first":"Nothing by that name. Try a broader word, like voice or memory."
             }
-            Text { text:Math.round((settingsView.settings.motionIntensity === undefined ? 0.7 : settingsView.settings.motionIntensity)*100)+"%";color:Theme.cyan;font.pixelSize:Theme.secondary }
-        }
-        CText { text:"From a quiet presence to full personality: soften her breathing, gaze, hair sway and gestures together. Zero keeps state poses still.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        RowLayout {
-            Layout.fillWidth:true
-            CText { text:"Idle energy";font.pixelSize:Theme.secondary }
-            CComboBox {
-                objectName:"idleEnergy";Layout.fillWidth:true;textRole:"label";valueRole:"value"
-                model:[{label:"Calm",value:"calm"},{label:"Lively",value:"lively"}]
-                currentIndex:settingsView.settings.idleEnergy === "calm" ? 0 : 1
-                Accessible.name:"Idle energy"
-                onActivated:settingsView.update({idleEnergy:currentValue})
-            }
-        }
-        MotionStage { Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0 }
-        CCheckBox { objectName:"expressiveCues";text:"Respond to conversational tone";checked:settingsView.settings.expressiveCues!==false;onClicked:settingsView.update({expressiveCues:checked}) }
-        CText { text:"Occasional expressions from clear English conversational cues, interpreted locally. Task results always come from the app.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        RowLayout {
-            Layout.fillWidth:true
-            CComboBox {
-                id:expression;objectName:"animationPicker";Layout.fillWidth:true;Layout.minimumWidth:0;textRole:"label";valueRole:"name"
-                model:Object.keys(App.animations.clips||{}).filter(n=>!App.animations.clips[n].loop).map(n=>({name:n,label:App.animations.clips[n].label}))
-                Accessible.name:"Choose Cere’s expression"
-            }
-            CButton { objectName:"previewAnimation";text:"Preview";enabled:!settingsView.settings.quiet&&!settingsView.settings.reducedMotion&&!settingsView.settings.hidden&&settingsView.settings.motionIntensity!==0;onClicked:App.preview(expression.currentValue) }
-        }
-        Flow {
-            Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:6
-            Repeater {
-                model:[{name:"wave",label:"Say hello"},{name:"nod",label:"A knowing nod"},{name:"giggle",label:"Try to behave"},{name:"stretch",label:"Stretch"},{name:"glassesAdjust",label:"Adjust glasses"},{name:"hairTuck",label:"Tuck her hair"},{name:"smallShrug",label:"Who, me?"},{name:"hairToss",label:"A little drama"},{name:"music",label:"Find the rhythm"}]
-                CButton {
+            ListView {
+                id:resultList;objectName:"settingsResults"
+                Layout.fillWidth:true;Layout.fillHeight:true;clip:true;spacing:4
+                model:settingsView.results
+                Accessible.role:Accessible.List;Accessible.name:"Matching settings"
+                ScrollBar.vertical:CScrollBar {}
+                delegate:CButton {
+                    id:result
                     required property var modelData
-                    text:modelData.label
-                    enabled:!settingsView.settings.quiet&&!settingsView.settings.reducedMotion&&!settingsView.settings.hidden&&settingsView.settings.motionIntensity!==0
-                    onClicked:App.preview(modelData.name)
+                    required property int index
+                    readonly property string detail:modelData.setting?Catalog.group(modelData.category.group).label+" › "+modelData.category.label:"Category · "+modelData.category.blurb
+                    objectName:"settingsResult_"+index
+                    width:resultList.width-12;implicitHeight:54;quiet:true;alignLeft:true
+                    text:modelData.setting?modelData.setting.label:modelData.category.label
+                    help:detail;Accessible.name:text+", "+detail
+                    onClicked:settingsView.openResult(modelData)
+                    contentItem:ColumnLayout {
+                        spacing:2
+                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:result.text;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;elide:Text.ElideRight;textFormat:Text.PlainText }
+                        Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:result.detail;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption;elide:Text.ElideRight;textFormat:Text.PlainText }
+                    }
                 }
             }
         }
-        CText { visible:settingsView.settings.quiet||settingsView.settings.reducedMotion||settingsView.settings.hidden;text:"Show Cere and turn off quiet mode and reduced motion to preview expressions.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CButton { text:settingsView.settings.hidden?"Show Cere":"Hide Cere";onClicked:settingsView.update({hidden:!settingsView.settings.hidden}) }
-    }
-    RemoteSettings { id:remoteSection }
-    CSection {
-        id:assistanceSection
-        title:"AI assistance"
-        description:"Choose which actions your assistant sessions can request. Manual controls in the Desktop tab remain available."
-        CCheckBox {
-            objectName:"bypassCliPermissions";text:"Skip CLI permission prompts"
-            Accessible.description:"Also allows authorized CLI requests from paired devices and delegated sessions. Questions still need your answer."
-            checked:settingsView.settings.bypassCliPermissions===true
-            onClicked:settingsView.update({bypassCliPermissions:checked})
-        }
-        CCheckBox {
-            objectName:"bypassComputerPermissions";text:"Skip computer permission prompts"
-            checked:settingsView.settings.bypassComputerPermissions===true
-            onClicked:settingsView.update({bypassComputerPermissions:checked})
-        }
-        CText { text:"These switches stay on until you turn them off. CLI includes project trust, commands, file changes, scripts, delegation and new terminals launched through Cere. Computer includes desktop actions. Questions still require an answer.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CButton { objectName:"openPermissionCenter";text:"Permission Center and power sessions";Layout.fillWidth:true;onClicked:permissionCenter.open() }
-        CText { text:"Power sessions grant project-bound access for a limited time. Power does not approve existing requests or change already-running terminals.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CComboBox {
-            id:profile;Layout.fillWidth:true;Layout.minimumWidth:0;model:["Manual controls only","Scoped assistance","Broad control"]
-            Accessible.name:"Desktop assistance profile"
-            currentIndex:settingsView.settings.profile==="manual"?0:settingsView.settings.profile==="broad"?2:1
-            onActivated:settingsView.update({profile:["manual","scoped","broad"][currentIndex]})
-        }
-        GridLayout {
-            Layout.fillWidth:true;columns:width>=460?2:1;columnSpacing:12;rowSpacing:4
-            Repeater {
-                model:Object.keys(settingsView.categoryNames)
-                CCheckBox {
-                    required property string modelData
-                    text:settingsView.categoryNames[modelData]
-                    property bool bypassed:modelData==="scripts"||modelData==="providers"?settingsView.settings.bypassCliPermissions===true:settingsView.settings.bypassComputerPermissions===true
-                    checked:bypassed||(settingsView.settings.categories||[]).indexOf(modelData)>=0
-                    enabled:!bypassed&&settingsView.settings.profile!=="manual"
-                    onClicked:{let c=(settingsView.settings.categories||[]).filter(x=>x!==modelData);if(checked)c.push(modelData);settingsView.update({categories:c})}
-                }
-            }
-        }
-        CText { text:"Provider orchestration and saved scripts follow the selected profile and grants. A power session can grant temporary access. Native CLI shell access remains outside Cere’s desktop grants.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CButton { text:settingsView.settings.paused?"Resume AI actions":"Pause AI actions";Layout.fillWidth:true;onClicked:settingsView.update({paused:!settingsView.settings.paused}) }
-        ColumnLayout {
-            visible:settingsView.settings.profile==="broad";Layout.fillWidth:true;spacing:12
-            CText { text:"Standing grants";color:Theme.amber;font.weight:Font.DemiBold }
-            CText { text:"Allow enabled desktop categories in this project for one hour. Provider delegation asks first unless CLI bypass is enabled.";color:Theme.muted;font.pixelSize:Theme.secondary }
-            CText { text:App.session.cwd||"Select a session to grant access.";color:Theme.cyan;font.pixelSize:Theme.secondary }
-            GridLayout {
-                Layout.fillWidth:true;columns:width>=340?2:1;columnSpacing:8;rowSpacing:8
-                CButton { Layout.fillWidth:true;text:"Grant for 1 hour";enabled:!!App.session.cwd;onClicked:settingsView.update({grants:(settingsView.settings.grants||[]).filter(g=>g.cwd!==App.session.cwd).concat((settingsView.settings.categories||[]).filter(c=>c!=="providers").map(c=>({category:c,cwd:App.session.cwd,expires:Date.now()+3600000})))}) }
-                CButton { Layout.fillWidth:true;text:"Revoke all";onClicked:settingsView.update({grants:[]}) }
-            }
-            Repeater { model:settingsView.settings.grants||[];CText { required property var modelData;text:modelData.category+" · expires "+new Date(modelData.expires).toLocaleTimeString(Qt.locale(),"h:mm AP");color:Theme.muted;font.pixelSize:Theme.caption } }
-        }
-    }
-    CSection {
-        id:scriptsSection
-        title:"Saved scripts"
-        description:"Save an executable, its arguments and a working folder. Review it in Desktop before running."
-        CButton { objectName:"addScript";text:"Add script";onClicked:scriptDialog.open() }
-        Repeater {
-            model:settingsView.settings.scripts||[]
-            RowLayout {
-                required property var modelData;id:scriptRow;Layout.fillWidth:true
-                CText { text:scriptRow.modelData.name }
-                CButton { text:"Remove";danger:true;onClicked:settingsView.update({scripts:settingsView.settings.scripts.filter(s=>s.id!==scriptRow.modelData.id)}) }
-            }
-        }
-        CText { visible:!(settingsView.settings.scripts||[]).length;text:"No saved scripts yet.";color:Theme.muted;font.pixelSize:Theme.secondary }
-    }
-    CSection {
-        id:connectionsSection
-        title:"Connections"
-        OllamaConnection {}
-        Repeater {
-            model:["codex","claude","antigravity"]
+        PageScroll {
+            id:settingsScroll;objectName:"settingsScroll"
+            visible:!settingsView.query
+            Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumWidth:0;maximumContentWidth:820
             ColumnLayout {
-                required property string modelData
-                property var capability:(App.state.capabilities||{})[modelData]||({})
-                Layout.fillWidth:true;spacing:5
-                CText { text:(modelData==="codex"?"Codex":modelData==="antigravity"?"AntiGravity":"Claude Code")+" · "+(capability.available?"Ready":"Unavailable");color:capability.available?Theme.cyan:Theme.amber;font.weight:Font.DemiBold }
-                CText { text:capability.version||capability.error||"Checking installed CLI…";color:Theme.muted;font.pixelSize:Theme.secondary }
-                CText { visible:modelData==="antigravity";text:"Sign in with agy in a terminal first. Headless actions that need approval are skipped unless allowed in AntiGravity or Cere’s CLI bypass is enabled. Desktop only; text attachments supported.";color:Theme.muted;font.pixelSize:Theme.secondary }
+                Layout.fillWidth:true;spacing:2
+                // The rail already names the group beside a wide page.
+                SectionLabel { visible:!settingsView.rail;text:(Catalog.group(settingsView.current.group)||{label:""}).label.toUpperCase() }
+                CText { objectName:"settingsCategoryTitle";text:settingsView.current.label;font.pixelSize:Theme.title;font.weight:Font.DemiBold;Accessible.role:Accessible.Heading }
+                CText { text:settingsView.current.blurb;color:Theme.muted;font.pixelSize:Theme.secondary }
             }
-        }
-        CText { text:"API keys stay on this computer in an owner-only credentials file, outside settings and backups. Shared memory follows Settings → Knowledge → cloud sharing.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        ApiConnection { provider:"openai";label:"OpenAI API" }
-        ApiConnection { provider:"anthropic";label:"Claude API" }
-        ApiConnection { provider:"google";label:"Google AI API" }
-    }
-    KnowledgeSettings { id:knowledgeSection }
-    TelemetrySettings { id:telemetrySection;backend:App;Layout.fillWidth:true }
-    CSection {
-        id:applicationSection
-        title:"Application"
-        description:"Find Cere in your application menu or tray. Closing a panel keeps your sessions running."
-        CButton { text:"Copy Hyprland shortcut";help:"Copy a suggested Super+C binding for a Lua configuration";onClicked:App.copy('hl.bind("SUPER + C", hl.dsp.exec_cmd("cere toggle"))') }
-        GridLayout {
-            Layout.fillWidth:true;columns:width>=520?2:1;columnSpacing:8;rowSpacing:8
-            CButton { objectName:"quitKeepSessions";Layout.fillWidth:true;text:"Quit · keep sessions running";onClicked:App.quit(false) }
-            CButton { Layout.fillWidth:true;text:"Stop sessions and quit";danger:true;onClicked:quitConfirm.open() }
+            CompanionSettings { id:companionPage;visible:settingsView.category==="companion" }
+            PersonalitySettings { id:personalityPage;visible:settingsView.category==="personality" }
+            VoiceSettings { id:voicePage;visible:voicePage.available&&settingsView.category==="voice" }
+            MotionSettings { id:motionPage;visible:settingsView.category==="motion" }
+            ConnectionsSettings { id:connectionsPage;visible:settingsView.category==="connections" }
+            KnowledgeSettings { id:knowledgePage;visible:settingsView.category==="knowledge" }
+            AssistanceSettings { id:assistancePage;visible:settingsView.category==="assistance" }
+            ScriptsSettings { id:scriptsPage;visible:settingsView.category==="scripts" }
+            RemoteSettings { id:mobilePage;visible:settingsView.category==="mobile" }
+            TelemetrySettings { id:telemetryPage;backend:App;Layout.fillWidth:true;visible:settingsView.category==="telemetry" }
+            ApplicationSettings { id:applicationPage;visible:settingsView.category==="application" }
         }
     }
-    }
-    CDialog {
-        id:quitConfirm
-        CText { text:"Stop sessions and quit?";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        CText { text:"Any running turns will be interrupted. Their conversation history will stay available.";color:Theme.muted }
-        RowLayout {
-            Layout.fillWidth:true
-            CButton { Layout.fillWidth:true;text:"Cancel";onClicked:quitConfirm.close() }
-            CButton { Layout.fillWidth:true;text:"Stop and quit";danger:true;onClicked:App.quit(true) }
+    // A brief outline around whatever revealControl() brought into view.
+    Rectangle {
+        id:spotlight;objectName:"settingsSpotlight"
+        parent:settingsScroll.contentItem
+        z:2;opacity:0;visible:opacity>0
+        color:"transparent";radius:Theme.radiusCard;border.color:Theme.cyan;border.width:Theme.focusWidth
+        function show(item){
+            const point=item.mapToItem(parent,0,0)
+            x=point.x-6;y=point.y-6;width=item.width+12;height=item.height+12
+            pulse.restart()
+        }
+        SequentialAnimation {
+            id:pulse
+            NumberAnimation { target:spotlight;property:"opacity";to:1;duration:Theme.duration(120) }
+            PauseAnimation { duration:900 }
+            NumberAnimation { target:spotlight;property:"opacity";to:0;duration:Theme.duration(450) }
         }
     }
-    CDialog {
-        id:scriptDialog;objectName:"scriptDialog";property int requestId:-1;property string error:""
-        onOpened:error=""
-        CText { text:"Add a saved script";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-        CText { text:"Name";font.pixelSize:Theme.secondary;color:Theme.muted }
-        CField { id:scriptName;Layout.fillWidth:true;placeholderText:"e.g. Start development server";Accessible.name:"Script name" }
-        CText { text:"Executable";font.pixelSize:Theme.secondary;color:Theme.muted }
-        CField { id:executable;Layout.fillWidth:true;placeholderText:"Absolute executable path";Accessible.name:"Executable path" }
-        CText { text:"Arguments (JSON array)";font.pixelSize:Theme.secondary;color:Theme.muted }
-        CField { id:scriptArgs;objectName:"scriptArguments";Layout.fillWidth:true;placeholderText:'["--verbose"]';text:"[]";Accessible.name:"Script arguments" }
-        CText { text:"Working folder";font.pixelSize:Theme.secondary;color:Theme.muted }
-        RowLayout {
-            Layout.fillWidth:true
-            CField { id:scriptCwd;Layout.fillWidth:true;placeholderText:"Absolute working folder";text:App.session.cwd||"";Accessible.name:"Script working folder" }
-            CButton { text:"Browse";onClicked:{const folder=App.chooseFolder();if(folder)scriptCwd.text=folder} }
-        }
-        CText { text:"Commands time out after 60 seconds.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CText { visible:scriptDialog.error.length>0;text:scriptDialog.error;color:Theme.danger;font.pixelSize:Theme.secondary }
-        RowLayout {
-            Layout.fillWidth:true
-            CButton { Layout.fillWidth:true;text:"Cancel";onClicked:scriptDialog.close() }
-            CButton {
-                Layout.fillWidth:true;text:scriptDialog.requestId>=0?"Saving…":"Save script";primary:true
-                enabled:scriptDialog.requestId<0&&scriptName.text.trim().length>0&&executable.text.startsWith("/")&&scriptCwd.text.startsWith("/")
-                onClicked:{
-                    try {
-                        const args=JSON.parse(scriptArgs.text)
-                        if(!Array.isArray(args)||!args.every(a=>typeof a==="string"))throw Error("Use a JSON array of strings for arguments.")
-                        scriptDialog.requestId=settingsView.update({scripts:(settingsView.settings.scripts||[]).concat([{id:"script-"+Date.now(),name:scriptName.text.trim(),executable:executable.text,args:args,cwd:scriptCwd.text,timeout:60000}])})
-                    }catch(e){scriptDialog.error=e.message}
-                }
-            }
-        }
-    }
-    Connections { target:App;function onResult(id,value){if(id===scriptDialog.requestId){scriptDialog.requestId=-1;if(value?.error)scriptDialog.error=value.error;else{scriptDialog.close();scriptName.clear();executable.clear();scriptArgs.text="[]"}}} }
-    PermissionCenter { id:permissionCenter }
-    Health { id:health }
-    Recovery { id:recovery }
 }

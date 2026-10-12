@@ -267,13 +267,7 @@ Rectangle {
         id:commandPalette
         onSessionRequested:id=>{App.selectedId=id;App.rpc("session.read",{id:id});shell.openConversation()}
         onFolderRequested:id=>shell.openFolder(id)
-        onSettingsRequested:section=>{
-            shell.page=3
-            Qt.callLater(()=>{
-                const destination=settingsPage.navigationEntries.find(entry=>entry.label===section)
-                if(destination)settingsPage.jumpTo(destination.target);else settingsPage.focusSearch()
-            })
-        }
+        onSettingsRequested:section=>{shell.page=3;Qt.callLater(()=>settingsPage.open(section,""))}
         onPageRequested:target=>shell.navigate(target)
         onDesktopRequested:query=>{shell.page=2;Qt.callLater(()=>desktop.focusSearch())}
     }

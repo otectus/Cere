@@ -108,7 +108,7 @@ CSection {
         objectName:"resetVoiceTuning";text:"Reset voice adjustments";enabled:!voiceSettings.savingTuning
         onClicked:voiceSettings.saveTuning({speechRate:1,speechPitch:0,speechVolume:1})
     }
-    CCheckBox { text:"Read a brief opening instead of the full response";checked:voiceSettings.settings.speechBrief===true;onClicked:App.rpc("settings.update",{speechBrief:checked}) }
+    CCheckBox { objectName:"speechBrief";text:"Read a brief opening instead of the full response";checked:voiceSettings.settings.speechBrief===true;onClicked:App.rpc("settings.update",{speechBrief:checked}) }
     GridLayout {
         Layout.fillWidth:true;columns:width>=400?3:1;columnSpacing:8;rowSpacing:8
         CButton { objectName:"ttsTest";text:"Test voice";Layout.fillWidth:true;enabled:!voiceSettings.savingTuning;onClicked:App.rpc("tts.test",{}) }
