@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "SettingsCatalog.js" as SettingsCatalog
 
 Popup {
     id:rootPalette
@@ -16,7 +17,7 @@ Popup {
 
     signal sessionRequested(string id)
     signal folderRequested(string id)
-    signal settingsRequested(string section)
+    signal settingsRequested(string category, string target)
     signal pageRequested(int page)
     signal desktopRequested(string query)
 
@@ -32,13 +33,6 @@ Popup {
     readonly property var navigation:App.state.navigation||({favorites:[],recents:[]})
     readonly property var favorites:navigation.favorites||[]
     readonly property var recents:navigation.recents||[]
-    readonly property var settingsEntries:[
-        {label:"Companion",detail:"window, size, roaming, login"},{label:"Personality",detail:"tone and response style"},
-        {label:"Voice",detail:"speech and Piper voices"},{label:"Motion & expressions",detail:"animation, quiet mode, previews"},
-        {label:"Cere Mobile",detail:"pairing and remote access"},{label:"AI assistance",detail:"permissions, categories, grants"},
-        {label:"Saved scripts",detail:"commands and working folders"},{label:"Connections",detail:"Ollama, Codex, Claude"},
-        {label:"Web search & memory",detail:"search providers and recall"},{label:"Application",detail:"shortcut and quit"}
-    ]
     readonly property var allEntries:buildEntries().concat(brokerEntries||[])
     readonly property var results:rankedEntries()
 
@@ -55,7 +49,11 @@ Popup {
             detail:(session.provider||"")+" · "+(session.cwd||""),search:(session.title||"")+" "+(session.cwd||"")+" "+(session.provider||""),value:session.id
         })))
         entries=entries.concat((App.state.folders||[]).map(folder=>({id:"folder:"+folder.id,kind:"folder",title:folder.name,detail:"Session folder",value:folder.id})))
-        entries=entries.concat(settingsEntries.map(section=>({id:"settings:"+section.label,kind:"settings",title:section.label,detail:section.detail,value:section.label})))
+        // Settings categories and the settings in them, from the same catalog as the Settings page.
+        for(const category of SettingsCatalog.visibleCategories(App.state.speech===undefined?["voice"]:[])){
+            entries.push({id:"settings:"+category.id,kind:"settings",title:category.label,detail:"Settings · "+category.blurb,search:category.label+" "+category.keywords,value:{category:category.id,target:""}})
+            for(const setting of category.settings)entries.push({id:"settings:"+category.id+"/"+setting.target,kind:"settings",title:setting.label,detail:"Settings › "+category.label,search:setting.label+" "+setting.keywords,value:{category:category.id,target:setting.target}})
+        }
         entries=entries.concat((App.state.actions||[]).map(action=>({
             id:"action:"+action.name,kind:"action",title:action.title||action.name,detail:action.description||action.category||"Desktop action",search:(action.title||"")+" "+(action.name||"")+" "+(action.description||"")
         })))
@@ -117,7 +115,7 @@ Popup {
         else if(entry.kind==="transcript"||entry.kind==="bookmark")sessionRequested(entry.sessionId||entry.value)
         else if(entry.kind==="project"||entry.kind==="capsule")App.rpc("action.run",{name:"files.open",args:{path:entry.cwd}})
         else if(entry.kind==="folder")folderRequested(entry.value)
-        else if(entry.kind==="settings")settingsRequested(entry.value)
+        else if(entry.kind==="settings")settingsRequested(entry.value.category,entry.value.target)
         else if(entry.kind==="page")pageRequested(entry.page)
         else if(entry.kind==="script"){
             scriptReview.script=entry.value

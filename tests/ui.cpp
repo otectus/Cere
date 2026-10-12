@@ -21,6 +21,7 @@
 #include <QQmlContext>
 #include <QQmlExpression>
 #include <QJSValue>
+#include <QJSEngine>
 #include <QScopeGuard>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -62,6 +63,21 @@ class UiCheck : public QObject {
     void tool(const QString &row,const QString &entry){
         if(item(row)){click(row);return;}
         click("conversationMore");QTRY_VERIFY2(item(entry),qPrintable(entry));click(entry);
+    }
+    // Settings shows one category at a time. These open the category holding a control, or a category
+    // by id, the way a deep link does, and wait until it shows.
+    QQuickItem *openSetting(const QString &name){
+        if(!item("settingsPage"))click("tab_Settings");
+        auto page=item("settingsPage");
+        if(!page||!QMetaObject::invokeMethod(page,"revealControl",Q_ARG(QVariant,name)))return nullptr;
+        QElapsedTimer clock;clock.start();while(!item(name)&&clock.elapsed()<5000)QTest::qWait(20);
+        QTest::qWait(50);return item(name);
+    }
+    void openCategory(const QString &id){
+        if(!item("settingsPage"))click("tab_Settings");
+        auto page=item("settingsPage");QVERIFY(page);
+        QVERIFY(QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,id),Q_ARG(QVariant,QString())));
+        QTRY_COMPARE(page->property("category").toString(),id);QTest::qWait(50);
     }
     void capture(const QString &name){QVERIFY2(window,"no window to capture");QDir().mkpath("/tmp/cere-ui-evidence");QVERIFY(window->grabWindow().save("/tmp/cere-ui-evidence/"+name+".png"));}
     QJsonDocument hypr(const QStringList &args){QProcess p;p.start("hyprctl",args);if(!p.waitForFinished(2000))return {};return QJsonDocument::fromJson(p.readAllStandardOutput());}
@@ -124,28 +140,86 @@ private slots:
     }
     void settingsSectionNavigation(){
         click("tab_Settings");
-        auto search=item("settingsSearch"),picker=item("settingsSectionPicker"),scroll=item("settingsScroll");
-        QVERIFY(search&&picker&&scroll);
-        search->setProperty("text","voice");
-        QTRY_COMPARE(picker->property("count").toInt(),1);
-        QVERIFY(QMetaObject::invokeMethod(search,"accepted"));
-        QTRY_VERIFY(scroll->property("contentY").toDouble()>0);
-        QVERIFY(search->mapToScene(QPointF()).y()>=0);
-        search->setProperty("text","no-such-setting");QTRY_COMPARE(picker->property("count").toInt(),0);
-        search->setProperty("text","");QTRY_COMPARE(picker->property("count").toInt(),11);
+        auto search=item("settingsSearch"),page=item("settingsPage");QVERIFY(search&&page);
+        // Beside the wide workspace page every category sits in a rail; one category shows at a time.
+        const QStringList categories{"companion","personality","voice","motion","connections","knowledge","assistance","scripts","mobile","telemetry","application"};
+        QVERIFY(!item("settingsChipStrip"));
+        for(const auto &id:categories){auto tab=item("settingsCategory_"+id);QVERIFY2(tab,qPrintable(id));QCOMPARE(tab->property("primary").toBool(),page->property("category").toString()==id);}
+        click("settingsCategory_personality");QTRY_COMPARE(page->property("category").toString(),QString("personality"));
+        QVERIFY(item("personalityText"));QVERIFY(!item("showMemoryCitations"));
+        QCOMPARE(item("settingsCategoryTitle")->property("text").toString(),QString("Personality"));
+        QVERIFY(item("settingsCategory_personality")->property("primary").toBool());
+        // Search lists single settings; Enter opens the first and focuses its control.
+        search->forceActiveFocus();search->setProperty("text","citations");
+        QTRY_VERIFY(item("settingsResults"));QTRY_COMPARE(item("settingsResults")->property("count").toInt(),1);
+        QVERIFY(!item("settingsScroll"));QVERIFY(item("settingsResult_0"));capture("settings-search");
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(page->property("category").toString(),QString("knowledge"));
+        QTRY_VERIFY(item("showMemoryCitations"));QTRY_VERIFY(item("showMemoryCitations")->hasActiveFocus());
+        QCOMPARE(search->property("text").toString(),QString());
+        auto scroll=item("settingsScroll");QVERIFY(scroll);
+        auto inView=[&](QQuickItem *control){const auto y=control->mapToItem(scroll,QPointF()).y();return y>=-1&&y<scroll->height()-10;};
+        QVERIFY(inView(item("showMemoryCitations")));
+        // A brief outline marks what was revealed, beside the control's own focus ring.
+        auto spotlight=page->findChild<QQuickItem*>("settingsSpotlight");QVERIFY(spotlight);QTRY_VERIFY(spotlight->isVisible());
+        capture("settings-revealed");
+        search->setProperty("text","no-such-setting");QTRY_COMPARE(item("settingsResults")->property("count").toInt(),0);
+        QVERIFY(item("settingsResultSummary")->property("text").toString().contains("Nothing"));
+        // Escape clears a search before it leaves Settings.
+        search->forceActiveFocus();QTest::keyClick(window,Qt::Key_Escape);
+        QTRY_COMPARE(search->property("text").toString(),QString());QVERIFY(item("settingsScroll"));QVERIFY(item("settingsSearch"));
+        // Every catalog setting opens its category and comes into view; one in a part of the page
+        // that is switched off (memory disabled, for example) at least exists there.
+        QJSEngine js;QFile file(QString(CERE_SOURCE_DIR)+"/qml/SettingsCatalog.js");QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(!js.evaluate(QString::fromUtf8(file.readAll()).remove(".pragma library")).isError());
+        const auto catalog=js.globalObject().property("categories").toVariant().toList();QCOMPARE(catalog.size(),categories.size());
+        // Repeater delegates are not QObject children of the page, so search its item tree.
+        std::function<QQuickItem*(QQuickItem*,const QString&)> anywhere=[&](QQuickItem *root,const QString &name)->QQuickItem*{if(root->objectName()==name)return root;for(auto child:root->childItems())if(auto match=anywhere(child,name))return match;return nullptr;};
+        int revealed=0;
+        for(const auto &entry:catalog){
+            const auto category=entry.toMap();
+            for(const auto &setting:category.value("settings").toList()){
+                const auto target=setting.toMap().value("target").toString();
+                QVERIFY(QMetaObject::invokeMethod(page,"revealControl",Q_ARG(QVariant,target)));
+                QTRY_COMPARE(page->property("category").toString(),category.value("id").toString());QTest::qWait(30);
+                QVERIFY2(anywhere(page,target),qPrintable(target));
+                if(auto control=item(target)){QVERIFY2(inView(control),qPrintable(QString("%1 y=%2 view=%3 contentY=%4 contentHeight=%5").arg(target).arg(control->mapToItem(scroll,QPointF()).y()).arg(scroll->height()).arg(scroll->property("contentY").toDouble()).arg(scroll->property("contentHeight").toDouble())));++revealed;}
+            }
+        }
+        QVERIFY2(revealed>=50,qPrintable(QString::number(revealed)));
+        // Narrower pages trade the rail for a strip of chips that keeps the current one in view.
+        const auto size=window->size();
+        window->resize(720,600);QTRY_VERIFY(item("settingsChipStrip"));QVERIFY(!page->property("rail").toBool());
+        auto strip=item("settingsChipStrip");QTRY_VERIFY(strip->property("contentWidth").toDouble()>strip->width());
+        QVERIFY(QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,"application"),Q_ARG(QVariant,QString())));
+        auto chip=item("settingsCategory_application");QVERIFY(chip);QVERIFY(chip->property("primary").toBool());
+        QTRY_VERIFY(chip->mapToItem(strip,QPointF()).x()>=0&&chip->mapToItem(strip,QPointF()).x()+chip->width()<=strip->width()+1);
+        capture("settings-chips");
+        QVERIFY(QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,"companion"),Q_ARG(QVariant,QString())));
+        QTRY_COMPARE(strip->property("contentX").toDouble(),0.);
+        click("settingsCategory_personality");QTRY_COMPARE(page->property("category").toString(),QString("personality"));
+        window->resize(size);QTRY_COMPARE(window->size(),size);QTRY_VERIFY(!item("settingsChipStrip"));
+        // Desktop and the command palette open Settings where they point.
+        click("tab_Desktop");QTRY_VERIFY(item("manageScripts"));click("manageScripts");
+        QTRY_COMPARE(page->property("category").toString(),QString("scripts"));QTRY_VERIFY(item("addScript"));
+        click("tab_Chat");QTest::keyClick(window,Qt::Key_K,Qt::ControlModifier);QTRY_VERIFY(item("commandPaletteSearch"));
+        item("commandPaletteSearch")->setProperty("text","citations");
+        QTRY_VERIFY(item("command_settings_knowledge_showMemoryCitations"));click("command_settings_knowledge_showMemoryCitations");
+        QTRY_COMPARE(page->property("category").toString(),QString("knowledge"));
+        QTRY_VERIFY(item("showMemoryCitations"));QTRY_VERIFY(item("showMemoryCitations")->hasActiveFocus());
         // F-05: the pairing response editor is a plain TextArea; Tab leaves it and inserts nothing.
+        openCategory("mobile");
         auto pairing=item("pairingResponse");QVERIFY(pairing);
         pairing->forceActiveFocus();QTRY_VERIFY(pairing->hasActiveFocus());
         QTest::keyClick(window,Qt::Key_Tab);
         QTRY_VERIFY2(!pairing->hasActiveFocus(),"Tab stayed in the pairing response editor");
         QVERIFY2(pairing->property("text").toString().isEmpty(),"Tab inserted text into the pairing response editor");
-        scroll->setProperty("contentY",0);click("tab_Chat");
+        openCategory("companion");click("tab_Chat");
     }
     void workspaceTelemetryControls(){
         const QString root=data.path()+"/telemetry-project";QVERIFY(QDir().mkpath(root));
         const auto configured=call("settings.update",{{"telemetry",QVariantMap{{"roots",QStringList{root}}}}});QVERIFY(!configured.contains("error"));
-        click("tab_Settings");auto scroll=item("settingsScroll");QVERIFY(scroll);scroll->setProperty("contentY",0);
-        QVERIFY(item("telemetryEnabled"));click("telemetryEnabled");
+        QVERIFY(openSetting("telemetryEnabled"));click("telemetryEnabled");
         QTRY_COMPARE_WITH_TIMEOUT(app->state().value("telemetry").toMap().value("listener").toString(),QString("listening"),8000);
         QTRY_COMPARE(app->state().value("telemetry").toMap().value("watcher").toString(),QString("watching"));
         QProcess flood;QTimer heartbeat;heartbeat.setTimerType(Qt::PreciseTimer);heartbeat.setInterval(16);
@@ -164,7 +238,7 @@ private slots:
         click("tab_Chat");
     }
     void apiProviderSetup(){
-        click("tab_Settings");
+        openCategory("connections");
         for(const auto &provider:{"openai","anthropic","google"}){
             auto key=item(QString("apiKey_")+provider);QVERIFY(key);
             QCOMPARE(key->property("echoMode").toInt(),2); // Password; never populated from state.
@@ -224,7 +298,7 @@ private slots:
         QTRY_VERIFY(app->transcript()->rowCount()>rows);
     }
     void providerSpeechSwitches(){
-        click("tab_Settings");const auto original=app->state().value("settings").toMap().value("speechProviders");
+        openCategory("voice");const auto original=app->state().value("settings").toMap().value("speechProviders");
         const auto restore=qScopeGuard([&]{call("settings.update",{{"speechProviders",original}});click("tab_Chat");});
         QTRY_VERIFY(item("speechProvider_codex"));QVERIFY(item("speechProvider_ollama"));QVERIFY(item("speechProvider_google"));
         click("speechProvider_codex");
@@ -234,7 +308,7 @@ private slots:
         click("speechProvider_codex");QTRY_VERIFY(app->state().value("settings").toMap().value("speechProviders").toMap().value("codex").toBool());
     }
     void elevenLabsSettings(){
-        click("tab_Settings");
+        openCategory("voice");
         const auto original=app->state().value("settings").toMap();
         const auto restore=qScopeGuard([&]{call("settings.update",{{"ttsProvider",original.value("ttsProvider")},{"elevenlabs",original.value("elevenlabs")}});call("elevenlabs.credentials",{{"key",""}});click("tab_Chat");});
         QVERIFY(!call("settings.update",{{"ttsProvider","elevenlabs"}}).contains("error"));
@@ -249,7 +323,7 @@ private slots:
         QTRY_VERIFY(item("speechVoice"));QVERIFY(!item("elevenLabsSettings"));
     }
     void indexTtsSettings(){
-        click("tab_Settings");
+        openCategory("voice");
         const auto original=app->state().value("settings").toMap();
         const auto restore=qScopeGuard([&]{call("settings.update",{{"ttsProvider",original.value("ttsProvider")},{"indextts",original.value("indextts")}});click("tab_Chat");});
         QVERIFY(!call("settings.update",{{"ttsProvider","indextts"},{"indextts",QVariantMap{{"modelDir",data.path()+"/missing-index-model"},{"profileId",""}}}}).contains("error"));
@@ -269,7 +343,7 @@ private slots:
         QTRY_VERIFY(item("speechVoice"));QVERIFY(!item("indexTtsSettings"));
     }
     void voiceSettings(){
-        click("tab_Settings");
+        openCategory("voice");
         auto enabled=item("speechEnabled"),voice=item("speechVoice");QVERIFY(enabled&&voice);
         const auto original=app->state().value("settings").toMap();
         const auto restore=qScopeGuard([&]{call("settings.update",{{"speechEnabled",original.value("speechEnabled")},{"voice",original.value("voice")},{"speechRate",original.value("speechRate")},{"speechPitch",original.value("speechPitch")},{"speechVolume",original.value("speechVolume")}});click("tab_Chat");});
@@ -307,13 +381,10 @@ private slots:
         QTRY_VERIFY(app->state().value("settings").toMap().value("speechPitch").toDouble()>0.);
         QTRY_COMPARE(app->state().value("settingsRevision").toString().toLongLong(),revision.toString().toLongLong()+1);
         QVERIFY(item("ttsTest")->isEnabled());
-        auto scroll=item("settingsScroll");QVERIFY(scroll);
-        scroll->setProperty("contentY",voice->mapToItem(scroll,QPointF()).y()+scroll->property("contentY").toDouble()-170);
-        QTest::qWait(100);capture("voice-settings");
+        QVERIFY(openSetting("speechVoice"));QTest::qWait(100);capture("voice-settings");
     }
     void personalitySettings(){
-        click("tab_Settings");
-        auto editor=item("personalityText");QVERIFY(editor);
+        auto editor=openSetting("personalityText");QVERIFY(editor);
         const auto original=app->state().value("settings").toMap().value("personality").toString();
         QVERIFY(original.contains("You are Cere, a sharp-tongued desktop companion"));
         QCOMPARE(editor->property("text").toString(),original);
@@ -344,9 +415,7 @@ private slots:
         click("personalityReset");QCOMPARE(editor->property("text").toString(),original);
         QCOMPARE(app->state().value("settings").toMap().value("personality").toString(),QString());
         click("personalitySave");QTRY_COMPARE(app->state().value("settings").toMap().value("personality").toString(),original);
-        auto scroll=item("settingsScroll");QVERIFY(scroll);
-        scroll->setProperty("contentY",editor->mapToItem(scroll,QPointF()).y()+scroll->property("contentY").toDouble()-110);
-        QTest::qWait(100);capture("personality-settings");
+        QVERIFY(openSetting("personalityText"));QTest::qWait(100);capture("personality-settings");
     }
     void markdownMessages(){
         click("tab_Chat");
@@ -489,7 +558,7 @@ Unicode: café ✦ 日本語
         QVERIFY(!call("settings.update",{{"showMemoryCitations",false}}).contains("error"));
         QTRY_VERIFY(!document->toPlainText().contains("evidence"));QCOMPARE(toggled.count(),2);
         // The switch itself lives with Memory in Settings.
-        click("tab_Settings");QTRY_VERIFY(item("showMemoryCitations"));
+        QVERIFY(openSetting("showMemoryCitations"));
         click("showMemoryCitations");QTRY_VERIFY(app->state().value("settings").toMap().value("showMemoryCitations").toBool());
         capture("memory-citations-setting");
         click("showMemoryCitations");QTRY_VERIFY(!app->state().value("settings").toMap().value("showMemoryCitations").toBool());
@@ -540,13 +609,10 @@ Unicode: café ✦ 日本語
         QCOMPARE(prompts,2);
     }
     void ollamaConversation(){
-        click("tab_Settings");
-        auto defaults=item("ollamaDefaultModel");QVERIFY(defaults);
+        auto defaults=openSetting("ollamaDefaultModel");QVERIFY(defaults);
         QTRY_COMPARE_WITH_TIMEOUT(defaults->property("count").toInt(),3,5000);
         defaults->setProperty("currentIndex",1);QVERIFY(QMetaObject::invokeMethod(defaults,"activated",Q_ARG(int,1)));
         QTRY_COMPARE(app->state().value("settings").toMap().value("ollama").toMap().value("model").toString(),QString("fixture-chat:latest"));
-        auto settings=item("settingsScroll");QVERIFY(settings);
-        settings->setProperty("contentY",defaults->mapToItem(settings,QPointF(0,0)).y()+settings->property("contentY").toDouble()-250);
         QTest::qWait(100);capture("ollama-settings");
         click("tab_Sessions");click("newSession");
         auto provider=item("sessionProvider");QVERIFY(provider);
@@ -595,7 +661,7 @@ Unicode: café ✦ 日本語
         const auto previous=app->state().value("settings").toMap().value("memory").toMap();
         auto restore=qScopeGuard([&]{fixtureModels("DELETE");call("provider.models",{{"provider","ollama"}});call("settings.update",{{"memory",previous}});});
         QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"extractionModel","nemotron-3-super"}}}}).contains("error"));
-        click("tab_Settings");click("extractionModelsRefresh");
+        QVERIFY(openSetting("extractionModelsRefresh"));click("extractionModelsRefresh");
         auto picker=item("extractionModel");QVERIFY(picker);
         QTRY_COMPARE(picker->property("count").toInt(),3);
         QTRY_COMPARE(picker->property("currentValue").toString(),QString("nemotron-3-super:cloud"));
@@ -622,8 +688,7 @@ Unicode: café ✦ 日本語
         const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","ollama"},{"model","fixture-plain:latest"},{"cwd",data.path()}});
         QTRY_VERIFY(app->selectedId()!=previous);
-        click("tab_Settings");
-        auto reveal=[&](const QString &name){auto scroll=item("settingsScroll"),control=item(name);if(scroll&&control){scroll->setProperty("contentY",control->mapToItem(scroll,QPointF()).y()+scroll->property("contentY").toDouble()-180);QTest::qWait(100);}};
+        auto reveal=[&](const QString &name){QVERIFY2(openSetting(name),qPrintable(name));};
         reveal("webSearchEnabled");click("webSearchEnabled");
         QTRY_VERIFY(app->state().value("settings").toMap().value("webSearch").toMap().value("enabled").toBool());
         auto provider=item("webSearchProvider");QVERIFY(provider);QCOMPARE(provider->property("count").toInt(),5);
@@ -907,6 +972,12 @@ Unicode: café ✦ 日本語
                 }
                 std::function<void(QQuickItem*)> bounds=[&](QQuickItem *node){
                     if(!node->isVisible())return;
+                    // A sideways-scrolling strip only has to fit; its chips scroll into view.
+                    if(node->objectName()=="settingsChipStrip"){
+                        const auto point=node->mapToItem(layout.rootObject(),QPointF(0,0));
+                        QVERIFY2(point.x()>=-1&&point.x()+node->width()<=size.width()+1,qPrintable(QString("chip strip x=%1 w=%2 viewport=%3").arg(point.x()).arg(node->width()).arg(size.width())));
+                        return;
+                    }
                     const QByteArray type=node->metaObject()->className();
                     if(type.startsWith("CButton_")||type.startsWith("CActionRow_")||type.startsWith("CField_")||type.startsWith("CComboBox_")||type.startsWith("CSpinBox_")||type.startsWith("CCheckBox_")){
                         const auto point=node->mapToItem(layout.rootObject(),QPointF(0,0));
@@ -918,12 +989,16 @@ Unicode: café ✦ 日本語
                 if(page==3){
                     item("settingsScroll")->setProperty("contentY",0);QTest::qWait(80);
                     capture(QString("settings-%1x%2-top").arg(size.width()).arg(size.height()));
+                    // One category shows at a time; Application holds the controls at the very bottom.
+                    auto settingsPage=item("settingsPage");QVERIFY(settingsPage);
+                    QVERIFY(QMetaObject::invokeMethod(settingsPage,"open",Q_ARG(QVariant,"application"),Q_ARG(QVariant,QString())));QTest::qWait(80);
                     auto scroll=item("settingsScroll");QVERIFY(scroll);
                     scroll->setProperty("contentY",scroll->property("contentHeight").toDouble()-scroll->height());
                     QTest::qWait(80);capture(QString("settings-%1x%2-bottom").arg(size.width()).arg(size.height()));
                     auto quit=item("quitKeepSessions");QVERIFY(quit);
                     const auto position=quit->mapToScene(QPointF(0,0));
                     QVERIFY(position.y()>=0&&position.y()+quit->height()<=size.height());
+                    QVERIFY(QMetaObject::invokeMethod(settingsPage,"open",Q_ARG(QVariant,"companion"),Q_ARG(QVariant,QString())));
                 }
             }
             auto sessionDialog=layout.rootObject()->findChild<QObject*>("createSessionDialog");QVERIFY(sessionDialog);
@@ -1249,8 +1324,8 @@ Unicode: café ✦ 日本語
         QVERIFY(beats.size()>1);
         player->setProperty("followAppMotion",true);
         player->setProperty("motion",app->motion());
-        restoreWorkspace();click("tab_Settings");
-        auto stage=item("motionStage");QVERIFY(stage);
+        restoreWorkspace();
+        auto stage=openSetting("motionStage");QVERIFY(stage);
         auto actor=stage->findChild<QQuickItem*>("motionStagePlayer");QVERIFY(actor);
         QVERIFY(!actor->property("animating").toBool());
         click("playMotionShowcase");QTRY_VERIFY(actor->property("animating").toBool());
@@ -1286,12 +1361,10 @@ Unicode: café ✦ 日本語
         const auto original=app->state().value("settings").toMap();
         const auto restore=qScopeGuard([&]{call("settings.update",original);restoreWorkspace();});
         QVERIFY(!call("settings.update",{{"topmost",false},{"hidden",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"idleEnergy","lively"}}).contains("error"));
-        restoreWorkspace();click("tab_Settings");
-        QVERIFY(item("idleEnergy"));auto stage=item("motionStage");QVERIFY(stage);
+        restoreWorkspace();
+        auto stage=openSetting("motionStage");QVERIFY(stage);QVERIFY(item("idleEnergy"));
         auto actor=stage->findChild<QQuickItem*>("motionStagePlayer");QVERIFY(actor);
         click("playMotionShowcase");
-        auto scroll=item("settingsScroll");QVERIFY(scroll);
-        scroll->setProperty("contentY",scroll->property("contentY").toDouble()+stage->mapToItem(scroll,QPointF()).y()-20);
         QTest::qWait(100);
         const auto profiles=app->animations().value("idleProfiles").toMap();
         auto names=profiles.value("lively").toMap().value("pool").toList();
@@ -1432,7 +1505,7 @@ Unicode: café ✦ 日本語
         const auto approval=app->state().value("approvals").toList().first().toMap().value("id");
         app->rpc("approval.answer",{{"id",approval},{"choice","deny"}});
         QTRY_VERIFY(app->state().value("approvals").toList().isEmpty());
-        restoreWorkspace();click("tab_Settings");QVERIFY(item("motionIntensity"));QVERIFY(item("expressiveCues"));
+        restoreWorkspace();QVERIFY(openSetting("motionIntensity"));QVERIFY(item("expressiveCues"));
         click("expressiveCues");QTRY_VERIFY(!app->state().value("settings").toMap().value("expressiveCues").toBool());
         capture("expressive-settings");
     }
@@ -1466,9 +1539,7 @@ Unicode: café ✦ 日本語
         auto policy=QVariantMap{{"fish_enabled",true},{"history_enabled",true},{"capture_titles",true},{"title_applications",QVariantList{"kitty"}},{"approved_roots",QVariantList{data.path()}}};
         QVERIFY(!graph("policy_update",{{"policy",policy}}).contains("error"));
         auto openInspector=[&]{
-            click("tab_Settings");
-            auto scroll=item("settingsScroll"),manage=item("manageMemories");QVERIFY(scroll&&manage);
-            scroll->setProperty("contentY",manage->mapToItem(scroll,QPointF()).y()+scroll->property("contentY").toDouble()-180);QTest::qWait(100);
+            QVERIFY(openSetting("manageMemories"));
             click("manageMemories");
             // Open without processing events: before the policy reply arrives, no collector
             // control may be enabled with default or stale values.
@@ -1877,7 +1948,7 @@ Unicode: café ✦ 日本語
         panel.hide();
     }
     void persistentPermissionSwitches(){
-        click("tab_Settings");
+        openCategory("assistance");
         const auto original=app->state().value("settings").toMap();
         const auto restore=qScopeGuard([&]{call("settings.update",{{"bypassCliPermissions",original.value("bypassCliPermissions")},{"bypassComputerPermissions",original.value("bypassComputerPermissions")}});click("tab_Chat");});
         QVERIFY(!call("settings.update",{{"bypassCliPermissions",false},{"bypassComputerPermissions",false}}).contains("error"));
@@ -2739,8 +2810,7 @@ private slots:
             QTest::qWait(300);capture("review-workflow-handoff-draft-compact");
             if(auto c=item("composer"))c->setProperty("text","");}
         // Change a setting and run a desktop control from the compact panel.
-        click("tab_Settings");QTest::qWait(300);
-        if(auto scroll=item("settingsScroll")){if(auto control=item("motionIntensity")){scroll->setProperty("contentY",control->mapToItem(scroll,QPointF()).y()+scroll->property("contentY").toDouble()-120);QTest::qWait(150);}}
+        openSetting("motionIntensity");QTest::qWait(300);
         capture("review-workflow-settings-compact");
         const bool reducedBefore=app->state().value("settings").toMap().value("reducedMotion").toBool();
         click("reducedMotion");note("setting toggled from compact",waitFor([&]{return app->state().value("settings").toMap().value("reducedMotion").toBool()!=reducedBefore;},4000));

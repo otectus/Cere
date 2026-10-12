@@ -225,7 +225,7 @@ Rectangle {
                     transform:Translate { x:shell.pageOffset }
                     Chat { id:conversation;showBackButton:!shell.wide;onBackRequested:shell.showSessions();onCreateRequested:newSession.open() }
                     SessionList { id:sessionsPage;rowActions:shell.wide;onSessionActivated:shell.openConversation();onCreateRequested:newSession.open() }
-                    Desktop { id:desktop;onSettingsRequested:shell.navigate(3) }
+                    Desktop { id:desktop;onSettingsRequested:category=>{shell.navigate(3);settingsPage.open(category,"")} }
                     Settings { id:settingsPage }
                     Projects { id:projectsPage;onSessionActivated:shell.openConversation();onProjectRequested:(cwd,archived)=>{shell.page=1;sessionsPage.selectProject(cwd,archived)} }
                 }
@@ -267,7 +267,7 @@ Rectangle {
         id:commandPalette
         onSessionRequested:id=>{App.selectedId=id;App.rpc("session.read",{id:id});shell.openConversation()}
         onFolderRequested:id=>shell.openFolder(id)
-        onSettingsRequested:section=>{shell.page=3;Qt.callLater(()=>settingsPage.open(section,""))}
+        onSettingsRequested:(category,target)=>{shell.page=3;Qt.callLater(()=>settingsPage.open(category,target))}
         onPageRequested:target=>shell.navigate(target)
         onDesktopRequested:query=>{shell.page=2;Qt.callLater(()=>desktop.focusSearch())}
     }

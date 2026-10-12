@@ -5,7 +5,7 @@ import QtQuick.Window
 ColumnLayout {
     id: desktop
     objectName: "desktopPage"
-    signal settingsRequested()
+    signal settingsRequested(string category)
     property var apps: []
     property var windows: []
     property var audio: ({available:false})
@@ -221,7 +221,7 @@ ColumnLayout {
                     CActionRow { required property var modelData;Layout.fillWidth:true;text:modelData.name;detail:"Review and run";mark:"›_";onClicked:{scriptConfirm.script=modelData;scriptConfirm.open()} }
                 }
                 CText { visible:!desktop.filteredScripts.length;text:"Keep frequently used commands here. Add an executable and its arguments in Settings.";color:Theme.muted;font.pixelSize:Theme.secondary }
-                CButton { text:"Manage scripts";onClicked:desktop.settingsRequested() }
+                CButton { objectName:"manageScripts";text:"Manage scripts";onClicked:desktop.settingsRequested("scripts") }
             }
             CSection {
                 title:"Recent activity";visible:!desktop.query&&desktop.category===0;Layout.preferredWidth:1
