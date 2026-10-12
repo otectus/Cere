@@ -32,6 +32,7 @@
 #include <QWheelEvent>
 #include <QStandardPaths>
 #include "../native/placement.h"
+#include "../native/citations.h"
 #include <QMutex>
 #include <signal.h>
 
@@ -444,6 +445,54 @@ Unicode: café ✦ 日本語
         QTest::qWait(250);capture("markdown-wide-table");
         model->upsert({{"id","markdown"},{"role","assistant"},{"text","A short response after a wide table."}});
         QTRY_COMPARE(body->width(),horizontal->width());
+    }
+    // Memory citations stay in the stored reply and, while hidden, stay out of what is shown, copied and quoted.
+    void memoryCitationDisplay(){
+        // The desktop applies the broker's rules: both are checked against one fixture.
+        QFile fixture(QString(CERE_SOURCE_DIR)+"/tests/fixtures/memory-citations.json");QVERIFY(fixture.open(QIODevice::ReadOnly));
+        const auto cases=QJsonDocument::fromJson(fixture.readAll()).array();QVERIFY(cases.size()>=30);
+        for(const auto &entry:cases){
+            const auto c=entry.toObject();const auto output=stripMemoryCitations(c["input"].toString());
+            QVERIFY2(output==c["output"].toString(),qPrintable(c["name"].toString()+": "+output));
+        }
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"showMemoryCitations",false}});if(auto c=item("composer"))c->setProperty("text","");click("tab_Chat");});
+        QVERIFY(!app->state().value("settings").toMap().value("showMemoryCitations").toBool());QVERIFY(!app->showMemoryCitations());
+        const auto created=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Memory citations"}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        app->select(created.value("id").toString());click("tab_Chat");
+        QVERIFY(!call("session.send",{{"id",app->selectedId()},{"text","cited-reply"}}).contains("error"));
+        QString replyId,stored;
+        QTRY_VERIFY(([&]{for(const auto &m:app->messages()){const auto map=m.toMap();if(map.value("role")=="assistant"&&map.value("text").toString().contains("[evidence:")){replyId=map.value("id").toString();stored=map.value("text").toString();return true;}}return false;})());
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        const QString clean="You prefer **Ruff** for linting.";
+        QTRY_VERIFY(item("messageBody_"+replyId));
+        auto document=item("messageBody_"+replyId)->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+        QTRY_VERIFY(document->toPlainText().contains("Ruff"));
+        QVERIFY2(!document->toPlainText().contains("evidence"),qPrintable(document->toPlainText()));
+        click("copyMessage_"+replyId);QCOMPARE(QGuiApplication::clipboard()->text(),clean);
+        // The complete stored text, assembled from chunks for long replies, is cleaned the same way.
+        QGuiApplication::clipboard()->setText(QString());
+        app->copySessionMessage(app->selectedId(),replyId,true);QTRY_COMPARE(QGuiApplication::clipboard()->text(),clean);
+        app->copySessionMessage(app->selectedId(),replyId,false);QTRY_COMPARE(QGuiApplication::clipboard()->text(),stored);
+        click("messageActions_"+replyId);QTRY_VERIFY(item("quoteMessage"));click("quoteMessage");
+        QTRY_COMPARE(item("composer")->property("text").toString(),"> "+clean+"\n\n");
+        item("composer")->setProperty("text","");
+        capture("memory-citations-hidden");
+        // Showing them reflows the visible reply at once; unrelated state updates leave the signal quiet.
+        QSignalSpy toggled(app.get(),&Controller::citationDisplayChanged);
+        QVERIFY(!call("settings.update",{{"showMemoryCitations",true}}).contains("error"));
+        QTRY_VERIFY(app->showMemoryCitations());QCOMPARE(toggled.count(),1);
+        QTRY_VERIFY(document->toPlainText().contains("[evidence:ea105855-1459-41da-b270-d370d2b54457]"));
+        click("copyMessage_"+replyId);QCOMPARE(QGuiApplication::clipboard()->text(),stored);
+        capture("memory-citations-shown");
+        QVERIFY(!call("settings.update",{{"quiet",false}}).contains("error"));QTest::qWait(150);QCOMPARE(toggled.count(),1);
+        QVERIFY(!call("settings.update",{{"showMemoryCitations",false}}).contains("error"));
+        QTRY_VERIFY(!document->toPlainText().contains("evidence"));QCOMPARE(toggled.count(),2);
+        // The switch itself lives with Memory in Settings.
+        click("tab_Settings");QTRY_VERIFY(item("showMemoryCitations"));
+        click("showMemoryCitations");QTRY_VERIFY(app->state().value("settings").toMap().value("showMemoryCitations").toBool());
+        capture("memory-citations-setting");
+        click("showMemoryCitations");QTRY_VERIFY(!app->state().value("settings").toMap().value("showMemoryCitations").toBool());
     }
     void permissionPowerSession(){
         const auto created=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Power permissions check"}});

@@ -67,6 +67,8 @@ class Controller : public QObject {
     Q_PROPERTY(QString moodSession READ actingSession NOTIFY moodContextChanged)
     Q_PROPERTY(bool moodSourceEnabled READ moodSourceEnabled NOTIFY moodContextChanged)
     Q_PROPERTY(bool hasOlderMessages READ hasOlderMessages NOTIFY messagesChanged)
+    // Its own signal, so message text bound to it is not filtered again on every state update.
+    Q_PROPERTY(bool showMemoryCitations READ showMemoryCitations NOTIFY citationDisplayChanged)
 public:
     explicit Controller(QString root, bool overlay, QObject *parent=nullptr);
     ~Controller();
@@ -96,6 +98,10 @@ public:
     bool petMoving() const { return !m_motionPaused && (m_roamStep || m_settling); }
     Q_INVOKABLE void advancePetMotion();
     bool hasOlderMessages() const { return m_olderCursor>0; }
+    bool showMemoryCitations() const { return m_state.value("settings").toMap().value("showMemoryCitations").toBool(); }
+    // A message as shown: memory citation markers are left out unless showCitations. Bindings pass
+    // showMemoryCitations so they follow the setting.
+    Q_INVOKABLE QString displayText(const QString &text, bool showCitations) const;
     Q_INVOKABLE int rpc(const QString &method, const QVariantMap &params={});
     Q_INVOKABLE void select(const QString &id);
     Q_INVOKABLE void togglePanel();
@@ -129,7 +135,8 @@ public:
     Q_INVOKABLE void attachImage(const QString &path) { emit attachmentRequested(path); }
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void copyMessage(const QString &messageId);
-    Q_INVOKABLE void copySessionMessage(const QString &sessionId, const QString &messageId);
+    // hideCitations copies the text as a message shows it while memory citations are hidden.
+    Q_INVOKABLE void copySessionMessage(const QString &sessionId, const QString &messageId, bool hideCitations=false);
     Q_INVOKABLE void openCompletion(const QString &completionId);
     Q_INVOKABLE void openCompanionReply(const QString &replyId);
     Q_INVOKABLE QVariantMap questionDraft(const QString &approvalId) const { return m_questionDrafts.value(approvalId); }
@@ -165,6 +172,7 @@ signals:
     void motionChanged();
     void conversationMoodsChanged();
     void moodContextChanged();
+    void citationDisplayChanged();
     void motionDynamicsChanged();
     void result(int id, const QVariant &value);
     // Editors persist unsaved text before a window hides, expands or quits.

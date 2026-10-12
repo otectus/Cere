@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import type { Store } from './store.ts';
+import { stripMemoryCitations } from './citations.ts';
 import type { Message, Session, SessionFolder } from './types.ts';
 
 type NavigationSearchEntry = {
@@ -33,8 +34,10 @@ export class Organization {
     for(const session of rankedSessions.slice(0,sessionBudget))add(sessionEntry(session));
 
     const bookmarks=new Set(this.store.bookmarks().map(bookmark=>bookmark.messageId));
+    // Snippets read like the conversation: hidden memory citations stay out of them too.
+    const hideCitations=!this.store.settings().showMemoryCitations;
     const messageSnippet=(message:Message)=>{
-      const source=message.text.replace(/\s+/g,' ').trim(),index=query?source.toLocaleLowerCase().indexOf(query):-1,start=index<0?0:Math.max(0,index-90);
+      const source=(hideCitations?stripMemoryCitations(message.text):message.text).replace(/\s+/g,' ').trim(),index=query?source.toLocaleLowerCase().indexOf(query):-1,start=index<0?0:Math.max(0,index-90);
       return source.slice(start,start+280)+(source.length>start+280?'…':'');
     };
     let messages:Message[]=[];

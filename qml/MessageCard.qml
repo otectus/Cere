@@ -9,6 +9,10 @@ Rectangle {
     signal branchRequested(string text)
     property string directory: App.session.cwd || ""
     property bool collapsed: message.role==="tool"
+    // The stored reply keeps its memory citations; while they are hidden this card leaves them out of
+    // what it shows, copies, quotes, speaks and branches. Tool output stays as it was produced.
+    readonly property bool hidesCitations: message.role!=="tool"&&!App.showMemoryCitations
+    readonly property string displayText: hidesCitations?App.displayText(message.text,false):message.text
     color: message.role==="user" ? Theme.userBubble : message.role==="tool" ? Theme.input : Theme.surface
     radius: Theme.radius
     border.color: message.role==="user" ? Theme.userBubbleBorder : Theme.subtle
@@ -19,10 +23,10 @@ Rectangle {
             Text { text:card.message.role==="user" ? "You" : card.message.role==="tool" ? "Tool activity" : "Cere";color:card.message.role==="user"?Theme.muted:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;Layout.fillWidth:true }
             CButton{visible:card.message.role==="tool";quiet:true;text:card.collapsed?"Show":"Hide";implicitHeight:28;onClicked:card.collapsed=!card.collapsed}
             // A display copy shortened for transport copies the complete stored text instead.
-            CButton{objectName:"copyMessage_"+card.message.id;text:"Copy";quiet:true;implicitHeight:28;help:"Copy message";onClicked:card.message.truncated?App.copySessionMessage(card.message.sessionId,card.message.id):App.copy(card.message.text)}
+            CButton{objectName:"copyMessage_"+card.message.id;text:"Copy";quiet:true;implicitHeight:28;help:"Copy message";onClicked:card.message.truncated?App.copySessionMessage(card.message.sessionId,card.message.id,card.hidesCitations):App.copy(card.displayText)}
             CButton{objectName:"messageActions_"+card.message.id;text:"⋯";quiet:true;implicitHeight:28;Accessible.name:"Message actions";onClicked:messageMenu.popup()}
         }
-        Text { visible:card.collapsed;text:card.message.text.split("\n")[0];color:Theme.muted;Layout.fillWidth:true;elide:Text.ElideRight;font.pixelSize:Theme.secondary }
+        Text { visible:card.collapsed;text:card.displayText.split("\n")[0];color:Theme.muted;Layout.fillWidth:true;elide:Text.ElideRight;font.pixelSize:Theme.secondary }
         Flickable {
             id:messageViewport;objectName:"messageViewport_"+card.message.id
             visible:!card.collapsed
@@ -49,7 +53,7 @@ Rectangle {
                 Component.onCompleted:formatDocument()
                 // The item must cover the table so Qt paints columns reached by scrolling.
                 width:Math.max(messageViewport.width,overflowWidth)
-                text:card.message.text
+                text:card.displayText
                 // Long URLs and paths break where they must instead of widening the message. Table
                 // columns still keep their longest word, so a table too wide for the view scrolls.
                 readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap
@@ -71,12 +75,12 @@ Rectangle {
     }
     CMenu {
         id:messageMenu
-        CMenuItem { text:body.selectedText?"Quote selection":"Quote reply";onTriggered:card.quoteRequested(body.selectedText||card.message.text) }
+        CMenuItem { objectName:"quoteMessage";text:body.selectedText?"Quote selection":"Quote reply";onTriggered:card.quoteRequested(body.selectedText||card.displayText) }
         CMenuItem { text:(App.state.bookmarks||[]).some(b=>b.messageId===card.message.id)?"Remove bookmark":"Bookmark";onTriggered:App.rpc("message.bookmark",{sessionId:card.message.sessionId,messageId:card.message.id,bookmarked:!(App.state.bookmarks||[]).some(b=>b.messageId===card.message.id)}) }
-        CMenuItem { text:body.selectedText?"Speak selection":"Speak message";onTriggered:App.rpc("tts.speak",{text:(body.selectedText||card.message.text).slice(0,20000)}) }
+        CMenuItem { text:body.selectedText?"Speak selection":"Speak message";onTriggered:App.rpc("tts.speak",{text:(body.selectedText||card.displayText).slice(0,20000)}) }
         CMenuItem { text:"Propose project decision";onTriggered:{card.proposalRequested("decision")} }
         CMenuItem { text:"Propose project constraint";onTriggered:{card.proposalRequested("constraint")} }
-        CMenuItem { text:"Branch with reviewed context";onTriggered:card.branchRequested(body.selectedText||card.message.text) }
+        CMenuItem { text:"Branch with reviewed context";onTriggered:card.branchRequested(body.selectedText||card.displayText) }
         CMenuItem { text:"Stop speaking";onTriggered:App.rpc("tts.stop",{}) }
     }
 

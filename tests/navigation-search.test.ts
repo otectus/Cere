@@ -52,3 +52,12 @@ test('blank navigation search is bounded and restores stable older destinations'
   assert.ok(result.entries.some((entry:any)=>entry.kind==='bookmark'&&entry.sessionId===current.id));
   await assert.rejects(core.rpc('navigation.search',{query:'x',limit:101}),/limit/);
 });
+
+test('transcript snippets leave out memory citations while they are hidden',async t=>{
+  const {core,current}=await fixture(t);
+  core.putMessage({id:'cited-reply',sessionId:current.id,role:'assistant',text:'Use the turquoise linter [evidence:ea105855-1459-41da-b270-d370d2b54457] everywhere.',time:30});
+  const snippet=async()=>(await core.rpc('navigation.search',{query:'turquoise',limit:80}) as any).entries.find((entry:any)=>entry.id==='message:cited-reply').detail;
+  assert.match(await snippet(),/turquoise linter everywhere\./);assert.doesNotMatch(await snippet(),/evidence/);
+  await core.updateSettings({showMemoryCitations:true});
+  assert.match(await snippet(),/turquoise linter \[evidence:ea105855-1459-41da-b270-d370d2b54457\] everywhere\./);
+});

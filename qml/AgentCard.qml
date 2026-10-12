@@ -96,7 +96,8 @@ Rectangle {
             CText {
                 visible: !!card.agent.detail
                 Layout.fillWidth: true
-                text: card.agent.detail || ""
+                // A delegated conversation's result reads like its reply, without hidden memory citations.
+                text: App.displayText(card.agent.detail || "", App.showMemoryCitations)
                 textFormat: Text.PlainText
                 color: card.agent.status === "failed" ? Theme.danger : Theme.muted
                 font.pixelSize: Theme.caption

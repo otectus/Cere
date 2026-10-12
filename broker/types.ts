@@ -69,6 +69,8 @@ export type Settings = {
   desktopProfile: 'normal'|'focus'|'gaming'|'presentation'; interfaceScale:number; homePositions:Record<string,{x:number;y:number}>;
   topmost: boolean; scale: number; roaming: boolean; quiet: boolean; reducedMotion: boolean;
   motionIntensity: number; expressiveCues: boolean; idleEnergy: 'calm' | 'lively';
+  /** Show memory citation markers ([evidence:ID]) in replies; stored replies keep them either way. */
+  showMemoryCitations: boolean;
   hidden: boolean; profile: 'manual' | 'scoped' | 'broad'; paused: boolean;
   bypassCliPermissions: boolean; bypassComputerPermissions: boolean;
   categories: string[]; grants: { category: string; cwd: string; expires: number }[];
@@ -122,6 +124,7 @@ export const defaultSettings: Settings = {
   memory: { enabled: false, model: 'nomic-embed-text', extractionModel: defaultExtractionModel },
   desktopProfile: 'normal', interfaceScale:1, homePositions:{},
   topmost: true, scale: 1, roaming: false, quiet: false, reducedMotion: false, motionIntensity: .7, expressiveCues: true, idleEnergy: 'lively', hidden: false,
+  showMemoryCitations: false,
   profile: 'scoped', paused: false, bypassCliPermissions: false, bypassComputerPermissions: false, categories: [], grants: [],
   position: { output: '', x: 0.86, y: 0.78 }, roamArea: { left: 0.05, right: 0.95, top: 0.5, bottom: 0.95 },
   onboarding: true, scripts: [],

@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { paths } from './paths.ts';
+import { stripMemoryCitations } from './citations.ts';
 import type { IndexTTS } from './indextts.ts';
 import type { Emotion } from './indextts-config.ts';
 
@@ -92,13 +93,13 @@ export async function listVoices(directories = voiceDirectories(), manifestPath:
   return voices;
 }
 
-/** Read prose, not fenced code, markdown syntax, or link destinations. Bound playback. */
+/** Read prose, not fenced code, markdown syntax, memory citations, or link destinations. Bound playback. */
 export function speechText(text: string): string {
   const prose: string[] = [];
   let fence = '', size = 0;
   // Scan fences once. Greedy fence/link regexes on malformed model output can
   // otherwise spend seconds backtracking on the broker's response thread.
-  for (const line of text.slice(0, 100000).split(/\r?\n/)) {
+  for (const line of stripMemoryCitations(text.slice(0, 100000)).split(/\r?\n/)) {
     const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (marker) {
       if (!fence) fence = marker;

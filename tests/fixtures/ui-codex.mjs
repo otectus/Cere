@@ -54,6 +54,11 @@ createInterface({input:process.stdin}).on('line',line=>{
       },500));
       actingTimers.push(setTimeout(()=>event('item/completed',{threadId:'fixture-child',item:{id:'child-reply',type:'agentMessage',text:'Reviewed the question UI.'}}),4000));
       actingTimers.push(setTimeout(()=>event('turn/completed',{threadId:'fixture-child',turn:{id:'child-turn',status:'completed'}}),8000));
+    }else if(prompt==='cited-reply'){
+      // A reply that cites recalled memory the way the memory guidance asks.
+      const id='ea105855-1459-41da-b270-d370d2b54457';
+      event('item/completed',{item:{id:`reply-${turn}`,type:'agentMessage',phase:'final_answer',text:`You prefer **Ruff** for linting [evidence:${id}].\n\nEvidence: [evidence:${id}]`}});
+      event('turn/completed',{turn:{id:`turn-${turn}`,status:'completed'}});
     }else if(prompt.startsWith('completion-rich')){
       // UI review fixture: a long reply with fenced code, nested lists, a wide table, an image, long URLs and paths.
       const image=prompt.includes(':')?prompt.slice(prompt.indexOf(':')+1):'';

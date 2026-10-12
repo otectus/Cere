@@ -11,7 +11,7 @@ CDialog {
             required property var modelData
             Layout.fillWidth:true
             CText { text:modelData.title+" · "+modelData.provider+" · "+new Date(modelData.time).toLocaleString();wrapMode:Text.Wrap }
-            CText { text:modelData.message.text.slice(0,350);wrapMode:Text.Wrap;font.pixelSize:Theme.secondary }
+            CText { text:App.displayText(modelData.message.text,App.showMemoryCitations).slice(0,350);wrapMode:Text.Wrap;font.pixelSize:Theme.secondary }
             RowLayout {
                 CButton { text:"Open conversation";onClicked:{App.openCompletion(modelData.id);inbox.close()} }
                 CButton { text:"Mark read";onClicked:App.rpc("completion.dismiss",{id:modelData.id}) }

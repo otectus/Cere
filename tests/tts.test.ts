@@ -378,7 +378,7 @@ test('dispatcher setup preserves existing configuration and voice files and regi
   const f = await fixture(t), project = join(f.directory, "project with 'quotes"), config = join(f.directory, 'speech-dispatcher');
   await mkdir(join(project, 'tools'), { recursive: true }); await mkdir(join(project, 'broker')); await mkdir(join(project, 'tts/voices'), { recursive: true });
   await mkdir(join(project, 'tts/licenses')); await mkdir(config);
-  for (const name of ['broker/tts.ts', 'broker/paths.ts', 'tools/setup-speech.ts']) await cp(new URL('../' + name, import.meta.url), join(project, name));
+  for (const name of ['broker/tts.ts', 'broker/paths.ts', 'broker/citations.ts', 'tools/setup-speech.ts']) await cp(new URL('../' + name, import.meta.url), join(project, name));
   await cp(f.voices, join(project, 'tts/voices'), { recursive: true });
   for (const name of ['tts/voices/MODEL_CARD', 'tts/NOTICES.md', 'tts/licenses/MIMIC3-CC-BY-SA-4.0.txt']) await writeFile(join(project, name), 'fixture attribution');
   await f.addVoice('custom', 48000, true);

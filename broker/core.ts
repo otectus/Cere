@@ -27,6 +27,7 @@ import { SendQueue } from './send-queue.ts';
 import { ordinarySettings, busy, remoteError } from './execution.ts';
 import type { RemoteExecution } from './execution.ts';
 import { Speech, listVoices, validateVoice, voiceDirectories, ttsTestLine } from './tts.ts';
+import { stripMemoryCitations } from './citations.ts';
 import { Attachments } from './attachments.ts';
 import { Organization } from './organization.ts';
 import { PowerSessions } from './power.ts';
@@ -340,6 +341,8 @@ export class Core extends EventEmitter {
   persistCompletions(){this.store.set('completionInbox',this.completions.filter(c=>!this.store.temporary(c.sessionId)).map(({message,...row})=>({...row,messageId:message.id})));}
 
   speechText(text: string) {
+    // Citations are never read aloud, so they do not spend the brief reading's 600 characters either.
+    text=stripMemoryCitations(text.slice(0,100000));
     if(!this.settings.speechBrief||text.length<=600)return text;
     const end=text.slice(0,600).replace(/\s+\S*$/,'').length;
     return 'Brief reading. '+(this.settings.ttsProvider==='indextts'?indexPrefix(text,end):text.slice(0,end))+'. The full answer is in the conversation.';
@@ -794,7 +797,7 @@ export class Core extends EventEmitter {
         next.ollama.model = value.model;
       }
     }
-    for (const key of ['speechEnabled','speechBrief','topmost','roaming','quiet','reducedMotion','expressiveCues','hidden','paused','onboarding','bypassCliPermissions','bypassComputerPermissions'] as const) if (key in patch) {
+    for (const key of ['speechEnabled','speechBrief','topmost','roaming','quiet','reducedMotion','expressiveCues','showMemoryCitations','hidden','paused','onboarding','bypassCliPermissions','bypassComputerPermissions'] as const) if (key in patch) {
       if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}`); next[key] = patch[key];
     }
     for (const [key,min,max,label] of [['speechRate',.5,2,'Speech rate'],['speechPitch',-6,6,'Speech pitch'],['speechVolume',0,1,'Speech volume']] as const) {

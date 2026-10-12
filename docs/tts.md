@@ -49,7 +49,8 @@ playback. **Stop speaking** cancels Cere's current and queued speech. Pinned
 replies queue in arrival order without replacing one another. Up to three pending
 unpinned replies are retained; newer unpinned replies replace the oldest unpinned
 one. Pinning respects the voice, Quiet mode and brief-reading settings. Code fences,
-markdown formatting and link destinations are omitted; spoken prose is bounded
+markdown formatting, link destinations and memory citation markers
+(`[evidence:…]`) are omitted; spoken prose is bounded
 to 8,000 characters. Text remains unchanged in the transcript.
 
 Use **Test voice**, type **`/tts-test`** in a desktop conversation, or run

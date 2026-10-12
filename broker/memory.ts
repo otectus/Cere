@@ -7,6 +7,7 @@ import type { ModelRoute } from './ollama.ts';
 import { defaultExtractionModel } from './graph-memory/models.ts';
 import { MemoryService } from './graph-memory/service.ts';
 import { predicates } from './graph-memory/contracts.ts';
+import { citedEvidenceIds } from './citations.ts';
 
 const entityToolSchema={type:'object',properties:{id:{type:'string'},type:{type:'string'},name:{type:'string'}},required:['type','name'],additionalProperties:false};
 const claimToolSchema={type:'object',properties:{subject:entityToolSchema,predicate:{type:'string',enum:predicates},object:entityToolSchema,value:{type:['string','number','boolean']},qualifiers:{type:'object'},polarity:{type:'string',enum:['positive','negative']},modality:{type:'string',enum:['actual','planned','hypothetical','reported','inferred']},valid_mode:{type:'string',enum:['bounded','known_current','atemporal','unknown']},valid_from_us:{type:['integer','null']},valid_to_us:{type:['integer','null']},time_zone:{type:'string'},time_precision:{type:'string'}},required:['subject','predicate'],additionalProperties:false};
@@ -144,7 +145,7 @@ export class Memory {
       const response = await this.intake(() => write('observe_text', { scope_id, text: answer || '(empty response)', role: 'assistant', session_id: session.id, source_event_id: randomUUID() }));
       if (!response) skipped = true;
       else if (packet?.snapshot) {
-        const supplied = packet.evidence.map((e: any) => e.id), cited = [...answer.matchAll(/\[evidence:([0-9a-f-]{36})\]/g)].map(m => m[1]);
+        const supplied = packet.evidence.map((e: any) => e.id), cited = citedEvidenceIds(answer);
         await write('record_response', { scope_id, response_ref: response.id, supplied_evidence_ids: supplied, cited_evidence_ids: cited,
           snapshot_revision: packet.snapshot.revision, policy_epoch: packet.snapshot.policy_epoch, erasure_epoch: packet.snapshot.erasure_epoch });
       }

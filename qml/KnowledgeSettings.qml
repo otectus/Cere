@@ -79,6 +79,8 @@ ColumnLayout {
             CText { visible:knowledge.status.state==="degraded";text:knowledge.status.error||"Semantic memory is unavailable. Keyword recall is still available.";color:Theme.amber;font.pixelSize:Theme.secondary }
         }
         CText { visible:!!knowledge.memoryError;text:knowledge.memoryError;color:Theme.danger;font.pixelSize:Theme.secondary }
+        CCheckBox { objectName:"showMemoryCitations";text:"Show memory citations in replies";checked:App.state.settings?.showMemoryCitations===true;onClicked:App.rpc("settings.update",{showMemoryCitations:checked}) }
+        CText { text:"Replies that draw on memory cite it as [evidence:…]. Off keeps those markers out of the conversation and out of copies, quotes and speech. Saved replies keep them, and Cere still records what each reply cited.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CButton { objectName:"manageMemories";text:"Manage project memory";enabled:App.connected&&!!App.session.id&&!App.session.temporary;onClicked:manager.open() }
         CText { text:App.session.id?"Review, correct or forget shared facts and conversation passages. Memory stays separate for each project and server.":"Select a conversation to manage its project’s memory.";color:Theme.muted;font.pixelSize:Theme.secondary }
     }

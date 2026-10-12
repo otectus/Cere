@@ -1,5 +1,24 @@
 # Validation record
 
+## Memory citation display toggle — October 12, 2026
+
+Replies that use recalled memory cite it as `[evidence:ID]`. **Settings → Memory → Show memory citations in replies** (`showMemoryCitations`, off by default) now keeps those markers out of everything a reply is shown in or copied from. Stored replies keep them: `broker/memory.ts` still reads the cited ids from the saved answer for `record_response`.
+
+- **Rules.** `broker/citations.ts` and `native/citations.h` apply the same rules and are both checked against `tests/fixtures/memory-citations.json` (35 cases). A marker takes the space before it when punctuation or the end of the line follows, and the space after it at the start of a line; parentheses or backticks that only wrap it go too. Comma or semicolon lists and adjacent brackets count as one marker. A line left with only a list marker or a label such as `Evidence:` or `**Sources:**` is removed without doubling a blank line. A partial marker at the end of a streaming reply is dropped. Fenced code is not exempt. Short ids such as `[evidence:abc]` and text without a complete marker are returned unchanged. Every pattern is bounded by literals, so long or malformed input stays linear.
+- **Desktop.** `Controller` exposes `showMemoryCitations` with its own change signal and `displayText(text, showCitations)`. `MessageCard` (conversations, completion cards and pinned-reply cards) shows, copies, quotes, speaks and branches the stripped text; Copy of a transport-shortened message strips the full text after its chunks are assembled. The completion inbox and Activity agent results use the same text. Tool output is unchanged.
+- **Broker.** `speechText` strips markers before reading, so no voice provider reads them, whatever the setting. A brief reading measures its 600 characters after stripping. Command-palette transcript snippets follow the setting.
+
+Checks on this machine:
+
+- Baseline before this change, same working tree: `./tools/build.sh`, then the full offscreen UI suite: **57 passed, 0 failed, 9 skipped** in 533 s (`/tmp/cere-baseline-full.txt`). The 9 skips are the live-desktop slots.
+- `node --test tests/citations.test.ts`: 4/4, including all fixture cases and a linear-time check on hostile input. `tests/core.test.ts` adds default, strict validation, restart and brief-reading checks; the brief-reading assertion fails with the core change removed. `tests/navigation-search.test.ts` adds the snippet check. `tests/tts.test.ts` now copies `broker/citations.ts` into its minimal install, since `broker/tts.ts` imports it.
+- `npm test`: 507 tests, 506 passed, 1 skipped (opt-in installed IndexTTS), 0 failed. `npm run typecheck` and `git diff --check` passed.
+- `./tools/build.sh` passed. Offscreen UI `markdownMessages memoryCitationDisplay completionBubbles searchAndMemory`: 6/6 with setup and cleanup (`/tmp/cere-f1-ui.txt`). The new `memoryCitationDisplay` runs the C++ rules over the fixture, then checks a real Codex fixture reply: no marker in the rendered document, Copy, the chunked full-text copy or Quote; markers appear and disappear live when the setting changes, with one change signal per change and none for unrelated updates.
+- Full offscreen UI suite: **58 passed, 0 failed, 9 skipped** in 530 s (`/tmp/cere-f1-full.txt`); the extra pass is the new slot. The accessibility inventory counts 161 named settings controls (160 before).
+- `qmllint` on the four changed QML files adds only `unqualified` warnings for the `App` context property, as every existing `App` use does.
+
+Not verified: a live, memory-enabled conversation on the desktop. Cere Mobile still shows markers; its settings and Markdown renderer are unchanged.
+
 ## Completeness review fixes — October 9, 2026
 
 Fixes for the repository review of `f9d4a0f` (branch `ui-overhaul`), findings F1–F12. Product decisions: restore keeps this computer's setup; the persistent bypass switches stay and are documented; `nemotron-3-super` stays the extraction default; saved conversations can be deleted.

@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "avatarpuppet.h"
+#include "citations.h"
 #include <qqml.h>
 #include <LayerShellQt/Window>
 #include <QApplication>
@@ -212,10 +213,11 @@ void Controller::loadOlderMessages(){
 void Controller::copyMessage(const QString &messageId){
     copySessionMessage(m_selected,messageId);
 }
-void Controller::copySessionMessage(const QString &sessionId,const QString &messageId){
+void Controller::copySessionMessage(const QString &sessionId,const QString &messageId,bool hideCitations){
     const int id=rpc("session.messageText",{{"id",sessionId},{"messageId",messageId},{"offset",0}});
-    if(id>=0)m_copies[id]={{"messageId",messageId},{"sessionId",sessionId},{"text",QString()}};
+    if(id>=0)m_copies[id]={{"messageId",messageId},{"sessionId",sessionId},{"text",QString()},{"hideCitations",hideCitations}};
 }
+QString Controller::displayText(const QString &text,bool showCitations) const{return showCitations?text:stripMemoryCitations(text);}
 void Controller::openCompletion(const QString &completionId){
     for(const auto &entry:m_state.value("completions").toList()){
         const auto completion=entry.toMap();
@@ -316,7 +318,8 @@ void Controller::receive(){
             if(method=="session.messageText"&&m_copies.contains(id)){
                 auto copy=m_copies.take(id);const auto chunk=value.toMap();
                 copy["text"]=copy.value("text").toString()+chunk.value("text").toString();
-                if(chunk.value("next").isNull()||!chunk.contains("next")||chunk.value("next").toLongLong()<=0){QGuiApplication::clipboard()->setText(copy.value("text").toString());notify("Copied to clipboard");}
+                // Citations are removed from the assembled text: a marker can span two chunks.
+                if(chunk.value("next").isNull()||!chunk.contains("next")||chunk.value("next").toLongLong()<=0){const auto text=copy.value("text").toString();QGuiApplication::clipboard()->setText(copy.value("hideCitations").toBool()?stripMemoryCitations(text):text);notify("Copied to clipboard");}
                 else{const int next=rpc("session.messageText",{{"id",copy.value("sessionId")},{"messageId",copy.value("messageId")},{"offset",chunk.value("next")}});if(next>=0)m_copies[next]=copy;}
             }
             if(method=="session.create")select(value.toMap().value("id").toString());
@@ -386,6 +389,7 @@ void Controller::applyState(const QVariantMap &state){
     if(moodAttention.contains("mood"))receiveMood(moodAttention.value("sessionId").toString(),moodAttention.value("mood").toMap());
     if(m_selected.isEmpty()&&!state.value("sessions").toList().isEmpty())select(state.value("sessions").toList().first().toMap().value("id").toString());
     emit stateChanged();syncPet();
+    if(oldSettings.value("showMemoryCitations").toBool()!=showMemoryCitations())emit citationDisplayChanged();
     refreshMotion();
     const auto after=m_director.context();
     if(!before.busy&&after.busy&&!m_toast.isEmpty()) { m_toastTimer.stop();m_toast.clear();emit toastChanged(); }

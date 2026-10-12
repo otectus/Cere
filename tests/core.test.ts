@@ -220,6 +220,27 @@ test('permission bypasses default off, validate strictly, and survive broker res
   } finally { await restarted.close(); }
 });
 
+test('memory citations are hidden by default, validate strictly, survive restart, and are never spoken', async t => {
+  const { core, directory } = await setup(t);
+  assert.equal(core.settings.showMemoryCitations, false);
+  assert.equal(core.snapshot().settings.showMemoryCitations, false);
+  for (const value of ['true', 1, null]) await assert.rejects(core.updateSettings({ showMemoryCitations: value }), /Invalid/);
+  // A database written before the setting existed reads the default.
+  core.store.set('settings', { quiet: true });
+  assert.equal(core.store.settings().showMemoryCitations, false);
+  await core.updateSettings({ showMemoryCitations: true });
+  const restarted = new Core(new Store(directory));
+  try { assert.equal(restarted.settings.showMemoryCitations, true); } finally { await restarted.close(); }
+  // A brief reading measures and cuts prose only: a marker never lands half-read at the cut.
+  await core.updateSettings({ speechBrief: true });
+  const id = 'ea105855-1459-41da-b270-d370d2b54457';
+  // Without that, the cut at 600 characters falls inside the second id and leaves "[evidence:<id>," behind.
+  const reply = 'word '.repeat(103) + `cited [evidence:${id}, ${id}, ${id}] ` + 'more '.repeat(200);
+  const brief = core.speechText(reply);
+  assert.match(brief, /^Brief reading\. word/);
+  assert.doesNotMatch(brief, /evidence|ea105855/);
+});
+
 test('CLI and computer switches approve only their permission classes and never answer questions', async t => {
   const { core, session } = await setup(t);
   const cli = core.approval(session.id, { kind: 'provider', title: 'Command', detail: '', choices: ['allow', 'deny'] });
