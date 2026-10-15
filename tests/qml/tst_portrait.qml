@@ -44,9 +44,9 @@ Item {
         var portrait = make({settings:({assistantName:"Étoile", reducedMotion:true}), mood:"concerned"})
         compare(portrait.face, 7)
         var originalColor = portrait.color.toString()
-        for (var id of ["daemona", "jade", "nova"]) {
+        for (var id of ["daemona", "jade", "nova", "soap"]) {
             portrait.blinking = false
-            portrait.avatar = ({id:id,portrait:id+"-portrait-expressions.png"})
+            portrait.avatar = ({id:id,portrait:id+"-portraits.png"})
             tryVerify(function() { return portrait.artworkReady }, 10000)
             compare(portrait.loadedFaces, 12)
             compare(portrait.face, 7)
@@ -56,7 +56,7 @@ Item {
             portrait.blinking = true
             compare(portrait.face, 11)
         }
-        portrait.avatar = ({id:"cere",portrait:"cere-portrait-reference.png"})
+        portrait.avatar = ({id:"cere",portrait:"cere-portraits.png"})
         tryVerify(function() { return portrait.artworkReady }, 10000)
         compare(portrait.loadedFaces, 12)
         compare(portrait.color, originalColor)
@@ -154,10 +154,10 @@ Item {
     }
 
     function test_hover_click_and_every_expression_texture_is_ready_data() {
-        return ["cere", "daemona", "jade", "nova"].map(function(id) { return {tag:id,id:id} })
+        return ["cere", "daemona", "jade", "nova", "soap"].map(function(id) { return {tag:id,id:id} })
     }
     function test_hover_click_and_every_expression_texture_is_ready(data) {
-        var portrait = make({avatar:({id:data.id,portrait:data.id === "cere" ? "cere-portrait-reference.png" : data.id+"-portrait-expressions.png"})})
+        var portrait = make({avatar:({id:data.id,portrait:data.id+"-portraits.png"})})
         var expected = ["neutral", "curious", "thinking", "happy", "cheeky", "skeptical", "tender", "concerned", "surprised", "focused", "sleepy"]
         for (var frame = 0; frame < expected.length; ++frame) {
             portrait.mood = expected[frame]

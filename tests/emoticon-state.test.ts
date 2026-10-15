@@ -42,6 +42,15 @@ test('background activity remains visible while the selected conversation is idl
   assert.equal(multiple.count, 2);
 });
 
+test('direct pointer reactions match the body while urgent status stays visible', () => {
+  for (const [motion, key] of Object.entries({hoverBlush:'tender', clickBlush:'tender', dragging:'pickedUp'})) {
+    assert.equal(resolve({sessions:[session('working','thinking')]}, {motion, hovered:true}).key, key);
+    assert.equal(resolve({sessions:[session('error')]}, {motion}).key, 'error');
+    assert.equal(resolve({approvals:[{sessionId:'a',kind:'cli'}]}, {motion}).key, 'approval');
+    assert.equal(resolve({}, {motion, connected:false}).key, 'reconnecting');
+  }
+});
+
 test('live tone colors replies, expires, and respects the expressive-cues preference', () => {
   const cues = {a:{mood:'tender', time:now}};
   assert.equal(resolve({sessions:[session('working','speaking')]}, {cues}).key, 'tender');

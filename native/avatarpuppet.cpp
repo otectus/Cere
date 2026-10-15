@@ -31,6 +31,8 @@ constexpr qreal maximumDefinitionCoordinate = 1000000.0;
 // aliases (shimmers) at those reductions on both GPU and software backends.
 constexpr int maximumTextureLevel = 4;
 constexpr int minimumLevelSide = 4;
+// Five gesture routes plus an authored carried loop, decoded one atlas at a time.
+constexpr int maximumSurfaceFrames = 384;
 
 struct RawBone
 {
@@ -41,6 +43,12 @@ struct RawBone
 
 struct Part
 {
+    struct SurfaceFrame
+    {
+        QRect sourceRect;
+        QRect blinkSourceRect;
+    };
+
     QString name;
     int bone = -1;
     QRect sourceRect;
@@ -58,6 +66,14 @@ struct Part
     bool mirrorX = false;
     bool surfaceMotion = false;
     QRect blinkSourceRect;
+    // Frame zero is always the part's ordinary sourceRect/blinkSourceRect.
+    QVector<SurfaceFrame> surfaceFrames;
+};
+
+struct PartImages
+{
+    QVector<QVector<QImage>> frames;
+    QVector<QVector<QImage>> blinks;
 };
 
 QString imagePath(const QUrl &source)
@@ -73,16 +89,34 @@ QString imagePath(const QUrl &source)
 
 struct ImageCache
 {
-    QHash<QString, QImage> atlases;
-    QHash<QString, QVector<QImage>> crops;
+    QString atlasKey;
+    QImage atlas;
 };
 
 ImageCache &imageCache()
 {
-    // Source and definition setters run on the GUI thread. QImage implicit
-    // sharing lets puppet instances reuse both decoded atlases and cutouts.
+    // Source and definition setters run on the GUI thread. Keep only the most
+    // recently decoded atlas: settings can instantiate every avatar preview,
+    // and a generated surface atlas is hundreds of decoded megabytes. QImage
+    // implicit sharing keeps the returned image alive during preparation.
     static ImageCache cache;
     return cache;
+}
+
+QImage cachedAtlas(const QString &path, const QString &key)
+{
+    ImageCache &cache = imageCache();
+    if (!key.isEmpty() && cache.atlasKey == key && !cache.atlas.isNull())
+        return cache.atlas;
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    QImage image = reader.read();
+    if (image.isNull())
+        return {};
+    image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    cache.atlasKey = key;
+    cache.atlas = image;
+    return image;
 }
 
 QVector<QImage> textureLevels(const QImage &crop)
@@ -192,6 +226,37 @@ bool numberList(const QVariant &value, int expected, QVector<qreal> *numbers)
     return true;
 }
 
+bool pixelRect(const QVariant &value, QRect *rect)
+{
+    if (value.metaType().id() != QMetaType::QVariantList)
+        return false;
+    const QVariantList list = value.toList();
+    if (list.size() != 4)
+        return false;
+    QVector<qreal> coordinates;
+    coordinates.reserve(4);
+    for (const QVariant &entry : list) {
+        const int type = entry.metaType().id();
+        qreal coordinate = 0.0;
+        if (type == QMetaType::QString || type == QMetaType::Bool
+                || !boundedNumber(entry, &coordinate)) {
+            return false;
+        }
+        coordinates.append(coordinate);
+    }
+    if (coordinates[0] < 0.0 || coordinates[1] < 0.0
+            || coordinates[2] <= 0.0 || coordinates[3] <= 0.0
+            || coordinates[0] != std::floor(coordinates[0])
+            || coordinates[1] != std::floor(coordinates[1])
+            || coordinates[2] != std::floor(coordinates[2])
+            || coordinates[3] != std::floor(coordinates[3])) {
+        return false;
+    }
+    *rect = QRect(int(coordinates[0]), int(coordinates[1]),
+                  int(coordinates[2]), int(coordinates[3]));
+    return true;
+}
+
 QMatrix4x4 matrixFor(const AvatarSkeleton::Transform &transform)
 {
     return QMatrix4x4(float(transform.m11), float(transform.m12), 0.0f,
@@ -213,6 +278,10 @@ public:
         int part = -1;
         ReferenceArt::Pose surfacePose;
         bool surfacePoseValid = false;
+        int surfaceFrame = -1;
+        int surfaceLevel = -1;
+        int surfaceOriginalFrame = -1;
+        int surfaceOriginalLevel = -1;
         QSGTexture *surfaceOriginal = nullptr;
         QSGTexture *surfaceDynamic = nullptr;
     };
@@ -220,7 +289,7 @@ public:
     ~PuppetNode() override
     {
         for (RenderPart &part : parts) {
-            if (!part.surfaceOriginal)
+            if (!part.surfaceOriginal && !part.surfaceDynamic)
                 continue;
             part.image->setOwnsTexture(false);
             delete part.surfaceDynamic;
@@ -240,13 +309,12 @@ struct AvatarPuppet::Private
     QUrl source;
     QVariantMap definition;
     QVariantMap pose;
-    QImage atlas;
+    int surfaceFrame = 0;
     QString sourceKey;
     QSizeF referenceSize{defaultReferenceWidth, defaultReferenceHeight};
     QVector<AvatarSkeleton::Bone> bones;
     QVector<Part> parts;
-    QVector<QVector<QImage>> partLevels;
-    QVector<QVector<QImage>> blinkLevels;
+    QVector<PartImages> partImages;
     quint64 revision = 0;
     bool ready = false;
     QString error;
@@ -303,6 +371,25 @@ void AvatarPuppet::setPose(const QVariantMap &pose)
     update();
 }
 
+int AvatarPuppet::surfaceFrame() const
+{
+    return d->surfaceFrame;
+}
+
+void AvatarPuppet::setSurfaceFrame(int frame)
+{
+    if (d->surfaceFrame == frame)
+        return;
+    d->surfaceFrame = frame;
+    if (d->ready) {
+        QString preparationError;
+        if (!prepareFrameImages(frame, &preparationError))
+            setStatus(false, preparationError);
+    }
+    emit surfaceFrameChanged();
+    update();
+}
+
 bool AvatarPuppet::ready() const
 {
     return d->ready;
@@ -327,26 +414,11 @@ void AvatarPuppet::setStatus(bool ready, const QString &error)
 
 void AvatarPuppet::loadSource()
 {
-    d->atlas = {};
     d->sourceKey.clear();
     const QString path = imagePath(d->source);
     if (!path.isEmpty()) {
         const QString canonical = QFileInfo(path).canonicalFilePath();
         d->sourceKey = canonical.isEmpty() ? path : canonical;
-        ImageCache &cache = imageCache();
-        const auto cached = cache.atlases.constFind(d->sourceKey);
-        if (cached != cache.atlases.cend()) {
-            d->atlas = *cached;
-        } else {
-            QImageReader reader(path);
-            reader.setAutoTransform(true);
-            QImage image = reader.read();
-            if (!image.isNull()) {
-                image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-                cache.atlases.insert(d->sourceKey, image);
-                d->atlas = image;
-            }
-        }
     }
     rebuild();
 }
@@ -355,8 +427,7 @@ void AvatarPuppet::rebuild()
 {
     d->bones.clear();
     d->parts.clear();
-    d->partLevels.clear();
-    d->blinkLevels.clear();
+    d->partImages.clear();
     d->referenceSize = QSizeF(defaultReferenceWidth, defaultReferenceHeight);
     ++d->revision;
 
@@ -560,6 +631,69 @@ void AvatarPuppet::rebuild()
                 }
             }
 
+            part.surfaceFrames.append(Part::SurfaceFrame{
+                    part.sourceRect, part.blinkSourceRect});
+            const auto surfaceFramesValue = map.constFind(QStringLiteral("surfaceFrames"));
+            if (surfaceFramesValue != map.cend()) {
+                if (!part.surfaceMotion) {
+                    validationError = QStringLiteral("part '%1': surfaceFrames requires surfaceMotion")
+                                              .arg(part.name);
+                    break;
+                }
+                if (surfaceFramesValue->metaType().id() != QMetaType::QVariantList) {
+                    validationError = QStringLiteral("part '%1': surfaceFrames must be a list")
+                                              .arg(part.name);
+                    break;
+                }
+                const QVariantList frames = surfaceFramesValue->toList();
+                if (frames.size() > maximumSurfaceFrames) {
+                    validationError = QStringLiteral("part '%1': surfaceFrames exceeds %2 entries")
+                                              .arg(part.name).arg(maximumSurfaceFrames);
+                    break;
+                }
+                const qreal mainAspect = qreal(part.sourceRect.width())
+                        / part.sourceRect.height();
+                for (int frameIndex = 0; frameIndex < frames.size(); ++frameIndex) {
+                    if (frames[frameIndex].metaType().id() != QMetaType::QVariantMap) {
+                        validationError = QStringLiteral("part '%1': surface frame %2 must be an object")
+                                                  .arg(part.name).arg(frameIndex + 1);
+                        break;
+                    }
+                    const QVariantMap frameMap = frames[frameIndex].toMap();
+                    Part::SurfaceFrame frame;
+                    if (!pixelRect(frameMap.value(QStringLiteral("sourceRect")),
+                                   &frame.sourceRect)) {
+                        validationError = QStringLiteral("part '%1': surface frame %2 has an invalid sourceRect")
+                                                  .arg(part.name).arg(frameIndex + 1);
+                        break;
+                    }
+                    const qreal aspect = qreal(frame.sourceRect.width())
+                            / frame.sourceRect.height();
+                    if (std::abs(aspect / mainAspect - 1.0) > 0.01) {
+                        validationError = QStringLiteral("part '%1': surface frame %2 aspect ratio differs from frame 0")
+                                                  .arg(part.name).arg(frameIndex + 1);
+                        break;
+                    }
+                    const auto frameBlink = frameMap.constFind(
+                            QStringLiteral("blinkSourceRect"));
+                    if (frameBlink != frameMap.cend()) {
+                        if (!pixelRect(*frameBlink, &frame.blinkSourceRect)) {
+                            validationError = QStringLiteral("part '%1': surface frame %2 has an invalid blinkSourceRect")
+                                                      .arg(part.name).arg(frameIndex + 1);
+                            break;
+                        }
+                        if (frame.blinkSourceRect.size() != frame.sourceRect.size()) {
+                            validationError = QStringLiteral("part '%1': surface frame %2 blinkSourceRect must match sourceRect size")
+                                                      .arg(part.name).arg(frameIndex + 1);
+                            break;
+                        }
+                    }
+                    part.surfaceFrames.append(frame);
+                }
+                if (!validationError.isEmpty())
+                    break;
+            }
+
             const auto visibilityValue = map.constFind(QStringLiteral("visibleWhen"));
             if (visibilityValue != map.cend()) {
                 const QVariantMap visibility = visibilityValue->toMap();
@@ -602,63 +736,44 @@ void AvatarPuppet::rebuild()
         });
     }
 
-    if (validationError.isEmpty() && d->atlas.isNull())
+    const QImage atlas = validationError.isEmpty()
+            ? cachedAtlas(imagePath(d->source), d->sourceKey) : QImage();
+    if (validationError.isEmpty() && atlas.isNull())
         validationError = QStringLiteral("source atlas could not be loaded");
 
     if (validationError.isEmpty()) {
-        d->partLevels.reserve(d->parts.size());
-        d->blinkLevels.reserve(d->parts.size());
-        ImageCache &cache = imageCache();
         for (const Part &part : std::as_const(d->parts)) {
-            if (!d->atlas.rect().contains(part.sourceRect)) {
-                validationError = QStringLiteral("part '%1' sourceRect is outside the atlas")
-                                          .arg(part.name);
+            PartImages images;
+            images.frames.resize(part.surfaceFrames.size());
+            images.blinks.resize(part.surfaceFrames.size());
+            for (int frameIndex = 0; frameIndex < part.surfaceFrames.size(); ++frameIndex) {
+                const Part::SurfaceFrame &frame = part.surfaceFrames[frameIndex];
+                if (!atlas.rect().contains(frame.sourceRect)) {
+                    validationError = QStringLiteral("part '%1' surface frame %2 sourceRect is outside the atlas")
+                                              .arg(part.name).arg(frameIndex);
+                    break;
+                }
+                if (!frame.blinkSourceRect.isNull()
+                        && !atlas.rect().contains(frame.blinkSourceRect)) {
+                    validationError = QStringLiteral("part '%1' surface frame %2 blinkSourceRect is outside the atlas")
+                                              .arg(part.name).arg(frameIndex);
+                    break;
+                }
+            }
+            if (!validationError.isEmpty())
                 break;
-            }
-            const QString cropKey = d->sourceKey + QLatin1Char('#')
-                    + QString::number(part.sourceRect.x()) + QLatin1Char(',')
-                    + QString::number(part.sourceRect.y()) + QLatin1Char(',')
-                    + QString::number(part.sourceRect.width()) + QLatin1Char(',')
-                    + QString::number(part.sourceRect.height());
-            const auto cached = cache.crops.constFind(cropKey);
-            if (cached != cache.crops.cend()) {
-                d->partLevels.append(*cached);
-            } else {
-                const QVector<QImage> levels = textureLevels(d->atlas.copy(part.sourceRect));
-                cache.crops.insert(cropKey, levels);
-                d->partLevels.append(levels);
-            }
-            if (part.blinkSourceRect.isNull()) {
-                d->blinkLevels.append(QVector<QImage>{});
-                continue;
-            }
-            if (!d->atlas.rect().contains(part.blinkSourceRect)) {
-                validationError = QStringLiteral("part '%1' blinkSourceRect is outside the atlas")
-                                          .arg(part.name);
-                break;
-            }
-            const QString blinkKey = d->sourceKey + QLatin1String("#blink,")
-                    + QString::number(part.blinkSourceRect.x()) + QLatin1Char(',')
-                    + QString::number(part.blinkSourceRect.y()) + QLatin1Char(',')
-                    + QString::number(part.blinkSourceRect.width()) + QLatin1Char(',')
-                    + QString::number(part.blinkSourceRect.height());
-            const auto blinkCached = cache.crops.constFind(blinkKey);
-            if (blinkCached != cache.crops.cend()) {
-                d->blinkLevels.append(*blinkCached);
-            } else {
-                const QVector<QImage> levels = textureLevels(
-                        d->atlas.copy(part.blinkSourceRect));
-                cache.crops.insert(blinkKey, levels);
-                d->blinkLevels.append(levels);
-            }
+            d->partImages.append(images);
+        }
+        if (validationError.isEmpty()
+                && !prepareFrameImages(d->surfaceFrame, &validationError)) {
+            // prepareFrameImages supplies the diagnostic.
         }
     }
 
     if (!validationError.isEmpty()) {
         d->bones.clear();
         d->parts.clear();
-        d->partLevels.clear();
-        d->blinkLevels.clear();
+        d->partImages.clear();
         setStatus(false, validationError);
     } else {
         d->referenceSize = QSizeF(reference[0], reference[1]);
@@ -666,6 +781,50 @@ void AvatarPuppet::rebuild()
         setStatus(true, {});
     }
     update();
+}
+
+bool AvatarPuppet::prepareFrameImages(int requestedFrame, QString *error)
+{
+    QVector<int> selectedFrames(d->parts.size(), 0);
+    bool preparationNeeded = false;
+    for (int index = 0; index < d->parts.size(); ++index) {
+        const Part &part = d->parts[index];
+        if (part.surfaceMotion && requestedFrame >= 0
+                && requestedFrame < part.surfaceFrames.size()) {
+            selectedFrames[index] = requestedFrame;
+        }
+        preparationNeeded |= d->partImages[index].frames[selectedFrames[index]].isEmpty();
+    }
+    if (!preparationNeeded)
+        return true;
+
+    const QImage atlas = cachedAtlas(imagePath(d->source), d->sourceKey);
+    if (atlas.isNull()) {
+        *error = QStringLiteral("source atlas could not be loaded while preparing surface frame");
+        return false;
+    }
+    for (int index = 0; index < d->parts.size(); ++index) {
+        const Part &part = d->parts[index];
+        const int frameIndex = selectedFrames[index];
+        PartImages &images = d->partImages[index];
+        if (!images.frames[frameIndex].isEmpty())
+            continue;
+        if (part.surfaceMotion) {
+            // A player needs only its current authored drawing. Dropping prior
+            // CPU crops bounds a 256-frame animation at one frame plus mips.
+            for (int stale = 0; stale < images.frames.size(); ++stale) {
+                if (stale == frameIndex)
+                    continue;
+                images.frames[stale].clear();
+                images.blinks[stale].clear();
+            }
+        }
+        const Part::SurfaceFrame &frame = part.surfaceFrames[frameIndex];
+        images.frames[frameIndex] = textureLevels(atlas.copy(frame.sourceRect));
+        if (!frame.blinkSourceRect.isNull())
+            images.blinks[frameIndex] = textureLevels(atlas.copy(frame.blinkSourceRect));
+    }
+    return true;
 }
 
 void AvatarPuppet::itemChange(ItemChange change, const ItemChangeData &value)
@@ -709,27 +868,41 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     const qreal deviceScale = scale * window()->effectiveDevicePixelRatio()
             * (std::isfinite(sceneScale) && sceneScale > 0.0 ? sceneScale : 1.0);
     QVector<int> levels(d->parts.size(), 0);
+    QVector<int> selectedFrames(d->parts.size(), 0);
+    QVector<int> nodeLevels(d->parts.size(), 0);
     for (int index = 0; index < d->parts.size(); ++index) {
         const Part &part = d->parts[index];
+        if (part.surfaceMotion && d->surfaceFrame >= 0
+                && d->surfaceFrame < part.surfaceFrames.size()) {
+            selectedFrames[index] = d->surfaceFrame;
+        }
+        const int frame = selectedFrames[index];
+        const QRect sourceRect = part.surfaceFrames[frame].sourceRect;
         const qreal density = deviceScale
-                * std::max(part.rect.width() / part.sourceRect.width(),
-                           part.rect.height() / part.sourceRect.height());
+                * std::max(part.rect.width() / sourceRect.width(),
+                           part.rect.height() / sourceRect.height());
         if (density > 0.0 && density < 1.0)
             levels[index] = std::min(int(std::floor(std::log2(1.0 / density))),
-                                     int(d->partLevels[index].size()) - 1);
+                                     int(d->partImages[index].frames[frame].size()) - 1);
+        // Surface nodes swap their own frame/level texture without rebuilding
+        // the surrounding rigid scene graph.
+        nodeLevels[index] = part.surfaceMotion ? -1 : levels[index];
     }
 
     auto *root = dynamic_cast<PuppetNode *>(oldNode);
-    if (!root || root->revision != d->revision || root->levels != levels) {
+    if (!root || root->revision != d->revision || root->levels != nodeLevels) {
         delete oldNode;
         root = new PuppetNode;
         root->revision = d->revision;
-        root->levels = levels;
+        root->levels = nodeLevels;
         root->parts.reserve(d->parts.size());
         for (int index = 0; index < d->parts.size(); ++index) {
             const Part &part = d->parts[index];
+            const int frame = selectedFrames[index];
+            const int level = levels[index];
+            const QRect sourceRect = part.surfaceFrames[frame].sourceRect;
             QSGTexture *texture = window()->createTextureFromImage(
-                    d->partLevels[index][levels[index]]);
+                    d->partImages[index].frames[frame][level]);
             if (!texture) {
                 delete root;
                 return nullptr;
@@ -743,11 +916,11 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             imageNode->setOwnsTexture(!part.surfaceMotion);
             imageNode->setFiltering(QSGTexture::Linear);
             // Level 0 is the crop itself; coarser levels hold it in their corner.
-            const qreal divisor = qreal(1 << levels[index]);
-            imageNode->setSourceRect(levels[index] == 0
+            const qreal divisor = qreal(1 << level);
+            imageNode->setSourceRect(level == 0
                     ? QRectF(QPointF(), texture->textureSize())
-                    : QRectF(0, 0, part.sourceRect.width() / divisor,
-                             part.sourceRect.height() / divisor));
+                    : QRectF(0, 0, sourceRect.width() / divisor,
+                             sourceRect.height() / divisor));
             imageNode->setRect(part.rect);
             imageNode->setTextureCoordinatesTransform(part.mirrorX
                     ? QSGImageNode::MirrorHorizontally : QSGImageNode::NoTransform);
@@ -759,7 +932,11 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             rendered.opacity = opacityNode;
             rendered.image = imageNode;
             rendered.part = index;
-            rendered.surfaceOriginal = part.surfaceMotion ? texture : nullptr;
+            if (part.surfaceMotion) {
+                rendered.surfaceOriginal = texture;
+                rendered.surfaceOriginalFrame = frame;
+                rendered.surfaceOriginalLevel = level;
+            }
             root->parts.append(rendered);
         }
     }
@@ -786,6 +963,10 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         renderPart.opacity->setOpacity(opacity);
 
         if (part.surfaceMotion) {
+            const int frame = selectedFrames[renderPart.part];
+            const int level = levels[renderPart.part];
+            const Part::SurfaceFrame &frameDefinition = part.surfaceFrames[frame];
+            const PartImages &images = d->partImages[renderPart.part];
             ReferenceArt::Pose surfacePose;
             surfacePose.breathLift = ReferenceArt::finiteClamp(
                     AvatarSkeleton::channelValue(d->pose, QStringLiteral("breathLift")),
@@ -815,25 +996,45 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     AvatarSkeleton::channelValue(d->pose, QStringLiteral("blink")),
                     AvatarSkeleton::channelValue(d->pose, QStringLiteral("eyeClose"))),
                     0.0, 1.0);
-            if (d->blinkLevels[renderPart.part].isEmpty())
+            if (images.blinks[frame].isEmpty())
                 surfacePose.blink = 0.0;
             if (!renderPart.surfacePoseValid
-                    || renderPart.surfacePose != surfacePose) {
+                    || renderPart.surfacePose != surfacePose
+                    || renderPart.surfaceFrame != frame
+                    || renderPart.surfaceLevel != level) {
                 const bool rest = !ReferenceArt::hasDeformation(surfacePose)
                         && surfacePose.blink <= 0.0;
                 if (rest) {
-                    renderPart.image->setTexture(renderPart.surfaceOriginal);
-                    delete renderPart.surfaceDynamic;
-                    renderPart.surfaceDynamic = nullptr;
+                    if (!renderPart.surfaceOriginal
+                            || renderPart.surfaceOriginalFrame != frame
+                            || renderPart.surfaceOriginalLevel != level) {
+                        QSGTexture *original = window()->createTextureFromImage(
+                                images.frames[frame][level]);
+                        if (!original)
+                            continue;
+                        original->setFiltering(QSGTexture::Linear);
+                        renderPart.image->setTexture(original);
+                        delete renderPart.surfaceDynamic;
+                        renderPart.surfaceDynamic = nullptr;
+                        delete renderPart.surfaceOriginal;
+                        renderPart.surfaceOriginal = original;
+                        renderPart.surfaceOriginalFrame = frame;
+                        renderPart.surfaceOriginalLevel = level;
+                    } else {
+                        renderPart.image->setTexture(renderPart.surfaceOriginal);
+                        delete renderPart.surfaceDynamic;
+                        renderPart.surfaceDynamic = nullptr;
+                    }
                 } else {
-                    const int level = levels[renderPart.part];
-                    const QImage closed = d->blinkLevels[renderPart.part].isEmpty()
-                            ? QImage() : d->blinkLevels[renderPart.part][level];
+                    const QImage closed = images.blinks[frame].isEmpty()
+                            ? QImage() : images.blinks[frame][level];
                     const QImage image = ReferenceArt::render(
-                            d->partLevels[renderPart.part][level], closed,
+                            images.frames[frame][level], closed,
                             part.rect, surfacePose,
-                            QSizeF(part.sourceRect.width() / qreal(1 << level),
-                                   part.sourceRect.height() / qreal(1 << level)));
+                            QSizeF(frameDefinition.sourceRect.width()
+                                           / qreal(1 << level),
+                                   frameDefinition.sourceRect.height()
+                                           / qreal(1 << level)));
                     QSGTexture *texture = window()->createTextureFromImage(image);
                     if (!texture)
                         continue;
@@ -841,10 +1042,26 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     renderPart.image->setTexture(texture);
                     delete renderPart.surfaceDynamic;
                     renderPart.surfaceDynamic = texture;
+                    if (renderPart.surfaceOriginal
+                            && (renderPart.surfaceOriginalFrame != frame
+                                || renderPart.surfaceOriginalLevel != level)) {
+                        delete renderPart.surfaceOriginal;
+                        renderPart.surfaceOriginal = nullptr;
+                        renderPart.surfaceOriginalFrame = -1;
+                        renderPart.surfaceOriginalLevel = -1;
+                    }
                 }
+                const qreal divisor = qreal(1 << level);
+                renderPart.image->setSourceRect(level == 0
+                        ? QRectF(QPointF(), renderPart.image->texture()->textureSize())
+                        : QRectF(0, 0,
+                                 frameDefinition.sourceRect.width() / divisor,
+                                 frameDefinition.sourceRect.height() / divisor));
                 renderPart.image->setFiltering(QSGTexture::Linear);
                 renderPart.surfacePose = surfacePose;
                 renderPart.surfacePoseValid = true;
+                renderPart.surfaceFrame = frame;
+                renderPart.surfaceLevel = level;
             }
         }
     }

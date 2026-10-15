@@ -1,5 +1,7 @@
 # Cere project review
 
+Historical audit: file paths and inventories below describe the reviewed revision. The October 15, 2026 avatar replacement retired the legacy sprites, cutout atlases and preparation scripts; current avatar sources and checks are documented in README.md and VALIDATION.md.
+
 ## 1. Summary
 
 Cere has a substantial native desktop interface, a working broker/provider test suite, and an opt-in graph-memory subsystem with explicit experimental status, but its authorization, erasure, model routing and recovery boundaries need correction before relying on them for sensitive work. This read-only audit found **46 issues: 6 Critical, 15 High, 24 Medium and 1 Low**. The five highest-priority issues are actions retaining revoked automatic authorization (F-001), broker impersonation through an unsafe fallback runtime parent (F-002), forgotten stable memory IDs leaving current content recallable (F-003), local-only text reaching cloud-marked embedding models (F-004), and cloud chat aliases bypassing the memory-sharing opt-out (F-005). A separate critical deletion-confirmation mismatch is F-006. All 98 backend tests passed; strict checking of additional tools found a broken live checker, and native builds/UI execution could not run because the required toolchain/compositor is absent. Every one of the 152 tracked files at the pinned revision was reviewed, including all seven PNGs; no source changes or commits were made. Only this review document is added.

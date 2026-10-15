@@ -142,6 +142,8 @@ public:
     Q_INVOKABLE void setAutostart(bool enabled);
     Q_INVOKABLE bool autostartEnabled() const;
     Q_INVOKABLE void preview(const QString &state);
+    Q_INVOKABLE void setPetHovered(bool hovered);
+    Q_INVOKABLE void clickPet();
     Q_INVOKABLE void attachImage(const QString &path) { emit attachmentRequested(path); }
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void copyMessage(const QString &messageId);
@@ -194,7 +196,7 @@ private:
     // Pet and output-seam mirror share QML values and one animation sample.
     QQmlEngine m_qmlEngine;
     QString m_root, m_selected, m_toast, m_motion="idle";
-    bool m_overlay, m_expanded=false, m_dragging=false, m_roamStep=false;
+    bool m_overlay, m_expanded=false, m_dragging=false, m_roamStep=false, m_petHovered=false;
     QLocalSocket m_socket;
     QByteArray m_buffer;
     QVariantMap m_state, m_animations;

@@ -5,7 +5,7 @@ Item {
     width: 192; height: 208
     Accessible.role: Accessible.Button
     Accessible.name: App.assistantName + ", " + (((App.animations.clips || {})[App.motion] || {}).label || "Open Cere")
-    Accessible.onPressAction: App.togglePanel()
+    Accessible.onPressAction: App.clickPet()
     property var settings: App.state.settings || ({})
     property bool dragging: false
     property point pressPoint
@@ -13,6 +13,8 @@ Item {
     property bool motionDriver: true
     property alias animationPlayer: art
     property alias motionSource: art.mirrorSource
+    onVisibleChanged: if (!visible && motionDriver) App.setPetHovered(false)
+    Component.onDestruction: if (motionDriver) App.setPetHovered(false)
     FrameAnimation {
         running: pet.visible && pet.motionDriver && App.petMoving
         onTriggered: App.advancePetMotion()
@@ -31,7 +33,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
         cursorShape: pet.dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-        onPressed: mouse => { App.setPetInteracting(true);pet.pressPoint = Qt.point(mouse.x,mouse.y);pet.dragging = false }
+        onPressed: mouse => { App.setPetInteracting(true);pet.pressPoint = Qt.point(mouse.x,mouse.y);art.carryAnchor = Qt.point(mouse.x/width,mouse.y/height);pet.dragging = false }
         onPositionChanged: mouse => {
             if (!pressed) art.gazeAt(mouse.x/width, mouse.y/height)
             if (!pressed || pressedButtons !== Qt.LeftButton) return
@@ -41,12 +43,13 @@ Item {
         onReleased: mouse => {
             if(pet.dragging) { App.endDrag(); pet.dragging=false }
             else if(mouse.button === Qt.RightButton) context.popup()
-            else App.togglePanel()
+            else App.clickPet()
+            App.setPetHovered(containsMouse)
             App.setPetInteracting(containsMouse||context.visible)
         }
-        onCanceled: { if(pet.dragging)App.endDrag();pet.dragging=false;App.setPetInteracting(containsMouse||context.visible) }
-        onEntered: { App.setPetInteracting(true);if(!pet.busy&&!pet.waiting)App.preview("attentive") }
-        onExited: { art.clearGaze(); if(!pressed&&!context.visible)App.setPetInteracting(false) }
+        onCanceled: { if(pet.dragging)App.endDrag();pet.dragging=false;App.setPetHovered(false);App.setPetInteracting(containsMouse||context.visible) }
+        onEntered: { App.setPetInteracting(true);App.setPetHovered(true);art.gazeAt(mouseX/width,mouseY/height) }
+        onExited: { App.setPetHovered(false);art.clearGaze(); if(!pressed&&!context.visible)App.setPetInteracting(false) }
     }
     CMenu {
         id: context

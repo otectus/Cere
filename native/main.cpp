@@ -1,11 +1,15 @@
 #include "controller.h"
 #include <QApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QStringList>
 #include <QCommandLineParser>
 #include <QLocalSocket>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QStandardPaths>
 #include <QLockFile>
 #include <QIcon>
@@ -63,7 +67,48 @@ int main(int argc,char **argv) {
     QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath()+"/plugins");
     // Development autostart can launch the binary directly, outside tools/run.sh.
     if(QDir(root+"/.local-deps/usr/lib/qt6/plugins").exists())QCoreApplication::addLibraryPath(root+"/.local-deps/usr/lib/qt6/plugins");
-    if(!QFileInfo::exists(root+"/assets/cere-puppet.png")||!QFileInfo::exists(root+"/assets/cere-rig.json")||!QFileInfo::exists(root+"/assets/motions.json")) { qCritical("Cere artwork or motion catalog is missing. Restore the assets directory."); return 1; }
+    const auto requireAsset=[&root](const QString &name){
+        if(QFileInfo::exists(root+"/assets/"+name))return true;
+        qCritical("Cere artwork is missing or belongs to an older installation (assets/%s). Restore the complete assets directory.",qPrintable(name));
+        return false;
+    };
+    const auto loadObject=[&root,&requireAsset](const QString &name,QJsonObject *result){
+        if(!requireAsset(name))return false;
+        QFile file(root+"/assets/"+name);QJsonParseError error;
+        if(!file.open(QIODevice::ReadOnly)){qCritical("Cere asset metadata cannot be read (assets/%s).",qPrintable(name));return false;}
+        const auto document=QJsonDocument::fromJson(file.readAll(),&error);
+        if(error.error==QJsonParseError::NoError&&document.isObject()){*result=document.object();return true;}
+        qCritical("Cere asset metadata is invalid (assets/%s): %s",qPrintable(name),qPrintable(error.errorString()));
+        return false;
+    };
+    if(!requireAsset("avatars.json")||!requireAsset("palettes.json"))return 1;
+    QJsonObject motions;
+    if(!loadObject("motions.json",&motions))return 1;
+    const QString baseRigName=motions.value("rig").toString("cere-rig.json");
+    QJsonObject baseRig;
+    if(baseRigName.isEmpty()||!loadObject(baseRigName,&baseRig))return 1;
+    const QString baseTexture=baseRig.value("texture").toString();
+    if(baseTexture.isEmpty()||!requireAsset(baseTexture))return 1;
+    QFile avatarFile(root+"/assets/avatars.json");QJsonParseError avatarError;
+    if(!avatarFile.open(QIODevice::ReadOnly)){qCritical("Cere avatar catalog cannot be read.");return 1;}
+    const auto avatarDocument=QJsonDocument::fromJson(avatarFile.readAll(),&avatarError);
+    if(avatarError.error!=QJsonParseError::NoError||!avatarDocument.isArray()){
+        qCritical("Cere avatar catalog is invalid: %s",qPrintable(avatarError.errorString()));return 1;
+    }
+    QStringList missingIds{"cere","daemona","jade","nova","soap"};
+    for(const auto &value:avatarDocument.array()){
+        if(!value.isObject()){qCritical("Cere avatar catalog contains a non-object entry.");return 1;}
+        const auto entry=value.toObject();const QString id=entry.value("id").toString();
+        if(missingIds.removeAll(id)!=1){qCritical("Cere avatar catalog contains an unsupported or duplicate id: %s",qPrintable(id));return 1;}
+        const QString portrait=entry.value("portrait").toString(),rigName=entry.value("rig").toString();
+        QJsonObject rig;
+        if(portrait.isEmpty()||rigName.isEmpty()||!requireAsset(portrait)||!loadObject(rigName,&rig))return 1;
+        const QString texture=rig.value("texture").toString(baseTexture);
+        if(texture.isEmpty()||!requireAsset(texture))return 1;
+    }
+    if(!missingIds.isEmpty()){
+        qCritical("Cere avatar catalog belongs to an older installation; missing: %s",qPrintable(missingIds.join(", ")));return 1;
+    }
     Controller controller(root,parser.isSet("overlay"));active=&controller;
     controller.start(parser.isSet("show"),parser.isSet("toggle"));
     return app.exec();

@@ -13,9 +13,10 @@ var groups = [
 
 var categories = [
     {id: "companion", group: "cere", label: "Companion", icon: "desktop",
-        blurb: "Where she sits, how big she is, and whether she wanders. Profiles calm her down when you need to focus.",
-        keywords: "pet window desktop size placement position dock home monitor login startup profile always on top",
+        blurb: "How your companion looks, where they sit, and whether they wander. Profiles reduce distractions when you need to focus.",
+        keywords: "appearance avatar character theme color colour cere daemona jade nova soap tactical tan pet window desktop size placement position dock home monitor login startup profile always on top",
         settings: [
+            {label: "Avatar & colors", target: "avatarSelection", keywords: "appearance character cere daemona jade nova soap portrait skin theme colour color black red crimson blue violet purple tactical tan"},
             {label: "Desktop profile", target: "desktopProfile", keywords: "normal focus gaming presentation mode"},
             {label: "Always on top", target: "alwaysOnTop", keywords: "topmost above fullscreen windows"},
             {label: "Show or hide companion", target: "hideCere", keywords: "hidden visible pet cere"},
@@ -26,16 +27,15 @@ var categories = [
             {label: "Interface size", target: "interfaceScale", keywords: "zoom scale text panel"}
         ]},
     {id: "personality", group: "cere", label: "Personality", icon: "edit",
-        blurb: "Her name, appearance and conversation style. Choose an avatar and shape her tone and attitude.",
-        keywords: "tone style manner prompt character attitude identity appearance avatar name daemona jade nova",
+        blurb: "Your companion’s name and conversation style. Shape their tone and attitude.",
+        keywords: "tone style manner prompt attitude identity name",
         settings: [
             {label: "Assistant name", target: "assistantName", keywords: "rename identity call nickname"},
-            {label: "Avatar & colors", target: "avatarSelection", keywords: "appearance character cere daemona jade nova portrait skin theme colour color black red crimson blue violet purple"},
             {label: "Personality text", target: "personalityText", keywords: "prompt instructions tone style edit"},
             {label: "Restore default personality", target: "personalityReset", keywords: "reset original"}
         ]},
     {id: "voice", group: "cere", label: "Voice", icon: "microphone",
-        blurb: "How she sounds when she reads to you, and how she hears you.",
+        blurb: "How replies sound when read aloud, and how voice input hears you.",
         keywords: "speech tts speak read aloud audio sound piper kokoro elevenlabs indextts whisper",
         settings: [
             {label: "Read replies aloud", target: "speechEnabled", keywords: "speech tts automatic"},
@@ -50,7 +50,7 @@ var categories = [
             {label: "Local voice input", target: "whisperExecutable", keywords: "whisper transcription microphone push to talk dictation"}
         ]},
     {id: "motion", group: "cere", label: "Motion & expressions", chip: "Motion", icon: "star",
-        blurb: "How she moves, breathes and reacts while she keeps you company.",
+        blurb: "How your companion moves, breathes and reacts while keeping you company.",
         keywords: "animation movement gestures expressions quiet reduced intensity idle energy preview",
         settings: [
             {label: "Quiet mode", target: "quietMode", keywords: "silence pause notifications speech animations"},
@@ -62,7 +62,7 @@ var categories = [
             {label: "Preview an expression", target: "animationPicker", keywords: "gesture animation wave nod giggle"}
         ]},
     {id: "connections", group: "assistant", label: "Connections", icon: "model",
-        blurb: "The models and keys she works with: your Ollama server, the coding CLIs and direct API access.",
+        blurb: "The available models and keys: your Ollama server, the coding CLIs and direct API access.",
         keywords: "ollama codex claude antigravity cli api keys openai anthropic google gemini models server host",
         settings: [
             {label: "Ollama server", target: "ollamaHost", keywords: "url host connect local"},
@@ -73,7 +73,7 @@ var categories = [
             {label: "Google AI API key", target: "apiKey_google", keywords: "gemini"}
         ]},
     {id: "knowledge", group: "assistant", label: "Knowledge", icon: "memory",
-        blurb: "What she can look up, and what she remembers across your projects.",
+        blurb: "What your companion can look up and remember across your projects.",
         keywords: "web search memory recall remember embeddings extraction graph searxng duckduckgo brave mojeek",
         settings: [
             {label: "Web search", target: "webSearchEnabled", keywords: "internet online lookup sources"},
@@ -86,7 +86,7 @@ var categories = [
             {label: "Manage project memory", target: "manageMemories", keywords: "facts notes forget correct inspector graph"}
         ]},
     {id: "assistance", group: "assistant", label: "AI assistance", icon: "shield",
-        blurb: "What she may do on your desktop, and when she has to ask you first.",
+        blurb: "What your companion may do on your desktop, and when permission is required.",
         keywords: "permissions bypass approvals desktop control categories grants power profile pause",
         settings: [
             {label: "Skip CLI permission prompts", target: "bypassCliPermissions", keywords: "bypass approvals cli"},
@@ -98,20 +98,20 @@ var categories = [
             {label: "Standing grants", target: "grantHour", keywords: "one hour project grant revoke broad"}
         ]},
     {id: "scripts", group: "assistant", label: "Saved scripts", chip: "Scripts", icon: "terminal",
-        blurb: "Commands you trust her with. Each one is reviewed in Desktop before it runs.",
+        blurb: "Commands you trust Cere to run. Each one is reviewed in Desktop before it runs.",
         keywords: "commands executable shell run working folder",
         settings: [
             {label: "Add a saved script", target: "addScript", keywords: "new command executable"}
         ]},
     {id: "mobile", group: "system", label: "Cere Mobile", icon: "chat",
-        blurb: "Take her along on your Android phone, paired over a network you choose.",
+        blurb: "Take Cere along on your Android phone, paired over a network you choose.",
         keywords: "android phone remote pairing qr wireguard tailscale lan devices gateway",
         settings: [
             {label: "Disable remote access", target: "disableRemote", keywords: "off stop gateway"},
             {label: "Pair a phone", target: "pairingResponse", keywords: "qr pairing response verify"}
         ]},
     {id: "telemetry", group: "system", label: "Workspace telemetry", chip: "Telemetry", icon: "context",
-        blurb: "Let her see recent shell and file activity, only in the workspaces you pick.",
+        blurb: "Share recent shell and file activity only from the workspaces you pick.",
         keywords: "shell hooks files activity fish bash zsh cere-run workspaces edits",
         settings: [
             {label: "Enable workspace telemetry", target: "telemetryEnabled", keywords: "activity listener watcher"},
@@ -121,7 +121,7 @@ var categories = [
             {label: "Include stderr from cere-run", target: "telemetryOutput", keywords: "errors output"}
         ]},
     {id: "application", group: "system", label: "Application", icon: "settings",
-        blurb: "Her shortcut, your backups, a health check, and the way out.",
+        blurb: "Cere’s shortcut, your backups, a health check and the way out.",
         keywords: "hyprland shortcut keybinding backup restore recovery health diagnostics quit exit",
         settings: [
             {label: "Copy Hyprland shortcut", target: "copyShortcut", keywords: "keybinding super toggle"},
@@ -157,10 +157,16 @@ function categoryOf(target) {
 }
 
 // A setting's own label beats its keywords, which beat a category; an exact category name leads.
+function containsWords(text, words) {
+    var tokens = text.toLowerCase().split(/[^a-z0-9]+/).filter(function (token) { return token.length > 0 })
+    return words.every(function (word) {
+        return tokens.some(function (token) { return token.indexOf(word) === 0 })
+    })
+}
 function rank(label, text, words) {
     var phrase = words.join(" ")
     label = label.toLowerCase()
-    if (!words.every(function (word) { return text.indexOf(word) >= 0 })) return 0
+    if (!containsWords(text, words)) return 0
     if (label === phrase) return 100
     if (label.indexOf(phrase) === 0) return 90
     if (label.indexOf(phrase) >= 0) return 80

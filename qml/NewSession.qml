@@ -125,7 +125,7 @@ CDialog {
         id:saveDefaults;objectName:"saveDefaults";visible:popup.general;text:"Save as my defaults"
         Accessible.description:"New conversations start with this provider, model, effort and mode"
     }
-    CText { visible:saveDefaults.visible&&saveDefaults.checked;text:"Next time, she’ll have a new conversation set up just like this. Titles, folders and trust stay your call; projects keep their own defaults.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { visible:saveDefaults.visible&&saveDefaults.checked;text:"Next time, a new conversation will use these settings. Titles, folders and trust stay your call; projects keep their own defaults.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CText { objectName:"newSessionError";visible:popup.error.length>0||popup.modelError.length>0;text:popup.error||popup.modelError;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     footerContent:Component { RowLayout {
         Layout.fillWidth:true

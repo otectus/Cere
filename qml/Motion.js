@@ -55,7 +55,7 @@ function create(seed) {
         entry:null, phase:"rest", nextBeat:1.6, beat:null, beatCount:0, lastBeat:-1,
         breathStart:0, inhale:1.8, exhale:2.9, breathPower:1,
         blinkAt:-10, nextBlink:null, blinkDouble:false, blink:0, blinkTime:0, lastBlink:0,
-        energy:"", mood:"neutral", life:{}, micro:{}}
+        energy:"", mood:"neutral", life:{}, micro:{}, carrying:{value:0,velocity:0}}
 }
 function configure(state, energy, mood) {
     state.energy=energy || state.catalog.defaultIdleProfile
@@ -159,7 +159,7 @@ function attention(state, enabled, hovered) {
     if (!b || !enabled || hovered) return {amount:0, side:0, kind:-1, label:"At ease"}
     var age = t-b.start, envelope = smooth(age/.65)*(1-smooth((age-b.duration+.9)/.9))
     return {amount:envelope*b.strength, side:b.side, kind:b.kind,
-            label:["Looking around", "Shifting her weight", "A little shoulder roll", "An inquisitive glance"][b.kind]}
+            label:["Looking around", "Shifting weight", "A little shoulder roll", "An inquisitive glance"][b.kind]}
 }
 function breathing(state) {
     var age = state.rhythmTime-state.breathStart
@@ -261,7 +261,7 @@ function sample(state, seconds, intensity, gazeX, gazeY, carryX, carryY, still, 
         movement.bodyTilt+=carryX*.012
     }
     if (state.clip.carry) {
-        movement.rotation-=clamp(carryX*.035,-4,4)
+        movement.rotation+=Math.sin(t*4.1)*2.5-clamp(carryX*.035,-4,4)
         movement.leftLeg+=Math.sin(t*4)*4; movement.rightLeg-=Math.sin(t*4)*4
         movement.y+=clamp(carryY*.012,-2,2)
     }
@@ -285,5 +285,8 @@ function sample(state, seconds, intensity, gazeX, gazeY, carryX, carryY, still, 
     result.pose=state.pose; result.keyIndex=state.keyIndex; result.phase=state.phase
     result.beat=amount>.1 ? idle.label : "At ease"; result.blink=state.blink
     result.breath=breath*intensity
+    if (still) { state.carrying.value=0; state.carrying.velocity=0 }
+    else spring(state.carrying,state.clip.carry ? 1 : 0,dt,11)
+    result.carried=clamp(state.carrying.value,0,1)
     return result
 }

@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import Cere.Native 1.0
 import "Motion.js" as Motion
+import "SurfaceMotion.js" as SurfaceMotion
 
 Item {
     id: player
@@ -20,6 +21,9 @@ Item {
     readonly property var visual: mirrorSource || player
     readonly property bool referenceArt: puppet.presentation === "reference"
     readonly property bool referenceStill: referenceArt && !visual.active
+    readonly property var surfaceCatalog: puppet.surfaceSequences || null
+    property var surfaceClock: SurfaceMotion.create()
+    property int surfaceFrame: 0
     property real intensity: settings.motionIntensity === undefined ? 0.7 : settings.motionIntensity
     readonly property bool exposed: visible && Window.window !== null && Window.window.visible && Window.window.visibility !== Window.Minimized
     property bool active: !mirrorSource && exposed && motion !== "quiet" && !settings.quiet && !settings.reducedMotion && intensity > 0
@@ -36,6 +40,8 @@ Item {
     property real gazeX: 0
     property real gazeY: 0
     property bool hovered: false
+    property point carryAnchor: Qt.point(.5, .3)
+    readonly property real carried: visual.rig.carried || 0
     property bool blinking: false
     property string phase: "rest"
     property string idleBeat: "At ease"
@@ -65,6 +71,8 @@ Item {
         blinking = false
         sequence = (animationCatalog.clips || {})[motion] || {keys:[{pose:0,ms:1000}],loop:true}
         Motion.select(clock, sequence, animationCatalog, motion)
+        SurfaceMotion.select(surfaceClock, surfaceCatalog, motion, sequence.loop || sequence.surfaceHold,
+                             active && referenceArt, sequence.surfaceStrength)
         configureLife()
         advance(0)
     }
@@ -75,6 +83,7 @@ Item {
         keyIndex = sample.keyIndex; pose = sample.pose
         shiftX = sample.x; shiftY = sample.y; angle = sample.rotation
         rig = sample
+        surfaceFrame = SurfaceMotion.sample(surfaceClock, seconds, active && referenceArt)
         phase = sample.phase; idleBeat = sample.beat; blinking = sample.blink > .1
 
     }
@@ -107,9 +116,18 @@ Item {
             pendingSeconds += frameTime
             // The reference surface is rasterized at full selected detail.
             // Keep its gentle motion at up to 60 Hz on high-refresh displays.
-            if (player.referenceArt && pendingSeconds < 1 / 60) return
-            player.advance(pendingSeconds)
-            pendingSeconds = 0
+            if (player.referenceArt) {
+                const step = 1 / 60
+                if (pendingSeconds < step - .0005) return
+                // Keep the remainder on 120/144 Hz monitors. Dropping it on
+                // every update turns a nominal 60 Hz player into a 48 Hz one.
+                const elapsed = Math.min(pendingSeconds, Math.floor((pendingSeconds + .0005) / step) * step)
+                player.advance(elapsed)
+                pendingSeconds -= elapsed
+            } else {
+                player.advance(pendingSeconds)
+                pendingSeconds = 0
+            }
             player.renderedFrames++
         }
     }
@@ -119,21 +137,29 @@ Item {
         height: Math.max(3, parent.height * .025)
         x: (parent.width - width) / 2; y: parent.height - height - 4
         radius: height / 2; color: Theme.petShadow
-        opacity: .65 + Math.min(0, player.visual.shiftY) * .035
+        opacity: (.65 + Math.min(0, player.visual.shiftY) * .035) * (1 - player.carried * .9)
     }
     Item {
         id: artwork
         width: parent.width * .96; height: parent.height * .96
         x: (parent.width - width) / 2 + (player.referenceStill ? 0 : player.visual.shiftX * (player.referenceArt ? .35 : 1)) * parent.width / 192
         y: parent.height - height - 5 + (player.referenceStill ? 0 : player.visual.shiftY * (player.referenceArt ? .35 : 1)) * parent.height / 208
-        rotation: player.referenceStill ? 0 : player.referenceArt ? Math.max(-3, Math.min(3, player.visual.angle * .35)) : player.visual.angle
-        transformOrigin: Item.Bottom
+        transform: Rotation {
+            // Suspend the drawing from the actual grab point, eased in/out on
+            // the shared motion clock so releasing it cannot snap its pivot.
+            origin.x: artwork.width * (.5 + (player.visual.carryAnchor.x - .5) * player.carried)
+            origin.y: artwork.height * (1 + (player.visual.carryAnchor.y - 1) * player.carried)
+            angle: player.referenceStill ? 0 : player.referenceArt
+                   ? Math.max(-7, Math.min(7, player.visual.angle * (.35 + .65 * player.carried)))
+                   : player.visual.angle
+        }
         AvatarPuppet {
             objectName: "avatarPuppet"
             anchors.fill: parent
             source: App.assetPath + player.puppet.texture
             definition: player.puppet
             pose: player.referenceStill ? ({}) : player.visual.rig
+            surfaceFrame: player.referenceStill ? 0 : player.visual.surfaceFrame
         }
     }
 

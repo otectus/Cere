@@ -12,6 +12,8 @@ QString MotionDirector::base() const {
     if(!m_context.connected)return "disconnected";
     if(m_context.waiting)return "waiting";
     if(m_context.problem)return "problem";
+    // Direct attention may react while a task runs; urgent states still win.
+    if(m_context.hovered&&!m_context.reduced&&m_context.intensity>0)return "hoverBlush";
     if(m_context.busy){
         if(m_context.activity=="speaking")return "speaking";
         if(m_context.activity=="thinking"||m_context.activity=="recalling")return "thinking";

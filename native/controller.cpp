@@ -123,7 +123,7 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
             entry.insert("puppet",definition);m_avatars.append(entry);
         }
     }
-    if(m_avatars.isEmpty())m_avatars.append(QVariantMap{{"id","cere"},{"label","Cere"},{"portrait","cere-portrait-expressions.png"},{"puppet",m_animations.value("puppet")}});
+    if(m_avatars.isEmpty())m_avatars.append(QVariantMap{{"id","cere"},{"label","Cere"},{"portrait","cere-portraits.png"},{"puppet",m_animations.value("puppet")}});
     // Compiled with the host so native dialogs and the overlay cannot lose their palette.
     QFile palettes(":/assets/palettes.json");
     if(palettes.open(QIODevice::ReadOnly))m_themes=QJsonDocument::fromJson(palettes.readAll()).object().toVariantMap();
@@ -573,22 +573,65 @@ void Controller::updateMask(){
     const QImage atlas(atlasPath);
     AvatarPuppet puppet;
     puppet.setDefinition(definition);puppet.setSource(QUrl::fromLocalFile(atlasPath));
-    QImage mask(192,208,QImage::Format_ARGB32_Premultiplied);mask.fill(Qt::transparent);
+    const auto parts=definition.value("parts").toList();
+    const QSize logicalMaskSize(192,208);
+    QVector<QImage> surfaceEnvelopes(parts.size());
+    if(puppet.ready()&&!atlas.isNull()){
+        const auto checkedCrop=[&atlas](const QVariant &value,QRect &crop){
+            const auto values=value.toList();
+            if(values.size()!=4)return false;
+            double numbers[4];
+            for(int i=0;i<4;++i){
+                bool ok=false;numbers[i]=values[i].toDouble(&ok);
+                if(!ok||!std::isfinite(numbers[i])||std::abs(numbers[i]-std::round(numbers[i]))>1e-6)return false;
+            }
+            if(numbers[0]<0||numbers[1]<0||numbers[2]<=0||numbers[3]<=0||
+                numbers[0]+numbers[2]>atlas.width()||numbers[1]+numbers[3]>atlas.height())return false;
+            crop=QRect(qRound(numbers[0]),qRound(numbers[1]),qRound(numbers[2]),qRound(numbers[3]));
+            return atlas.rect().contains(crop);
+        };
+        for(int partIndex=0;partIndex<parts.size();++partIndex){
+            const auto part=parts[partIndex].toMap();
+            if(!part.value("surfaceMotion").toBool())continue;
+            const auto logicalRect=part.value("rect").toList();
+            if(logicalRect.size()!=4)continue;
+            bool widthOk=false,heightOk=false;
+            const double width=logicalRect[2].toDouble(&widthOk),height=logicalRect[3].toDouble(&heightOk);
+            if(!widthOk||!heightOk||!std::isfinite(width)||!std::isfinite(height)||width<=0||height<=0)continue;
+            const QSize envelopeSize(std::clamp(int(std::ceil(width)),1,logicalMaskSize.width()),
+                                     std::clamp(int(std::ceil(height)),1,logicalMaskSize.height()));
+            QImage envelope(envelopeSize,QImage::Format_ARGB32_Premultiplied);envelope.fill(Qt::transparent);
+            QPainter envelopePainter(&envelope);envelopePainter.setRenderHint(QPainter::SmoothPixmapTransform);
+            bool drewCrop=false;
+            const auto addCrop=[&](const QVariant &value){
+                QRect crop;
+                if(!checkedCrop(value,crop))return;
+                envelopePainter.drawImage(QRectF(QPointF(0,0),QSizeF(envelopeSize)),atlas,crop);drewCrop=true;
+            };
+            addCrop(part.value("sourceRect"));
+            for(const auto &frameValue:part.value("surfaceFrames").toList())addCrop(frameValue.toMap().value("sourceRect"));
+            envelopePainter.end();
+            if(drewCrop)surfaceEnvelopes[partIndex]=envelope;
+        }
+    }
+    QImage mask(logicalMaskSize,QImage::Format_ARGB32_Premultiplied);mask.fill(Qt::transparent);
     QPainter painter(&mask);
     const auto poses=definition.value("poses").toMap();
     for(const auto &value:poses){
         puppet.setPose(value.toMap().value("joints").toMap());
         const auto bones=puppet.boneTransforms();
-        for(int angle:{-6,0,6}){
+        // Carrying rotates around the grab point. Cover every pivot within the
+        // artwork, as well as the ordinary bottom-center resting pivot.
+        for(const QPointF pivot:{QPointF(0,0),QPointF(192,0),QPointF(0,208),QPointF(192,208),QPointF(96,208)})for(int angle:{-7,0,7}){
             painter.save();
-            // Match GesturePlayer's 96% canvas and bottom-pivot root rotation.
-            painter.translate(96,203);painter.rotate(angle);
-            painter.translate(-92.16,-199.68);painter.scale(.96,.96);
-            for(const auto &entry:definition.value("parts").toList()){
-                const auto part=entry.toMap();
+            painter.translate(3.84+pivot.x()*.96,3.32+pivot.y()*.96);painter.rotate(angle);
+            painter.translate(-pivot.x()*.96,-pivot.y()*.96);painter.scale(.96,.96);
+            for(int partIndex=0;partIndex<parts.size();++partIndex){
+                const auto part=parts[partIndex].toMap();
                 const auto matrix=bones.value(part.value("bone").toString()).toList();
                 const auto source=part.value("sourceRect").toList(),rect=part.value("rect").toList();
-                if(matrix.size()!=6||source.size()!=4||rect.size()!=4)continue;
+                const QImage &surfaceEnvelope=surfaceEnvelopes[partIndex];
+                if(matrix.size()!=6||rect.size()!=4||(surfaceEnvelope.isNull()&&source.size()!=4))continue;
                 painter.save();
                 painter.setTransform(QTransform(matrix[0].toDouble(),matrix[2].toDouble(),
                     matrix[1].toDouble(),matrix[3].toDouble(),matrix[4].toDouble(),matrix[5].toDouble()),true);
@@ -598,7 +641,9 @@ void Controller::updateMask(){
                 if(part.value("mirrorX").toBool()){
                     painter.translate(target.center().x()*2,0);painter.scale(-1,1);
                 }
-                painter.drawImage(target,atlas,crop);painter.restore();
+                if(surfaceEnvelope.isNull())painter.drawImage(target,atlas,crop);
+                else painter.drawImage(target,surfaceEnvelope);
+                painter.restore();
             }
             painter.restore();
         }
@@ -618,8 +663,11 @@ void Controller::updateMask(){
     region=region.united(region.translated(-margin,0)).united(region.translated(margin,0));
     region=region.united(region.translated(0,-margin)).united(region.translated(0,margin));
     const qreal badgeScale=std::clamp(m_pet->width()/192.,.8,1.5);
-    const int badgeWidth=qRound(116*badgeScale),badgeRight=std::max(4,qRound(m_pet->width()*.07));
-    region+=QRect(std::max(0,m_pet->width()-badgeRight-badgeWidth),0,badgeWidth,qRound(34*badgeScale));
+    const qreal badgeWidth=116*badgeScale,badgeRight=std::max(4.,m_pet->width()*.07);
+    // QML margins are fractional; include the antialiased border as well as
+    // rounding outwards so the software renderer's last column stays clickable.
+    region+=QRectF(std::max(0.,m_pet->width()-badgeRight-badgeWidth),0,badgeWidth,34*badgeScale)
+        .adjusted(-1,0,1,1).toAlignedRect();
     m_pet->setMask(region.intersected(QRect(QPoint(0,0),m_pet->size())));
 }
 void Controller::placePet(QPoint global,QScreen *screen,bool persist,bool roaming){
@@ -996,7 +1044,7 @@ void Controller::refreshMotion(){
     context.intensity=settings.value("motionIntensity",.7).toDouble();
     context.idleEnergy=settings.value("idleEnergy",m_animations.value("defaultIdleProfile")).toString();
     if(context.idleEnergy!=m_director.context().idleEnergy)m_idleTimer.stop();
-    context.connected=connected();context.dragging=m_dragging;
+    context.connected=connected();context.dragging=m_dragging;context.hovered=m_petHovered;
     context.waiting=!m_state.value("approvals").toList().isEmpty();
     const auto panels=m_state.value("panels").toMap();
     context.interacting=m_petInteracting;
@@ -1128,6 +1176,15 @@ void Controller::preview(const QString &state){
     if(!m_animations.value("clips").toMap().contains(state))return;
     if(m_state.value("settings").toMap().value("topmost",true).toBool()==m_overlay)playMotion(state);
     else rpc("ui.animate",{{"name",state}});
+}
+void Controller::setPetHovered(bool hovered){
+    if(m_petHovered==hovered)return;
+    m_petHovered=hovered;refreshMotion();
+}
+void Controller::clickPet(){
+    togglePanel();
+    // Opening the panel may request listen; the explicit click reaction follows it.
+    preview("clickBlush");
 }
 void Controller::stopRoaming(bool persist){
     m_follower.reset(m_petPosition);m_petVelocity={};m_petSubpixel={};

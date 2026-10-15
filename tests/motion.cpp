@@ -5,7 +5,6 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QImage>
 
 class MotionCheck : public QObject {
     Q_OBJECT
@@ -18,27 +17,20 @@ private slots:
         catalog=QJsonDocument::fromJson(file.readAll()).object().toVariantMap();
         QVERIFY(!catalog.value("clips").toMap().isEmpty());
     }
-    void assetAndTimelineIntegrity() {
-        QImage texture(QString(CERE_SOURCE_DIR)+"/assets/"+catalog.value("texture").toString());
-        QVERIFY(!texture.isNull());QVERIFY(texture.hasAlphaChannel());
+    void poseAndTimelineIntegrity() {
+        // Raster bounds/alpha belong to avatarpuppet's per-avatar surface tests.
+        // The motion catalog contains semantic stances, not retired sprite cells.
+        QFile rigFile(QString(CERE_SOURCE_DIR)+"/assets/"+catalog.value("rig").toString());
+        QVERIFY(rigFile.open(QIODevice::ReadOnly));
+        const auto poses=QJsonDocument::fromJson(rigFile.readAll()).object().value("poses").toObject();
         const auto frames=catalog.value("frames").toList();
-        for(const auto &frame:frames){
-            const auto f=frame.toMap();
-            const QImage texture(QString(CERE_SOURCE_DIR)+"/assets/"+f.value("texture",catalog.value("texture")).toString());
-            QVERIFY(!texture.isNull());QVERIFY(texture.hasAlphaChannel());
-            QRect rect(f.value("x").toInt(),f.value("y").toInt(),f.value("width").toInt(),f.value("height").toInt());
-            QVERIFY(rect.isValid());QVERIFY(texture.rect().contains(rect));
-            int clear=0,solid=0,antialiased=0;
-            for(int y=rect.top();y<=rect.bottom();++y)for(int x=rect.left();x<=rect.right();++x){
-                const int alpha=qAlpha(texture.pixel(x,y));
-                if(alpha==0)++clear;else if(alpha>=245)++solid;else ++antialiased;
-            }
-            const int area=rect.width()*rect.height();
-            QVERIFY(clear>area/5);QVERIFY(solid>area/5);QVERIFY(antialiased>20);
-            for(int x=rect.left();x<=rect.right();++x){
-                QVERIFY(qAlpha(texture.pixel(x,rect.top()))<=8);
-                QVERIFY(qAlpha(texture.pixel(x,rect.bottom()))<=8);
-            }
+        QVERIFY(!frames.isEmpty());
+        for(int i=0;i<frames.size();++i){
+            const auto frame=frames.at(i).toMap();
+            QVERIFY2(poses.contains(QString::number(i)),qPrintable(QString::number(i)));
+            QVERIFY(!frame.value("family").toString().isEmpty());
+            QVERIFY(frame.contains("eyesVisible"));
+            QVERIFY(!frame.contains("texture"));
         }
         const auto clips=catalog.value("clips").toMap();
         for(auto i=clips.begin();i!=clips.end();++i){
@@ -147,6 +139,25 @@ private slots:
         QVERIFY(d.play("timer"));QVERIFY(!d.finish(old));QCOMPARE(d.name(),QString("timer"));
         QVERIFY(!d.play("unknown"));QVERIFY(!d.play("runRight"));
         QVERIFY(d.finish(d.revision()));QCOMPARE(d.name(),QString("idle"));
+    }
+    void directAttentionBlushAndUrgentPriorities(){
+        MotionDirector d(catalog,1);auto c=visible();c.busy=true;c.activity="thinking";
+        d.setContext(c);QCOMPARE(d.name(),QString("thinking"));
+        c.hovered=true;d.setContext(c);QCOMPARE(d.name(),QString("hoverBlush"));QVERIFY(!d.canIdle());
+        QVERIFY(d.play("clickBlush"));const auto token=d.revision();QVERIFY(d.duration()>2000);
+        c.panel=true;c.listening=true;d.setContext(c);QCOMPARE(d.revision(),token);
+        QVERIFY(d.finish(token));QCOMPARE(d.name(),QString("hoverBlush"));
+        c.hovered=false;d.setContext(c);QCOMPARE(d.name(),QString("thinking"));
+        for(int guard=0;guard<6;++guard){
+            auto blocked=c;blocked.hovered=true;
+            if(guard==0)blocked.waiting=true;if(guard==1)blocked.problem=true;
+            if(guard==2)blocked.connected=false;if(guard==3)blocked.dragging=true;
+            if(guard==4)blocked.quiet=true;if(guard==5)blocked.reduced=true;
+            d.setContext(blocked);QVERIFY(d.name()!=QString("hoverBlush"));QVERIFY(!d.play("clickBlush"));
+        }
+        c.hovered=true;c.intensity=0;d.setContext(c);QVERIFY(d.name()!=QString("hoverBlush"));QVERIFY(!d.play("clickBlush"));
+        c.intensity=1;d.setContext(c);QVERIFY(d.play("clickBlush"));const auto interrupted=d.revision();
+        c.waiting=true;d.setContext(c);QCOMPARE(d.name(),QString("waiting"));QVERIFY(!d.finish(interrupted));
     }
     void statesAndStaticAccessibility(){
         MotionDirector d(catalog,2);auto c=visible();c.listening=true;d.setContext(c);QCOMPARE(d.name(),QString("listening"));

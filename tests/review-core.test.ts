@@ -390,19 +390,3 @@ test('F-046 history discovery uses the configured Codex executable', async t => 
   const history = await core.history('codex');
   assert.deepEqual(history.map((h: any) => [h.nativeId, h.title]), [['fixture-history-thread', 'Fixture history']]);
 });
-
-test('F-043 atlas extraction names its external input and writes nothing without it', async (t) => {
-  const output = await mkdtemp(join(tmpdir(), 'cere-atlas-'));
-  t.after(() => rm(output, { recursive: true, force: true }));
-  const child = spawn('python3', [resolve('tools/prepare-assets.py'), '--input', join(output, 'missing.gif'), '--output', join(output, 'assets')], { stdio: ['ignore', 'pipe', 'pipe'] });
-  let stderr = '';
-  child.stderr.on('data', chunk => { stderr += chunk; });
-  const [code] = await once(child, 'exit');
-  assert.equal(code, 1);
-  assert.match(stderr, /not distributed with this repository/);
-  assert.match(stderr, /--input PATH/);
-  assert.deepEqual(await readdir(output), [], 'the preflight fails before creating or writing anything');
-  const readme = await readFile('README.md', 'utf8');
-  assert.match(readme, /prepare-assets\.py --input PATH/);
-  assert.doesNotMatch(readme, /original GIFs remain intact/);
-});

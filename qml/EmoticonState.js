@@ -51,7 +51,7 @@ var motionFaces = {
     listening:"listening", attentiveRest:"listening", send:"starting", copy:"success", capture:"focused",
     resize:"surprised", goodbye:"greeting", smug:"cheeky", cheeky:"cheeky", idleSmug:"cheeky",
     idleCurious:"curious", idleSoft:"tender", disbelief:"skeptical", headShake:"skeptical",
-    shy:"tender", ponder:"thinking", doubleTake:"surprised", fistPump:"success", glassesAdjust:"focused"
+    shy:"tender", hoverBlush:"tender", clickBlush:"tender", ponder:"thinking", doubleTake:"surprised", fistPump:"success", glassesAdjust:"focused"
 }
 function make(key, session, count, detail) {
     var entry = faces[key] || faces.idle
@@ -79,6 +79,9 @@ function resolve(input) {
     if (waiting) return make("question", waiting)
     var problem = sessions.filter(function(s) { return s.status === "error" && (s.id === selectedId || now - s.updated < 90000) })[0]
     if (problem) return make("error", problem)
+    // Match deliberate pointer reactions without hiding urgent status.
+    if (input.motion === "dragging") return make("pickedUp")
+    if (input.motion === "hoverBlush" || input.motion === "clickBlush") return make("tender")
     var active = sessions.filter(function(s) { return ["starting","working","stopping"].indexOf(s.status) >= 0 })
     if (active.length) {
         var task = active.filter(function(s) { return s.id === selectedId })[0] || active[0]

@@ -143,7 +143,7 @@ QImage makeAtlas()
 
 QImage makeSurfaceAtlas(const QColor &bodyColor)
 {
-    QImage atlas(64, 32, QImage::Format_ARGB32_Premultiplied);
+    QImage atlas(96, 32, QImage::Format_ARGB32_Premultiplied);
     atlas.fill(Qt::transparent);
     QPainter painter(&atlas);
     painter.setRenderHint(QPainter::Antialiasing, false);
@@ -163,6 +163,26 @@ QImage makeSurfaceAtlas(const QColor &bodyColor)
     closed.fillRect(QRect(10 + 32, 8, 12, 4), QColor(245, 245, 235));
     closed.fillRect(QRect(12 + 32, 10, 2, 1), QColor(30, 45, 65));
     closed.fillRect(QRect(18 + 32, 10, 2, 1), QColor(30, 45, 65));
+    // A half-resolution posed frame and matching blink frame.
+    closed.setBrush(bodyColor.darker(145));
+    closed.setPen(Qt::NoPen);
+    closed.drawRoundedRect(QRectF(67, 1, 10, 14), 3, 3);
+    closed.fillRect(QRect(69, 4, 6, 3), QColor(245, 245, 235));
+    closed.fillRect(QRect(70, 5, 1, 1), QColor(30, 45, 65));
+    closed.fillRect(QRect(73, 5, 1, 1), QColor(30, 45, 65));
+    closed.end();
+    const QImage posedOpen = atlas.copy(64, 0, 16, 16);
+    QPainter posedFrames(&atlas);
+    posedFrames.drawImage(QPoint(80, 0), posedOpen);
+    posedFrames.fillRect(QRect(69 + 16, 4, 6, 3), QColor(245, 245, 235));
+    posedFrames.fillRect(QRect(70 + 16, 6, 1, 1), QColor(30, 45, 65));
+    posedFrames.fillRect(QRect(73 + 16, 6, 1, 1), QColor(30, 45, 65));
+    // This frame deliberately has no blinkSourceRect.
+    posedFrames.setBrush(bodyColor.lighter(145));
+    posedFrames.drawRoundedRect(QRectF(67, 17, 10, 14), 3, 3);
+    posedFrames.fillRect(QRect(69, 20, 6, 3), QColor(245, 245, 235));
+    posedFrames.fillRect(QRect(70, 21, 1, 1), QColor(30, 45, 65));
+    posedFrames.fillRect(QRect(73, 21, 1, 1), QColor(30, 45, 65));
     return atlas;
 }
 
@@ -178,7 +198,14 @@ QVariantMap surfaceDefinition()
                  {QStringLiteral("sourceRect"), QVariantList{0, 0, 32, 32}},
                  {QStringLiteral("blinkSourceRect"), QVariantList{32, 0, 32, 32}},
                  {QStringLiteral("rect"), QVariantList{0, 0, 32, 32}},
-                 {QStringLiteral("surfaceMotion"), true}}}}};
+                 {QStringLiteral("surfaceMotion"), true},
+                 {QStringLiteral("surfaceFrames"), QVariantList{
+                      QVariantMap{{QStringLiteral("sourceRect"),
+                                   QVariantList{64, 0, 16, 16}},
+                                  {QStringLiteral("blinkSourceRect"),
+                                   QVariantList{80, 0, 16, 16}}},
+                      QVariantMap{{QStringLiteral("sourceRect"),
+                                   QVariantList{64, 16, 16, 16}}}}}}}}};
 }
 
 bool referenceSurfaceImageChecks()
@@ -637,8 +664,59 @@ bool productionDefinitionChecks(const QString &root, QVariantMap *definition,
                         "connected surface artwork must provide an in-atlas matching blink frame");
         }
     }
-    ok &= check(surfacePartCount == 0 || (surfacePartCount == 1 && parts.size() == 1),
-                "connected surface artwork must be represented by one full-body part");
+    ok &= check(surfacePartCount == 1 && parts.size() == 1,
+                "every selectable avatar must use one connected full-body surface");
+    if (surfacePartCount == 1 && parts.size() == 1) {
+        ok &= check(definition->value(QStringLiteral("presentation")).toString()
+                            == QStringLiteral("reference"),
+                    "connected avatar artwork must use reference presentation");
+        const QVariantMap surfacePart = parts.first().toMap();
+        const QVariantList surfaceFrames = surfacePart.value(
+                QStringLiteral("surfaceFrames")).toList();
+        const QVariantMap surfaceSequences = definition->value(
+                QStringLiteral("surfaceSequences")).toMap();
+        const QVariantMap routes = surfaceSequences.value(QStringLiteral("routes")).toMap();
+        const QVariantMap motions = surfaceSequences.value(QStringLiteral("motions")).toMap();
+        const QMap<QString, QStringList> requiredRoutes{
+            {QStringLiteral("wave"), QStringList{QStringLiteral("wave")}},
+            {QStringLiteral("thinking"), QStringList{QStringLiteral("thinking")}},
+            {QStringLiteral("present"), QStringList{QStringLiteral("explainOpen")}},
+            {QStringLiteral("celebrate"), QStringList{QStringLiteral("celebrate")}},
+            {QStringLiteral("shy"), QStringList{QStringLiteral("shy"), QStringLiteral("blush"), QStringLiteral("hoverBlush"), QStringLiteral("clickBlush")}},
+            {QStringLiteral("carry"), QStringList{QStringLiteral("dragging")}}
+        };
+        for (auto route = requiredRoutes.cbegin(); route != requiredRoutes.cend(); ++route) {
+            const QVariantMap sequence = routes.value(route.key()).toMap();
+            const QVariantList frames = sequence.value(QStringLiteral("frames")).toList();
+            bool frameIdsValid = frames.size() >= 30 && !frames.isEmpty()
+                    && frames.first().toInt() == 0;
+            for (const QVariant &frameValue : frames) {
+                bool idOk = false;
+                const int frame = frameValue.toInt(&idOk);
+                frameIdsValid &= idOk && frame >= 0 && frame <= surfaceFrames.size();
+            }
+            ok &= check(frameIdsValid,
+                        QStringLiteral("connected %1 route must contain dense valid frame IDs")
+                                .arg(route.key()));
+            bool timingOk = false;
+            const qreal frameMs = sequence.value(QStringLiteral("frameMs")).toDouble(&timingOk);
+            ok &= check(timingOk && frameMs > 0 && frameMs <= 17.0,
+                        QStringLiteral("connected %1 route must animate at approximately 60 Hz")
+                                .arg(route.key()));
+            for (const QString &motion : route.value())
+                ok &= check(motions.value(motion).toString() == route.key(),
+                            QStringLiteral("motion '%1' must select the connected %2 route")
+                                    .arg(motion, route.key()));
+            if (!frames.isEmpty()) {
+                const int endpoint = frames.last().toInt();
+                const QVariantMap endpointFrame = endpoint == 0
+                        ? surfacePart : surfaceFrames.value(endpoint - 1).toMap();
+                ok &= check(endpointFrame.value(QStringLiteral("blinkSourceRect")).toList().size() == 4,
+                            QStringLiteral("connected %1 endpoint must provide a blink frame")
+                                    .arg(route.key()));
+            }
+        }
+    }
 
     for (auto pose = poses.cbegin(); pose != poses.cend(); ++pose) {
         const QVariantMap poseMap = pose.value().toMap();
@@ -873,6 +951,58 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
     ok &= check(!thinking.isNull() && thinking != wave,
                 "production thinking pose must repaint differently from wave");
 
+    if (definition.value(QStringLiteral("presentation")).toString()
+            == QStringLiteral("reference")) {
+        puppet.setPose({});
+        puppet.setSurfaceFrame(0);
+        const QImage neutral = synchronizedGrab(window);
+        const QVariantMap routes = definition.value(QStringLiteral("surfaceSequences")).toMap()
+                                           .value(QStringLiteral("routes")).toMap();
+        const QStringList routeNames{QStringLiteral("wave"), QStringLiteral("thinking"),
+                                     QStringLiteral("present"), QStringLiteral("celebrate"),
+                                     QStringLiteral("shy"), QStringLiteral("carry")};
+        QImage routeSheet(192 * routeNames.size(), 232, QImage::Format_ARGB32);
+        routeSheet.fill(QColor("#20232e"));
+        QPainter routePainter(&routeSheet);
+        for (int routeIndex = 0; routeIndex < routeNames.size(); ++routeIndex) {
+            const QString routeName = routeNames[routeIndex];
+            const QVariantList frames = routes.value(routeName).toMap()
+                                                .value(QStringLiteral("frames")).toList();
+            if (frames.isEmpty()) {
+                ok &= check(false, QStringLiteral("production %1 route is missing").arg(routeName));
+                continue;
+            }
+            puppet.setSurfaceFrame(frames.last().toInt());
+            const QImage endpoint = synchronizedGrab(window);
+            int painted = 0;
+            bool clipped = false;
+            for (int y = 0; y < endpoint.height(); ++y) {
+                for (int x = 0; x < endpoint.width(); ++x) {
+                    painted += qAlpha(endpoint.pixel(x, y)) > 200;
+                    if ((x == 0 || y == 0 || x == endpoint.width() - 1
+                         || y == endpoint.height() - 1)
+                            && qAlpha(endpoint.pixel(x, y)) > 128)
+                        clipped = true;
+                }
+            }
+            ok &= check(!endpoint.isNull() && endpoint != neutral && painted > 3000 && !clipped,
+                        QStringLiteral("production %1 endpoint must be distinct, visible, and unclipped")
+                                .arg(routeName));
+            routePainter.setPen(Qt::white);
+            routePainter.drawText(routeIndex * 192 + 4, 18, routeName);
+            routePainter.drawImage(routeIndex * 192, 24, endpoint);
+        }
+        routePainter.end();
+        QDir().mkpath("/tmp/cere-motion-evidence");
+        const auto avatar = definition.value("texture").toString().section('-', 0, 0);
+        const auto backend = window.rendererInterface()->graphicsApi()
+                == QSGRendererInterface::Software ? "software" : "opengl";
+        ok &= check(routeSheet.save(QString("/tmp/cere-motion-evidence/routes-%1-%2.png")
+                                            .arg(avatar, backend)),
+                    "connected route contact sheet must save");
+        puppet.setSurfaceFrame(0);
+    }
+
     QImage sheet(192 * 8, 232 * 4, QImage::Format_ARGB32);
     sheet.fill(QColor("#20232e"));
     QPainter painter(&sheet);
@@ -1088,6 +1218,58 @@ bool malformedChecks(const QUrl &source)
                                  {QStringLiteral("blinkSourceRect"),
                                   QVariantList{96, 0, 16, 16}}}),
                   "out-of-atlas surface blink frame must be rejected visibly");
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceFrames"), QVariantList{}}}),
+                  "surfaceFrames on a rigid part must be rejected visibly");
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceMotion"), true},
+                                 {QStringLiteral("surfaceFrames"), QStringLiteral("invalid")}}),
+                  "non-list surfaceFrames metadata must be rejected visibly");
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceMotion"), true},
+                                 {QStringLiteral("surfaceFrames"), QVariantList{17}}}),
+                  "non-object surface frame metadata must be rejected visibly");
+    QVariantList tooManyFrames;
+    for (int index = 0; index < 385; ++index)
+        tooManyFrames.append(QVariantMap{{QStringLiteral("sourceRect"),
+                                          QVariantList{16, 0, 16, 16}}});
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceMotion"), true},
+                                 {QStringLiteral("surfaceFrames"), tooManyFrames}}),
+                  "more than 384 surface frames must be rejected visibly");
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceMotion"), true},
+                                 {QStringLiteral("surfaceFrames"), QVariantList{
+                                      QVariantMap{{QStringLiteral("sourceRect"),
+                                                   QVariantList{16.5, 0, 16, 16}}}}}}),
+                  "non-integral surface frame rectangles must be rejected visibly");
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceMotion"), true},
+                                 {QStringLiteral("surfaceFrames"), QVariantList{
+                                      QVariantMap{{QStringLiteral("sourceRect"),
+                                                   QVariantList{QStringLiteral("16"), 0,
+                                                                16, 16}}}}}}),
+                  "non-numeric surface frame coordinates must be rejected visibly");
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceMotion"), true},
+                                 {QStringLiteral("surfaceFrames"), QVariantList{
+                                      QVariantMap{{QStringLiteral("sourceRect"),
+                                                   QVariantList{16, 0, 8, 16}}}}}}),
+                  "surface frame aspect mismatch must be rejected visibly");
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceMotion"), true},
+                                 {QStringLiteral("surfaceFrames"), QVariantList{
+                                      QVariantMap{{QStringLiteral("sourceRect"),
+                                                   QVariantList{16, 0, 16, 16}},
+                                                  {QStringLiteral("blinkSourceRect"),
+                                                   QVariantList{32, 0, 8, 16}}}}}}),
+                  "surface frame blink dimensions must be rejected visibly");
+    ok &= rejects(withFirstPart(validDefinition(),
+                                {{QStringLiteral("surfaceMotion"), true},
+                                 {QStringLiteral("surfaceFrames"), QVariantList{
+                                      QVariantMap{{QStringLiteral("sourceRect"),
+                                                   QVariantList{96, 0, 16, 16}}}}}}),
+                  "out-of-atlas surface frame rectangles must be rejected visibly");
     return ok;
 }
 
@@ -1181,7 +1363,8 @@ bool surfaceRenderChecks(const QUrl &firstSource, const QUrl &secondSource)
     puppet.setSize({64, 64});
     puppet.setSource(firstSource);
     puppet.setDefinition(surfaceDefinition());
-    ok &= check(puppet.ready() && puppet.error().isEmpty(),
+    ok &= check(puppet.ready() && puppet.error().isEmpty()
+                        && puppet.surfaceFrame() == 0,
                 "valid surface puppet must become ready");
 
     const QImage rest = synchronizedGrab(window);
@@ -1211,11 +1394,62 @@ bool surfaceRenderChecks(const QUrl &firstSource, const QUrl &secondSource)
                 "authored eye-close must repaint the surface blink frame on the selected backend");
 
     puppet.setPose({});
+    puppet.setSurfaceFrame(1);
+    const QImage posed = synchronizedGrab(window);
+    ok &= check(puppet.surfaceFrame() == 1 && !posed.isNull() && posed != rest,
+                "selecting a surface frame must visibly replace neutral pixels");
+    puppet.setPose({{QStringLiteral("blink"), 1.0}});
+    const QImage posedBlink = synchronizedGrab(window);
+    ok &= check(!posedBlink.isNull() && posedBlink != posed,
+                "a selected surface frame must use its own blink crop");
+
+    // Authored playback repeatedly replaces the sole prepared CPU frame and
+    // the selected GPU texture. Exercise forward/reverse switching on both
+    // scene-graph backends so bounded caches cannot leave dangling images.
+    for (int step = 0; step < 18; ++step) {
+        const int frame = step % 3;
+        puppet.setPose(frame == 1
+                ? QVariantMap{{QStringLiteral("blink"), qreal(step % 2)}}
+                : QVariantMap{});
+        puppet.setSurfaceFrame(frame);
+        const QImage switchedFrame = synchronizedGrab(window);
+        ok &= check(puppet.ready() && !switchedFrame.isNull(),
+                    "repeated surface frame replacement must remain ready and visible");
+    }
+
+    puppet.setPose({});
+    puppet.setSurfaceFrame(2);
+    const QImage noBlinkFrame = synchronizedGrab(window);
+    puppet.setPose({{QStringLiteral("eyeClose"), 1.0}});
+    const QImage suppressedBlink = synchronizedGrab(window);
+    ok &= check(!noBlinkFrame.isNull() && suppressedBlink == noBlinkFrame,
+                "a surface frame without blinkSourceRect must suppress blinking");
+
+    puppet.setPose({});
+    puppet.setSurfaceFrame(999);
+    const QImage fallback = synchronizedGrab(window);
+    ok &= check(fallback == rest,
+                "an out-of-range surface frame must safely render frame zero");
+
+    QVariantMap oneFrameDefinition = surfaceDefinition();
+    QVariantList oneFrameParts = oneFrameDefinition.value(QStringLiteral("parts")).toList();
+    QVariantMap oneFramePart = oneFrameParts.first().toMap();
+    oneFramePart.remove(QStringLiteral("surfaceFrames"));
+    oneFrameParts[0] = oneFramePart;
+    oneFrameDefinition.insert(QStringLiteral("parts"), oneFrameParts);
+    puppet.setSurfaceFrame(1);
+    puppet.setDefinition(oneFrameDefinition);
+    ok &= check(puppet.ready() && synchronizedGrab(window) == rest,
+                "switching to a definition without the selected frame must fall back safely");
+
+    puppet.setDefinition(surfaceDefinition());
+    puppet.setSurfaceFrame(1);
+    const QImage firstPosedSource = synchronizedGrab(window);
     puppet.setSource(secondSource);
     ok &= check(puppet.ready(), "surface source switch must remain ready");
     const QImage switched = synchronizedGrab(window);
-    ok &= check(!switched.isNull() && switched != rest,
-                "surface source switch must replace the cached texture");
+    ok &= check(!switched.isNull() && switched != firstPosedSource,
+                "surface source switch must replace the selected frame texture");
     window.hide();
     return ok;
 }
@@ -1260,7 +1494,7 @@ int main(int argc, char **argv)
     QFile avatars(root + "/assets/avatars.json");
     if (!check(avatars.open(QIODevice::ReadOnly), "avatar catalog must open")) return 1;
     const auto entries=QJsonDocument::fromJson(avatars.readAll()).array();
-    ok &= check(entries.size()==4, "all four selectable avatars must be checked");
+    ok &= check(entries.size()==5, "all five selectable connected avatars must be checked");
     // Match the application: switch every avatar on one live scene graph.
     QQuickWindow productionWindow;
     productionWindow.setColor(Qt::transparent);

@@ -50,7 +50,7 @@ test('selecting an interruption retains every joint value and velocity', () => {
 });
 
 test('catalogue and puppet references are complete and valid', () => {
-  assert.equal(Object.keys(catalog.clips).length, 74);
+  assert.equal(Object.keys(catalog.clips).length, 76);
   assert.equal(catalog.frames.length, 32);
   assert.ok(catalog.rig && Object.keys(catalog.puppet.poses).length >= catalog.frames.length);
   for (const [name, config] of Object.entries<any>(catalog.puppet.channels)) {
@@ -417,4 +417,22 @@ test('all eleven shared moods have valid reactions, weights and idle life adjust
   const happy=stateFor('idle'),sleepy=stateFor('idle');
   motion.configure(happy,'lively','happy');motion.configure(sleepy,'lively','sleepy');
   assert.ok(happy.life.sway>sleepy.life.sway);assert.ok(sleepy.life.pace<1);
+});
+
+test('carrying eases its pivot on the shared clock and sways while held still', () => {
+  const state=stateFor('dragging');
+  const first=sample(state,1/60);
+  assert.ok(first.carried>0&&first.carried<.1,'pickup pivot eases in');
+  const angles:number[]=[];
+  for(let i=0;i<150;i++)angles.push(sample(state,1/60).rotation);
+  assert.ok(state.carrying.value>.99);
+  assert.ok(Math.max(...angles)-Math.min(...angles)>2,'held avatar continues to sway without cursor velocity');
+  motion.select(state,catalog.clips.land,catalog,'land');
+  const released=sample(state,1/60);
+  assert.ok(released.carried>.8&&released.carried<1,'release does not snap the pivot');
+  for(let i=0;i<120;i++)sample(state,1/60);
+  assert.ok(state.carrying.value<.001);
+  motion.select(state,catalog.clips.dragging,catalog,'dragging');
+  for(let i=0;i<30;i++)sample(state,1/60);
+  assert.equal(motion.sample(state,1/60,1,0,0,0,0,true,{}).carried,0,'accessibility restores a still pivot');
 });

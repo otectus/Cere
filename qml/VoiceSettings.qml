@@ -103,7 +103,7 @@ CSection {
     TuningSlider { visible:voiceSettings.settings.ttsProvider!=="indextts";settingKey:"speechRate";label:"Speaking speed";minimum:.5;maximum:2;suffix:"×" }
     TuningSlider { settingKey:"speechPitch";label:"Pitch · lower / higher";minimum:-6;maximum:6;increment:.5;neutral:0;decimals:1;suffix:" semitones";signed:true }
     TuningSlider { settingKey:"speechVolume";label:App.assistantName+"’s volume";displayScale:100;decimals:0;suffix:"%" }
-    CText { text:"Pitch changes tone without changing speed. Adjustments apply to new replies and Test voice. Volume affects her speech only; 0% mutes her voice.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { text:"Pitch changes tone without changing speed. Adjustments apply to new replies and Test voice. Volume affects speech only; 0% mutes the voice.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CButton {
         objectName:"resetVoiceTuning";text:"Reset voice adjustments";enabled:!voiceSettings.savingTuning
         onClicked:voiceSettings.saveTuning({speechRate:1,speechPitch:0,speechVolume:1})
@@ -117,7 +117,7 @@ CSection {
     }
     CText {
         objectName:"ttsStatus";font.pixelSize:Theme.secondary
-        text:voiceSettings.speech.error||voiceSettings.error||(voiceSettings.settings.speechVolume===0?"Voice muted · raise her volume to preview":voiceSettings.speech.state==="preparing"?"Preparing voice…":voiceSettings.speech.state==="speaking"?"Speaking · "+voiceSettings.speech.backend:voiceSettings.speech.backend?"Ready · "+voiceSettings.speech.backend:"Ready to test")
+        text:voiceSettings.speech.error||voiceSettings.error||(voiceSettings.settings.speechVolume===0?"Voice muted · raise the volume to preview":voiceSettings.speech.state==="preparing"?"Preparing voice…":voiceSettings.speech.state==="speaking"?"Speaking · "+voiceSettings.speech.backend:voiceSettings.speech.backend?"Ready · "+voiceSettings.speech.backend:"Ready to test")
         color:voiceSettings.speech.error||voiceSettings.error?Theme.danger:Theme.accentText
     }
     CText { visible:!voiceSettings.settings.ttsProvider||voiceSettings.settings.ttsProvider==="local";text:"Add a voice’s .onnx and .onnx.json files to ~/.local/share/piper/voices/ or Cere’s config/voices/ folder, then refresh. Test voice plays even in quiet mode.";color:Theme.muted;font.pixelSize:Theme.secondary }

@@ -19,3 +19,9 @@ snapshots/
 !.env.example
 *.pem
 *.key
+*.kate-swp
+*.swp
+# Local desktop validation state; keep artwork and visual acceptance captures.
+/artwork/avatars/validation/**/*.json
+/artwork/avatars/validation/**/*-geometry.txt
+/artwork/avatars/validation/**/user-service-*.txt

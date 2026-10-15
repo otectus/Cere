@@ -1,15 +1,13 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Cere.Native 1.0
 CSection {
     id:personality
     title:"Personality"
-    description:"Choose her appearance, what you call her, and how she talks with you."
+    description:"Choose your companion’s name and conversation style."
     property string savedBaseline:""
     property string savedName:"Cere"
     property string savedAvatar:"cere"
-    property string draftAvatar:"cere"
     property string savedRevision:"0"
     property bool conflict:false
     property bool loaded:false
@@ -17,12 +15,12 @@ CSection {
     property string error:""
     property string feedback:""
     readonly property int maximumLength:App.state.personality?.maxLength||8000
-    readonly property bool dirty:editor.text!==savedBaseline||nameField.text!==savedName||draftAvatar!==savedAvatar
+    readonly property bool dirty:editor.text!==savedBaseline||nameField.text!==savedName
     function adopt(settings){
         savedBaseline=settings.personality??""
         savedName=settings.assistantName||"Cere"
         savedAvatar=settings.avatar||"cere"
-        editor.text=savedBaseline;nameField.text=savedName;draftAvatar=savedAvatar
+        editor.text=savedBaseline;nameField.text=savedName
         savedRevision=App.state.settingsRevision||"0";conflict=false;loaded=true
     }
     function syncSaved(){
@@ -39,45 +37,7 @@ CSection {
         Accessible.name:"Assistant name"
         onTextChanged:{personality.error="";personality.feedback=""}
     }
-    CText { text:"Used in conversation and on her labels. Up to 64 characters; leave blank to use Cere.";color:Theme.muted;font.pixelSize:Theme.secondary }
-    CText { text:"Avatar";font.weight:Font.DemiBold }
-    GridLayout {
-        id:avatarGrid
-        objectName:"avatarSelection";Layout.fillWidth:true
-        readonly property bool compactCards:width<400
-        columns:width>=340?2:1;uniformCellWidths:true;columnSpacing:12;rowSpacing:12
-        Repeater {
-            model:App.avatars
-            CButton {
-                id:avatarCard
-                required property var modelData
-                objectName:"avatar_"+modelData.id
-                Layout.fillWidth:true;implicitHeight:avatarGrid.compactCards?180:214
-                text:modelData.label;help:modelData.description||modelData.label
-                checkable:true;autoExclusive:true
-                checked:personality.draftAvatar===modelData.id;primary:checked
-                enabled:personality.requestId<0
-                Accessible.name:modelData.label+" avatar"
-                Accessible.description:modelData.description||""
-                onClicked:{personality.draftAvatar=modelData.id;personality.error="";personality.feedback=""}
-                contentItem:ColumnLayout {
-                    spacing:4
-                    AvatarPuppet {
-                        objectName:"avatarPreview_"+avatarCard.modelData.id
-                        Layout.alignment:Qt.AlignHCenter
-                        Layout.preferredWidth:avatarGrid.compactCards?112:144
-                        Layout.preferredHeight:avatarGrid.compactCards?121:156
-                        source:App.assetPath+avatarCard.modelData.puppet.texture
-                        definition:avatarCard.modelData.puppet
-                        pose:avatarCard.modelData.puppet.poses["0"].joints
-                    }
-                    CText { text:avatarCard.modelData.label;font.weight:Font.DemiBold;horizontalAlignment:Text.AlignHCenter }
-                    CText { text:(avatarCard.checked?"Selected · ":"")+(avatarCard.modelData.themeLabel||"Choose avatar");color:avatarCard.checked?Theme.accentText:Theme.muted;font.pixelSize:Theme.caption;horizontalAlignment:Text.AlignHCenter }
-                }
-            }
-        }
-    }
-    CText { text:"Save applies the avatar and her matching colors throughout the client. Her name, personality and speaking voice stay independent.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { text:"Used in conversation and on companion labels. Up to 64 characters; leave blank to use Cere.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CText { text:"Personality";font.weight:Font.DemiBold }
     ScrollView {
         Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredHeight:280
@@ -106,7 +66,7 @@ CSection {
         CButton {
             objectName:"personalitySave";text:personality.requestId>=0?"Saving…":"Save changes";primary:true;Layout.fillWidth:true
             enabled:App.connected&&personality.loaded&&personality.requestId<0&&personality.dirty&&!personality.conflict&&editor.length<=personality.maximumLength&&nameField.length<=64
-            onClicked:{personality.error="";personality.feedback="";personality.requestId=App.rpc("settings.update",{personality:editor.text,assistantName:nameField.text,avatar:personality.draftAvatar,expectedRevision:personality.savedRevision,expectedIdentity:{personality:personality.savedBaseline,assistantName:personality.savedName,avatar:personality.savedAvatar}})}
+            onClicked:{personality.error="";personality.feedback="";personality.requestId=App.rpc("settings.update",{personality:editor.text,assistantName:nameField.text,expectedRevision:personality.savedRevision,expectedIdentity:{personality:personality.savedBaseline,assistantName:personality.savedName,avatar:personality.savedAvatar}})}
         }
         CButton {
             objectName:"personalityDiscard";text:"Discard changes";Layout.fillWidth:true
@@ -130,7 +90,7 @@ CSection {
             personality.requestId=-1
             if(value?.error){personality.error=value.error;return}
             personality.adopt(value)
-            personality.feedback="Saved · appearance and labels update now; conversation changes apply on the next reply."
+            personality.feedback="Saved · labels update now; conversation changes apply on the next reply."
         }
     }
 }

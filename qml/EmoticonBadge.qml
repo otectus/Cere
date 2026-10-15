@@ -71,7 +71,10 @@ Rectangle {
     // real state changes but stop cosmetic rotation entirely.
     Timer { objectName:"emoticonVariation"; interval: 6200; repeat: true; running: badge.animated; onTriggered: badge.variant = (badge.variant + 1) % 3 }
     Timer { interval: 2000; repeat: true; running: badge.exposed && !badge.mirror && badge.live; onTriggered: badge.now = Date.now() }
-    ToolTip.visible: badge.hovered
+    // The body hover now performs an expressive pose. Keep its face clear;
+    // show the explanation only when the pointer is over the badge itself.
+    HoverHandler { id: tooltipHover }
+    ToolTip.visible: tooltipHover.hovered
     ToolTip.delay: 650
     ToolTip.text: description
 }

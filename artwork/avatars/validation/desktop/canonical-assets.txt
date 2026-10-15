@@ -1,0 +1,15 @@
+cere-surface.png 6400x7980 PNG
+cere-portraits.png 1024x768 PNG
+cere rig=valid reference/single-surface/shy
+daemona-surface.png 6400x8740 PNG
+daemona-portraits.png 1024x768 PNG
+daemona rig=valid reference/single-surface/shy
+jade-surface.png 6400x8740 PNG
+jade-portraits.png 1024x768 PNG
+jade rig=valid reference/single-surface/shy
+nova-surface.png 6400x8740 PNG
+nova-portraits.png 1024x768 PNG
+nova rig=valid reference/single-surface/shy
+soap-surface.png 6400x8740 PNG
+soap-portraits.png 1024x768 PNG
+soap rig=valid reference/single-surface/shy

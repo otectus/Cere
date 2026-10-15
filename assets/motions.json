@@ -1,329 +1,148 @@
 {
-  "version": 6,
-  "texture": "cere-polished.png",
-  "textureWidth": 1280,
-  "textureHeight": 1344,
-  "frameWidth": 320,
-  "frameHeight": 336,
+  "version": 7,
   "frames": [
     {
-      "x": 0,
-      "y": 0,
-      "width": 320,
-      "height": 336,
       "family": "rest",
       "eyesVisible": true
     },
     {
-      "x": 320,
-      "y": 0,
-      "width": 320,
-      "height": 336,
       "family": "rest",
       "eyesVisible": false
     },
     {
-      "x": 640,
-      "y": 0,
-      "width": 320,
-      "height": 336,
       "family": "rest",
       "eyesVisible": true
     },
     {
-      "x": 960,
-      "y": 0,
-      "width": 320,
-      "height": 336,
       "family": "rest",
       "eyesVisible": true
     },
     {
-      "x": 0,
-      "y": 336,
-      "width": 320,
-      "height": 336,
       "family": "wave",
       "eyesVisible": true
     },
     {
-      "x": 320,
-      "y": 336,
-      "width": 320,
-      "height": 336,
       "family": "wave",
       "eyesVisible": true
     },
     {
-      "x": 640,
-      "y": 336,
-      "width": 320,
-      "height": 336,
       "family": "folded",
       "eyesVisible": true
     },
     {
-      "x": 960,
-      "y": 336,
-      "width": 320,
-      "height": 336,
       "family": "folded",
       "eyesVisible": false
     },
     {
-      "x": 0,
-      "y": 672,
-      "width": 320,
-      "height": 336,
       "family": "surprise",
       "eyesVisible": true
     },
     {
-      "x": 320,
-      "y": 672,
-      "width": 320,
-      "height": 336,
       "family": "open",
       "eyesVisible": true
     },
     {
-      "x": 640,
-      "y": 672,
-      "width": 320,
-      "height": 336,
       "family": "action",
       "eyesVisible": true
     },
     {
-      "x": 960,
-      "y": 672,
-      "width": 320,
-      "height": 336,
       "family": "action",
       "eyesVisible": false
     },
     {
-      "x": 0,
-      "y": 1008,
-      "width": 320,
-      "height": 336,
       "family": "action",
       "eyesVisible": true
     },
     {
-      "x": 320,
-      "y": 1008,
-      "width": 320,
-      "height": 336,
       "family": "action",
       "eyesVisible": true
     },
     {
-      "x": 640,
-      "y": 1008,
-      "width": 320,
-      "height": 336,
       "family": "action",
       "eyesVisible": true
     },
     {
-      "x": 960,
-      "y": 1008,
-      "width": 320,
-      "height": 336,
       "family": "action",
       "eyesVisible": true
     },
     {
       "name": "skeptical",
-      "texture": "cere-expressions.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 0,
-      "y": 0,
-      "width": 384,
-      "height": 512,
       "family": "folded",
       "eyesVisible": true
     },
     {
       "name": "smug",
-      "texture": "cere-expressions.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 384,
-      "y": 0,
-      "width": 384,
-      "height": 512,
       "family": "rest",
       "eyesVisible": true
     },
     {
       "name": "disbelief",
-      "texture": "cere-expressions.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 768,
-      "y": 0,
-      "width": 384,
-      "height": 512,
       "family": "surprise",
       "eyesVisible": true
     },
     {
       "name": "curious",
-      "texture": "cere-expressions.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 1152,
-      "y": 0,
-      "width": 384,
-      "height": 512,
       "family": "thoughtful",
       "eyesVisible": true
     },
     {
       "name": "cheeky",
-      "texture": "cere-expressions.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 0,
-      "y": 512,
-      "width": 400,
-      "height": 512,
       "family": "soft",
       "eyesVisible": true
     },
     {
       "name": "tender",
-      "texture": "cere-expressions.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 400,
-      "y": 512,
-      "width": 368,
-      "height": 512,
       "family": "soft",
       "eyesVisible": true
     },
     {
       "name": "explaining",
-      "texture": "cere-expressions.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 768,
-      "y": 512,
-      "width": 384,
-      "height": 512,
       "family": "open",
       "eyesVisible": true
     },
     {
       "name": "triumph",
-      "texture": "cere-expressions.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 1152,
-      "y": 512,
-      "width": 384,
-      "height": 512,
       "family": "triumph",
       "eyesVisible": true
     },
     {
       "name": "release",
       "family": "soft",
-      "texture": "cere-inbetweens.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 0,
-      "y": 0,
-      "width": 384,
-      "height": 512,
       "eyesVisible": true
     },
     {
       "name": "gather",
       "family": "gather",
-      "texture": "cere-inbetweens.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 384,
-      "y": 0,
-      "width": 384,
-      "height": 512,
       "eyesVisible": true
     },
     {
       "name": "offer",
       "family": "open",
-      "texture": "cere-inbetweens.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 768,
-      "y": 0,
-      "width": 384,
-      "height": 512,
       "eyesVisible": true
     },
     {
       "name": "halfWave",
       "family": "wave",
-      "texture": "cere-inbetweens.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 1152,
-      "y": 0,
-      "width": 384,
-      "height": 512,
       "eyesVisible": true
     },
     {
       "name": "adjustGlasses",
       "family": "thoughtful",
-      "texture": "cere-inbetweens.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 0,
-      "y": 512,
-      "width": 384,
-      "height": 512,
       "eyesVisible": false
     },
     {
       "name": "tuckHair",
       "family": "thoughtful",
-      "texture": "cere-inbetweens.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 384,
-      "y": 512,
-      "width": 384,
-      "height": 512,
       "eyesVisible": false
     },
     {
       "name": "softReset",
       "family": "rest",
-      "texture": "cere-inbetweens.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 768,
-      "y": 512,
-      "width": 384,
-      "height": 512,
       "eyesVisible": true
     },
     {
       "name": "attentiveRest",
       "family": "soft",
-      "texture": "cere-inbetweens.png",
-      "textureWidth": 1536,
-      "textureHeight": 1024,
-      "x": 1152,
-      "y": 512,
-      "width": 384,
-      "height": 512,
       "eyesVisible": true
     }
   ],
@@ -487,7 +306,7 @@
       "entryMs": 120
     },
     "dragging": {
-      "label": "Being carried",
+      "label": "Dangling · flailing arms and legs",
       "priority": 100,
       "keys": [
         {
@@ -898,7 +717,7 @@
       "entryMs": 560
     },
     "shy": {
-      "label": "A shy moment",
+      "label": "Timid blush · hands to cheeks",
       "priority": 5,
       "keys": [
         {
@@ -2087,7 +1906,7 @@
       "life": {
         "breath": 2.3,
         "sway": 0.6,
-        "head": 1.0,
+        "head": 1,
         "nod": 0.7,
         "pace": 0.65,
         "hands": 0.35,
@@ -2947,7 +2766,7 @@
           "ms": 1800,
           "rig": {
             "headY": 0.6,
-            "breathLift": -0.0
+            "breathLift": 0
           }
         },
         {
@@ -3908,106 +3727,53 @@
         "autonomy": 0,
         "presence": 1.05
       }
+    },
+    "hoverBlush": {
+      "label": "Gentle blush · being noticed",
+      "priority": 45,
+      "keys": [
+        {
+          "pose": 8,
+          "ms": 1000
+        }
+      ],
+      "loop": true,
+      "entryMs": 220,
+      "surfaceStrength": 0.47058823529411764,
+      "life": {
+        "breath": 0.7,
+        "sway": 0.22,
+        "head": 0.35,
+        "hands": 0.15,
+        "autonomy": 0,
+        "presence": 0.5
+      }
+    },
+    "clickBlush": {
+      "label": "Deep blush · clicked",
+      "priority": 65,
+      "keys": [
+        {
+          "pose": 8,
+          "ms": 2600
+        },
+        {
+          "pose": 8,
+          "ms": 350
+        }
+      ],
+      "entryMs": 250,
+      "surfaceHold": true,
+      "life": {
+        "breath": 1,
+        "sway": 0.4,
+        "head": 0.5,
+        "hands": 0.15,
+        "autonomy": 0,
+        "presence": 0.65
+      }
     }
   },
-  "sourceFrames": [
-    {
-      "x": 0,
-      "y": 0,
-      "width": 313,
-      "height": 326
-    },
-    {
-      "x": 313,
-      "y": 0,
-      "width": 314,
-      "height": 326
-    },
-    {
-      "x": 627,
-      "y": 0,
-      "width": 314,
-      "height": 326
-    },
-    {
-      "x": 941,
-      "y": 0,
-      "width": 313,
-      "height": 326
-    },
-    {
-      "x": 0,
-      "y": 326,
-      "width": 313,
-      "height": 326
-    },
-    {
-      "x": 313,
-      "y": 326,
-      "width": 314,
-      "height": 326
-    },
-    {
-      "x": 627,
-      "y": 326,
-      "width": 314,
-      "height": 326
-    },
-    {
-      "x": 941,
-      "y": 326,
-      "width": 313,
-      "height": 326
-    },
-    {
-      "x": 0,
-      "y": 652,
-      "width": 313,
-      "height": 322
-    },
-    {
-      "x": 313,
-      "y": 652,
-      "width": 314,
-      "height": 322
-    },
-    {
-      "x": 627,
-      "y": 652,
-      "width": 314,
-      "height": 322
-    },
-    {
-      "x": 941,
-      "y": 652,
-      "width": 313,
-      "height": 322
-    },
-    {
-      "x": 0,
-      "y": 974,
-      "width": 313,
-      "height": 280
-    },
-    {
-      "x": 313,
-      "y": 974,
-      "width": 314,
-      "height": 280
-    },
-    {
-      "x": 627,
-      "y": 974,
-      "width": 314,
-      "height": 280
-    },
-    {
-      "x": 941,
-      "y": 974,
-      "width": 313,
-      "height": 280
-    }
-  ],
   "breathing": {
     "inhaleMinMs": 1500,
     "inhaleMaxMs": 2100,

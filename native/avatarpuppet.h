@@ -12,6 +12,7 @@ class AvatarPuppet : public QQuickItem
     Q_PROPERTY(QUrl source READ source WRITE setSource NOTIFY sourceChanged)
     Q_PROPERTY(QVariantMap definition READ definition WRITE setDefinition NOTIFY definitionChanged)
     Q_PROPERTY(QVariantMap pose READ pose WRITE setPose NOTIFY poseChanged)
+    Q_PROPERTY(int surfaceFrame READ surfaceFrame WRITE setSurfaceFrame NOTIFY surfaceFrameChanged)
     Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
 
@@ -28,6 +29,9 @@ public:
     QVariantMap pose() const;
     void setPose(const QVariantMap &pose);
 
+    int surfaceFrame() const;
+    void setSurfaceFrame(int frame);
+
     bool ready() const;
     QString error() const;
 
@@ -39,6 +43,7 @@ signals:
     void sourceChanged();
     void definitionChanged();
     void poseChanged();
+    void surfaceFrameChanged();
     void readyChanged();
     void errorChanged();
 
@@ -52,5 +57,6 @@ private:
 
     void loadSource();
     void rebuild();
+    bool prepareFrameImages(int frame, QString *error);
     void setStatus(bool ready, const QString &error);
 };

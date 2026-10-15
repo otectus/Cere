@@ -71,6 +71,10 @@ test('search ranks a setting by its own words and honours unavailable categories
   assert.ok(catalog.search('gemini').some((result: any) => result.setting?.target === 'apiKey_google'));
   assert.equal(catalog.search('backup')[0].setting.target, 'openBackup');
   assert.equal(catalog.search('quiet')[0].setting.target, 'quietMode');
-  for (const word of ['jade', 'nova', 'violet', 'purple'])
-    assert.equal(catalog.search(word)[0].setting.target, 'avatarSelection');
+  assert.equal(catalog.categoryOf('avatarSelection'), 'companion');
+  for (const word of ['avatar', 'appearance', 'jade', 'nova', 'soap', 'tactical', 'tan', 'violet', 'purple']) {
+    const result = catalog.search(word)[0];
+    assert.equal(result.setting.target, 'avatarSelection');
+    assert.equal(result.category.id, 'companion');
+  }
 });

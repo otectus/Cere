@@ -16,9 +16,9 @@ Rectangle {
 
     // Inputs are explicit so the miniature and workspace share identical behavior.
     property var settings: ({})
-    property var avatar: ({portrait:"cere-portrait-reference.png"})
+    property var avatar: ({portrait:"cere-portraits.png"})
     readonly property var portraitColors: Theme.paletteFor(avatar.id || settings.avatar)
-    readonly property string portraitFile: avatar.portrait || "cere-portrait-reference.png"
+    readonly property string portraitFile: avatar.portrait || "cere-portraits.png"
     readonly property url portraitSource: assetRoot + portraitFile
     readonly property string assistantName: settings.assistantName || "Cere"
     property var session: ({})

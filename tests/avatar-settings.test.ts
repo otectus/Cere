@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,4 +25,23 @@ test('retired 3D appearance settings are stripped without changing the 2D avatar
   assert.equal(core.settings.quiet, false);
   const persisted = store.get<Record<string, unknown>>('settings', {});
   for (const key of ['avatarRenderer','avatarModel','avatarQuality']) assert.equal(key in persisted, false);
+});
+
+test('avatar and theme selection lives in Companion with its own authoritative draft', () => {
+  const qml = new URL('../qml/', import.meta.url);
+  const companion = readFileSync(new URL('CompanionSettings.qml', qml), 'utf8');
+  const personality = readFileSync(new URL('PersonalitySettings.qml', qml), 'utf8');
+  assert.equal((companion.match(/objectName:"avatarSelection"/g) || []).length, 1);
+  assert.doesNotMatch(personality, /objectName:"avatarSelection"|draftAvatar|avatarPreview_/);
+  assert.match(companion, /model:App\.avatars/);
+  assert.match(companion, /modelData\.themeLabel/);
+  assert.match(companion, /objectName:"avatarSave"/);
+  assert.match(companion, /objectName:"avatarDiscard"/);
+  assert.match(companion, /objectName:"avatarConflict"/);
+  assert.match(companion, /avatar:companion\.draftAvatar/);
+  assert.match(companion, /expectedIdentity:\{personality:companion\.savedPersonality,assistantName:companion\.savedName,avatar:companion\.savedAvatar\}/);
+  assert.match(personality, /objectName:"assistantName"/);
+  assert.match(personality, /objectName:"personalityText"/);
+  assert.match(personality, /expectedIdentity:\{personality:personality\.savedBaseline,assistantName:personality\.savedName,avatar:personality\.savedAvatar\}/);
+  assert.doesNotMatch(personality, /avatar:personality\.draftAvatar/);
 });

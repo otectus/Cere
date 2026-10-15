@@ -21,7 +21,7 @@ Item {
             var mirror = make({mirror:badge})
             compare(badge.accent, "#49dfff")
             var original = badge.color.toString(), glyph = badge.glyph
-            for (var id of ["daemona", "jade", "nova"]) {
+            for (var id of ["daemona", "jade", "nova", "soap"]) {
                 badge.snapshot = state({avatar:id,reducedMotion:true})
                 compare(badge.accent, Cere.Theme.paletteFor(id).accentText)
                 compare(mirror.accent, badge.accent)

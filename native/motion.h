@@ -9,7 +9,7 @@ public:
     struct Context {
         bool visible=false, quiet=false, reduced=false, connected=true;
         bool dragging=false, waiting=false, busy=false, panel=false, roaming=false, roamLeft=false;
-        bool listening=false, problem=false, interacting=false;
+        bool listening=false, problem=false, interacting=false, hovered=false;
         QString activity;
         QString idleEnergy="lively", mood="neutral", moodSession;
         bool expressive=true;

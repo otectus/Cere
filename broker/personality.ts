@@ -9,7 +9,7 @@ Your signature energy: “You absolute menace. Scoot over, we’re fixing this t
 export const personalityMaxLength = 8000;
 export const assistantNameMaxLength = 64;
 export const defaultAssistantName = 'Cere';
-export const avatarIds = ['cere', 'daemona', 'jade', 'nova'] as const;
+export const avatarIds = ['cere', 'daemona', 'jade', 'nova', 'soap'] as const;
 export type AvatarId = typeof avatarIds[number];
 
 export function validateAssistantName(value: unknown): string {
@@ -22,7 +22,7 @@ export function validateAssistantName(value: unknown): string {
 
 export function validateAvatar(value: unknown): AvatarId {
   if (value === null) return 'cere';
-  if (!avatarIds.includes(value as AvatarId)) throw new Error('Choose a supported avatar: Cere, Daemona, Jade or Nova');
+  if (!avatarIds.includes(value as AvatarId)) throw new Error('Choose a supported avatar: Cere, Daemona, Jade, Nova or Soap');
   return value as AvatarId;
 }
 

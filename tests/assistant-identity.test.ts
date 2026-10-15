@@ -20,12 +20,13 @@ test('identity migrates old profiles, persists independently, and rejects invali
   const before = structuredClone(core.settings);
   await core.updateSettings({ avatar: 'daemona' });
   assert.deepEqual(core.settings, { ...before, avatar: 'daemona' });
-  for (const avatar of ['jade', 'nova', 'cere', 'daemona'] as const) {
+  for (const avatar of avatarIds) {
     await core.updateSettings({ avatar });
     assert.deepEqual(core.settings, { ...before, avatar });
     const persisted = new Store(directory);
     try { assert.deepEqual(persisted.settings(), core.settings); } finally { persisted.close(); }
   }
+  await core.updateSettings({ avatar: 'daemona' });
   await core.updateSettings({ assistantName: '  Étoile ✦  ' });
   assert.equal(core.settings.assistantName, 'Étoile ✦');
   assert.equal(core.settings.avatar, 'daemona');
@@ -93,7 +94,7 @@ test('every selectable avatar ships transparent artwork, usable cutouts, and a c
   const entries = JSON.parse(await readFile('assets/avatars.json', 'utf8'));
   const base = JSON.parse(await readFile('assets/cere-rig.json', 'utf8'));
   assert.deepEqual(entries.map((entry: any) => entry.id), [...avatarIds]);
-  assert.deepEqual(entries.map((entry: any) => entry.label), ['Cere', 'Daemona', 'Jade', 'Nova']);
+  assert.deepEqual(entries.map((entry: any) => entry.label), ['Cere', 'Daemona', 'Jade', 'Nova', 'Soap']);
   for (const entry of entries) {
     const rig = { ...base, ...(entry.rig ? JSON.parse(await readFile(join('assets', entry.rig), 'utf8')) : {}) };
     const { data, info } = await sharp(join('assets', rig.texture)).raw().toBuffer({ resolveWithObject: true });
@@ -123,13 +124,27 @@ test('every selectable avatar ships transparent artwork, usable cutouts, and a c
   }
 });
 
-test('Cere reference surface preserves source pixels and confines blinking to the eyes', async () => {
+test('Cere canonical surface preserves source pixels and confines neutral blinking to the eyes', async () => {
   const source = await sharp('reference/cere.png').extract({ left: 0, top: 170, width: 430, height: 760 }).ensureAlpha().raw().toBuffer();
-  const { data, info } = await sharp('assets/cere-reference-surface.png').raw().toBuffer({ resolveWithObject: true });
-  assert.deepEqual([info.width, info.height, info.channels], [860, 760, 4]);
+  const rig = JSON.parse(await readFile('assets/cere-surface-rig.json', 'utf8'));
+  const part = rig.parts.find((candidate: any) => candidate.surfaceMotion);
+  assert.ok(part, 'Cere has a connected surface part');
+  const [openX, openY, width, height] = part.sourceRect;
+  const [closedX, closedY, closedWidth, closedHeight] = part.blinkSourceRect;
+  assert.equal(height, 840);
+  const topInset = height - 760;
+  assert.deepEqual([closedWidth, closedHeight], [width, height]);
+  assert.ok(width >= 430 && (width - 430) % 2 === 0, 'neutral surface symmetrically pads the original reference crop');
+  const inset = (width - 430) / 2;
+  const { data, info } = await sharp('assets/cere-surface.png').raw().toBuffer({ resolveWithObject: true });
+  assert.equal(info.channels, 4);
+  assert.ok(openX >= 0 && openY >= 0 && openX + width <= info.width && openY + height <= info.height);
+  assert.ok(closedX >= 0 && closedY >= 0 && closedX + width <= info.width && closedY + height <= info.height);
   let eyeChanges = 0, opaque = 0;
   for (let y = 0; y < 760; y++) for (let x = 0; x < 430; x++) {
-    const original = (y * 430 + x) * 4, open = (y * 860 + x) * 4, closed = open + 430 * 4;
+    const original = (y * 430 + x) * 4;
+    const open = ((openY + topInset + y) * info.width + openX + inset + x) * 4;
+    const closed = ((closedY + topInset + y) * info.width + closedX + inset + x) * 4;
     for (let c = 0; c < 3; c++) assert.equal(data[open + c], source[original + c], `original color at ${x},${y}`);
     assert.equal(data[open + 3], data[closed + 3], 'blinking preserves silhouette');
     const changed = [0, 1, 2].some(c => data[open + c] !== data[closed + c]);
@@ -142,5 +157,5 @@ test('Cere reference surface preserves source pixels and confines blinking to th
   assert.ok(eyeChanges > 2000, 'closed eyelids must actually replace the eyes');
   assert.ok(opaque > 190000 && opaque < 220000, 'foreground remains complete without the studio background');
   for (const [x, y] of [[0, 0], [200, 0], [220, 630], [10, 750], [420, 740]])
-    assert.equal(data[(y * 860 + x) * 4 + 3], 0, 'background and leg gap remain transparent');
+    assert.equal(data[((openY + topInset + y) * info.width + openX + inset + x) * 4 + 3], 0, 'background and leg gap remain transparent');
 });

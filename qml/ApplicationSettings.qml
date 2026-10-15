@@ -12,7 +12,7 @@ ColumnLayout {
     }
     CSection {
         title:"Maintenance"
-        description:"Back up or restore Cere’s state, or check how she is doing."
+        description:"Back up or restore Cere’s state, or check the application’s health."
         GridLayout {
             Layout.fillWidth:true;columns:width>=520?2:1;columnSpacing:8;rowSpacing:8
             CButton { objectName:"openBackup";Layout.fillWidth:true;text:"Backup and restore";onClicked:recovery.open() }

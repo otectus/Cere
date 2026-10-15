@@ -4,31 +4,39 @@
     "label": "Cere",
     "description": "Long cobalt hair, blue eyes and a black respirator with strapped tactical gear.",
     "themeLabel": "Cool blue",
-    "portrait": "cere-portrait-reference.png",
-    "rig": "cere-reference-surface-rig.json"
+    "portrait": "cere-portraits.png",
+    "rig": "cere-surface-rig.json"
   },
   {
     "id": "daemona",
     "label": "Daemona",
     "description": "Crimson skin, dark hair and curved horns.",
     "themeLabel": "Black & crimson",
-    "portrait": "daemona-portrait-expressions.png",
-    "rig": "daemona-rig.json"
+    "portrait": "daemona-portraits.png",
+    "rig": "daemona-surface-rig.json"
   },
   {
     "id": "jade",
     "label": "Jade",
     "description": "Scarlet hair, a black crown and feathered wings. Black with vibrant red accents.",
     "themeLabel": "Black & vivid red",
-    "portrait": "jade-portrait-expressions.png",
-    "rig": "jade-rig.json"
+    "portrait": "jade-portraits.png",
+    "rig": "jade-surface-rig.json"
   },
   {
     "id": "nova",
     "label": "Nova",
     "description": "Violet-tipped dark hair, a half-up bun and purple jewelry. Black with violet and purple accents.",
     "themeLabel": "Black & violet",
-    "portrait": "nova-portrait-expressions.png",
-    "rig": "nova-rig.json"
+    "portrait": "nova-portraits.png",
+    "rig": "nova-surface-rig.json"
+  },
+  {
+    "id": "soap",
+    "label": "Soap",
+    "description": "Brown mohawk, stubble and a tan tactical vest with navy shirt, jeans and combat boots.",
+    "themeLabel": "Charcoal & tan",
+    "portrait": "soap-portraits.png",
+    "rig": "soap-surface-rig.json"
   }
 ]
