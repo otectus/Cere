@@ -60,6 +60,11 @@ class Controller : public QObject {
     Q_PROPERTY(bool overlay READ overlay CONSTANT)
     Q_PROPERTY(QString assetPath READ assetPath CONSTANT)
     Q_PROPERTY(QVariantMap animations READ animations CONSTANT)
+    Q_PROPERTY(QVariantList avatars READ avatars CONSTANT)
+    Q_PROPERTY(QVariantMap avatar READ avatar NOTIFY avatarChanged)
+    Q_PROPERTY(QVariantMap themes READ themes CONSTANT)
+    Q_PROPERTY(QVariantMap theme READ theme NOTIFY themeChanged)
+    Q_PROPERTY(QString assistantName READ assistantName NOTIFY stateChanged)
     Q_PROPERTY(QString toast READ toast NOTIFY toastChanged)
     Q_PROPERTY(QString motion READ motion NOTIFY motionChanged)
     Q_PROPERTY(QVariantMap conversationMoods READ conversationMoods NOTIFY conversationMoodsChanged)
@@ -83,6 +88,11 @@ public:
     bool overlay() const { return m_overlay; }
     QString assetPath() const;
     QVariantMap animations() const { return m_animations; }
+    QVariantList avatars() const { return m_avatars; }
+    QVariantMap avatar() const;
+    QVariantMap themes() const { return m_themes; }
+    QVariantMap theme() const { return m_theme; }
+    QString assistantName() const;
     QString toast() const { return m_toast; }
     QString motion() const { return m_motion; }
     QVariantMap conversationMoods() const { return m_conversationMoods; }
@@ -164,6 +174,7 @@ public:
     static bool privateRuntime(const QString &path);
 signals:
     void stateChanged();
+    void avatarChanged();
     void messagesChanged();
     void conversationMessage(const QVariantMap &message);
     void activityChanged();
@@ -173,6 +184,7 @@ signals:
     void conversationMoodsChanged();
     void moodContextChanged();
     void citationDisplayChanged();
+    void themeChanged();
     void motionDynamicsChanged();
     void result(int id, const QVariant &value);
     // Editors persist unsaved text before a window hides, expands or quits.
@@ -186,6 +198,11 @@ private:
     QLocalSocket m_socket;
     QByteArray m_buffer;
     QVariantMap m_state, m_animations;
+    QVariantList m_avatars;
+    QVariantMap m_themes, m_theme;
+    QString m_themeId;
+    void applyTheme();
+    QString m_maskAvatar;
     QVariantList m_messages;
     QHash<QString,QVariantMap> m_questionDrafts;
     QHash<int,QVariantMap> m_deferredDrafts;

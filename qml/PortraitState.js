@@ -15,7 +15,7 @@ function resolve(input) {
     var busy = status === "working" || status === "starting"
     var replying = busy && session.activity === "speaking"
     if (busy && !replying) {
-        var thinking = ["thinking", "planning", "compacting", ""].indexOf(session.activity || "") >= 0
+        var thinking = ["recalling", "thinking", "planning", "compacting", ""].indexOf(session.activity || "") >= 0
         return { expression: thinking ? "thinking" : "focused", label: thinking ? "Thinking it through" : "Working on it", tone: "active" }
     }
     // A click acknowledges the user without obscuring an approval or failure.

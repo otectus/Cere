@@ -243,7 +243,9 @@ export function workingContext(messages: OllamaMessage[], budget: number) {
     used += cost; start = i;
   }
   if (start === groups.length && messages.length) throw new Error(`This turn exceeds the model’s working context (about ${costOf(latest).toLocaleString('en-US')} tokens; ${Math.max(0,budget).toLocaleString('en-US')} available for conversation). Shorten the message or use a model with a larger context window.`);
-  return { messages: groups.slice(start).flat(), omitted: groups.slice(0,start).reduce((sum,g) => sum+g.length,0), shortened };
+  const kept = groups.slice(start).flat();
+  // Where the current turn begins: its user message, then this turn's tool calls and results.
+  return { messages: kept, omitted: groups.slice(0,start).reduce((sum,g) => sum+g.length,0), shortened, turnStart: kept.length - latest.length };
 }
 
 async function imageData(paths: string[], signal: AbortSignal, encode = true) {
@@ -300,7 +302,7 @@ export class OllamaAdapter implements Adapter {
   }
   async run(text: string, paths: string[], signal: AbortSignal, options: SendOptions = {}) {
     // Snapshot once so a settings edit cannot change personality mid-tool-loop.
-    const personality = personalityInstructions(this.hooks.personality?.());
+    const personality = personalityInstructions(this.hooks.personality?.(), this.hooks.assistantName?.());
     const host = this.session.ollama?.host || '';
     const info = this.cloud ? { capabilities: ['completion', 'tools', 'vision'] } : await ollamaJson(host, 'show', { model: this.session.model }, signal);
     signal.throwIfAborted();
@@ -373,7 +375,10 @@ export class OllamaAdapter implements Adapter {
           if(telemetry&&this.context.telemetryValid&&!this.context.telemetryValid())throw new Error('Workspace telemetry changed before dispatch. Retry the message.');
           options.beforeAccept?.();
         }};
-        const reply = await this.stream(host, [system, ...(memory ? [{role:'user' as const,content:memory}] : []), ...(telemetry ? [{role:'user' as const,content:telemetry}] : []), ...context.messages], tools, signal, contextSize, sources, acceptance);
+        // Per-turn data goes just before the turn it serves. Earlier history then stays an unchanged
+        // prefix, which Ollama's cache and providers' prompt caching can reuse from turn to turn.
+        const data: OllamaMessage[] = [...(memory ? [{role:'user' as const,content:memory}] : []), ...(telemetry ? [{role:'user' as const,content:telemetry}] : [])];
+        const reply = await this.stream(host, [system, ...context.messages.slice(0, context.turnStart), ...data, ...context.messages.slice(context.turnStart)], tools, signal, contextSize, sources, acceptance);
         signal.throwIfAborted();
         if (!reply.content && !reply.tool_calls?.length) throw new Error(`${this.label} returned no answer. Try again or choose another model.`);
         messages.push(reply); this.context.save(messages);

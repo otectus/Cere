@@ -3,7 +3,30 @@ import { join } from 'node:path';
 import { chmodSync } from 'node:fs';
 import { paths, privateDir } from './paths.ts';
 import { defaultSettings } from './types.ts';
-import type { Session, Message, Settings, SessionFolder } from './types.ts';
+import { assistantIdentity } from './personality.ts';
+import type { Session, Message, Settings, SessionFolder, AgentActivity } from './types.ts';
+const activeAgent=(agent:AgentActivity)=>['starting','running','waiting'].includes(agent.status);
+function withoutRetiredAvatarAppearance(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { avatarRenderer: _avatarRenderer, avatarModel: _avatarModel, avatarQuality: _avatarQuality, ...settings } = value as Record<string, unknown>;
+  return settings;
+}
+/**
+ * The session row every client receives on each state change. Busy and selected (attention)
+ * sessions carry their whole agent list; an idle session keeps only agents still active, so a
+ * finished delegation's history never rides along in every later snapshot. Agent text is bounded
+ * the same way the mobile transport bounds it; the store keeps the complete record.
+ */
+export function snapshotRow(s:Session,full:boolean):Session {
+  if(!s.agents?.length)return s;
+  const busy=['starting','working','waiting','stopping'].includes(s.status);
+  const agents=(full||busy?s.agents:s.agents.filter(activeAgent)).map(a=>{
+    const task=a.task&&a.task.length>1000?a.task.slice(0,1000):a.task,detail=a.detail&&a.detail.length>2000?a.detail.slice(0,2000):a.detail;
+    return task===a.task&&detail===a.detail?a:{...a,...(task===undefined?{}:{task}),...(detail===undefined?{}:{detail})};
+  });
+  if(agents.length)return {...s,agents};
+  const {agents:_agents,...rest}=s;return rest as Session;
+}
 export class Store {
   db: DatabaseSync;
   volatile = new DatabaseSync(':memory:');
@@ -50,8 +73,9 @@ export class Store {
     return row ? JSON.parse(row.value as string) : fallback;
   }
   set(key: string, value: unknown) {
-    const temporary=this.volatile.prepare('SELECT id FROM sessions').all().some(row=>key.includes(String(row.id))||(value as any)?.sessionId===row.id);
-    (temporary?this.volatile:this.db).prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run(key, JSON.stringify(value));
+    const stored = key === 'settings' ? withoutRetiredAvatarAppearance(value) : value;
+    const temporary=this.volatile.prepare('SELECT id FROM sessions').all().some(row=>key.includes(String(row.id))||(stored as any)?.sessionId===row.id);
+    (temporary?this.volatile:this.db).prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run(key, JSON.stringify(stored));
   }
   temporary(id:string): boolean { return !!this.volatile.prepare('SELECT 1 FROM sessions WHERE id=?').get(id); }
   sessionDatabase(id:string) { return this.temporary(id)?this.volatile:this.db; }
@@ -73,8 +97,8 @@ export class Store {
     this.sessionsRevision++; this.catalogRevision++;
   }
   settings(): Settings {
-    const saved = this.get<Partial<Settings>>('settings', {});
-    return { ...structuredClone(defaultSettings), ...saved,
+    const saved = withoutRetiredAvatarAppearance(this.get<Partial<Settings>>('settings', {})) as Partial<Settings>;
+    return { ...structuredClone(defaultSettings), ...saved, ...assistantIdentity(saved),
       speechProviders: { ...defaultSettings.speechProviders, ...saved.speechProviders },
       indextts: { ...defaultSettings.indextts, ...saved.indextts },
       elevenlabs: { ...defaultSettings.elevenlabs, ...saved.elevenlabs },
@@ -92,8 +116,8 @@ export class Store {
       ...this.db.prepare("SELECT data FROM sessions WHERE json_extract(data,'$.status') IN ('starting','working','waiting','stopping')").all(),
       ...ids.flatMap(id=>{const row=this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id);return row?[row]:[];}),
       ...this.volatile.prepare('SELECT data FROM sessions').all()];
-    const unique=new Map(rows.map(r=>{const s=JSON.parse(String(r.data)) as Session;return[s.id,s]}));
-    const result=[...unique.values()].sort((a,b)=>b.updated-a.updated||b.id.localeCompare(a.id));
+    const unique=new Map(rows.map(r=>{const s=JSON.parse(String(r.data)) as Session;return[s.id,s]})),full=new Set(ids);
+    const result=[...unique.values()].sort((a,b)=>b.updated-a.updated||b.id.localeCompare(a.id)).map(s=>snapshotRow(s,full.has(s.id)));
     this.snapshotCache={revision:this.sessionsRevision,selected:key,rows:result};return result;
   }
   sessionPage(p: any = {}): { sessions: Session[]; next?: {updated:number;id:string}; total: number } {

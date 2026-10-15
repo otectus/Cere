@@ -1,0 +1,34 @@
+[
+  {
+    "id": "cere",
+    "label": "Cere",
+    "description": "Long cobalt hair, blue eyes and a black respirator with strapped tactical gear.",
+    "themeLabel": "Cool blue",
+    "portrait": "cere-portrait-reference.png",
+    "rig": "cere-reference-rig.json"
+  },
+  {
+    "id": "daemona",
+    "label": "Daemona",
+    "description": "Crimson skin, dark hair and curved horns.",
+    "themeLabel": "Black & crimson",
+    "portrait": "daemona-portrait-expressions.png",
+    "rig": "daemona-rig.json"
+  },
+  {
+    "id": "jade",
+    "label": "Jade",
+    "description": "Scarlet hair, a black crown and feathered wings. Black with vibrant red accents.",
+    "themeLabel": "Black & vivid red",
+    "portrait": "jade-portrait-expressions.png",
+    "rig": "jade-rig.json"
+  },
+  {
+    "id": "nova",
+    "label": "Nova",
+    "description": "Violet-tipped dark hair, a half-up bun and purple jewelry. Black with violet and purple accents.",
+    "themeLabel": "Black & violet",
+    "portrait": "nova-portrait-expressions.png",
+    "rig": "nova-rig.json"
+  }
+]

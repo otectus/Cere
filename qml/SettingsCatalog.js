@@ -6,7 +6,7 @@
 // A category's `chip` is a shorter label for the narrow strip; its full label stays its name.
 
 var groups = [
-    {id: "cere", label: "Cere herself"},
+    {id: "cere", label: "Your companion"},
     {id: "assistant", label: "Assistant"},
     {id: "system", label: "System"}
 ]
@@ -18,7 +18,7 @@ var categories = [
         settings: [
             {label: "Desktop profile", target: "desktopProfile", keywords: "normal focus gaming presentation mode"},
             {label: "Always on top", target: "alwaysOnTop", keywords: "topmost above fullscreen windows"},
-            {label: "Show or hide Cere", target: "hideCere", keywords: "hidden visible pet"},
+            {label: "Show or hide companion", target: "hideCere", keywords: "hidden visible pet cere"},
             {label: "Start Cere at login", target: "autostart", keywords: "startup boot autostart"},
             {label: "Character size", target: "characterSize", keywords: "scale pet bigger smaller"},
             {label: "Monitor home and docking", target: "saveHome", keywords: "position dock left right go home save monitor"},
@@ -26,9 +26,11 @@ var categories = [
             {label: "Interface size", target: "interfaceScale", keywords: "zoom scale text panel"}
         ]},
     {id: "personality", group: "cere", label: "Personality", icon: "edit",
-        blurb: "How she talks to you: tone, manners and attitude. It shapes her voice, never her permissions.",
-        keywords: "tone style manner prompt character attitude",
+        blurb: "Her name, appearance and conversation style. Choose an avatar and shape her tone and attitude.",
+        keywords: "tone style manner prompt character attitude identity appearance avatar name daemona jade nova",
         settings: [
+            {label: "Assistant name", target: "assistantName", keywords: "rename identity call nickname"},
+            {label: "Avatar & colors", target: "avatarSelection", keywords: "appearance character cere daemona jade nova portrait skin theme colour color black red crimson blue violet purple"},
             {label: "Personality text", target: "personalityText", keywords: "prompt instructions tone style edit"},
             {label: "Restore default personality", target: "personalityReset", keywords: "reset original"}
         ]},
@@ -42,7 +44,7 @@ var categories = [
             {label: "Speaking voice", target: "speechVoice", keywords: "piper kokoro heart bella"},
             {label: "Speaking speed", target: "speechRate", keywords: "rate fast slow"},
             {label: "Pitch", target: "speechPitch", keywords: "tone semitones lower higher"},
-            {label: "Cere’s volume", target: "speechVolume", keywords: "loudness mute"},
+            {label: "Speaking volume", target: "speechVolume", keywords: "loudness mute cere"},
             {label: "Brief reading", target: "speechBrief", keywords: "short opening summary"},
             {label: "Test voice", target: "ttsTest", keywords: "preview try listen sample"},
             {label: "Local voice input", target: "whisperExecutable", keywords: "whisper transcription microphone push to talk dictation"}

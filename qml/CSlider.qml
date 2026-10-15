@@ -8,7 +8,7 @@ Slider {
     background: Rectangle {
         x: control.leftPadding; y: (control.height-height)/2
         width: control.availableWidth; height: 4; radius: 2; color: Theme.border
-        Rectangle { width: control.visualPosition*parent.width; height: parent.height; radius: 2; color: control.enabled ? Theme.cyan : Theme.muted }
+        Rectangle { width: control.visualPosition*parent.width; height: parent.height; radius: 2; color: control.enabled ? Theme.accentText : Theme.muted }
     }
     handle: Rectangle {
         x: control.leftPadding + control.visualPosition*(control.availableWidth-width)

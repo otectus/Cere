@@ -153,11 +153,16 @@ test('manual executable review is invalidated by a changed definition',async t=>
   await core.updateSettings({scripts:[script]});await core.updateSettings({scripts:[{...script,args:['changed']}]});
   await assert.rejects(core.rpc('action.run',{name:'script.run',args:{id:'review'},expectedScript:script}),/changed/);
 });
-test('native branching uses the provider fork and rejects unsupported forks without copying history',async t=>{
+test('native branching skips large fork-response history and rejects unsupported forks without copying history',async t=>{
   const {core,session,directory}=await setup(t),executable=join(directory,'fork-cli.mjs'),previous=process.env.CERE_CODEX_BIN;
   await writeFile(executable,`#!/usr/bin/env node
 import readline from 'node:readline';
-for await(const line of readline.createInterface({input:process.stdin})){const m=JSON.parse(line);if(m.id===undefined)continue;const reply=m.method==='thread/fork'?(m.params.threadId==='original'?{result:{thread:{id:'forked-native'}}}:{error:{message:'Fork unsupported'}}):{result:{}};process.stdout.write(JSON.stringify({id:m.id,...reply})+'\\n');}
+for await(const line of readline.createInterface({input:process.stdin})){
+  const m=JSON.parse(line);if(m.id===undefined)continue;
+  const turns=m.params?.excludeTurns?[]:[{id:'old-turn',items:[{type:'agentMessage',id:'old-message',text:'x'.repeat(9*1024*1024)}]}];
+  const reply=m.method==='thread/fork'?(m.params.threadId==='original'?{result:{thread:{id:'forked-native',turns}}}:{error:{message:'Fork unsupported'}}):{result:{}};
+  process.stdout.write(JSON.stringify({id:m.id,...reply})+'\\n');
+}
 `,{mode:0o700});process.env.CERE_CODEX_BIN=executable;
   t.after(()=>{if(previous===undefined)delete process.env.CERE_CODEX_BIN;else process.env.CERE_CODEX_BIN=previous;});
   core.updateSession(session.id,{nativeId:'original'});const branch=await core.rpc('session.nativeFork',{id:session.id});

@@ -5,12 +5,15 @@ export class JsonLines {
   buffer = '';
   push(chunk: string, receive: (value: any) => void) {
     this.buffer += chunk;
-    if (Buffer.byteLength(this.buffer) > 8 * 1024 * 1024) throw new Error('Protocol message exceeds 8 MiB');
+    // A read may contain several valid messages; the bound applies to each line.
     let i: number;
     while ((i = this.buffer.indexOf('\n')) >= 0) {
-      const line = this.buffer.slice(0, i); this.buffer = this.buffer.slice(i + 1);
+      const line = this.buffer.slice(0, i);
+      if (Buffer.byteLength(line) > 8 * 1024 * 1024) throw new Error('Protocol message exceeds 8 MiB');
+      this.buffer = this.buffer.slice(i + 1);
       if (line.trim()) receive(JSON.parse(line));
     }
+    if (Buffer.byteLength(this.buffer) > 8 * 1024 * 1024) throw new Error('Protocol message exceeds 8 MiB');
   }
 }
 export class RpcResponseError extends Error {}

@@ -371,6 +371,10 @@ test('voice settings migrate/persist atomically and slash/debug tests bypass the
   const s = await core.create({ provider: 'codex', cwd: f.directory, trusted: true });
   await core.send({ id: s.id, text: '/tts-test' }); await core.rpc('tts.test');
   assert.equal(sends, 0); assert.deepEqual(spoken, [[ttsTestLine, true], [ttsTestLine, true]]);
+  await core.updateSettings({assistantName:'Daemona'});
+  await core.send({id:s.id,text:'/tts-test'});await core.rpc('tts.test');
+  assert.equal(sends,0);
+  assert.deepEqual(spoken.slice(2),[[ttsTestLine.replace('Cere','Daemona'),true],[ttsTestLine.replace('Cere','Daemona'),true]]);
   assert.deepEqual(await core.rpc('tts.status'), core.speech.snapshot());
 });
 

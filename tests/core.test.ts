@@ -387,3 +387,76 @@ test('persistent bypass never resolves a queued remote approval and explicitly s
   assert.equal((await cli).choice,'deny');assert.equal((await desktop).choice,'deny');
   assert.equal((await core.create({provider:'codex',cwd:directory,trusted:false})).provider,'codex');
 });
+
+test('state fan-out is paced: a burst of changes yields one leading and one trailing snapshot',async t=>{
+  const {core,session}=await setup(t),sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+  const titles:string[]=[];core.on('state',state=>titles.push(state.sessions.find((s:any)=>s.id===session.id)?.title));
+  // Background services (memory, telemetry) finish reporting first: wait for a quiet period.
+  for(let n=titles.length;;n=titles.length){await sleep(150);if(titles.length===n)break;}
+  const start=titles.length;
+  for(let n=0;n<25;n++)core.updateSession(session.id,{title:'Burst '+n});
+  assert.equal(titles.length-start,1); // the first change after a quiet period goes out at once
+  for(const end=Date.now()+3000;titles.length-start<2&&Date.now()<end;)await sleep(20);
+  await sleep(150);
+  assert.equal(titles.length-start,2); // the burst collapses into one trailing snapshot
+  assert.equal(titles.at(-1),'Burst 24');
+  await core.close();
+  const closed=titles.length;
+  core.changed(); // a change after close emits nothing
+  await sleep(150);
+  assert.equal(titles.length,closed);
+});
+test('state snapshots carry agent history only for busy and attended sessions, with bounded text',async t=>{
+  const {core,session,directory}=await setup(t);
+  const other=await core.create({provider:'codex',cwd:directory,trusted:true});
+  const agents=[{id:'done',name:'Done',status:'completed' as const,updated:1,task:'t'.repeat(5000),detail:'d'.repeat(5000)},{id:'live',name:'Live',status:'running' as const,updated:2}];
+  core.updateSession(other.id,{agents});
+  const row=()=>core.snapshot().sessions.find(s=>s.id===other.id)!;
+  assert.deepEqual(row().agents?.map(a=>a.id),['live']); // a finished agent does not ride along in every later snapshot
+  core.updateSession(other.id,{agents:[agents[0]]});
+  assert.equal('agents' in row(),false);
+  await core.rpc('ui.attention',{owner:'ui',sessionId:other.id,listening:false});
+  assert.deepEqual(row().agents?.map(a=>a.id),['done']); // the attended session keeps its history
+  assert.equal(row().agents![0].task!.length,1000);assert.equal(row().agents![0].detail!.length,2000);
+  core.updateSession(session.id,{status:'working',agents});
+  assert.deepEqual(core.snapshot().sessions.find(s=>s.id===session.id)!.agents!.map(a=>a.id),['done','live']);
+  assert.equal(core.store.session(other.id).agents![0].task!.length,5000); // the store keeps the complete record
+});
+
+test('a notice is delivered after the snapshot it describes',async t=>{
+  const {core,session}=await setup(t),order:string[]=[],sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+  core.on('state',state=>order.push('state:'+state.sessions.find((s:any)=>s.id===session.id)?.title));core.on('notice',()=>order.push('notice'));
+  for(let n=order.length;;n=order.length){await sleep(150);if(order.length===n)break;}
+  core.updateSession(session.id,{title:'First'});core.updateSession(session.id,{title:'Second'}); // leading snapshot, then a pending one
+  core.emit('notice',{kind:'complete',sessionId:session.id,text:'Task complete'});
+  assert.deepEqual(order.slice(-3),['state:First','state:Second','notice']);
+});
+
+test('a turn shows recalling while it waits for memory and goes ahead without it after the deadline', async t => {
+  const {core,session,sends,getHooks}=await setup(t);
+  await core.updateSettings({memory:{enabled:true}});await core.memory.ready;
+  const until=async(check:()=>boolean)=>{const end=Date.now()+5000;while(!check()){if(Date.now()>end)throw new Error('Timed out');await new Promise(r=>setTimeout(r,5));}};
+  // A memory worker that never answers, as when a long erasure walk held it.
+  const call=core.memory.service.call.bind(core.memory.service);
+  core.memory.service.call=((method:string,p?:any,signal?:AbortSignal)=>method==='observe_text'?new Promise(()=>{}):call(method,p,signal)) as typeof core.memory.service.call;
+  core.memory.recallDeadlineMs=150;
+  const seen:string[]=[];
+  core.on('changed',()=>{const s=core.store.session(session.id);if(['starting','working'].includes(s.status)&&seen.at(-1)!==(s.activity||''))seen.push(s.activity||'');});
+  await core.send({id:session.id,text:'Plan the next phase.'});
+  assert.equal(sends(),1);
+  assert.deepEqual(seen.slice(0,2),['recalling','thinking']);
+  assert.equal(core.memory.summary().state,'degraded');
+  core.memory.service.call=call;
+  getHooks().event({type:'complete',text:''});
+  await until(()=>core.store.session(session.id).status==='idle'&&core.memoryCaptures.size===0);
+  // Stop while recalling ends the turn before anything is dispatched.
+  core.memory.service.call=((method:string,p?:any,signal?:AbortSignal)=>method==='observe_text'?new Promise(()=>{}):call(method,p,signal)) as typeof core.memory.service.call;
+  core.memory.recallDeadlineMs=60000;
+  const sending=core.send({id:session.id,text:'Again.'});
+  await until(()=>core.store.session(session.id).activity==='recalling');
+  await core.stop(session.id);
+  await assert.rejects(sending,/Stopped/);
+  core.memory.service.call=call;
+  assert.equal(sends(),1);
+  await until(()=>!['starting','working','stopping'].includes(core.store.session(session.id).status));
+});

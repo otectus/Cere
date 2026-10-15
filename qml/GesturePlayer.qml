@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import Cere.Native 1.0
 import "Motion.js" as Motion
 
@@ -8,10 +9,20 @@ Item {
     property bool followAppMotion: true
     property string motion: "idle"
     property var settings: App.state.settings || ({})
+    property var avatar: App.avatar
+    readonly property var puppet: avatar.puppet || ({})
+    readonly property var animationCatalog: {
+        const catalog = Object.assign({}, App.animations)
+        catalog.puppet = player.puppet
+        return catalog
+    }
     property var mirrorSource: null
     readonly property var visual: mirrorSource || player
+    readonly property bool referenceArt: puppet.presentation === "reference"
+    readonly property bool referenceStill: referenceArt && !visual.active
     property real intensity: settings.motionIntensity === undefined ? 0.7 : settings.motionIntensity
-    property bool active: !mirrorSource && visible && motion !== "quiet" && !settings.quiet && !settings.reducedMotion && intensity > 0
+    readonly property bool exposed: visible && Window.window !== null && Window.window.visible && Window.window.visibility !== Window.Minimized
+    property bool active: !mirrorSource && exposed && motion !== "quiet" && !settings.quiet && !settings.reducedMotion && intensity > 0
     property var sequence: ({keys:[{pose:0,ms:1000}],loop:true})
     property var clock: Motion.create(Math.floor(Math.random() * 4294967296))
     property int keyIndex: 0
@@ -31,7 +42,7 @@ Item {
     property bool ready: false
     property int renderedFrames: 0
     readonly property bool animating: frames.running
-    property string idleEnergy: settings.idleEnergy || App.animations.defaultIdleProfile
+    property string idleEnergy: settings.idleEnergy || animationCatalog.defaultIdleProfile
     property string bodyMood: followAppMotion ? App.bodyMood : "neutral"
     // Touch the singleton even when every conversation panel is closed.
     readonly property var sharedMood: followAppMotion ? ConversationMood.forSession(App.moodSession) : null
@@ -52,8 +63,8 @@ Item {
     function play() {
         if (!ready) return
         blinking = false
-        sequence = (App.animations.clips || {})[motion] || {keys:[{pose:0,ms:1000}],loop:true}
-        Motion.select(clock, sequence, App.animations, motion)
+        sequence = (animationCatalog.clips || {})[motion] || {keys:[{pose:0,ms:1000}],loop:true}
+        Motion.select(clock, sequence, animationCatalog, motion)
         configureLife()
         advance(0)
     }
@@ -79,6 +90,7 @@ Item {
     }
     onFollowAppMotionChanged: if (ready && followAppMotion) syncMotion()
     onMotionChanged: play()
+    onAnimationCatalogChanged: if (ready && !mirrorSource) play()
     Component.onCompleted: { if (followAppMotion) motion = App.motion; ready = true; play() }
     Connections {
         target: App
@@ -88,30 +100,40 @@ Item {
     }
     FrameAnimation {
         id: frames
-        running: player.active && player.ready
-        onTriggered: { player.advance(frameTime); player.renderedFrames++ }
+        property real pendingSeconds: 0
+        running: player.active && player.exposed && player.ready
+        onRunningChanged: pendingSeconds = 0
+        onTriggered: {
+            pendingSeconds += frameTime
+            // The reference surface is rasterized at full selected detail.
+            // Keep its gentle motion at up to 60 Hz on high-refresh displays.
+            if (player.referenceArt && pendingSeconds < 1 / 60) return
+            player.advance(pendingSeconds)
+            pendingSeconds = 0
+            player.renderedFrames++
+        }
     }
     // A grounded shadow responds to lift, so jumps and landings have weight.
     Rectangle {
         width: parent.width * .48 * (1 + Math.min(0, player.visual.shiftY) * .016)
         height: Math.max(3, parent.height * .025)
         x: (parent.width - width) / 2; y: parent.height - height - 4
-        radius: height / 2; color: "#36070c13"
+        radius: height / 2; color: Theme.petShadow
         opacity: .65 + Math.min(0, player.visual.shiftY) * .035
     }
     Item {
         id: artwork
         width: parent.width * .96; height: parent.height * .96
-        x: (parent.width - width) / 2 + player.visual.shiftX * parent.width / 192
-        y: parent.height - height - 5 + player.visual.shiftY * parent.height / 208
-        rotation: player.visual.angle
+        x: (parent.width - width) / 2 + (player.referenceStill ? 0 : player.visual.shiftX * (player.referenceArt ? .35 : 1)) * parent.width / 192
+        y: parent.height - height - 5 + (player.referenceStill ? 0 : player.visual.shiftY * (player.referenceArt ? .35 : 1)) * parent.height / 208
+        rotation: player.referenceStill ? 0 : player.referenceArt ? Math.max(-3, Math.min(3, player.visual.angle * .35)) : player.visual.angle
         transformOrigin: Item.Bottom
         AvatarPuppet {
             objectName: "avatarPuppet"
             anchors.fill: parent
-            source: App.assetPath + (App.animations.puppet.texture || "cere-puppet.png")
-            definition: App.animations.puppet
-            pose: player.visual.rig
+            source: App.assetPath + player.puppet.texture
+            definition: player.puppet
+            pose: player.referenceStill ? ({}) : player.visual.rig
         }
     }
 

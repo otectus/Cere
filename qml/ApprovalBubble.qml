@@ -16,7 +16,7 @@ Item {
     onPanelOpenChanged:syncApprovals()
     readonly property int replyIndex:currentReply?replies.findIndex(reply=>reply.id===currentReply.id):-1
     readonly property bool needsInput:approvals.length>0
-    readonly property color accent:needsInput?Theme.amber:currentReply?Theme.cyan:Theme.success
+    readonly property color accent:needsInput?Theme.amber:currentReply?Theme.accentText:Theme.success
     function resetScroll() { Qt.callLater(function(){if(viewport.contentItem)viewport.contentItem.contentY=0}) }
     onCurrentCompletionChanged:if(!currentReply&&!needsInput)resetScroll()
     onCurrentReplyChanged:if(!needsInput)resetScroll()
@@ -67,7 +67,7 @@ Item {
                 CText {
                     objectName:"bubbleHeading"
                     text:bubble.needsInput?"Input needed"+(bubble.approvals.length>1?" · "+bubble.approvals.length:"")
-                        :bubble.currentReply?"Cere · pinned conversation"
+                        :bubble.currentReply?App.assistantName+" · pinned conversation"
                         :"Run complete"+(bubble.completions.length>1?" · "+bubble.completions.length+" unread":"")
                     font.pixelSize:Theme.section;font.bold:true;color:bubble.accent
                 }

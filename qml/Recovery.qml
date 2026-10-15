@@ -21,7 +21,7 @@ CDialog {
     CText { objectName:"restoreReview";visible:!!recovery.review.id;text:recovery.review.id?(recovery.review.folders+" folders · "+recovery.review.sessions+" conversations · "+recovery.review.messages+" messages\n"+recovery.review.warning+"\n"+(recovery.review.replaced||"")+"\n"+(recovery.review.kept||"")+"\n"+(recovery.review.memory?"Backed-up memory will be restored with current forgetting records.":"Current memory is retained.")+"\nCere will restart its broker. The previous profile, including its backups folder, is retained in a private recovery directory."):"";wrapMode:Text.Wrap }
     CButton { visible:!!recovery.review.id;text:"Restore reviewed backup and restart";enabled:recovery.request<0;onClicked:recovery.call("recovery.activate",{id:recovery.review.id,digest:recovery.review.digest}) }
     CButton { text:"Cancel a pending restore";onClicked:recovery.call("recovery.cancel") }
-    CText { text:recovery.feedback;visible:text.length>0;color:Theme.cyan;wrapMode:Text.Wrap;Accessible.name:text }
+    CText { text:recovery.feedback;visible:text.length>0;color:Theme.accentText;wrapMode:Text.Wrap;Accessible.name:text }
     CButton { text:"Close";onClicked:recovery.close() }
     Connections {
         target:App

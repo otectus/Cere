@@ -18,8 +18,8 @@ MenuItem {
         visible: item.checkable
         x: item.leftPadding; y: (item.height - height) / 2
         width: 16; height: 16; radius: 4
-        color: item.checked ? Theme.cyan : Theme.input
-        border.color: item.checked ? Theme.cyan : Theme.border
+        color: item.checked ? Theme.accentText : Theme.input
+        border.color: item.checked ? Theme.accentText : Theme.border
         Text { anchors.centerIn: parent; visible: item.checked; text: "✓"; color: Theme.background; font.family: Theme.font; font.pixelSize: Theme.caption; font.bold: true }
     }
     arrow: Text {

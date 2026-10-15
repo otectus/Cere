@@ -8,6 +8,8 @@ Type=simple
 ExecStart=/usr/bin/node /usr/share/cere/broker/main.ts
 Restart=on-failure
 RestartSec=3
+# The broker bounds its own shutdown at 10 s (broker/main.ts); give it room to exit cleanly.
+TimeoutStopSec=30
 # Restoring a backup asks for a restart with this status; it is not a failure.
 RestartForceExitStatus=75
 SuccessExitStatus=75

@@ -13,11 +13,11 @@ CDialog {
     onOpened:{recallRequest=App.rpc("memoryReview.recalled",{sessionId:sessionId});error="";context={};request=App.rpc("session.context",{id:sessionId,text:draftText,attachmentIds:attachmentIds})}
     CText { text:"Conversation context";font.pixelSize:Theme.title;font.bold:true }
     CText { text:drawer.error;color:Theme.danger;visible:!!drawer.error }
-    CText { text:(drawer.context.destination?.provider||"")+" · "+(drawer.context.destination?.model||"")+"\n"+(drawer.context.destination?.cwd||"");color:Theme.cyan }
+    CText { text:(drawer.context.destination?.provider||"")+" · "+(drawer.context.destination?.model||"")+"\n"+(drawer.context.destination?.cwd||"");color:Theme.accentText }
     CText { text:drawer.context.destination?.host||"";visible:!!text;color:Theme.muted }
     CText { text:"Cere will attach "+drawer.attachmentIds.length+" selected files and your message." }
     Repeater { model:drawer.context.attachments||[];CText { required property var modelData;text:modelData.name+" · "+Math.ceil(modelData.size/1024)+" KiB";font.pixelSize:Theme.secondary } }
-    CText { text:"Approximately "+(drawer.context.estimatedTokens||0)+" text tokens";color:Theme.cyan }
+    CText { text:"Approximately "+(drawer.context.estimatedTokens||0)+" text tokens";color:Theme.accentText }
     CText { text:drawer.context.estimateLabel||"";font.pixelSize:Theme.secondary;color:Theme.muted }
     CText { text:drawer.context.nativeContext||"";font.pixelSize:Theme.secondary;color:Theme.amber }
     CText { text:drawer.context.memoryLabel||"";font.pixelSize:Theme.secondary;color:Theme.muted }

@@ -23,7 +23,7 @@ Rectangle {
     }
     readonly property color statusColor: agent.status === "failed" ? Theme.danger
         : agent.status === "waiting" ? Theme.amber
-        : active ? Theme.cyan
+        : active ? Theme.accentText
         : Theme.muted
 
     implicitHeight: body.implicitHeight + 16

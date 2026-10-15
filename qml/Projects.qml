@@ -73,13 +73,13 @@ ColumnLayout {
                         spacing:4
                         RowLayout {
                             Layout.fillWidth:true;spacing:6
-                            CIcon { name:row.modelData.favorite?"star":"projects";color:row.modelData.favorite?Theme.amber:Theme.cyan;Layout.preferredWidth:18;Layout.preferredHeight:18 }
+                            CIcon { name:row.modelData.favorite?"star":"projects";color:row.modelData.favorite?Theme.amber:Theme.accentText;Layout.preferredWidth:18;Layout.preferredHeight:18 }
                             Text { text:row.modelData.name;Layout.fillWidth:true;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.message;font.weight:Font.DemiBold }
                         }
                         Text { text:row.modelData.cwd;Layout.fillWidth:true;elide:Text.ElideMiddle;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
                         Text {
                             text:(row.modelData.sessions?row.modelData.sessions+" session"+(row.modelData.sessions===1?"":"s"):row.modelData.total?row.modelData.total+" archived":"No sessions")+(row.modelData.active?" · "+row.modelData.active+" active":"")+(row.modelData.unread?" · "+row.modelData.unread+" unread":"")+(!row.modelData.configured?" · Set defaults":" · "+row.modelData.defaults.provider)
-                            Layout.fillWidth:true;elide:Text.ElideRight;color:row.modelData.unread?Theme.cyan:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
+                            Layout.fillWidth:true;elide:Text.ElideRight;color:row.modelData.unread?Theme.accentText:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
                         }
                     }
                 }
@@ -92,7 +92,7 @@ ColumnLayout {
                 CButton {
                     objectName:"projectNew_"+row.index;implicitWidth:36;implicitHeight:36;primary:true
                     help:"New session in "+row.modelData.name;Accessible.name:help;enabled:App.connected
-                    contentItem:CIcon { name:"plus";color:Theme.cyan }
+                    contentItem:CIcon { name:"plus";color:Theme.accentText }
                     onClicked:{rows.currentIndex=row.index;page.start(row.modelData)}
                 }
             }

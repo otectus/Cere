@@ -129,7 +129,7 @@ ColumnLayout {
         if(pending)return pending===1?"waiting for input":pending+" inputs needed"
         if(active)return active===1?"1 subagent active":active+" subagents active"
         switch(session.activity){
-        case"thinking":return"thinking";case"speaking":return"responding";case"working":return"using tools"
+        case"recalling":return"recalling memory";case"thinking":return"thinking";case"speaking":return"responding";case"working":return"using tools"
         case"delegating":return"delegating";case"waitingForAgents":return"waiting for subagents"
         case"compacting":return"compacting context";case"planning":return"planning"
         default:return session.mode==="linked"&&session.status==="idle"?"linked terminal":session.status
@@ -211,7 +211,7 @@ ColumnLayout {
                         Layout.fillWidth:true;spacing:8
                         Text { visible:sessionDelegate.modelData.pinned===true;text:"★";color:Theme.amber;font.pixelSize:Theme.body;Accessible.ignored:true }
                         Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:(sessionDelegate.modelData.unread?"● ":"")+(sessionDelegate.modelData.title||"Untitled session");maximumLineCount:1;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;textFormat:Text.PlainText }
-                        Rectangle { width:6;height:6;radius:3;color:list.pendingInputCount(sessionDelegate.modelData)>0?Theme.amber:["starting","working","stopping"].indexOf(sessionDelegate.modelData.status)>=0?Theme.cyan:Theme.line }
+                        Rectangle { width:6;height:6;radius:3;color:list.pendingInputCount(sessionDelegate.modelData)>0?Theme.amber:["starting","working","stopping"].indexOf(sessionDelegate.modelData.status)>=0?Theme.accentText:Theme.line }
                         CButton {
                             visible:!list.compact&&!list.rowActions;objectName:"sessionMore_"+sessionDelegate.modelData.id
                             implicitWidth:32;implicitHeight:28;leftPadding:6;rightPadding:6;quiet:true
@@ -226,7 +226,7 @@ ColumnLayout {
             }
             RowLayout {
                 visible:!list.compact&&list.rowActions;anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;height:36;spacing:6
-                CButton { objectName:"pinSession_"+sessionDelegate.modelData.id;text:sessionDelegate.modelData.pinned?"Unpin":"Pin";help:"Pinned replies appear beside Cere and are read aloud when voice is enabled.";quiet:true;implicitHeight:32;onClicked:list.organize(sessionDelegate.modelData,{pinned:!sessionDelegate.modelData.pinned}) }
+                CButton { objectName:"pinSession_"+sessionDelegate.modelData.id;text:sessionDelegate.modelData.pinned?"Unpin":"Pin";help:"Pinned replies appear beside "+App.assistantName+" and are read aloud when voice is enabled.";quiet:true;implicitHeight:32;onClicked:list.organize(sessionDelegate.modelData,{pinned:!sessionDelegate.modelData.pinned}) }
                 CComboBox {
                     objectName:"moveSession_"+sessionDelegate.modelData.id;Layout.fillWidth:true;implicitHeight:32
                     model:[{id:"",name:"Unfiled"}].concat(list.folders);textRole:"name";valueRole:"id"

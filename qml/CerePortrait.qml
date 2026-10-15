@@ -10,12 +10,17 @@ Rectangle {
     implicitWidth: 64
     implicitHeight: 64
     radius: width * .27
-    color: "#102736"
+    color: portraitColors.portraitSurface
     border.color: accent
     border.width: 1
 
     // Inputs are explicit so the miniature and workspace share identical behavior.
     property var settings: ({})
+    property var avatar: ({portrait:"cere-portrait-reference.png"})
+    readonly property var portraitColors: Theme.paletteFor(avatar.id || settings.avatar)
+    readonly property string portraitFile: avatar.portrait || "cere-portrait-reference.png"
+    readonly property url portraitSource: assetRoot + portraitFile
+    readonly property string assistantName: settings.assistantName || "Cere"
     property var session: ({})
     property var messages: []
     property var approvals: []
@@ -37,8 +42,9 @@ Rectangle {
         paused:settings.paused, mood:cuesEnabled ? mood : "neutral", greeting:greeting,
         hovered:hovered, listening:listening})
     readonly property string expression: resolved.expression
-    readonly property string description: "Cere · " + resolved.label + (speaking ? " · Speaking" : "")
-    readonly property color accent: resolved.tone === "attention" ? "#bb9155" : resolved.tone === "warm" ? "#70b8cb" : "#367790"
+    readonly property string description: assistantName + " · " + resolved.label + (speaking ? " · Speaking" : "")
+    readonly property color accent: resolved.tone === "attention" ? portraitColors.portraitAttention
+        : resolved.tone === "warm" ? portraitColors.portraitWarm : portraitColors.portraitAccent
     readonly property var frames: ({neutral:0, curious:1, thinking:2, happy:3, cheeky:4, skeptical:5,
         tender:6, concerned:7, surprised:8, focused:9, sleepy:10})
     readonly property int face: blinking ? 11 : (frames[expression] || 0)
@@ -83,7 +89,7 @@ Rectangle {
     Component.onCompleted: ready = true
 
     Accessible.role: Accessible.Button
-    Accessible.name: "Cere · " + actionText
+    Accessible.name: assistantName + " · " + actionText
     Accessible.description: description + ". " + actionText
     Accessible.onPressAction: acknowledge()
     activeFocusOnTab: true
@@ -122,8 +128,8 @@ Rectangle {
     Rectangle {
         anchors.fill: parent; anchors.margins: 3; radius: parent.radius - 2
         gradient: Gradient {
-            GradientStop { position: 0; color: "#23495d" }
-            GradientStop { position: 1; color: "#101c2b" }
+            GradientStop { position: 0; color: portrait.portraitColors.portraitTop }
+            GradientStop { position: 1; color: portrait.portraitColors.portraitBottom }
         }
     }
     Item {
@@ -138,7 +144,7 @@ Rectangle {
                 id: faceImage
                 required property int index
                 anchors.fill: parent
-                source: portrait.assetRoot + "cere-portrait-expressions.png"
+                source: portrait.portraitSource
                 sourceSize: Qt.size(1024, 768)
                 sourceClipRect: Qt.rect((index % 4) * 256, Math.floor(index / 4) * 256, 256, 256)
                 fillMode: Image.PreserveAspectFit
@@ -154,7 +160,7 @@ Rectangle {
     Rectangle {
         anchors.fill: parent; radius: parent.radius; color: "transparent"
         border.width: portrait.activeFocus ? 2 : 1
-        border.color: portrait.activeFocus ? "#49dfff" : "#39667b"
+        border.color: portrait.activeFocus ? portrait.portraitColors.accentText : portrait.portraitColors.portraitBorder
     }
     // Breath-like mask light communicates real speech without pretending to lip-sync.
     Item {
@@ -166,7 +172,7 @@ Rectangle {
                 required property int index
                 x: index * 5; y: parent.height - height
                 width: 3; height: portrait.animated ? 3 + (1 + Math.sin(portrait.phase * 12 + index * 1.7)) * 2 : 4
-                radius: 1.5; color: "#a8ecff"
+                radius: 1.5; color: portrait.portraitColors.portraitSpeech
             }
         }
     }

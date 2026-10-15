@@ -24,6 +24,7 @@ internal fun sessionDisplayStatus(session: Session, pendingInput: Int = 0): Stri
     pendingInput > 1 -> "${pendingInput} inputs needed"
     session.activeAgentCount() == 1 -> "1 subagent active"
     session.activeAgentCount() > 1 -> "${session.activeAgentCount()} subagents active"
+    session.activity == "recalling" -> "Recalling memory"
     session.activity == "thinking" -> "Thinking"
     session.activity == "speaking" -> "Responding"
     session.activity == "working" -> "Using tools"

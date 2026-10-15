@@ -242,7 +242,7 @@ CDialog {
 
     CText { visible:workflow.requestId>=0;text:"Working…";color:Theme.muted;font.pixelSize:Theme.caption }
     CText { visible:workflow.error.length>0;text:workflow.error;color:Theme.danger;font.pixelSize:Theme.secondary }
-    CText { visible:workflow.feedback.length>0;text:workflow.feedback;color:Theme.cyan;font.pixelSize:Theme.secondary }
+    CText { visible:workflow.feedback.length>0;text:workflow.feedback;color:Theme.accentText;font.pixelSize:Theme.secondary }
     CButton { Layout.fillWidth:true;text:"Done";onClicked:workflow.close() }
     CDialog {
         id:checkReview

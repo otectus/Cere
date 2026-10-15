@@ -75,12 +75,12 @@ ColumnLayout {
         Layout.fillWidth:true;spacing:4
         CText { text:"Settings";font.pixelSize:Theme.page;font.weight:Font.DemiBold;Accessible.role:Accessible.Heading }
         // Narrow pages give this line to the chips; the category blurb below still speaks for her.
-        CText { visible:settingsView.rail;text:"Shape how Cere looks, speaks, connects, and acts on your desktop.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { visible:settingsView.rail;text:"Shape how "+App.assistantName+" looks, speaks, connects, and acts on your desktop.";color:Theme.muted;font.pixelSize:Theme.secondary }
     }
     CField {
         id:settingsSearch;objectName:"settingsSearch";Layout.fillWidth:true
         leftPadding:38;placeholderText:"Find a setting…";Accessible.name:"Find a setting"
-        CIcon { name:"search";x:12;anchors.verticalCenter:parent.verticalCenter;color:settingsSearch.activeFocus?Theme.cyan:Theme.muted }
+        CIcon { name:"search";x:12;anchors.verticalCenter:parent.verticalCenter;color:settingsSearch.activeFocus?Theme.accentText:Theme.muted }
         onAccepted:settingsView.openResult(settingsView.results[0])
         // Escape clears a search first; on an empty field it leaves Settings as before.
         Keys.onEscapePressed:event=>{if(text.length){clear();event.accepted=true}else event.accepted=false}
@@ -161,7 +161,7 @@ ColumnLayout {
         id:spotlight;objectName:"settingsSpotlight"
         parent:settingsScroll.contentItem
         z:2;opacity:0;visible:opacity>0
-        color:"transparent";radius:Theme.radiusCard;border.color:Theme.cyan;border.width:Theme.focusWidth
+        color:"transparent";radius:Theme.radiusCard;border.color:Theme.accentText;border.width:Theme.focusWidth
         function show(item){
             const point=item.mapToItem(parent,0,0)
             x=point.x-6;y=point.y-6;width=item.width+12;height=item.height+12

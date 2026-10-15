@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "avatarpuppet.h"
+#include "avatardefinition.h"
 #include "citations.h"
 #include <qqml.h>
 #include <LayerShellQt/Window>
@@ -8,6 +9,7 @@
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QTextBlock>
+#include <QTextFragment>
 #include <QTextCursor>
 #include <QTextTable>
 #include <QFontMetricsF>
@@ -26,6 +28,8 @@
 #include <QStandardPaths>
 #include <QImage>
 #include <QPainter>
+#include <QPalette>
+#include <QPainterPath>
 #include <QLineF>
 #include <QRandomGenerator>
 #include <QSaveFile>
@@ -94,6 +98,36 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
     QFile f(m_root+"/assets/motions.json"); if(f.open(QIODevice::ReadOnly))m_animations=QJsonDocument::fromJson(f.readAll()).object().toVariantMap();
     QFile rigFile(m_root+"/assets/"+m_animations.value("rig","cere-rig.json").toString());
     if(rigFile.open(QIODevice::ReadOnly))m_animations.insert("puppet",QJsonDocument::fromJson(rigFile.readAll()).object().toVariantMap());
+    const auto baseRig=m_animations.value("puppet").toMap();
+    const auto resolvedBase=AvatarDefinition::resolve(baseRig);
+    m_animations.insert("puppet",resolvedBase.definition);
+    QFile avatarFile(m_root+"/assets/avatars.json");
+    if(avatarFile.open(QIODevice::ReadOnly)){
+        for(const auto &value:QJsonDocument::fromJson(avatarFile.readAll()).array()){
+            auto entry=value.toObject().toVariantMap();
+            QVariantMap overrides;
+            const QString overrideFile=entry.take("rig").toString();
+            if(!overrideFile.isEmpty()){
+                QFile file(m_root+"/assets/"+overrideFile);
+                if(!file.open(QIODevice::ReadOnly))continue;
+                overrides=QJsonDocument::fromJson(file.readAll()).object().toVariantMap();
+                if(overrides.isEmpty())continue;
+            }
+            const auto resolved=AvatarDefinition::resolve(baseRig,overrides);
+            if(!resolved.error.isEmpty()){qWarning()<<"Invalid avatar"<<entry.value("id")<<resolved.error;continue;}
+            const auto definition=resolved.definition;
+            AvatarPuppet check;
+            check.setDefinition(definition);
+            check.setSource(QUrl::fromLocalFile(m_root+"/assets/"+definition.value("texture").toString()));
+            if(!check.ready()||!QFileInfo::exists(m_root+"/assets/"+entry.value("portrait").toString()))continue;
+            entry.insert("puppet",definition);m_avatars.append(entry);
+        }
+    }
+    if(m_avatars.isEmpty())m_avatars.append(QVariantMap{{"id","cere"},{"label","Cere"},{"portrait","cere-portrait-expressions.png"},{"puppet",m_animations.value("puppet")}});
+    // Compiled with the host so native dialogs and the overlay cannot lose their palette.
+    QFile palettes(":/assets/palettes.json");
+    if(palettes.open(QIODevice::ReadOnly))m_themes=QJsonDocument::fromJson(palettes.readAll()).object().toVariantMap();
+    applyTheme();
     m_director=MotionDirector(m_animations);m_reactionClock.start();
     connect(&m_socket,&QLocalSocket::readyRead,this,&Controller::receive);
     connect(&m_socket,&QLocalSocket::connected,this,[this]{
@@ -143,6 +177,15 @@ Controller::~Controller(){
     m_socket.abort();
 }
 QString Controller::assetPath()const{return QUrl::fromLocalFile(m_root+"/assets/").toString();}
+QVariantMap Controller::avatar()const{
+    const auto selected=m_state.value("settings").toMap().value("avatar","cere").toString();
+    for(const auto &entry:m_avatars)if(entry.toMap().value("id").toString()==selected)return entry.toMap();
+    return m_avatars.first().toMap();
+}
+QString Controller::assistantName()const{
+    const auto name=m_state.value("settings").toMap().value("assistantName").toString().trimmed();
+    return name.isEmpty()?QStringLiteral("Cere"):name;
+}
 // The same resolution as the broker's paths(), including its private /tmp fallback.
 QString Controller::runtimePath()const{
     const QString override=qEnvironmentVariable("CERE_RUNTIME_DIR");if(!override.isEmpty())return QDir(override).absolutePath();
@@ -163,8 +206,12 @@ void Controller::launchBroker(bool initial){
     if(managedBroker()){
         if(initial){
             QProcess environment;environment.start("systemctl",{"--user","import-environment","WAYLAND_DISPLAY","DISPLAY","HYPRLAND_INSTANCE_SIGNATURE"});environment.waitForFinished(2000);
-            QProcess service;service.start("systemctl",{"--user","start","cere-broker.service"});
-            if(service.waitForFinished(3000)&&service.exitCode()==0)return;
+            // Queue the start without waiting for it: at login the unit waits for the memory service, and the
+            // socket retry connects once the broker listens. Only a start the service manager refuses falls
+            // through to a direct launch, whose broker would otherwise hold the runtime lock with this
+            // process's environment instead of the unit's (no ~/.local/bin, no memory credentials).
+            QProcess service;service.start("systemctl",{"--user","start","--no-block","cere-broker.service"});
+            if(service.waitForFinished(3000)&&service.exitStatus()==QProcess::NormalExit&&service.exitCode()==0)return;
         }else if(QProcess::startDetached("systemctl",{"--user","start","--no-block","cere-broker.service"}))return;
     }
     QProcess broker;broker.setProgram(QStandardPaths::findExecutable("node"));broker.setArguments({m_root+"/broker/main.ts"});broker.setStandardOutputFile(QProcess::nullDevice());broker.setStandardErrorFile(QProcess::nullDevice());broker.startDetached();
@@ -176,7 +223,7 @@ void Controller::start(bool show,bool toggle){
         m_overlayProcess=new QProcess(this);m_overlayProcess->setProgram(qEnvironmentVariable("CERE_HOST_EXEC",QCoreApplication::applicationFilePath()));
         QStringList overlayArguments{"--overlay","--root",m_root};if(toggle)overlayArguments<<"--toggle";
         m_overlayProcess->setArguments(overlayArguments);m_overlayProcess->setProcessChannelMode(QProcess::ForwardedChannels);m_overlayProcess->start();
-        m_tray=new QSystemTrayIcon(QIcon(m_root+"/assets/cere-emblem.png"),this);m_tray->setToolTip("Cere · your desktop companion");
+        m_tray=new QSystemTrayIcon(QGuiApplication::windowIcon(),this);m_tray->setToolTip("Cere · your desktop companion");
         auto menu=new QMenu();menu->addAction("Open Cere",this,[this]{expand();});menu->addAction("Show / hide",this,[this]{auto s=m_state.value("settings").toMap();rpc("settings.update",{{"hidden",!s.value("hidden").toBool()}});});
         menu->addAction("Pause AI actions",this,[this]{rpc("settings.update",{{"paused",true}});});
         menu->addAction("Disable remote access now",this,[this]{rpc("remote.off",{});});
@@ -197,7 +244,8 @@ void Controller::connectBroker(){
 }
 void Controller::failPendingRequests(const QString &message){
     const auto pending=std::exchange(m_requests,{});
-    m_messagesRequest=-1;m_olderRequest=-1;m_copies.clear();m_liveMessages.clear();m_deferredDrafts.clear();
+    // Offline flushes in flight ended with the connection; their conversations may flush again.
+    m_messagesRequest=-1;m_olderRequest=-1;m_copies.clear();m_liveMessages.clear();m_deferredDrafts.clear();m_offlineFlushes.clear();
     for(auto it=pending.cbegin();it!=pending.cend();++it)emit result(it.key(),QVariantMap{{"error",message},{"code","CONNECTION_LOST"}});
 }
 // Refetches the newest transcript page without clearing the selection or composer.
@@ -327,7 +375,11 @@ void Controller::receive(){
             if(m_deferredDrafts.contains(id)){auto params=m_deferredDrafts.take(id);params["expectedRevision"]=value.toMap().value("draftRevision");rpc("session.draft",params);}
         }else{
             QString method=object["method"].toString();auto params=object["params"].toObject().toVariantMap();
-            if(method=="state")applyState(params);
+            if(method=="state"){
+                // A snapshot whose revision this host already holds changes nothing.
+                const auto revision=params.value("revision");
+                if(!revision.isValid()||revision!=m_state.value("revision"))applyState(params);
+            }
             if(method=="message")observeConversation(params);
             if(method=="message"&&params.value("sessionId").toString()==m_selected){
                 // An older revision can arrive after a newer page; it never overwrites it.
@@ -375,7 +427,9 @@ void Controller::receive(){
 void Controller::applyState(const QVariantMap &state){
     const auto before=m_director.context();
     const auto oldSettings=m_state.value("settings").toMap();
+    const auto oldAvatarId=avatar().value("id");
     m_state=state;
+    applyTheme();
     QSet<QString> pendingQuestions;
     for(const auto &entry:state.value("approvals").toList())pendingQuestions.insert(entry.toMap().value("id").toString());
     bool draftsChanged=false;
@@ -388,7 +442,9 @@ void Controller::applyState(const QVariantMap &state){
     const auto moodAttention=m_attention.value(moodOwner()).toMap();
     if(moodAttention.contains("mood"))receiveMood(moodAttention.value("sessionId").toString(),moodAttention.value("mood").toMap());
     if(m_selected.isEmpty()&&!state.value("sessions").toList().isEmpty())select(state.value("sessions").toList().first().toMap().value("id").toString());
-    emit stateChanged();syncPet();
+    emit stateChanged();
+    if(avatar().value("id")!=oldAvatarId)emit avatarChanged();
+    syncPet();
     if(oldSettings.value("showMemoryCitations").toBool()!=showMemoryCitations())emit citationDisplayChanged();
     refreshMotion();
     const auto after=m_director.context();
@@ -398,6 +454,51 @@ void Controller::applyState(const QVariantMap &state){
     else if(!before.busy&&after.busy)playMotion("send");
     else if((before.quiet||before.reduced)&&!after.quiet&&!after.reduced)playMotion("wake");
     else if(!oldSettings.isEmpty()&&oldSettings.value("scale")!=state.value("settings").toMap().value("scale"))playMotion("resize");
+}
+void Controller::applyTheme(){
+    const auto selected=avatar();
+    const auto id=selected.value("id").toString();
+    const QString themeId=m_themes.contains(id)?id:QStringLiteral("cere");
+    if(m_themeId==themeId)return;
+    m_themeId=themeId;m_theme=m_themes.value(themeId).toMap();
+    const auto color=[this](const char *token){return QColor(m_theme.value(QLatin1String(token)).toString());};
+    QPalette palette;
+    // Native menus, file pickers, tooltips and unstyled Quick controls use this too.
+    const std::pair<QPalette::ColorRole,const char*> roles[]={
+        {QPalette::Window,"background"},{QPalette::WindowText,"text"},
+        {QPalette::Base,"input"},{QPalette::AlternateBase,"surface"},{QPalette::Text,"text"},
+        {QPalette::Button,"raised"},{QPalette::ButtonText,"text"},{QPalette::BrightText,"text"},
+        {QPalette::Highlight,"selected"},{QPalette::HighlightedText,"text"},
+        {QPalette::Accent,"accent"},{QPalette::Link,"accentText"},{QPalette::LinkVisited,"warm"},
+        {QPalette::ToolTipBase,"raised"},{QPalette::ToolTipText,"text"},{QPalette::PlaceholderText,"muted"},
+        {QPalette::Light,"borderHover"},{QPalette::Midlight,"border"},{QPalette::Mid,"line"},
+        {QPalette::Dark,"subtle"},{QPalette::Shadow,"sidebar"}
+    };
+    for(const auto &[role,token]:roles)palette.setColor(role,color(token));
+    for(const auto role:{QPalette::Text,QPalette::WindowText,QPalette::ButtonText})palette.setColor(QPalette::Disabled,role,color("muted"));
+    QApplication::setPalette(palette);
+
+    QIcon icon(m_root+"/assets/cere-emblem.png");
+    if(themeId!="cere"){
+        // Render the existing neutral portrait as a native icon; the source atlas stays intact.
+        const QImage atlas(m_root+"/assets/"+selected.value("portrait").toString());
+        if(!atlas.isNull()){
+            icon=QIcon();
+            const auto face=atlas.copy(0,0,atlas.width()/4,atlas.height()/3);
+            for(const int size:{16,22,24,32,48,64,128,256}){
+                QPixmap frame(size,size);frame.fill(Qt::transparent);
+                QPainter painter(&frame);painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);
+                QPainterPath clip;clip.addRoundedRect(QRectF(0,0,size,size),size*.24,size*.24);
+                painter.setClipPath(clip);painter.fillRect(frame.rect(),color("portraitSurface"));
+                painter.drawImage(frame.rect(),face);painter.end();icon.addPixmap(frame);
+            }
+        }
+    }
+    QGuiApplication::setWindowIcon(icon);
+    for(QQuickView *view:{m_panel,m_pet,m_petMirror.data(),m_bubble})
+        if(view)view->setIcon(icon);
+    if(m_tray)m_tray->setIcon(icon);
+    emit themeChanged();
 }
 QVariantMap Controller::session()const{for(auto s:m_state.value("sessions").toList())if(s.toMap().value("id").toString()==m_selected)return s.toMap();return {};}
 void Controller::setQuestionDraft(const QString &approvalId,const QVariantMap &answers){
@@ -460,11 +561,14 @@ void Controller::syncPet(){
     }}
 }
 void Controller::updateMask(){
-    if(!m_pet||m_maskSize==m_pet->size())return;
+    const auto selected=avatar();
+    const QString identity=selected.value("id").toString();
+    if(!m_pet||(m_maskSize==m_pet->size()&&m_maskAvatar==identity))return;
     m_maskSize=m_pet->size();
+    m_maskAvatar=identity;
     // This is an input region only, never a visual cutout. Include the envelope
     // of every pose/transform so animated hair and outstretched hands stay clickable.
-    const auto definition=m_animations.value("puppet").toMap();
+    const auto definition=selected.value("puppet").toMap();
     const QString atlasPath=m_root+"/assets/"+definition.value("texture").toString();
     const QImage atlas(atlasPath);
     AvatarPuppet puppet;
@@ -488,6 +592,7 @@ void Controller::updateMask(){
                 painter.save();
                 painter.setTransform(QTransform(matrix[0].toDouble(),matrix[2].toDouble(),
                     matrix[1].toDouble(),matrix[3].toDouble(),matrix[4].toDouble(),matrix[5].toDouble()),true);
+                painter.rotate(part.value("rotation").toDouble());
                 const QRectF target(rect[0].toDouble(),rect[1].toDouble(),rect[2].toDouble(),rect[3].toDouble());
                 const QRect crop(source[0].toInt(),source[1].toInt(),source[2].toInt(),source[3].toInt());
                 if(part.value("mirrorX").toBool()){
@@ -773,16 +878,28 @@ void Controller::formatMessage(QQuickTextDocument *quickDocument,qreal proseWidt
     // A wide table or code block widens the whole document; a right margin keeps every other
     // block at the visible width so reading never needs horizontal scrolling.
     const qreal overflow=proseWidth>0&&document->textWidth()>proseWidth?std::floor(document->textWidth()-proseWidth):0;
+    const QColor linkColor(m_theme.value("accentText").toString());
+    QList<QPair<int,int>> links;
     QTextCursor edit(document);edit.beginEditBlock();
     for(auto block=document->begin();block.isValid();block=block.next()){
         auto format=block.blockFormat();
         const bool code=format.hasProperty(QTextFormat::BlockCodeFence)||format.hasProperty(QTextFormat::BlockCodeLanguage);
         format.setTopMargin(block==document->begin()?0:code||block.textList()?2:format.headingLevel()?12:8);
         format.setBottomMargin(code?2:0);
-        if(code){format.setBackground(QColor("#0d131c"));format.setLeftMargin(8);format.setRightMargin(8);}
+        if(code){format.setBackground(QColor(m_theme.value("codeSurface").toString()));format.setLeftMargin(8);format.setRightMargin(8);}
         else if(!QTextCursor(block).currentTable())format.setRightMargin(overflow);
         QTextCursor cursor(block);cursor.setBlockFormat(format);
+        // Markdown anchors keep an explicit foreground from their first parse.
+        // Changing TextArea.palette.link alone leaves old replies in the old colour.
+        for(auto it=block.begin();!it.atEnd();++it){
+            const auto fragment=it.fragment();const auto style=fragment.charFormat();
+            if(style.isAnchor()&&!style.anchorHref().isEmpty()&&style.foreground().color()!=linkColor)
+                links.append({fragment.position(),fragment.length()});
+        }
     }
+    // Collect ranges before editing: merging adjacent fragments invalidates their iterators.
+    QTextCharFormat link;link.setForeground(linkColor);
+    for(const auto &[position,length]:links){QTextCursor cursor(document);cursor.setPosition(position);cursor.setPosition(position+length,QTextCursor::KeepAnchor);cursor.mergeCharFormat(link);}
     if(proseWidth>0)for(auto frame:document->rootFrame()->childFrames())if(auto table=qobject_cast<QTextTable*>(frame))fitTable(table,document->defaultFont(),proseWidth);
     edit.endEditBlock();
 }

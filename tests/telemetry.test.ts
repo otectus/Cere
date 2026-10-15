@@ -106,3 +106,13 @@ test('forced worker termination releases native watches and held flock descripto
   await new Promise<void>((resolve,reject)=>{worker.once('message',()=>resolve());worker.once('error',reject);});
   assert.equal(linuxNative().lock(lock),-1);await worker.terminate();const fd=linuxNative().lock(lock);assert.ok(fd>=0);linuxNative().unlock(fd);
 });
+
+test('a worker status that did not change is not a state change',async t=>{
+  const parent=await fixture(t),root=join(parent,'workspace'),runtime=join(parent,'runtime');await mkdir(root);
+  let changes=0;const service=new TelemetryService(()=>{changes++;},runtime);t.after(()=>service.close());
+  await service.configure({...telemetryDefaults,enabled:true,roots:[root],commands:true});await until(()=>service.status.listener==='listening');
+  const before=changes,status=service.status;
+  service.worker!.emit('message',{status:{...status}});assert.equal(changes,before);
+  service.worker!.emit('message',{status:{...status,events:status.events+1}});assert.equal(changes,before+1);
+  assert.equal(service.status.events,status.events+1);
+});

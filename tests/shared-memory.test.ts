@@ -118,3 +118,49 @@ test('erasure from one provider removes shared memory and scrubs every managed p
   assert.equal(f.store.get<any[]>(`ollama:${ollama.id}`, [])[0].content, '[Content removed by memory erasure]');
   assert.equal((await f.memory.list(ollama)).total, 0);
 });
+
+test('retention expiry retires recalled packets without ending live turns; a forget ends them with a clear reason', async t => {
+  const f = await fixture(t), project = join(f.directory, 'project');
+  await mkdir(project);
+  const codex = session('codex', 'codex-session', project);
+  f.store.saveSession(codex);
+  const turn = f.memory.controller.signal, work = f.memory.service.controller.signal, epoch = f.store.get('transcriptEpoch', '');
+  f.memory.packets.set(codex.id, { observed: true });
+  // The memory worker relays canonical events through this client callback.
+  f.memory.service.canonical.notify({ type: 'invalidate', cause: 'expiration' });
+  assert.equal(turn.aborted, false, 'a reply in progress survives routine expiry');
+  assert.equal(work.aborted, false, 'extraction and projection in flight survive routine expiry');
+  assert.equal(f.memory.packets.size, 0, 'recalled packets are retired');
+  assert.notEqual(f.store.get('transcriptEpoch', ''), epoch);
+  // A real forget crosses the worker with its cause and still ends work that may use the removed content.
+  const saved = await f.memory.save(codex, 'Shared secret orchid marker.');
+  await f.memory.forget(codex, saved.id);
+  assert.equal(turn.aborted, true);
+  assert.equal((turn.reason as any).code, 'MEMORY_INVALIDATED');
+  assert.match((turn.reason as Error).message, /^Memory changed while Cere was replying\. Send your message again\.$/);
+  assert.equal(work.aborted, true);
+  assert.equal(f.memory.controller.signal.aborted, false, 'the next turn starts with a fresh signal');
+});
+
+test('a turn waits at most the recall deadline for memory; stopping the turn ends the wait at once', async t => {
+  const f = await fixture(t), project = join(f.directory, 'deadline');
+  await mkdir(project);
+  const codex = session('codex', 'codex-deadline', project);
+  f.store.saveSession(codex);
+  // A memory worker that never answers, as when a long erasure walk held it.
+  const call = f.memory.service.call.bind(f.memory.service);
+  f.memory.service.call = ((method: string, p?: any, s?: AbortSignal) => method === 'observe_text' ? new Promise(() => {}) : call(method, p, s)) as typeof f.memory.service.call;
+  t.after(() => { f.memory.service.call = call; });
+  f.memory.recallDeadlineMs = 150;
+  const started = Date.now();
+  assert.equal(await f.memory.context(codex, 'What did we decide about the orchid release?', signal()), '');
+  assert.ok(Date.now() - started < 3000, 'the turn went ahead without recalled context');
+  assert.equal(f.memory.summary().state, 'degraded');
+  assert.match(f.memory.summary().error, /did not answer in time/);
+  assert.equal(f.memory.service.foreground, 0, 'housekeeping resumes after the turn');
+  f.memory.recallDeadlineMs = 60000;
+  const stop = new AbortController(), waiting = f.memory.context(codex, 'And the cedar launch?', stop.signal);
+  setTimeout(() => stop.abort(new Error('Stopped by the user')), 50);
+  await assert.rejects(waiting, /Stopped by the user/);
+  assert.ok(Date.now() - started < 6000);
+});

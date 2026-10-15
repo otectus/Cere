@@ -146,12 +146,12 @@ Rectangle {
                 Layout.preferredHeight: 22
                 radius: Theme.radiusChip
                 color: card.isQuestion ? Theme.questionBadge : Theme.permissionBadge
-                border.color: card.isQuestion ? Theme.cyan : Theme.amber
+                border.color: card.isQuestion ? Theme.accentText : Theme.amber
                 CText {
                     id: badge
                     anchors.centerIn: parent
                     text: card.isQuestion ? "QUESTION" : "PERMISSION"
-                    color: card.isQuestion ? Theme.cyan : Theme.amber
+                    color: card.isQuestion ? Theme.accentText : Theme.amber
                     font.pixelSize: Theme.caption
                     font.bold: true
                     font.letterSpacing: 1
@@ -183,7 +183,7 @@ Rectangle {
             Layout.fillWidth: true
             text: "Subagent · " + (card.requestingAgent?.name || "")
             textFormat: Text.PlainText
-            color: Theme.cyan
+            color: Theme.accentText
             font.pixelSize: Theme.caption
         }
         Text {
@@ -256,7 +256,7 @@ Rectangle {
                         Layout.fillWidth: true
                         CText {
                             text: "Question " + (questionBody.index + 1) + " of " + card.questions.length
-                            color: Theme.cyan
+                            color: Theme.accentText
                             font.pixelSize: Theme.caption
                             font.bold: true
                         }

@@ -66,7 +66,7 @@ ColumnLayout {
                 visible:desktop.width>=500
                 Layout.preferredWidth:42;Layout.preferredHeight:42;radius:Theme.radiusCard
                 color:Theme.selected
-                Text { anchors.centerIn:parent;text:"⌁";color:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.page;font.weight:Font.DemiBold }
+                Text { anchors.centerIn:parent;text:"⌁";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.page;font.weight:Font.DemiBold }
             }
             // Title and status share one line; actions wrap below so narrow panels never clip them.
             ColumnLayout {
@@ -104,7 +104,7 @@ ColumnLayout {
         text:desktop.query
             ? "Results for “"+search.text.trim()+"”"
             : ["All desktop tools and recent activity","Quick actions, sound, timers, and scripts","Installed applications","Open windows and workspaces"][desktop.category]
-        color:desktop.query?Theme.cyan:Theme.muted;font.pixelSize:Theme.caption
+        color:desktop.query?Theme.accentText:Theme.muted;font.pixelSize:Theme.caption
     }
     Rectangle {
         visible:desktop.feedback.length>0||desktop.catalogError.length>0
@@ -139,7 +139,7 @@ ColumnLayout {
                 RowLayout {
                     Layout.fillWidth:true
                     CText { text:"Output volume";font.pixelSize:Theme.secondary;color:Theme.muted }
-                    Text { text:desktop.audio.available?(desktop.audio.muted?"Muted · ":"")+Math.round(volume.value)+"%":"Unavailable";color:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.secondary }
+                    Text { text:desktop.audio.available?(desktop.audio.muted?"Muted · ":"")+Math.round(volume.value)+"%":"Unavailable";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary }
                 }
                 RowLayout {
                     Layout.fillWidth:true
@@ -148,7 +148,7 @@ ColumnLayout {
                 }
                 CText { visible:!desktop.audio.available;text:"No audio output is available. Refresh after connecting a device.";font.pixelSize:Theme.caption;color:Theme.muted }
                 Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }
-                CText { objectName:"mediaStatus";text:desktop.media.available?desktop.media.name+" · "+desktop.media.status:desktop.mediaError|| (desktop.mediaRequest>=0?"Checking media players…":"Open Spotify or another media player to use playback controls.");font.pixelSize:Theme.secondary;color:desktop.media.available?Theme.cyan:Theme.muted }
+                CText { objectName:"mediaStatus";text:desktop.media.available?desktop.media.name+" · "+desktop.media.status:desktop.mediaError|| (desktop.mediaRequest>=0?"Checking media players…":"Open Spotify or another media player to use playback controls.");font.pixelSize:Theme.secondary;color:desktop.media.available?Theme.accentText:Theme.muted }
                 GridLayout {
                     Layout.fillWidth:true;columns:2;columnSpacing:8;rowSpacing:8
                     Repeater {
@@ -230,7 +230,7 @@ ColumnLayout {
                     RowLayout {
                         required property var modelData;id:activityRow;Layout.fillWidth:true
                         CText { text:(App.state.actions||[]).find(a=>a.name===activityRow.modelData.action)?.title||activityRow.modelData.action;font.pixelSize:Theme.secondary }
-                        Text { text:activityRow.modelData.status==="completed"?"Done":"Failed";color:activityRow.modelData.status==="failed"?Theme.danger:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.caption }
+                        Text { text:activityRow.modelData.status==="completed"?"Done":"Failed";color:activityRow.modelData.status==="failed"?Theme.danger:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.caption }
                     }
                 }
                 CText { visible:!(App.state.activity||[]).length;text:"Your completed desktop actions will appear here.";color:Theme.muted;font.pixelSize:Theme.secondary }

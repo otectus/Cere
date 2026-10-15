@@ -8,6 +8,8 @@
 #include <QJsonObject>
 #include <QImage>
 #include <QPainter>
+#include <QPalette>
+#include <QMenu>
 #include <QClipboard>
 #include <QMimeData>
 #include <QDesktopServices>
@@ -19,6 +21,7 @@
 #include <QAbstractTextDocumentLayout>
 #include <QScreen>
 #include <QQmlContext>
+#include <QQmlEngine>
 #include <QQmlExpression>
 #include <QJSValue>
 #include <QJSEngine>
@@ -416,6 +419,180 @@ private slots:
         QCOMPARE(app->state().value("settings").toMap().value("personality").toString(),QString());
         click("personalitySave");QTRY_COMPARE(app->state().value("settings").toMap().value("personality").toString(),original);
         QVERIFY(openSetting("personalityText"));QTest::qWait(100);capture("personality-settings");
+    }
+    void assistantIdentitySettings(){
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",original);restoreWorkspace();click("tab_Chat");});
+        QVERIFY(openSetting("assistantName"));
+        auto name=item("assistantName");QVERIFY(name);
+        QCOMPARE(name->property("text").toString(),QString("Cere"));
+        QCOMPARE(app->avatars().size(),4);
+        for(const auto &id:{"cere","daemona","jade","nova"}){
+            auto preview=item(QString("avatarPreview_")+id);QVERIFY(preview);
+            QTRY_VERIFY(preview->property("ready").toBool());
+        }
+        name->setProperty("text","  Daemona  ");click("avatar_daemona");
+        QCOMPARE(app->assistantName(),QString("Cere"));
+        QCOMPARE(app->avatar().value("id").toString(),QString("cere"));
+        QCOMPARE(app->theme().value("background").toString(),QString("#0b121b"));
+        // Unrelated edits must not destroy the three-field draft or create a conflict.
+        QVERIFY(!call("settings.update",{{"quiet",true},{"hidden",false},{"topmost",false},{"reducedMotion",true}}).contains("error"));
+        QCOMPARE(name->property("text").toString(),QString("  Daemona  "));
+        QVERIFY(item("personalitySave")->isEnabled());click("personalitySave");
+        QTRY_COMPARE(app->assistantName(),QString("Daemona"));
+        QTRY_COMPARE(app->avatar().value("id").toString(),QString("daemona"));
+        QTRY_COMPARE(app->theme().value("background").toString(),QString("#100b0d"));
+        QCOMPARE(name->property("text").toString(),QString("Daemona"));
+        QVERIFY(!item("personalitySave")->isEnabled());
+        QVERIFY(openSetting("playMotionShowcase"));
+        QCOMPARE(item("playMotionShowcase")->property("text").toString(),QString("Spend a moment with Daemona"));
+        auto portrait=item("cerePortrait");QVERIFY(portrait);
+        QTRY_VERIFY(portrait->property("artworkReady").toBool());
+        QVERIFY(portrait->property("description").toString().startsWith("Daemona · "));
+        auto pet=titled("Cere Pet");QVERIFY(pet);
+        auto puppet=pet->findChild<QQuickItem*>("avatarPuppet");QVERIFY(puppet);
+        QTRY_VERIFY(puppet->property("ready").toBool());
+        QVERIFY(puppet->property("source").toUrl().toString().endsWith("daemona-puppet.png"));
+        QDir().mkpath("/tmp/cere-ui-evidence");
+        QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/daemona-pet.png"));
+        QVERIFY(openSetting("assistantName"));name=item("assistantName");QVERIFY(name);QTest::qWait(100);capture("avatar-settings-wide");
+        name->setProperty("text","Local draft");
+        QVERIFY(!call("settings.update",{{"assistantName","Changed elsewhere"},{"avatar","cere"}}).contains("error"));
+        QTRY_VERIFY(item("personalityConflict"));
+        QCOMPARE(name->property("text").toString(),QString("Local draft"));
+        QVERIFY(!item("personalitySave")->isEnabled());
+        click("personalityDiscard");
+        QCOMPARE(name->property("text").toString(),QString("Changed elsewhere"));
+        QVERIFY(item("avatar_cere")->property("checked").toBool());
+        // Choosing the other avatar never renames her or changes personality/voice.
+        click("avatar_daemona");click("personalitySave");
+        QTRY_COMPARE(app->avatar().value("id").toString(),QString("daemona"));
+        QCOMPARE(app->assistantName(),QString("Changed elsewhere"));
+        QCOMPARE(app->state().value("settings").toMap().value("voice"),original.value("voice"));
+        QCOMPARE(app->state().value("settings").toMap().value("personality"),original.value("personality"));
+        QTRY_VERIFY(!name->property("readOnly").toBool());
+        name->setProperty("text","");click("personalitySave");QTRY_COMPARE(app->assistantName(),QString("Cere"));
+        QCOMPARE(app->avatar().value("id").toString(),QString("daemona"));
+        // The same settings and portrait survive switching to the compact host.
+        app->closePanel();app->togglePanel();QTRY_VERIFY((window=titled("Cere Panel")));
+        QVERIFY(openSetting("assistantName"));
+        QCOMPARE(item("assistantName")->property("text").toString(),QString("Cere"));
+        QVERIFY(item("avatar_daemona")->property("checked").toBool());
+        QTest::qWait(100);capture("avatar-settings-compact");
+        for(const auto &next:{QString("jade"),QString("nova")}){
+            const auto previous=app->avatar().value("id").toString();
+            click("avatar_"+next);
+            QCOMPARE(app->avatar().value("id").toString(),previous);
+            click("personalityDiscard");
+            QVERIFY(item("avatar_"+previous)->property("checked").toBool());
+            click("avatar_"+next);click("personalitySave");
+            QTRY_COMPARE(app->avatar().value("id").toString(),next);
+            QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith(next+"-puppet.png"));
+            QCOMPARE(app->assistantName(),QString("Cere"));
+            QCOMPARE(app->state().value("settings").toMap().value("voice"),original.value("voice"));
+            QCOMPARE(app->state().value("settings").toMap().value("personality"),original.value("personality"));
+        }
+        click("avatar_cere");click("personalitySave");
+        QTRY_COMPARE(app->avatar().value("id").toString(),QString("cere"));
+        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("cere-reference-surface.png"));
+        QVERIFY(puppet->property("ready").toBool());
+    }
+    void avatarThemeSwitching_data(){
+        QTest::addColumn<QString>("avatarId");
+        QTest::addColumn<QString>("background");
+        QTest::addColumn<QString>("accent");
+        QTest::addColumn<QString>("code");
+        QTest::addColumn<QString>("portraitColor");
+        QTest::addColumn<QString>("badgeColor");
+        QTest::addColumn<QString>("stageColor");
+        QTest::newRow("Daemona") << QString("daemona") << QString("#100b0d") << QString("#ff9098") << QString("#120a0d") << QString("#271015") << QString("#ed241014") << QString("#1d1015");
+        QTest::newRow("Jade") << QString("jade") << QString("#0c090a") << QString("#ff7b7b") << QString("#10090b") << QString("#210b12") << QString("#ed220b13") << QString("#190c12");
+        QTest::newRow("Nova") << QString("nova") << QString("#0c0911") << QString("#d4adff") << QString("#100a18") << QString("#1f112e") << QString("#ed20102e") << QString("#180f24");
+    }
+    void avatarThemeSwitching(){
+        QFETCH(QString,avatarId);QFETCH(QString,background);QFETCH(QString,accent);
+        QFETCH(QString,code);QFETCH(QString,portraitColor);QFETCH(QString,badgeColor);QFETCH(QString,stageColor);
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",original);restoreWorkspace();click("tab_Chat");});
+        QVERIFY(!call("settings.update",{{"avatar","cere"},{"quiet",true},{"hidden",false},{"topmost",false},{"reducedMotion",true}}).contains("error"));
+        restoreWorkspace();click("tab_Chat");
+        QSignalSpy transcriptLoaded(app.get(),&Controller::messagesChanged);
+        const auto id=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Avatar colors"}}).value("id").toString();
+        QVERIFY(!id.isEmpty());QTRY_COMPARE(app->selectedId(),id);
+        // Selection clears the old transcript, then the asynchronous history page
+        // replaces it. Inject the rendering fixture only after that page has arrived.
+        QTRY_VERIFY(transcriptLoaded.size()>=2);
+        auto model=static_cast<TranscriptModel*>(static_cast<QSortFilterProxyModel*>(app->transcript())->sourceModel());
+        model->reset({QVariantMap{{"id","theme"},{"sessionId",id},{"role","assistant"},{"text","## Ready when you are\n\n[Project notes](https://example.com) and a code sample.\n\n```js\nconst ready = true;\n```"}}});
+        QTRY_VERIFY(item("messageBody_theme"));
+        auto body=item("messageBody_theme");
+        QPointer<QTextDocument> document=body->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+        const auto codeColor=[&]{if(document)for(auto block=document->begin();block.isValid();block=block.next())if(block.text().contains("const ready"))return block.blockFormat().background().color();return QColor();};
+        const auto linkColor=[&]{if(document)for(auto block=document->begin();block.isValid();block=block.next())for(auto it=block.begin();!it.atEnd();++it)if(it.fragment().charFormat().isAnchor())return it.fragment().charFormat().foreground().color();return QColor();};
+        QTRY_COMPARE(codeColor(),QColor("#0d131c"));
+        QCOMPARE(linkColor(),QColor("#49dfff"));
+        const auto prose=document->toPlainText();
+        const auto blueIcon=QGuiApplication::windowIcon().pixmap(64,64).toImage();
+        auto tray=app->findChild<QSystemTrayIcon*>();QVERIFY(tray);QVERIFY(tray->contextMenu());
+        auto shell=qobject_cast<QQuickView*>(window)->rootObject()->childItems().first();QVERIFY(shell);
+        QCOMPARE(shell->property("color").value<QColor>(),QColor("#0b121b"));
+        QSignalSpy changes(app.get(),&Controller::themeChanged);
+        QVERIFY(!call("settings.update",{{"avatar",avatarId}}).contains("error"));
+        QTRY_COMPARE(shell->property("color").value<QColor>(),QColor(background));
+        QCOMPARE(app->assistantName(),original.value("assistantName").toString());
+        QCOMPARE(changes.size(),1);
+        QCOMPARE(QApplication::palette().color(QPalette::Window),QColor(background));
+        QCOMPARE(QApplication::palette().color(QPalette::Link),QColor(accent));
+        // QApplication delivers native-widget palette changes through the event loop.
+        QTRY_COMPARE(tray->contextMenu()->palette().color(QPalette::Window),QColor(background));
+        QVERIFY(QGuiApplication::windowIcon().pixmap(64,64).toImage()!=blueIcon);
+        QCOMPARE(tray->icon().cacheKey(),QGuiApplication::windowIcon().cacheKey());
+        QTRY_COMPARE(window->icon().cacheKey(),QGuiApplication::windowIcon().cacheKey());
+        QVERIFY(document);QVERIFY(item("messageBody_theme"));
+        QTRY_COMPARE(codeColor(),QColor(code));
+        QTRY_COMPARE(linkColor(),QColor(accent));
+        QCOMPARE(document->toPlainText(),prose);
+        QTRY_COMPARE(item("cerePortrait")->property("color").value<QColor>(),QColor(portraitColor));
+        auto pet=titled("Cere Pet");QVERIFY(pet);
+        auto badge=pet->findChild<QQuickItem*>("emoticonBadge");QVERIFY(badge);
+        QTRY_COMPARE(badge->property("color").value<QColor>(),QColor(badgeColor));
+        auto puppet=pet->findChild<QQuickItem*>("avatarPuppet");QVERIFY(puppet);
+        QTRY_VERIFY(puppet->property("ready").toBool());
+        QVERIFY(puppet->property("source").toUrl().toString().endsWith(avatarId+"-puppet.png"));
+        QTest::qWait(100);capture(avatarId+"-theme-chat");
+        QVERIFY(QGuiApplication::windowIcon().pixmap(128,128).save("/tmp/cere-ui-evidence/"+avatarId+"-theme-icon.png"));
+        QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/"+avatarId+"-theme-pet.png"));
+        QVERIFY(openSetting("avatarSelection"));capture(avatarId+"-theme-settings");
+        QVERIFY(openSetting("motionStage"));
+        QTRY_COMPARE(item("motionStage")->property("color").value<QColor>(),QColor(stageColor));
+        capture(avatarId+"-theme-motion");
+        // A freshly connected host (including the separate desktop overlay process)
+        // takes the saved palette from its first snapshot without a second preference.
+        {
+            Controller fresh(CERE_SOURCE_DIR,true);fresh.start(false);
+            QTRY_COMPARE(fresh.theme().value("background").toString(),background);
+        }
+        QCOMPARE(changes.size(),1); // unrelated snapshots do not reformat every message
+        app->closePanel();app->togglePanel();QTRY_VERIFY((window=titled("Cere Panel")));
+        shell=qobject_cast<QQuickView*>(window)->rootObject()->childItems().first();QVERIFY(shell);
+        QCOMPARE(shell->property("color").value<QColor>(),QColor(background));
+        QVERIFY(openSetting("avatarSelection"));QTest::qWait(100);capture(avatarId+"-theme-compact");
+        click("avatar_cere");
+        QCOMPARE(shell->property("color").value<QColor>(),QColor(background));
+        click("personalityDiscard");
+        QCOMPARE(shell->property("color").value<QColor>(),QColor(background));
+        click("avatar_cere");click("personalitySave");
+        QTRY_COMPARE(shell->property("color").value<QColor>(),QColor("#0b121b"));
+        QCOMPARE(QApplication::palette().color(QPalette::Window),QColor("#0b121b"));
+        QCOMPARE(QGuiApplication::windowIcon().pixmap(64,64).toImage(),blueIcon);
+        QCOMPARE(changes.size(),2);
+        restoreWorkspace();click("tab_Chat");
+        QTRY_VERIFY(item("messageBody_theme"));
+        document=item("messageBody_theme")->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+        QTRY_COMPARE(codeColor(),QColor("#0d131c"));
+        QTRY_COMPARE(linkColor(),QColor("#49dfff"));
+        QCOMPARE(document->toPlainText(),prose);
+        capture("cere-theme-restored");
     }
     void markdownMessages(){
         click("tab_Chat");
@@ -1225,7 +1402,14 @@ Unicode: café ✦ 日本語
     void fluidAvatarAnimation(){
         QDir().mkpath("/tmp/cere-ui-evidence");
         app->closePanel();
+        QQuickItem *player=nullptr;
         const auto restore=qScopeGuard([&]{
+            if(player){
+                QQmlExpression restoreAvatar(QQmlEngine::contextForObject(player),player,
+                    "avatar = Qt.binding(function() { return App.avatar })");
+                restoreAvatar.evaluate();
+                player->setProperty("followAppMotion",true);
+            }
             app->endDrag();app->setPetInteracting(false);
             app->rpc("settings.update",{{"topmost",true},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"scale",1.0}});
             restoreWorkspace();
@@ -1233,7 +1417,7 @@ Unicode: café ✦ 日本語
         QVERIFY(!call("settings.update",{{"topmost",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.},{"scale",1.5},{"roaming",false}}).contains("error"));
         QQuickWindow *pet=nullptr;
         QTRY_VERIFY((pet=titled("Cere Pet")));
-        auto player=pet->findChild<QQuickItem*>("gesturePlayer");QVERIFY(player);
+        player=pet->findChild<QQuickItem*>("gesturePlayer");QVERIFY(player);
         std::function<QQuickItem*(QQuickItem*)> findPuppet=[&](QQuickItem *root)->QQuickItem*{
             if(root->objectName()=="avatarPuppet")return root;
             for(auto child:root->childItems())if(auto found=findPuppet(child))return found;
@@ -1278,10 +1462,46 @@ Unicode: café ✦ 日本語
         }
         QVERIFY(!call("settings.update",{{"reducedMotion",true}}).contains("error"));
         QTRY_VERIFY(!player->property("animating").toBool());QTest::qWait(100);
+        if(player->property("referenceArt").toBool())
+            QVERIFY(puppet->property("pose").toMap().isEmpty());
         const int stoppedFrame=player->property("renderedFrames").toInt();const auto still=pet->grabWindow();
         QTest::qWait(400);
         QCOMPARE(player->property("renderedFrames").toInt(),stoppedFrame);
         QCOMPARE(pet->grabWindow(),still);
+        // A state refresh (for example a streamed reply or unrelated setting)
+        // must not reselect the avatar catalog and restart the current gesture.
+        QQmlExpression markElapsed(QQmlEngine::contextForObject(player),player,"clock.elapsed = 1234");
+        markElapsed.evaluate();QVERIFY(!markElapsed.hasError());
+        QVERIFY(QMetaObject::invokeMethod(app.get(),"stateChanged",Qt::DirectConnection));
+        QQmlExpression readElapsed(QQmlEngine::contextForObject(player),player,"clock.elapsed");
+        QCOMPARE(readElapsed.evaluate().toDouble(),1234.0);
+        // The selected puppet supplies Motion's pose and channel catalog too. Exercise a
+        // channel which the stock rig does not have, then replace the puppet under the
+        // same avatar id: reduced motion must resample and repaint without a frame tick.
+        player->setProperty("followAppMotion",false);player->setProperty("motion","idle");
+        auto customAvatar=app->avatar();auto customPuppet=customAvatar.value("puppet").toMap();
+        // This synthetic catalog deliberately tests authored static poses;
+        // Cere's reference presentation instead freezes to the source drawing.
+        customPuppet.remove("presentation");
+        auto customChannels=customPuppet.value("channels").toMap();
+        customChannels.insert("avatarProbe",QVariantMap{{"min",-3.0},{"max",3.0},{"omega",20.0}});
+        customPuppet.insert("channels",customChannels);
+        auto customPoses=customPuppet.value("poses").toMap();auto restPose=customPoses.value("0").toMap();
+        auto restJoints=restPose.value("joints").toMap();restJoints.insert("avatarProbe",41.0);restJoints.insert("headTilt",20.0);
+        restPose.insert("joints",restJoints);customPoses.insert("0",restPose);customPuppet.insert("poses",customPoses);
+        customAvatar.insert("id","custom-motion-catalog");customAvatar.insert("puppet",customPuppet);
+        player->setProperty("avatar",customAvatar);
+        QTRY_COMPARE(readRig().value("avatarProbe").toDouble(),3.0);
+        QTRY_COMPARE(readRig().value("headTilt").toDouble(),9.0);
+        QTest::qWait(100);const auto customPositive=pet->grabWindow();QVERIFY(!customPositive.isNull());
+        restJoints.insert("avatarProbe",-41.0);restJoints.insert("headTilt",-20.0);
+        restPose.insert("joints",restJoints);customPoses.insert("0",restPose);customPuppet.insert("poses",customPoses);
+        customAvatar.insert("puppet",customPuppet);player->setProperty("avatar",customAvatar);
+        QTRY_COMPARE(readRig().value("avatarProbe").toDouble(),-3.0);
+        QTRY_COMPARE(readRig().value("headTilt").toDouble(),-9.0);
+        QTest::qWait(100);const auto customNegative=pet->grabWindow();QVERIFY(!customNegative.isNull());
+        QCOMPARE(player->property("renderedFrames").toInt(),stoppedFrame);
+        QVERIFY(customNegative!=customPositive);
         qInfo("Avatar cadence: %d updates / 900 ms; %lld distinct head positions; max sampled step %.5f degrees",rendered,qlonglong(distinctHead.size()),maxStep);
     }
     void avatarPresenceShowcase(){
@@ -1720,10 +1940,10 @@ Unicode: café ✦ 日本語
         const auto restore=qScopeGuard([&]{
             for(const auto &id:{first,second})if(!id.isEmpty())call("session.organize",{{"id",id},{"pinned",false}});
             for(const auto &entry:app->state().value("completions").toList())call("completion.dismiss",{{"id",entry.toMap().value("id")}});
-            call("settings.update",{{"hidden",originalSettings.value("hidden")},{"topmost",originalSettings.value("topmost")},{"quiet",originalSettings.value("quiet")}});
+            call("settings.update",{{"hidden",originalSettings.value("hidden")},{"topmost",originalSettings.value("topmost")},{"quiet",originalSettings.value("quiet")},{"avatar",originalSettings.value("avatar")}});
             restoreWorkspace();
         });
-        QVERIFY(!call("settings.update",{{"topmost",false},{"hidden",false},{"quiet",true}}).contains("error"));
+        QVERIFY(!call("settings.update",{{"topmost",false},{"hidden",false},{"quiet",true},{"avatar","daemona"}}).contains("error"));
         for(const auto &entry:app->state().value("completions").toList())call("completion.dismiss",{{"id",entry.toMap().value("id")}});
         first=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Pinned project"}}).value("id").toString();
         second=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Another pinned project"}}).value("id").toString();
@@ -1741,6 +1961,7 @@ Unicode: café ✦ 日本語
         QVERIFY(workspace->isVisible());QCOMPARE(app->selectedId(),second);
         QVERIFY(window->flags().testFlag(Qt::WindowDoesNotAcceptFocus));
         auto bubble=qobject_cast<QQuickView*>(window)->rootObject();QVERIFY(bubble);
+        QCOMPARE(bubble->property("accent").value<QColor>(),QColor("#ff9098"));
         QTRY_COMPARE(bubble->property("currentReply").toMap().value("id"),replies().last().toMap().value("id"));
         QVERIFY(!item("completionOpen"));QVERIFY(!item("companionStopSpeaking"));
         capture("pinned-conversation");
@@ -1756,6 +1977,16 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE(item("companionRequester")->property("text").toString(),QString("Another pinned project"));
         const auto shown=bubble->property("currentReply").toMap();
         QCOMPARE(shown.value("id"),replies().last().toMap().value("id"));
+        call("settings.update",{{"avatar","cere"}});
+        QTRY_COMPARE(bubble->property("accent").value<QColor>(),QColor("#49dfff"));
+        QCOMPARE(bubble->property("currentReply").toMap().value("id"),shown.value("id"));
+        for(const auto &id:{QString("daemona"),QString("jade"),QString("nova")}){
+            call("settings.update",{{"avatar",id}});
+            const auto accent=app->themes().value(id).toMap().value("accentText").toString();
+            QTRY_COMPARE(bubble->property("accent").value<QColor>(),QColor(accent));
+            QCOMPARE(bubble->property("currentReply").toMap().value("id"),shown.value("id"));
+            capture(id+"-theme-bubble");
+        }
         // Hovering a current reply also preserves the reader's place.
         call("session.send",{{"id",second},{"text","completion-second"}});
         QTRY_COMPARE(replies().size(),6);
@@ -1886,6 +2117,105 @@ Unicode: café ✦ 日本語
         click("tab_Projects");QTRY_VERIFY(item("projectOpen_0"));click("projectOpen_0");QTRY_VERIFY(item("sessionFilter"));
         QVERIFY(item("sessionFilter")->property("currentText").toString().contains("projects-ui"));
         panel.hide();
+    }
+    // "Save as my defaults" keeps a general conversation's provider, model, effort and mode for the next one.
+    // A conversation opened without it saves nothing. Projects keep their own defaults, in their settings
+    // dialog and for their sessions, and the Ollama default in Connections stays as it was.
+    void newConversationDefaults(){
+        restoreWorkspace();click("tab_Chat");
+        const auto unset=QVariant::fromValue(nullptr);
+        const auto ollamaDefault=app->state().value("settings").toMap().value("ollama").toMap().value("model");
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"conversationDefaults",unset}});if(item("sessionProvider")){QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(100);}if(auto search=item("projectSearch"))search->setProperty("text","");click("tab_Chat");});
+        QVERIFY(!call("settings.update",{{"conversationDefaults",unset}}).contains("error"));
+        auto saved=[&]{return app->state().value("settings").toMap().value("conversationDefaults").toMap();};
+        QVERIFY(QDir().mkpath(data.path()+"/defaults-project"));
+        const QString cwd=QDir(data.path()+"/defaults-project").canonicalPath();QVERIFY(!cwd.isEmpty());
+        const QVariantMap projectDefaults{{"provider","codex"},{"model","fixture-fast"},{"effort","low"},{"tools",false},{"trusted",true},{"temporary",false}};
+        const auto project=call("projects.save",{{"cwd",cwd},{"name","Defaults project"},{"favorite",false},{"expectedRevision","0"},{"defaults",projectDefaults}});
+        QVERIFY2(!project.contains("error"),qPrintable(project.value("error").toString()));
+        // The dialog refreshes the catalog as it opens and when the provider changes; the refreshed lists
+        // can move its rows, so clicks wait until the refresh and the paced state update have settled.
+        auto settle=[&]{
+            auto dialog=window->contentItem()->findChild<QObject*>("createSessionDialog");QVERIFY(dialog);
+            QTRY_VERIFY(dialog->property("modelRequests").value<QJSValue>().toVariant().toMap().isEmpty());QTest::qWait(250);
+        };
+        // From Sessions, as the other checks do: Chat's header title shares the dialog field's objectName.
+        auto openDialog=[&]{click("tab_Sessions");click("newSession");QTRY_VERIFY(item("sessionProvider"));QTRY_VERIFY(item("sessionModel")->property("count").toInt()>=2);settle();};
+        auto indexOf=[&](QQuickItem *box,const QVariant &value){int index=-1;QMetaObject::invokeMethod(box,"indexOfValue",Q_RETURN_ARG(int,index),Q_ARG(QVariant,value));return index;};
+        auto choose=[&](const QString &name,const QVariant &value){
+            auto box=item(name);QVERIFY2(box,qPrintable(name));
+            QTRY_VERIFY2(indexOf(box,value)>=0,qPrintable(name+" has no "+value.toString()));
+            const int index=indexOf(box,value);box->setProperty("currentIndex",index);
+            QVERIFY(QMetaObject::invokeMethod(box,"activated",Q_ARG(int,index)));QTest::qWait(80);
+        };
+        auto confirmTrust=[&]{if(auto trust=item("sessionTrust"))trust->setProperty("checked",true);};
+        // Stock choices, with the switch off; switched on, it saves what the conversation opened with.
+        openDialog();
+        auto toggle=item("saveDefaults");QVERIFY(toggle);QVERIFY(!toggle->property("checked").toBool());QVERIFY(!item("savedDefaultsNote"));
+        QCOMPARE(item("sessionProvider")->property("currentIndex").toInt(),0);QCOMPARE(item("sessionModel")->property("currentValue").toString(),QString());
+        choose("sessionModel","fixture-model");choose("sessionEffort","high");
+        // An effort chosen while a catalog update's model pass was pending used to be undone: the pass put
+        // back the effort it had captured when it was scheduled. Replay that order with a pass and a choice.
+        auto dialog=window->contentItem()->findChild<QObject*>("createSessionDialog");QVERIFY(dialog);
+        QVERIFY(QMetaObject::invokeMethod(dialog,"chooseModel",Q_ARG(QVariant,dialog->property("desiredModel"))));
+        auto effort=item("sessionEffort");const int low=indexOf(effort,"low");QVERIFY(low>=0);
+        effort->setProperty("currentIndex",low);QVERIFY(QMetaObject::invokeMethod(effort,"activated",Q_ARG(int,low)));
+        QTest::qWait(100);QCOMPARE(effort->property("currentValue").toString(),QString("low"));
+        choose("sessionEffort","high");settle();
+        item("sessionProjectPath")->setProperty("text",data.path());confirmTrust();
+        click("saveDefaults");QVERIFY(toggle->property("checked").toBool());
+        for(auto parent=toggle->parentItem();parent;parent=parent->parentItem())if(parent->property("contentY").isValid()){QTest::qWait(80);parent->setProperty("contentY",std::max(0.,parent->property("contentHeight").toDouble()-parent->height()));break;}
+        QTest::qWait(80);capture("conversation-defaults-save");
+        click("sessionOpen");
+        QTRY_COMPARE(app->session().value("model").toString(),QString("fixture-model"));QCOMPARE(app->session().value("effort").toString(),QString("high"));
+        const QVariantMap first{{"provider","codex"},{"model","fixture-model"},{"effort","high"},{"tools",false},{"temporary",false}};
+        QTRY_COMPARE(saved(),first);
+        // The next general conversation opens with them, at the top where the note is; title, folder and
+        // trust start fresh. Ticking the switch above scrolled the dialog down.
+        openDialog();
+        QVERIFY(item("savedDefaultsNote"));
+        auto contentY=[&](QQuickItem *node){for(auto parent=node->parentItem();parent;parent=parent->parentItem())if(parent->property("contentY").isValid())return parent->property("contentY").toDouble();return -1.;};
+        QTRY_COMPARE(contentY(item("savedDefaultsNote")),0.);QVERIFY(!item("saveDefaults")->property("checked").toBool());
+        QCOMPARE(item("sessionProvider")->property("currentIndex").toInt(),0);
+        QTRY_COMPARE(item("sessionModel")->property("currentValue").toString(),QString("fixture-model"));
+        QTRY_COMPARE(item("sessionEffort")->property("currentValue").toString(),QString("high"));
+        QCOMPARE(item("sessionTitle")->property("text").toString(),QString());QCOMPARE(item("sessionProjectPath")->property("text").toString(),QString());
+        if(auto trust=item("sessionTrust"))QVERIFY(!trust->property("checked").toBool());
+        capture("conversation-defaults-prefilled");
+        // Opened as filled in, it inherits them, and without the switch nothing is saved.
+        item("sessionTitle")->setProperty("text","Inherited defaults");item("sessionProjectPath")->setProperty("text",data.path());confirmTrust();
+        click("sessionOpen");
+        QTRY_COMPARE(app->session().value("title").toString(),QString("Inherited defaults"));
+        QCOMPARE(app->session().value("provider").toString(),QString("codex"));QCOMPARE(app->session().value("model").toString(),QString("fixture-model"));QCOMPARE(app->session().value("effort").toString(),QString("high"));
+        QTest::qWait(200);QCOMPARE(saved(),first);
+        // Saving again replaces them: another provider, model and mode.
+        openDialog();
+        auto provider=item("sessionProvider");provider->setProperty("currentIndex",2);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,2)));
+        settle();choose("sessionModel","fixture-plain:latest");click("temporarySession");click("saveDefaults");
+        item("sessionTitle")->setProperty("text","Temporary defaults");
+        click("sessionOpen");
+        QTRY_COMPARE(app->session().value("title").toString(),QString("Temporary defaults"));QVERIFY(app->session().value("temporary").toBool());
+        const QVariantMap second{{"provider","ollama"},{"model","fixture-plain:latest"},{"effort",""},{"tools",false},{"temporary",true}};
+        QTRY_COMPARE(saved(),second);
+        openDialog();QCOMPARE(item("sessionProvider")->property("currentIndex").toInt(),2);
+        QTRY_COMPARE(item("sessionModel")->property("currentValue").toString(),QString("fixture-plain:latest"));
+        QVERIFY(item("temporarySession")->property("checked").toBool());QVERIFY(!item("sessionEffort"));
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("sessionProvider"));
+        // Project defaults are untouched: the project's dialog, its stored row and its new sessions.
+        click("tab_Projects");QTRY_VERIFY(item("projectSearch"));item("projectSearch")->setProperty("text","Defaults project");
+        QTRY_VERIFY(item("projectSettings_0"));click("projectSettings_0");QTRY_VERIFY(item("sessionTitle"));
+        QCOMPARE(item("sessionTitle")->property("text").toString(),QString("Defaults project"));
+        QTRY_COMPARE(item("sessionModel")->property("currentValue").toString(),QString("fixture-fast"));
+        QTRY_COMPARE(item("sessionEffort")->property("currentValue").toString(),QString("low"));
+        QVERIFY(!item("saveDefaults"));QVERIFY(!item("savedDefaultsNote"));
+        capture("conversation-defaults-project");
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!item("sessionTitle"));
+        QVariantMap row;for(const auto &entry:call("projects.list").value("projects").toList())if(entry.toMap().value("cwd").toString()==cwd)row=entry.toMap();
+        QCOMPARE(row.value("defaults").toMap(),projectDefaults);
+        const auto fromProject=call("projects.createSession",{{"cwd",cwd},{"expectedRevision",row.value("revision")},{"title","Project defaults kept"}});
+        QVERIFY2(!fromProject.contains("error"),qPrintable(fromProject.value("error").toString()));
+        QCOMPARE(fromProject.value("provider").toString(),QString("codex"));QCOMPARE(fromProject.value("model").toString(),QString("fixture-fast"));QCOMPARE(fromProject.value("effort").toString(),QString("low"));
+        QCOMPARE(app->state().value("settings").toMap().value("ollama").toMap().value("model"),ollamaDefault);
     }
     void compactComposerClipboard(){
         auto original=window;
@@ -2307,6 +2637,163 @@ Unicode: café ✦ 日本語
         QTest::qWait(300);
         QCOMPARE(received.count("settings.update"),saves);QCOMPARE(received.count("session.create"),creates); // Nothing is replayed.
         QCOMPARE(outcomes(saving),1);QCOMPARE(outcomes(creating),1);
+        view.hide();
+    }
+    // A draft save whose reply is lost is this composer's own work, not another client's edit: after
+    // reconnecting, the newer text is kept without a conflict and saved against the broker's revision,
+    // and the state that clears a draft during a send never raises a conflict either.
+    void draftSurvivesUnconfirmedSave(){
+        QTemporaryDir runtime;QVERIFY(runtime.isValid());
+        QFile::setPermissions(runtime.path(),QFileDevice::ReadOwner|QFileDevice::WriteOwner|QFileDevice::ExeOwner);
+        QLocalServer server;QVERIFY(server.listen(runtime.path()+"/broker.sock"));
+        QString draft;int draftRevision=0;bool dropNextSave=true;QStringList received;QList<QVariantMap> saves;
+        QPointer<QLocalSocket> client;QByteArray buffer;
+        auto session=[&]{return QVariantMap{{"id","fake-a"},{"title","Fake A"},{"provider","codex"},{"status","idle"},{"cwd","/tmp"},{"draft",draft},{"draftRevision",QString::number(draftRevision)}};};
+        auto state=[&]{return QVariantMap{{"sessions",QVariantList{session()}},{"settings",QVariantMap{{"hidden",true}}},{"settingsRevision","1"},{"approvals",QVariantList{}}};};
+        auto send=[&](const QJsonObject &o){if(client)client->write(QJsonDocument(o).toJson(QJsonDocument::Compact)+'\n');};
+        connect(&server,&QLocalServer::newConnection,this,[&]{
+            client=server.nextPendingConnection();buffer.clear();
+            connect(client,&QLocalSocket::readyRead,this,[&]{
+                buffer+=client->readAll();int newline;
+                while((newline=buffer.indexOf('\n'))>=0){
+                    const auto request=QJsonDocument::fromJson(buffer.left(newline)).object();buffer.remove(0,newline+1);
+                    const QString method=request["method"].toString();const QVariantMap params=request["params"].toObject().toVariantMap();const int id=request["id"].toInt();received<<method;
+                    auto reply=[&](const QVariant &value){send(QJsonObject{{"id",id},{"result",QJsonValue::fromVariant(value)}});};
+                    if(method=="subscribe")reply(state());
+                    else if(method=="session.messages")reply(QVariantMap{{"messages",QVariantList{}},{"before",0},{"hasMore",false}});
+                    else if(method=="session.draft"){
+                        saves<<params;
+                        if(params.value("expectedRevision").toString()!=QString::number(draftRevision)){send(QJsonObject{{"id",id},{"error",QJsonObject{{"code","REVISION_CONFLICT"},{"message","Draft changed on another client."}}}});continue;}
+                        draft=params.value("text").toString();++draftRevision;
+                        // The broker applied this save, then the connection ended before its reply left.
+                        if(dropNextSave){dropNextSave=false;client->disconnectFromServer();continue;}
+                        send(QJsonObject{{"method","state"},{"params",QJsonObject::fromVariantMap(state())}});
+                        reply(QVariantMap{{"draftRevision",QString::number(draftRevision)},{"draft",draft}});
+                    }
+                    else if(method=="session.send"){
+                        draft.clear();++draftRevision;
+                        send(QJsonObject{{"method","state"},{"params",QJsonObject::fromVariantMap(state())}});
+                        reply(true);
+                    }
+                    else if(method=="session.recovery")reply(QVariant());
+                    else reply(true);
+                }
+            });
+        });
+        const auto previousRuntime=qgetenv("CERE_RUNTIME_DIR");
+        const auto restoreRuntime=qScopeGuard([&]{qputenv("CERE_RUNTIME_DIR",previousRuntime);});
+        qputenv("CERE_RUNTIME_DIR",runtime.path().toUtf8());
+        Controller fake(CERE_SOURCE_DIR,true);fake.start(false);
+        QTRY_VERIFY(fake.connected());QTRY_COMPARE(fake.selectedId(),QString("fake-a"));
+        QQuickView view;view.rootContext()->setContextProperty("App",&fake);
+        view.setSource(QUrl::fromLocalFile(QString(CERE_SOURCE_DIR)+"/qml/Chat.qml"));QCOMPARE(view.status(),QQuickView::Ready);
+        view.resize(720,640);view.show();
+        auto composer=view.rootObject()->findChild<QQuickItem*>("composer");QVERIFY(composer);
+        QSignalSpy conflicts(view.rootObject(),SIGNAL(draftConflictChanged()));
+        composer->setProperty("text","typed");
+        QTRY_COMPARE(saves.size(),1);QTRY_VERIFY(!fake.connected());
+        composer->setProperty("text","typed more");
+        QTRY_VERIFY_WITH_TIMEOUT(fake.connected(),6000);
+        // The broker's copy is this composer's first save: its revision is adopted and the newer text kept.
+        QTRY_VERIFY_WITH_TIMEOUT(saves.size()>=2,5000);
+        QCOMPARE(saves.at(1).value("expectedRevision").toString(),QString("1"));QCOMPARE(saves.at(1).value("text").toString(),QString("typed more"));
+        QTRY_COMPARE(draft,QString("typed more"));
+        QCOMPARE(composer->property("text").toString(),QString("typed more"));
+        QVERIFY(!view.rootObject()->property("draftConflict").toBool());
+        QVERIFY(!view.rootObject()->findChild<QQuickItem*>("draftConflict")||!view.rootObject()->findChild<QQuickItem*>("draftConflict")->isVisible());
+        // Sending: the state that clears the draft precedes the result and raises no conflict.
+        QTRY_VERIFY(!view.rootObject()->property("saveQueued").toBool());
+        QVERIFY(QMetaObject::invokeMethod(view.rootObject(),"send"));
+        QTRY_VERIFY(received.contains("session.send"));
+        QTRY_COMPARE(composer->property("text").toString(),QString(""));
+        QCOMPARE(conflicts.count(),0);
+        view.hide();
+    }
+    // A send whose reply is lost leaves the composer once the broker shows its turn was accepted, even
+    // when the draft was never saved and so no revision changed. While its outcome is open, the sent text
+    // is neither saved as the draft (online or offline) nor sent again. A send the broker never
+    // received, or one it refused, keeps its text, which is then saved as the draft.
+    void sentTextLeavesComposerAfterLostReply(){
+        QTemporaryDir runtime;QVERIFY(runtime.isValid());
+        QFile::setPermissions(runtime.path(),QFileDevice::ReadOwner|QFileDevice::WriteOwner|QFileDevice::ExeOwner);
+        QLocalServer server;QVERIFY(server.listen(runtime.path()+"/broker.sock"));
+        enum Outcome{Accepted,Unreceived,Refused};Outcome outcome=Accepted;
+        QString status="idle",draft,turn="t0";int draftRevision=0,sends=0;QVariantList transcript;QList<QVariantMap> saves;
+        QPointer<QLocalSocket> client;QByteArray buffer;
+        auto session=[&]{return QVariantMap{{"id","fake-a"},{"title","Fake A"},{"provider","codex"},{"status",status},{"cwd","/tmp"},{"draft",draft},{"draftRevision",QString::number(draftRevision)},{"turnId",turn}};};
+        auto state=[&]{return QVariantMap{{"sessions",QVariantList{session()}},{"settings",QVariantMap{{"hidden",true}}},{"settingsRevision","1"},{"approvals",QVariantList{}}};};
+        auto send=[&](const QJsonObject &o){if(client)client->write(QJsonDocument(o).toJson(QJsonDocument::Compact)+'\n');};
+        auto pushState=[&]{send(QJsonObject{{"method","state"},{"params",QJsonObject::fromVariantMap(state())}});};
+        connect(&server,&QLocalServer::newConnection,this,[&]{
+            client=server.nextPendingConnection();buffer.clear();
+            connect(client,&QLocalSocket::readyRead,this,[&]{
+                buffer+=client->readAll();int newline;
+                while((newline=buffer.indexOf('\n'))>=0){
+                    const auto request=QJsonDocument::fromJson(buffer.left(newline)).object();buffer.remove(0,newline+1);
+                    const QString method=request["method"].toString();const QVariantMap params=request["params"].toObject().toVariantMap();const int id=request["id"].toInt();
+                    auto reply=[&](const QVariant &value){send(QJsonObject{{"id",id},{"result",QJsonValue::fromVariant(value)}});};
+                    if(method=="subscribe")reply(state());
+                    else if(method=="session.messages")reply(QVariantMap{{"messages",transcript},{"before",0},{"hasMore",false}});
+                    else if(method=="session.draft"){
+                        saves<<params;
+                        if(params.value("expectedRevision").toString()!=QString::number(draftRevision)){send(QJsonObject{{"id",id},{"error",QJsonObject{{"code","REVISION_CONFLICT"},{"message","Draft changed on another client."}}}});continue;}
+                        if(params.value("text").toString()!=draft){draft=params.value("text").toString();++draftRevision;}
+                        pushState();reply(QVariantMap{{"draftRevision",QString::number(draftRevision)},{"draft",draft}});
+                    }
+                    else if(method=="session.send"){
+                        ++sends;
+                        // The broker records the message and starts a turn that it accepts or refuses;
+                        // then the connection ends before the reply leaves.
+                        if(outcome!=Unreceived){
+                            const QVariantMap message{{"id",QString("u%1").arg(transcript.size())},{"sessionId","fake-a"},{"role","user"},{"text",params.value("text")},{"revision","1"},{"time",QDateTime::currentMSecsSinceEpoch()}};
+                            transcript<<message;turn=QString("t%1").arg(transcript.size());status=outcome==Accepted?"working":"error";
+                            pushState();send(QJsonObject{{"method","message"},{"params",QJsonObject::fromVariantMap(message)}});
+                        }
+                        client->disconnectFromServer();continue;
+                    }
+                    else if(method=="session.recovery")reply(QVariant());
+                    else reply(true);
+                }
+            });
+        });
+        const auto previousRuntime=qgetenv("CERE_RUNTIME_DIR");
+        const auto restoreRuntime=qScopeGuard([&]{qputenv("CERE_RUNTIME_DIR",previousRuntime);});
+        qputenv("CERE_RUNTIME_DIR",runtime.path().toUtf8());
+        Controller fake(CERE_SOURCE_DIR,true);fake.start(false);
+        QTRY_VERIFY(fake.connected());QTRY_COMPARE(fake.selectedId(),QString("fake-a"));
+        QQuickView view;view.rootContext()->setContextProperty("App",&fake);
+        view.setSource(QUrl::fromLocalFile(QString(CERE_SOURCE_DIR)+"/qml/Chat.qml"));QCOMPARE(view.status(),QQuickView::Ready);
+        view.resize(720,640);view.show();
+        auto chat=view.rootObject();auto composer=chat->findChild<QQuickItem*>("composer");QVERIFY(composer);
+        auto saved=[&](const QString &text){for(const auto &s:saves)if(s.value("text").toString()==text)return true;return false;};
+        // Typed and sent at once, inside the draft debounce: the broker's draft stays empty.
+        auto sendLost=[&](const QString &text){
+            composer->setProperty("text",text);
+            QVERIFY(QMetaObject::invokeMethod(chat,"send"));
+            QTRY_VERIFY(!fake.connected());QTRY_VERIFY_WITH_TIMEOUT(fake.connected(),6000);
+        };
+        // Accepted: the composer empties, and the sent text is never saved back as the draft.
+        sendLost("first message");
+        QTRY_COMPARE(composer->property("text").toString(),QString(""));
+        QTest::qWait(1000);
+        QVERIFY(!saved("first message"));QCOMPARE(draft,QString(""));QVERIFY(!chat->property("draftConflict").toBool());
+        // Never received: while the outcome is open the text is not sent again; once the broker shows no
+        // message after reconnecting, the text stays and is saved as the draft.
+        status="idle";pushState();QTRY_VERIFY(!chat->property("busy").toBool());
+        outcome=Unreceived;sendLost("second message");
+        QVERIFY(chat->property("sendUnconfirmed").toBool());
+        QVERIFY(QMetaObject::invokeMethod(chat,"send"));QTest::qWait(300);
+        QCOMPARE(sends,2);QVERIFY(!saved("second message"));
+        QTRY_COMPARE_WITH_TIMEOUT(draft,QString("second message"),10000);
+        QCOMPARE(composer->property("text").toString(),QString("second message"));
+        QVERIFY(!chat->property("sendUnconfirmed").toBool());
+        // Refused after its message was recorded: the text stays, as after any failed send.
+        composer->setProperty("text","");
+        QTRY_COMPARE(draft,QString(""));QTRY_COMPARE(chat->property("draftRevision").toString(),QString::number(draftRevision));
+        outcome=Refused;sendLost("third message");
+        QTRY_COMPARE(draft,QString("third message"));
+        QCOMPARE(composer->property("text").toString(),QString("third message"));
+        QVERIFY(!chat->property("draftConflict").toBool());
         view.hide();
     }
 private:

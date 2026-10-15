@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import { fail, entityTypes } from "./contracts.ts";
 import { CollectorRpc } from "./collector-rpc.ts";
 import { defaultExtractionModel } from "./models.ts";
+import { embeddingPrompts } from "./prompts.ts";
 import { paths } from "../paths.ts";
 
 type Row = Record<string, any>;
@@ -60,6 +61,15 @@ export class MemoryService {
   controller = new AbortController();
   notify: (event: Row) => void;
   lastError = "";
+  /** Why the last housekeeping tick stopped early; the next tick retries. */
+  maintenanceError = "";
+  /** Why background embedding last failed; it tries again a minute later. */
+  embeddingError = "";
+  embeddingRetryAt = 0;
+  /** Each server's embedding space for the configured model, with its vector size. */
+  spaces = new Map<string, { model: string; at: number; dimension: number; fingerprint: string }>();
+  /** Set once no vector stored as JSON text remains to repack. */
+  vectorsPacked = false;
   /** Collector generation: callbacks from a stopped generation are discarded. */
   collectorGeneration = 0;
   /** Current collector policy with resolved approved roots, used to filter every live read. */
@@ -67,7 +77,9 @@ export class MemoryService {
   constructor(directory: string, notify: (event: Row) => void = () => {}) {
     this.notify = notify;
     this.canonical = new GraphMemory(directory, (event) => {
-      if (event.type === "invalidate") {
+      // Expired retention does not cancel extraction or projection in flight; an erasure or
+      // policy change does, since their stale epoch would reject the work anyway.
+      if (event.type === "invalidate" && event.cause !== "expiration") {
         this.controller.abort(new Error("Memory context invalidated"));
         this.controller = new AbortController();
       }
@@ -88,6 +100,9 @@ export class MemoryService {
     this.controller.abort(new Error("Memory configuration changed"));
     this.controller = new AbortController();
     this.extractor = undefined;
+    // A new server or embedding model starts a new space; background embedding begins at once.
+    this.spaces.clear();
+    this.embeddingRetryAt = 0;
     const current = await this.canonical.call("policy_get");
     if (
       current.policy.enabled !== p.enabled ||
@@ -253,7 +268,7 @@ export class MemoryService {
       m.digest,
       "unit",
       "Cosine",
-      "nomic-prefix-v1",
+      embeddingPrompts(model).id,
       "codepoint-chunks-480-v1",
     ]);
     return { key, digest: m.digest };
@@ -264,12 +279,9 @@ export class MemoryService {
     kind: "query" | "document",
     signal: AbortSignal,
   ) {
-    const model = this.configuration.embedding_model,
-      prefix = /(?:^|\/)nomic-embed-text(?::|$)/.test(model)
-        ? kind === "query"
-          ? "search_query: "
-          : "search_document: "
-        : "";
+    const prompts = embeddingPrompts(this.configuration.embedding_model),
+      model = this.configuration.embedding_model,
+      prefix = kind === "query" ? prompts.query : prompts.document;
     const chunks = texts.map((t) => {
       const points = Array.from(t),
         out: string[] = [];
@@ -377,9 +389,13 @@ export class MemoryService {
     }
     return this.graph;
   }
-  async project(backend: "graph" | "vector") {
+  /** One projection job; true when a job was applied, false when none was due or the backend failed. */
+  async project(backend: "graph" | "vector"): Promise<boolean> {
     const job = await this.canonical.call("claim_job", { backend });
-    if (!job) return;
+    if (!job) return false;
+    return this.projectJob(backend, job);
+  }
+  async projectJob(backend: "graph" | "vector", job: Row): Promise<boolean> {
     try {
       const data = await this.canonical.call("projection_data", { id: job.id });
       if (backend === "graph") {
@@ -472,11 +488,64 @@ export class MemoryService {
         }
       }
       await this.canonical.call("finish_job", { id: job.id });
+      return true;
     } catch {
       await this.canonical.call("finish_job", {
         id: job.id,
         error: "BACKEND_UNAVAILABLE",
       });
+      return false;
+    }
+  }
+  /** The configured model's embedding space on one server, measured again after five minutes. */
+  async space(host: string, signal: AbortSignal) {
+    const model = this.configuration.embedding_model, cached = this.spaces.get(host);
+    if (cached && cached.model === model && Date.now() - cached.at < 300000) return cached;
+    const identity = await this.identity(host, signal);
+    const [probe] = await this.embed(host, ["Cere memory embedding probe"], "document", signal);
+    const space = { model, at: Date.now(), dimension: probe.length, fingerprint: this.fingerprint(identity, probe.length) };
+    this.spaces.set(host, space);
+    return space;
+  }
+  /**
+   * Embeds stored memories that have no vector in the configured server's current space, a small
+   * batch per idle tick. Semantic recall then covers the whole store without a vector projection,
+   * and a change of embedding model or prompts re-embeds it in the background. Never throws: a
+   * failure is reported in health and retried a minute later.
+   */
+  async embedBacklog(): Promise<boolean> {
+    if (Date.now() < this.embeddingRetryAt) return false;
+    const host = ollamaHost(this.configuration.host),
+      signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(30000)]);
+    try {
+      const space = await this.space(host, signal);
+      const batch: Row[] = await this.canonical.call("vector_backlog", { host, fingerprint: space.fingerprint, limit: 16 });
+      if (!batch.length) return false;
+      const vectors = await this.embed(host, batch.map((a) => a.text), "document", signal);
+      for (const [index, a] of batch.entries()) {
+        if (vectors[index].length !== space.dimension) fail("BACKEND_UNAVAILABLE", "Embedding dimension changed");
+        // A memory changed or forgotten meanwhile is skipped; the backlog offers its new revision.
+        await this.canonical
+          .call("embedding_save", {
+            artifact_id: a.id,
+            content_revision: a.content_revision,
+            erasure_epoch: a.erasure_epoch,
+            fingerprint: space.fingerprint,
+            generation: "1",
+            point_id: pointId(a.id, a.content_revision, space.fingerprint, 1),
+            vector: vectors[index],
+          })
+          .catch((error: any) => {
+            if (error?.code !== "SOURCE_CHANGED") throw error;
+          });
+      }
+      this.embeddingError = "";
+      return true;
+    } catch (error: any) {
+      this.embeddingError = String(error?.code || "EMBEDDING_UNAVAILABLE");
+      this.embeddingRetryAt = Date.now() + 60000;
+      this.spaces.delete(host);
+      return false;
     }
   }
   async extraction() {
@@ -582,6 +651,8 @@ export class MemoryService {
       this.lastError = denied ? "EXTRACTION_DENIED" : "EXTRACTION_RETRYABLE";
     }
   }
+  static readonly projectionBatch = 50;
+  static readonly projectionBudgetMs = 400;
   async maintain() {
     if (
       this.busy ||
@@ -594,9 +665,23 @@ export class MemoryService {
       return;
     this.busy = true;
     try {
-      await Promise.allSettled([this.project("graph"), this.project("vector")]);
+      // A bounded batch per tick: a backlog drains in minutes instead of one job per second,
+      // and a backend that fails or runs dry ends the batch early.
+      const deadline = Date.now() + MemoryService.projectionBudgetMs;
+      for (let n = 0; n < MemoryService.projectionBatch && Date.now() < deadline && !this.foreground && !this.closed; n++) {
+        const applied = await Promise.allSettled([this.project("graph"), this.project("vector")]);
+        if (!applied.some((result) => result.status === "fulfilled" && result.value === true)) break;
+      }
       if (!this.foreground) await this.extraction();
-      if(Date.now()-this.lastMaintenance>60000){this.lastMaintenance=Date.now();await this.canonical.call('maintenance');}
+      if (!this.foreground) await this.embedBacklog();
+      if (!this.foreground && !this.vectorsPacked)
+        this.vectorsPacked = (await this.canonical.call("vector_upgrade")).upgraded === 0;
+      if(!this.foreground&&Date.now()-this.lastMaintenance>60000){this.lastMaintenance=Date.now();await this.canonical.call('maintenance');}
+      this.maintenanceError = "";
+    } catch (error: any) {
+      // A tick runs from a timer; a rejection here would end the broker. A stopped or restarted
+      // worker, or expiry that ran out of budget, is retried by the next tick.
+      this.maintenanceError = String(error?.code || "MAINTENANCE_FAILED");
     } finally {
       this.busy = false;
     }
@@ -623,7 +708,8 @@ export class MemoryService {
       AbortSignal.timeout(deadline),
     ]);
     let semantic: Row[] = [],
-      coverage: string[] = [];
+      coverage: string[] = [],
+      semanticFloor: number | null = null;
     const {host: _host,...seedQuery}=p;
     // Inherited scopes are authorized for every retrieval route, not only lexical recall.
     const scopeIds: string[] = await this.canonical.call("effective_scopes", { scope_id: p.scope_id }, guard);
@@ -668,11 +754,14 @@ export class MemoryService {
       }
       // Preserve the durable overlay before optional projection setup/query can
       // exhaust the deadline. An unavailable projection must not discard local hits.
-      semantic = await this.canonical.call("embedding_search", {
+      const overlay = await this.canonical.call("embedding_search", {
         scope_id: p.scope_id,
         fingerprint,
         vector,
       }, guard);
+      semantic = overlay.hits;
+      // Automatic recall keeps a semantic match only above this query's own similarity floor.
+      if (p.relevance_floor === true) semanticFloor = overlay.floor;
       try {
         const health = await this.canonical.call("health", {}, guard);
         // Collection preparation shares the retrieval deadline; expiry degrades to canonical recall.
@@ -710,6 +799,7 @@ export class MemoryService {
         semantic_ids: semantic,
         graph_ids:graphIds,
         backend_coverage: coverage,
+        ...(semanticFloor !== null ? { semantic_floor: semanticFloor } : {}),
         deadline_ms: Math.max(25, deadline - (performance.now() - time)),
       },
       signal,
@@ -824,6 +914,8 @@ export class MemoryService {
         ...(await this.canonical.call("health")),
         extraction_model: this.configuration.extraction_model,
         extraction_error: this.lastError,
+        embedding_error: this.embeddingError,
+        maintenance_error: this.maintenanceError,
         workspace: this.liveSnapshot(),
         collectors: this.collectors.length,
       };

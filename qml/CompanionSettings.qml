@@ -14,9 +14,9 @@ ColumnLayout {
         CComboBox { objectName:"desktopProfile";Layout.fillWidth:true;Layout.minimumWidth:0;model:["Normal","Focus","Gaming","Presentation"];currentIndex:["normal","focus","gaming","presentation"].indexOf(companion.settings.desktopProfile||"normal");Accessible.name:"Desktop profile";onActivated:companion.update({desktopProfile:["normal","focus","gaming","presentation"][currentIndex]}) }
         CText { text:"Profiles coordinate visibility, speech, motion and ordinary notifications. Pending approvals remain available from Cere’s tray.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CCheckBox { objectName:"alwaysOnTop";text:"Always on top";checked:companion.settings.topmost===true;onClicked:companion.update({topmost:checked}) }
-        CText { text:"Keep Cere above your applications, including fullscreen windows.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { text:"Keep "+App.assistantName+" above your applications, including fullscreen windows.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CCheckBox { objectName:"autostart";text:"Start Cere at login";checked:App.autostartEnabled();onClicked:App.setAutostart(checked) }
-        CButton { objectName:"hideCere";text:companion.settings.hidden?"Show Cere":"Hide Cere";onClicked:companion.update({hidden:!companion.settings.hidden}) }
+        CButton { objectName:"hideCere";text:(companion.settings.hidden?"Show ":"Hide ")+App.assistantName;onClicked:companion.update({hidden:!companion.settings.hidden}) }
     }
     CSection {
         title:"Placement"
@@ -25,7 +25,7 @@ ColumnLayout {
             Layout.fillWidth:true
             CText { text:"Character size";font.pixelSize:Theme.secondary;Layout.fillWidth:false }
             CSlider { objectName:"characterSize";Layout.fillWidth:true;Layout.minimumWidth:0;from:.5;to:3;stepSize:.25;value:companion.settings.scale||1;Accessible.name:"Character size";onMoved:App.resizePet(value) }
-            Text { text:Math.round((companion.settings.scale||1)*100)+"%";color:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.secondary }
+            Text { text:Math.round((companion.settings.scale||1)*100)+"%";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary }
         }
         Flow {
             Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:6

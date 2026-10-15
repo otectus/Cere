@@ -13,6 +13,14 @@ Rectangle {
     // what it shows, copies, quotes, speaks and branches. Tool output stays as it was produced.
     readonly property bool hidesCitations: message.role!=="tool"&&!App.showMemoryCitations
     readonly property string displayText: hidesCitations?App.displayText(message.text,false):message.text
+    // A hidden host (the other Cere window) skips document formatting while a reply streams and
+    // formats once when it is shown again.
+    readonly property bool hostVisible: Window.window ? Window.window.visible : true
+    onHostVisibleChanged: if(hostVisible)Qt.callLater(body.formatDocument)
+    Connections {
+        target: App
+        function onThemeChanged() { Qt.callLater(body.formatDocument) }
+    }
     color: message.role==="user" ? Theme.userBubble : message.role==="tool" ? Theme.input : Theme.surface
     radius: Theme.radius
     border.color: message.role==="user" ? Theme.userBubbleBorder : Theme.subtle
@@ -20,7 +28,7 @@ Rectangle {
     ColumnLayout {
         id:contents;anchors.fill:parent;anchors.margins:16;spacing:12
         RowLayout {
-            Text { text:card.message.role==="user" ? "You" : card.message.role==="tool" ? "Tool activity" : "Cere";color:card.message.role==="user"?Theme.muted:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;Layout.fillWidth:true }
+            Text { objectName:"messageAuthor";text:card.message.role==="user" ? "You" : card.message.role==="tool" ? "Tool activity" : App.assistantName;elide:Text.ElideRight;textFormat:Text.PlainText;color:card.message.role==="user"?Theme.muted:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;Layout.fillWidth:true }
             CButton{visible:card.message.role==="tool";quiet:true;text:card.collapsed?"Show":"Hide";implicitHeight:28;onClicked:card.collapsed=!card.collapsed}
             // A display copy shortened for transport copies the complete stored text instead.
             CButton{objectName:"copyMessage_"+card.message.id;text:"Copy";quiet:true;implicitHeight:28;help:"Copy message";onClicked:card.message.truncated?App.copySessionMessage(card.message.sessionId,card.message.id,card.hidesCitations):App.copy(card.displayText)}
@@ -44,7 +52,7 @@ Rectangle {
                 // Prose is formatted to the visible width; only code and tables reach past it.
                 function formatDocument(){
                     // A deferred call can run after its window (and App) is gone.
-                    if(formatting||card.message.role==="tool"||typeof App==="undefined")return
+                    if(formatting||card.message.role==="tool"||typeof App==="undefined"||!card.hostVisible)return
                     formatting=true;App.formatMessage(textDocument,messageViewport.width);formatting=false
                 }
                 onTextChanged:{if(!formatting)overflowWidth=0;formatDocument()}
@@ -61,7 +69,7 @@ Rectangle {
                 color:Theme.text;selectionColor:Theme.selected;selectedTextColor:Theme.text
                 font.pixelSize:Theme.message;font.family:card.message.role==="tool"?"monospace":Theme.font
                 padding:0;background:null
-                palette.link:Theme.cyan
+                palette.link:Theme.accentText
                 baseUrl:"file://"+card.directory+"/"
                 onLinkActivated:link=>App.openMessageLink(link,card.directory)
                 ToolTip.visible:hoveredLink.length>0

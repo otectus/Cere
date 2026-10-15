@@ -66,4 +66,35 @@ ALTER TABLE response_records ADD COLUMN evidence_scopes TEXT NOT NULL DEFAULT '{
 CREATE INDEX extraction_runs_status ON extraction_runs(status,revision);
 `,
   },
+  {
+    // Erasure walks look records up by the column that names them, and deleting a parent row checks
+    // its referencing columns. Without these, one forget step scanned whole tables.
+    id: 3,
+    sql: `
+CREATE INDEX artifacts_record ON artifacts(record_id);
+CREATE INDEX artifacts_payload ON artifacts(payload_id);
+CREATE INDEX assertions_subject_any ON assertion_versions(subject_id);
+CREATE INDEX assertions_object_any ON assertion_versions(object_entity_id);
+CREATE INDEX assertions_logical ON assertion_versions(logical_id);
+CREATE INDEX assertions_slot ON assertion_versions(slot_id);
+CREATE INDEX evidence_observation ON evidence(observation_id);
+CREATE INDEX events_observation ON events(observation_id);
+CREATE INDEX events_payload ON events(payload_id);
+CREATE INDEX observations_payload ON observations(payload_id);
+CREATE INDEX extraction_runs_observation ON extraction_runs(observation_id);
+CREATE INDEX extraction_runs_output ON extraction_runs(output_payload_id);
+CREATE INDEX commits_delta ON commits(delta_payload_id);
+CREATE INDEX mutation_effects_target ON mutation_effects(target_id,revision);
+CREATE INDEX episodes_thread ON episodes(scope_id,thread_id,state);
+`,
+  },
+  {
+    // Vectors become packed 32-bit floats: a fifth of the JSON text's size, and read without
+    // parsing. Semantic recall scans every stored vector of one embedding space.
+    id: 4,
+    sql: `
+ALTER TABLE embedding_records ADD COLUMN blob BLOB;
+CREATE INDEX embedding_records_space ON embedding_records(fingerprint,artifact_id);
+`,
+  },
 ];

@@ -14,7 +14,7 @@ QString MotionDirector::base() const {
     if(m_context.problem)return "problem";
     if(m_context.busy){
         if(m_context.activity=="speaking")return "speaking";
-        if(m_context.activity=="thinking")return "thinking";
+        if(m_context.activity=="thinking"||m_context.activity=="recalling")return "thinking";
         return "working";
     }
     if(m_context.listening)return "listening";

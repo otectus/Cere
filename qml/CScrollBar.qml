@@ -9,7 +9,7 @@ ScrollBar {
     Accessible.name: bar.horizontal ? "Horizontal scroll bar" : "Vertical scroll bar"
     contentItem: Rectangle {
         implicitWidth: 8; implicitHeight: 8; radius: 4
-        color: bar.pressed ? Theme.cyan : bar.hovered ? Theme.scrollThumbHover : Theme.scrollThumb
+        color: bar.pressed ? Theme.accentText : bar.hovered ? Theme.scrollThumbHover : Theme.scrollThumb
         opacity: bar.size < 1 ? 1 : 0
     }
     background: Rectangle { color: "transparent" }

@@ -13,8 +13,8 @@ CheckBox {
     indicator: Rectangle {
         x: control.leftPadding; y: (control.height-height)/2
         width: 20; height: 20; radius: Theme.radiusChip
-        color: control.checked ? Theme.cyan : Theme.input
-        border.color: control.activeFocus ? Theme.focus : control.hovered ? Theme.borderHover : control.checked ? Theme.cyan : Theme.border
+        color: control.checked ? Theme.accentText : Theme.input
+        border.color: control.activeFocus ? Theme.focus : control.hovered ? Theme.borderHover : control.checked ? Theme.accentText : Theme.border
         border.width: control.activeFocus ? Theme.focusWidth : 1
         opacity: control.enabled ? 1 : 0.45
         Text { anchors.centerIn: parent; text: "✓"; visible: control.checked; color: Theme.background; font.family: Theme.font; font.pixelSize: Theme.section; font.bold: true }

@@ -12,7 +12,13 @@ if (args.includes('app-server')) {
     const reply = result => send({ id: m.id, result });
     if (m.method === 'initialize') reply({});
     if (m.method === 'config/read') reply({ config: { approval_policy: 'on-request', approvals_reviewer: 'user', sandbox_mode: 'workspace-write', developer_instructions: 'Existing project guidance must survive.' } });
-    if (m.method === 'thread/start' || m.method === 'thread/resume') reply({ thread: { id: 'permission-thread' }, approvalPolicy: m.params.approvalPolicy, approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: [process.cwd()], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } });
+    if (m.method === 'thread/start' || m.method === 'thread/resume') {
+      const thread = { id: 'permission-thread' };
+      if (m.method === 'thread/resume' && process.env.CERE_PERMISSION_TEST_HISTORY_BYTES) {
+        thread.turns = m.params.excludeTurns ? [] : [{ id: 'old-turn', items: [{ type: 'agentMessage', id: 'old-message', text: 'x'.repeat(Number(process.env.CERE_PERMISSION_TEST_HISTORY_BYTES)) }] }];
+      }
+      reply({ thread, approvalPolicy: m.params.approvalPolicy, approvalsReviewer: m.params.approvalsReviewer, sandbox: { type: 'workspaceWrite', writableRoots: [process.cwd()], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } });
+    }
     if (m.method === 'turn/start') { reply({ turn: { id: 'turn' } }); send({ method: 'turn/completed', params: { turn: { id: 'turn', status: 'completed' } } }); }
     if (m.method === 'thread/list') reply({ data: [{ id: 'fixture-history-thread', name: 'Fixture history', cwd: process.cwd() }] });
   });

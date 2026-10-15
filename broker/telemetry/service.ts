@@ -10,7 +10,7 @@ export class TelemetryService {
     await this.stop();this.config=structuredClone(config);this.closed=false;this.status={...this.status,enabled:config.enabled,listener:'stopped',watcher:'stopped',lastError:''};
     if(!config.enabled){this.changed();return;}
     const worker=this.worker=new Worker(new URL('./worker.ts',import.meta.url),{workerData:{config,directory:this.directory,paused:this.paused}});
-    worker.on('message',message=>{if(this.worker!==worker)return;if(message.status){this.status=message.status;this.changed();return;}const p=this.pending.get(message.id);if(p){clearTimeout(p.timer);this.pending.delete(message.id);p.resolve(message.error?undefined:message.value);}});
+    worker.on('message',message=>{if(this.worker!==worker)return;if(message.status){const same=JSON.stringify(message.status)===JSON.stringify(this.status);this.status=message.status;if(!same)this.changed();return;}const p=this.pending.get(message.id);if(p){clearTimeout(p.timer);this.pending.delete(message.id);p.resolve(message.error?undefined:message.value);}});
     const failed=()=>{if(this.worker!==worker)return;this.worker=undefined;this.status={...this.status,listener:'error',watcher:'degraded',lastError:'WORKER_UNAVAILABLE'};this.epoch++;for(const p of this.pending.values()){clearTimeout(p.timer);p.resolve(undefined);}this.pending.clear();this.changed();};
     worker.on('error',failed);worker.on('exit',failed);
   }

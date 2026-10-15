@@ -26,7 +26,7 @@ ColumnLayout {
                 enabled:!motion.settings.quiet&&!motion.settings.reducedMotion
                 Accessible.name:"Motion intensity";onMoved:motion.update({motionIntensity:Math.round(value*10)/10})
             }
-            Text { text:Math.round(motion.intensity*100)+"%";color:Theme.cyan;font.family:Theme.font;font.pixelSize:Theme.secondary }
+            Text { text:Math.round(motion.intensity*100)+"%";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary }
         }
         CText { text:"From a quiet presence to full personality: soften her breathing, gaze, hair sway and gestures together. Zero keeps state poses still.";color:Theme.muted;font.pixelSize:Theme.secondary }
         RowLayout {
@@ -52,7 +52,7 @@ ColumnLayout {
             CComboBox {
                 id:expression;objectName:"animationPicker";Layout.fillWidth:true;Layout.minimumWidth:0;textRole:"label";valueRole:"name"
                 model:Object.keys(App.animations.clips||{}).filter(n=>!App.animations.clips[n].loop).map(n=>({name:n,label:App.animations.clips[n].label}))
-                Accessible.name:"Choose Cere’s expression"
+                Accessible.name:"Choose "+App.assistantName+"’s expression"
             }
             CButton { objectName:"previewAnimation";text:"Preview";enabled:motion.canPreview;onClicked:App.preview(expression.currentValue) }
         }

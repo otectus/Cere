@@ -4,7 +4,7 @@ Item {
     id: pet
     width: 192; height: 208
     Accessible.role: Accessible.Button
-    Accessible.name: "Cere, " + (((App.animations.clips || {})[App.motion] || {}).label || "Open Cere")
+    Accessible.name: App.assistantName + ", " + (((App.animations.clips || {})[App.motion] || {}).label || "Open Cere")
     Accessible.onPressAction: App.togglePanel()
     property var settings: App.state.settings || ({})
     property bool dragging: false
@@ -58,6 +58,6 @@ Item {
         CMenu { title: "Size"; Repeater { model: [0.75,1,1.5,2,3]; CMenuItem { required property real modelData; text: Math.round(modelData*100)+"%"; onTriggered: App.resizePet(modelData) } } }
         CMenuItem { text: "Roaming · follow mouse"; checkable: true; checked: settings.roaming === true; onTriggered: App.rpc("settings.update",{roaming:checked}) }
         CMenuItem { text: "Quiet mode"; checkable: true; checked: settings.quiet === true; onTriggered: App.rpc("settings.update",{quiet:checked}) }
-        CMenuItem { text: "Hide Cere"; onTriggered: App.rpc("settings.update",{hidden:true}) }
+        CMenuItem { text: "Hide "+App.assistantName; onTriggered: App.rpc("settings.update",{hidden:true}) }
     }
 }

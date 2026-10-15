@@ -4,7 +4,7 @@ import QtQuick.Layouts
 CSection {
     id:voiceSettings
     title:"Voice"
-    description:"Read replies aloud using a local voice or ElevenLabs. Pinned conversations also speak each conversational update in the background and show it beside Cere. Quiet mode pauses automatic speech."
+    description:"Read replies aloud using a local voice or ElevenLabs. Pinned conversations also speak each conversational update in the background and show it beside "+App.assistantName+". Quiet mode pauses automatic speech."
     property var settings:App.state.settings||({})
     property var speech:App.state.speech||({})
     property var transcriptionSettings:settings.transcription||({})
@@ -44,7 +44,7 @@ CSection {
             CText {
                 Layout.fillWidth:false
                 text:(tuning.signed&&control.value>0?"+":"")+(control.value*tuning.displayScale).toFixed(tuning.decimals)+tuning.suffix
-                color:Theme.cyan;font.pixelSize:Theme.secondary
+                color:Theme.accentText;font.pixelSize:Theme.secondary
             }
         }
         CSlider {
@@ -95,15 +95,15 @@ CSection {
         visible:!voiceSettings.settings.ttsProvider||voiceSettings.settings.ttsProvider==="local"
         objectName:"speechVoice";Layout.fillWidth:true;Layout.minimumWidth:0
         model:voiceSettings.voices;textRole:"label"
-        Accessible.name:"Cere speaking voice"
+        Accessible.name:App.assistantName+" speaking voice"
         currentIndex:voiceSettings.voices.findIndex(v=>v.id===voiceSettings.settings.voice)
         displayText:(voiceSettings.voices.find(voice=>voice.id===voiceSettings.settings.voice)||{}).label||voiceSettings.settings.voice||"en_US-amy-medium"
         onActivated:App.rpc("settings.update",{voice:voiceSettings.voices[currentIndex].id})
     }
     TuningSlider { visible:voiceSettings.settings.ttsProvider!=="indextts";settingKey:"speechRate";label:"Speaking speed";minimum:.5;maximum:2;suffix:"×" }
     TuningSlider { settingKey:"speechPitch";label:"Pitch · lower / higher";minimum:-6;maximum:6;increment:.5;neutral:0;decimals:1;suffix:" semitones";signed:true }
-    TuningSlider { settingKey:"speechVolume";label:"Cere’s volume";displayScale:100;decimals:0;suffix:"%" }
-    CText { text:"Pitch changes tone without changing speed. Adjustments apply to new replies and Test voice. Volume affects Cere only; 0% mutes her voice.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    TuningSlider { settingKey:"speechVolume";label:App.assistantName+"’s volume";displayScale:100;decimals:0;suffix:"%" }
+    CText { text:"Pitch changes tone without changing speed. Adjustments apply to new replies and Test voice. Volume affects her speech only; 0% mutes her voice.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CButton {
         objectName:"resetVoiceTuning";text:"Reset voice adjustments";enabled:!voiceSettings.savingTuning
         onClicked:voiceSettings.saveTuning({speechRate:1,speechPitch:0,speechVolume:1})
@@ -117,8 +117,8 @@ CSection {
     }
     CText {
         objectName:"ttsStatus";font.pixelSize:Theme.secondary
-        text:voiceSettings.speech.error||voiceSettings.error||(voiceSettings.settings.speechVolume===0?"Voice muted · raise Cere’s volume to preview":voiceSettings.speech.state==="preparing"?"Preparing voice…":voiceSettings.speech.state==="speaking"?"Speaking · "+voiceSettings.speech.backend:voiceSettings.speech.backend?"Ready · "+voiceSettings.speech.backend:"Ready to test")
-        color:voiceSettings.speech.error||voiceSettings.error?Theme.danger:Theme.cyan
+        text:voiceSettings.speech.error||voiceSettings.error||(voiceSettings.settings.speechVolume===0?"Voice muted · raise her volume to preview":voiceSettings.speech.state==="preparing"?"Preparing voice…":voiceSettings.speech.state==="speaking"?"Speaking · "+voiceSettings.speech.backend:voiceSettings.speech.backend?"Ready · "+voiceSettings.speech.backend:"Ready to test")
+        color:voiceSettings.speech.error||voiceSettings.error?Theme.danger:Theme.accentText
     }
     CText { visible:!voiceSettings.settings.ttsProvider||voiceSettings.settings.ttsProvider==="local";text:"Add a voice’s .onnx and .onnx.json files to ~/.local/share/piper/voices/ or Cere’s config/voices/ folder, then refresh. Test voice plays even in quiet mode.";color:Theme.muted;font.pixelSize:Theme.secondary }
     Rectangle { Layout.fillWidth:true;implicitHeight:1;color:Theme.line }

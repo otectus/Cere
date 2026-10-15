@@ -36,7 +36,7 @@ CDialog {
     }
     onClosed:{loadRequest=-1;saveRequest=-1}
     CText { text:"Conversation model";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
-    CText { text:(dialog.labels[dialog.original.provider]||"")+" · "+(dialog.original.model||"Provider default");color:Theme.cyan;font.pixelSize:Theme.secondary }
+    CText { text:(dialog.labels[dialog.original.provider]||"")+" · "+(dialog.original.model||"Provider default");color:Theme.accentText;font.pixelSize:Theme.secondary }
     CText { visible:dialog.isOllama;text:dialog.original.ollama?.host||"";color:Theme.muted;font.pixelSize:Theme.secondary }
     CText { text:"Changes apply to your next message. Your conversation stays in this session.";color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout { Layout.fillWidth:true;CText{text:"Model";color:Theme.muted}CButton{text:"Refresh";enabled:dialog.loadRequest<0&&dialog.saveRequest<0;onClicked:dialog.refresh()} }
@@ -52,7 +52,7 @@ CDialog {
     CCheckBox { id:assistance;objectName:"ollamaSessionTools";visible:!dialog.isNative;text:"Enable desktop tools and delegation";enabled:!dialog.original.temporary&&dialog.saveRequest<0&&(dialog.isApi||(dialog.selected.capabilities||[]).includes("tools")) }
     CText { visible:!dialog.isNative;text:"Uses categories enabled in Settings → AI assistance. Web search and memory follow Settings.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { id:trust;visible:!dialog.isNative&&!App.state.settings?.bypassCliPermissions&&assistance.checked&&!(dialog.original.ollama?.tools||dialog.original.api?.tools);text:"I trust this project and its enabled tool access" }
-    CText { visible:trust.visible;text:dialog.original.cwd||"";color:Theme.cyan;font.pixelSize:Theme.secondary }
+    CText { visible:trust.visible;text:dialog.original.cwd||"";color:Theme.accentText;font.pixelSize:Theme.secondary }
     CText { visible:!!dialog.loadError;text:dialog.loadError;color:Theme.amber;font.pixelSize:Theme.secondary }
     CText { visible:!!dialog.error;text:dialog.error;color:Theme.danger;font.pixelSize:Theme.secondary }
     RowLayout {

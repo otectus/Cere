@@ -49,7 +49,7 @@ CDialog {
         CText { text:"Memory records "+(review.offset+1)+"–"+(review.offset+25);color:Theme.muted }
         CButton { text:"Next";enabled:review.offset+25<Math.max(review.listing.totalAssertions||0,review.listing.totalNotes||0);onClicked:{review.offset+=25;review.reload()} }
     }
-    CText { text:review.feedback;visible:text.length>0;color:Theme.cyan;wrapMode:Text.Wrap }
+    CText { text:review.feedback;visible:text.length>0;color:Theme.accentText;wrapMode:Text.Wrap }
     CButton { text:"Close";onClicked:review.close() }
     MemoryDialog { id:allMemory }
     GraphMemoryInspector { id:inspector }

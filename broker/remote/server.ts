@@ -36,12 +36,15 @@ export class MobileGateway {
       const device=this.registry.live(execution.deviceId);
       return !!device&&this.registry.config().enabled&&device.scopeVersion===execution.scopeVersion&&device.projects.some(p=>p.id===execution.projectId&&p.path===session.cwd)&&this.router.inScope(device,session);
     };
-    core.on('state',this.onState);core.on('message',this.onMessage);core.on('notice',this.onNotice);
+    core.on('changed',this.onChanged);core.on('state',this.onState);core.on('message',this.onMessage);core.on('notice',this.onNotice);
     this.heartbeat=setInterval(()=>{void this.maintain();},20000);this.heartbeat.unref();this.presence();
   }
-  onState=()=> {
+  // Scope and pause enforcement follow every change at once, ahead of the paced state snapshot.
+  onChanged=()=> {
     this.router.recheckActions();
     if(this.core.settings.paused)for(const session of this.core.store.sessions())if(session.remote){this.core.abortActions(session.id,remoteError('POLICY_PAUSED','Desktop actions are paused.'));if(session.provider!=='ollama'&&busy(session)&&!this.core.stopping.has(session.id))void this.core.stop(session.id).catch(()=>{});}
+  };
+  onState=()=> {
     if(this.closed||this.stateTimer)return;
     this.stateTimer=setTimeout(()=>{this.stateTimer=undefined;for(const peer of this.peers)if(peer.subscribed&&peer.device)this.event(peer,'snapshot.changed',{});},250);this.stateTimer.unref();
   };
@@ -312,5 +315,5 @@ export class MobileGateway {
       default:throw new Error('Unknown remote management method');
     }
   }
-  async close() {this.closed=true;this.router.abortActions();clearInterval(this.heartbeat);if(this.stateTimer)clearTimeout(this.stateTimer);this.core.off('state',this.onState);this.core.off('message',this.onMessage);this.core.off('notice',this.onNotice);await this.stopListeners();}
+  async close() {this.closed=true;this.router.abortActions();clearInterval(this.heartbeat);if(this.stateTimer)clearTimeout(this.stateTimer);this.core.off('changed',this.onChanged);this.core.off('state',this.onState);this.core.off('message',this.onMessage);this.core.off('notice',this.onNotice);await this.stopListeners();}
 }

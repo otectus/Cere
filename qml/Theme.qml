@@ -1,49 +1,72 @@
 pragma Singleton
 import QtQuick
-// The one source of colour, type, spacing and shape for every Cere surface.
+// Shared colour, type, spacing and shape for every Cere surface.
+// Palettes live in assets/palettes.json and follow the saved avatar.
 // Text pairs meet WCAG 2.2 AA (4.5:1) and every control boundary 3:1 on the surfaces
 // it sits on; tests/qml-tokens.test.ts checks both and keeps literals out of other files.
 QtObject {
-    // Surfaces
-    readonly property color background: "#0b121b"
-    readonly property color sidebar: "#080f17"
-    readonly property color surface: "#101b27"
-    readonly property color raised: "#182736"
-    readonly property color input: "#0c1621"
-    readonly property color selected: "#13334a"
-    readonly property color codeSurface: "#0d131c"
-    readonly property color userBubble: "#112638"
-    readonly property color approvalSurface: "#29291f"
-    readonly property color questionSurface: "#22272c"
-    readonly property color warningSurface: "#2b261e"
-    readonly property color dangerSurface: "#33232e"
-    readonly property color questionBadge: "#173746"
-    readonly property color permissionBadge: "#3a3021"
-    readonly property color overlayScrim: "#b304090f"
-    // Lines: decorative outlines and dividers, then control boundaries (3:1 or more)
-    readonly property color line: "#263848"
-    readonly property color subtle: "#192937"
-    readonly property color userBubbleBorder: "#2d5373"
-    readonly property color border: "#61788f"
-    readonly property color borderHover: "#7e96ae"
-    readonly property color borderStrong: "#6b839c"
-    readonly property color primaryBorder: "#2f86c2"
-    readonly property color dangerBorder: "#a86b7a"
-    readonly property color warningBorder: "#94784a"
-    readonly property color approvalBorder: "#9a8150"
-    readonly property color activeBorder: "#2f86c2"
-    readonly property color scrollThumb: "#6b839c"
-    readonly property color scrollThumbHover: "#8ba3ba"
-    // Text and accents
-    readonly property color text: "#edf5fc"
-    readonly property color muted: "#9aafc2"
-    readonly property color accent: "#149cff"
-    readonly property color cyan: "#49dfff"
-    readonly property color success: "#82dccc"
-    readonly property color danger: "#ff9eae"
-    readonly property color amber: "#ffd385"
-    // Focus: a 2 px cyan ring on every focusable control
-    readonly property color focus: cyan
+    // The native host and QML share the same catalog. Standalone component previews
+    // read it directly (qmltestrunner enables local-file reads); production uses App.
+    readonly property var palettes: typeof App !== "undefined" ? App.themes : loadPalettes()
+    readonly property var colors: typeof App !== "undefined" ? App.theme : palettes.cere
+    function loadPalettes() {
+        const request = new XMLHttpRequest()
+        request.open("GET", Qt.resolvedUrl("../assets/palettes.json"), false)
+        request.send()
+        return JSON.parse(request.responseText)
+    }
+    function paletteFor(avatarId) { return palettes[avatarId] || palettes.cere }
+    readonly property color background: colors.background
+    readonly property color sidebar: colors.sidebar
+    readonly property color surface: colors.surface
+    readonly property color raised: colors.raised
+    readonly property color input: colors.input
+    readonly property color selected: colors.selected
+    readonly property color codeSurface: colors.codeSurface
+    readonly property color userBubble: colors.userBubble
+    readonly property color approvalSurface: colors.approvalSurface
+    readonly property color questionSurface: colors.questionSurface
+    readonly property color warningSurface: colors.warningSurface
+    readonly property color dangerSurface: colors.dangerSurface
+    readonly property color questionBadge: colors.questionBadge
+    readonly property color permissionBadge: colors.permissionBadge
+    readonly property color overlayScrim: colors.overlayScrim
+    readonly property color line: colors.line
+    readonly property color subtle: colors.subtle
+    readonly property color userBubbleBorder: colors.userBubbleBorder
+    readonly property color border: colors.border
+    readonly property color borderHover: colors.borderHover
+    readonly property color borderStrong: colors.borderStrong
+    readonly property color primaryBorder: colors.primaryBorder
+    readonly property color dangerBorder: colors.dangerBorder
+    readonly property color warningBorder: colors.warningBorder
+    readonly property color approvalBorder: colors.approvalBorder
+    readonly property color activeBorder: colors.activeBorder
+    readonly property color scrollThumb: colors.scrollThumb
+    readonly property color scrollThumbHover: colors.scrollThumbHover
+    readonly property color text: colors.text
+    readonly property color muted: colors.muted
+    readonly property color accent: colors.accent
+    readonly property color accentText: colors.accentText
+    readonly property color success: colors.success
+    readonly property color danger: colors.danger
+    readonly property color amber: colors.amber
+    readonly property color warm: colors.warm
+    readonly property color portraitSurface: colors.portraitSurface
+    readonly property color portraitTop: colors.portraitTop
+    readonly property color portraitBottom: colors.portraitBottom
+    readonly property color portraitBorder: colors.portraitBorder
+    readonly property color portraitAccent: colors.portraitAccent
+    readonly property color portraitWarm: colors.portraitWarm
+    readonly property color portraitAttention: colors.portraitAttention
+    readonly property color portraitSpeech: colors.portraitSpeech
+    readonly property color stageSurface: colors.stageSurface
+    readonly property color stageBorder: colors.stageBorder
+    readonly property color stageSpotlight: colors.stageSpotlight
+    readonly property color stageSpotlightBorder: colors.stageSpotlightBorder
+    readonly property color badgeSurface: colors.badgeSurface
+    readonly property color petShadow: colors.petShadow
+    readonly property color focus: accentText
     readonly property int focusWidth: 2
     // Type scale (logical px); nothing is smaller than caption
     readonly property string font: "Adwaita Sans"
@@ -71,7 +94,7 @@ QtObject {
     readonly property int radiusDialog: 16
     readonly property int radius: radiusCard
     // Motion: reduced motion and quiet mode stop transitions; lower intensity shortens them and 0 stops them.
-    readonly property bool reducedMotion: App.state.settings?.reducedMotion === true || App.state.settings?.quiet === true
-    readonly property real motionScale: reducedMotion ? 0 : Math.max(0, Math.min(1, (App.state.settings?.motionIntensity ?? 0.7) / 0.7))
+    readonly property bool reducedMotion: typeof App !== "undefined" && (App.state.settings?.reducedMotion === true || App.state.settings?.quiet === true)
+    readonly property real motionScale: reducedMotion ? 0 : Math.max(0, Math.min(1, (typeof App !== "undefined" ? (App.state.settings?.motionIntensity ?? 0.7) : 0.7) / 0.7))
     function duration(ms) { return Math.round(ms * motionScale) }
 }

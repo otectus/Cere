@@ -93,7 +93,7 @@ CDialog {
             }
         }
     }
-    CText { visible:shelf.feedback.length>0;text:shelf.feedback;Accessible.name:text;color:Theme.cyan }
+    CText { visible:shelf.feedback.length>0;text:shelf.feedback;Accessible.name:text;color:Theme.accentText }
     CButton { text:"Close";onClicked:shelf.close() }
     Connections {
         target:App

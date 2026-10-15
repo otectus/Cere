@@ -18,7 +18,7 @@ CDialog {
         requestId=App.rpc("projects.createSession",{cwd:project.cwd,expectedRevision:project.revision,title:sessionName.text.trim()})
     }
     CText { text:"New session";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
-    CText { text:dialog.project.name||"Project";color:Theme.cyan;font.weight:Font.DemiBold }
+    CText { text:dialog.project.name||"Project";color:Theme.accentText;font.weight:Font.DemiBold }
     CText { text:dialog.project.cwd||"";font.pixelSize:Theme.caption;color:Theme.muted;wrapMode:Text.WrapAnywhere }
     CField {
         id:sessionName;objectName:"projectSessionName";Layout.fillWidth:true;maximumLength:100

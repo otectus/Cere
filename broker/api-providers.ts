@@ -84,6 +84,8 @@ export async function consumeSse(response: Response, receive: (value: any) => vo
 function mime(image: string) { const b=Buffer.from(image,'base64'); return b[0]===255 ? 'image/jpeg' : b.toString('ascii',0,4)==='RIFF' ? 'image/webp' : 'image/png'; }
 function imageUrl(image: string) { return `data:${mime(image)};base64,${image}`; }
 function argumentsObject(value: unknown): Record<string, unknown> {
+  // A call without arguments streams no argument text (Anthropic) or omits args (Google).
+  if (value == null || typeof value === 'string' && !value.trim()) return {};
   let args: unknown;
   try { args = typeof value === 'string' ? JSON.parse(value) : value; }
   catch { throw new Error('Provider returned invalid tool arguments'); }

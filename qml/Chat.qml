@@ -1,4 +1,5 @@
 import QtQuick
+import Cere.Native 1.0
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
@@ -20,7 +21,7 @@ Item {
         contentItem:Item {
             implicitWidth:tool.iconOnly?18:caption.implicitWidth
             CIcon { anchors.centerIn:parent;visible:tool.iconOnly;name:tool.iconName;color:tool.enabled?Theme.text:Theme.muted }
-            Rectangle { visible:tool.iconOnly&&tool.badge;anchors.right:parent.right;anchors.top:parent.top;width:5;height:5;radius:3;color:Theme.cyan }
+            Rectangle { visible:tool.iconOnly&&tool.badge;anchors.right:parent.right;anchors.top:parent.top;width:5;height:5;radius:3;color:Theme.accentText }
             Text { id:caption;anchors.fill:parent;visible:!tool.iconOnly;text:tool.text;font:tool.font;color:tool.enabled?Theme.text:Theme.muted;verticalAlignment:Text.AlignVCenter;horizontalAlignment:Text.AlignHCenter }
         }
     }
@@ -91,11 +92,47 @@ Item {
     property int sendRequest:-1
     property string pendingText:""
     property string pendingSession:""
+    property string pendingTurn:""
+    property double pendingTime:0
     property string draftSession:""
     property string draftRevision:"0"
     property string draftBaseline:""
     property bool loadingDraft:false
     property bool draftConflict:false
+    // Texts this composer saved or sent. The broker holding one of them after a lost reply is this
+    // composer's own work arriving late, not another client's edit.
+    property var ownDrafts:[]
+    property var unconfirmedSend:null
+    function recordOwn(text,attachments){ownDrafts=ownDrafts.filter(d=>d.text!==text||d.attachments!==attachments).concat([{text:text,attachments:attachments}]).slice(-8)}
+    function ownsBrokerDraft(){const text=App.session.draft||"",attachments=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));return ownDrafts.some(d=>d.text===text&&d.attachments===attachments)}
+    // The broker's draft is this composer's: take its revision and keep editing from here.
+    function adoptBrokerDraft(){draftRevision=App.session.draftRevision||"0";draftBaseline=App.session.draft||"";attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));draftConflict=false;unconfirmedSend=null;if(App.connected&&draftDirty())draftTimer.restart()}
+    // The text of a send whose outcome is still open is not a draft. Saving it would stop the broker
+    // clearing the draft when the turn is accepted, or bring the sent text back after a lost reply.
+    readonly property bool sendUnconfirmed:!!unconfirmedSend&&unconfirmedSend.session===draftSession&&composer.text===unconfirmedSend.text
+    function holdsOpenSend(){
+        const ids=JSON.stringify(attachmentIds())
+        return sendRequest>=0&&pendingSession===draftSession&&composer.text===pendingText&&ids===pendingAttachments
+            ||sendUnconfirmed&&ids===unconfirmedSend.attachments
+    }
+    // The outcome of a send whose reply was lost, read from the broker once connected. Sent: its
+    // message is queued, or is in a newer turn the provider accepted; the composer then shows the
+    // broker's draft. Kept: that turn failed or was refused, or no message arrived within three
+    // seconds of reconnecting; the text stays and is saved as the draft. Otherwise it is still open.
+    function settleUnconfirmedSend(){
+        const sent=unconfirmedSend
+        if(!sent||sent.session!==draftSession)return
+        if(!App.connected){sent.connectedAt=0;return}
+        if(!sent.connectedAt)sent.connectedAt=Date.now()
+        // Edited since: the composer holds a new draft, which is saved as usual.
+        if(composer.text!==sent.text||JSON.stringify(attachmentIds())!==sent.attachments){unconfirmedSend=null;return}
+        const queued="Queued for the next turn:\n\n"+sent.text
+        const recorded=App.messages.find(m=>m.role==="user"&&(m.time||0)>=sent.time&&[sent.text,queued].some(t=>m.text===t||String(m.text).startsWith(t+"\n\nAttached")))
+        const newer=(App.session.turnId||"")!==sent.turn,status=App.session.status||""
+        if(recorded&&(recorded.kind==="queued"||newer&&["working","waiting","idle"].includes(status))){searchThisTurn.checked=false;loadDraft();return}
+        if(recorded?newer&&["error","interrupted","disconnected"].includes(status):Date.now()-sent.connectedAt>=3000){unconfirmedSend=null;if(draftDirty())draftTimer.restart()}
+    }
+    Timer { id:unconfirmedTick;interval:1000;repeat:true;running:!!chat.unconfirmedSend;onTriggered:chat.settleUnconfirmedSend() }
     property var draftRequests:({})
     property bool saveQueued:false
     // Composer and reading position carried between the compact panel and the workspace.
@@ -118,6 +155,7 @@ Item {
             return activeAgents.length + (activeAgents.length === 1 ? " subagent active" : " subagents active") + (waiting ? " · " + waiting + " waiting…" : "…")
         }
         switch (App.session.activity) {
+        case "recalling": return "Recalling memory…"
         case "thinking": return "Thinking…"
         case "speaking": return "Writing a response…"
         case "working": return "Using tools…"
@@ -128,7 +166,7 @@ Item {
         default: return App.session.status === "waiting" ? "Waiting for your input…" : "Working on it…"
         }
     }
-    function loadDraft(){loadingDraft=true;draftRevision=App.session.draftRevision||"0";draftBaseline=App.session.draft||"";if(composer.text!==draftBaseline)composer.text=draftBaseline;attachments=App.session.draftAttachments||[];attachmentBaseline=JSON.stringify(attachmentIds());draftConflict=false;loadingDraft=false;draftTimer.stop();recoverable={};inspectRecovery();restoreOfflineDraft()}
+    function loadDraft(){loadingDraft=true;draftRevision=App.session.draftRevision||"0";draftBaseline=App.session.draft||"";if(composer.text!==draftBaseline)composer.text=draftBaseline;attachments=App.session.draftAttachments||[];attachmentBaseline=JSON.stringify(attachmentIds());draftConflict=false;unconfirmedSend=null;loadingDraft=false;draftTimer.stop();recoverable={};inspectRecovery();restoreOfflineDraft()}
     // Text typed in this conversation while the broker was away comes back to its composer.
     function restoreOfflineDraft(){
         const offline=App.takeOfflineDraft(draftSession)
@@ -141,7 +179,7 @@ Item {
     // flush: the surface is hiding or closing, so a save waiting on another hands over to the controller.
     // previous: the selection already moved on, so the reading position comes from the tracked anchor.
     function saveDraft(flush,previous){
-        if(!draftSession||draftConflict||importingAttachments)return
+        if(!draftSession||draftConflict||importingAttachments||holdsOpenSend())return
         if(!App.connected){
             // Held by this window's process until the broker returns or this conversation opens again.
             if(draftDirty())App.keepOfflineDraft(draftSession,{text:composer.text,attachmentIds:attachmentIds(),attachments:attachments,expectedRevision:draftRevision,scroll:previous?0:scroll.contentY,view:viewState(previous)})
@@ -158,6 +196,7 @@ Item {
         }
         params.expectedRevision=draftRevision
         const id=App.rpc("session.draft",params);if(id<0)return
+        recordOwn(composer.text,JSON.stringify(ids))
         const pending=Object.assign({},draftRequests);pending[id]={session:draftSession,text:composer.text,attachments:JSON.stringify(ids),view:key,viewOnly:!textDirty};draftRequests=pending
     }
     function viewKey(v){v=v||({});return [Math.trunc(v.cursor||0),Math.trunc(v.selectionStart||0),Math.trunc(v.selectionEnd||0),v.webSearch===true,v.activityExpanded===true,v.anchorId||"",Math.round(v.anchorOffset||0),v.atEnd!==false,v.focus||""].join("|")}
@@ -297,7 +336,14 @@ Item {
         implicitHeight:chat.pendingQuestions.length?300:160
         ColumnLayout {
             visible:!App.session.id;anchors.centerIn:parent;width:Math.min(parent.width,400);spacing:18
-            CereSprite { visible:conversationArea.height>=270;Layout.alignment:Qt.AlignHCenter;Layout.preferredHeight:Math.min(156,conversationArea.height*.4);Layout.preferredWidth:144;fillMode:Image.PreserveAspectFit }
+            AvatarPuppet {
+                objectName:"emptyChatAvatar"
+                visible:conversationArea.height>=270;Layout.alignment:Qt.AlignHCenter
+                Layout.preferredHeight:Math.min(156,conversationArea.height*.4);Layout.preferredWidth:144
+                source:App.assetPath+App.avatar.puppet.texture;definition:App.avatar.puppet
+                pose:App.avatar.puppet.poses["0"].joints
+                Accessible.role:Accessible.Graphic;Accessible.name:App.assistantName
+            }
             CText { text:"What are we making today?";font.pixelSize:chat.width>=600?Theme.display:Theme.page;font.bold:true;horizontalAlignment:Text.AlignHCenter }
             CText { visible:conversationArea.height>=170;text:"A fresh idea, an unfinished project, or a little help.\nChoose a provider and make yourself at home.";color:Theme.muted;horizontalAlignment:Text.AlignHCenter }
             CButton { text: "New session"; iconName:"plus"; primary: true; Layout.alignment: Qt.AlignHCenter; onClicked: chat.createRequested() }
@@ -312,8 +358,8 @@ Item {
             delegate: MessageCard { required property var entry; width:scroll.width-12; message:entry;onProposalRequested:kind=>{chat.proposalRequest=App.rpc("memoryReview.propose",{sessionId:entry.sessionId,messageId:entry.id,kind:kind})};onBranchRequested:text=>{branch.contextText=text;branch.open()};onQuoteRequested:text=>{composer.text+=(composer.text?"\n\n":"")+text.split("\n").map(line=>"> "+line).join("\n")+"\n\n";chat.focusComposer()} }
             footer:Column {
                 width:scroll.width;spacing:8
-                Text { visible: (App.session.queuedCount||0)>0; text: App.session.queuedCount+" message(s) queued · will send after this turn"; color:Theme.cyan;font.pixelSize:Theme.secondary }
-                Text { visible: chat.busy; text: chat.activityStatus(); color: chat.pendingApprovals.length ? Theme.amber : Theme.cyan; font.pixelSize: Theme.secondary }
+                Text { visible: (App.session.queuedCount||0)>0; text: App.session.queuedCount+" message(s) queued · will send after this turn"; color:Theme.accentText;font.pixelSize:Theme.secondary }
+                Text { visible: chat.busy; text: chat.activityStatus(); color: chat.pendingApprovals.length ? Theme.amber : Theme.accentText; font.pixelSize: Theme.secondary }
                 Repeater {
                     model: chat.pendingQuestions
                     ApprovalCard {
@@ -423,14 +469,14 @@ Item {
             id:sendButton;objectName:"sendMessage";visible:!chat.busy||chat.canSendWhileBusy
             implicitWidth:implicitHeight;leftPadding:9;rightPadding:9
             help:chat.busy?"Queue message after this turn (Enter)":"Send (Enter) · Shift+Enter for a new line";Accessible.name:"Send";primary:true
-            enabled:!!App.session.id&&!chat.linked&&!chat.importingAttachments&&composer.text.trim().length>0&&App.connected
+            enabled:!!App.session.id&&!chat.linked&&!chat.importingAttachments&&!chat.sendUnconfirmed&&composer.text.trim().length>0&&App.connected
             onClicked:chat.send()
             contentItem: Item {
                 implicitWidth:20;implicitHeight:20
                 Shape {
                     anchors.centerIn:parent;width:20;height:20
                     ShapePath {
-                        strokeColor:sendButton.enabled?Theme.cyan:Theme.muted
+                        strokeColor:sendButton.enabled?Theme.accentText:Theme.muted
                         strokeWidth:1.5;fillColor:"transparent"
                         capStyle:ShapePath.RoundCap;joinStyle:ShapePath.RoundJoin
                         PathSvg { path:"M18 2 L12 18 L9 11 L2 8 Z M9 11 L18 2" }
@@ -468,7 +514,7 @@ Item {
         CMenuItem { text:"Recover submission";visible:!!chat.recoverable.text&&chat.recoverable.state!=="accepted";onTriggered:submissionRecovery.open() }
         CMenuItem { text:"Terminal";visible:chat.linked;onTriggered:App.rpc("session.terminal",{id:App.selectedId}) }
     }
-    function send(){if(!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingAttachments=JSON.stringify(attachmentIds());sendRequest=App.rpc("session.send",{id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision});follow=true}
+    function send(){if(!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||sendUnconfirmed||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingTurn=App.session.turnId||"";pendingTime=Date.now();pendingAttachments=JSON.stringify(attachmentIds());recordOwn(pendingText,pendingAttachments);sendRequest=App.rpc("session.send",{id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision});follow=true}
     Timer { id:draftTimer;interval:600;onTriggered:chat.saveDraft(false) }
     Timer { id:anchorTracker;interval:150;onTriggered:chat.trackedAnchor=chat.computeAnchor()||chat.trackedAnchor }
     Timer {
@@ -489,9 +535,18 @@ Item {
             if(!chat.draftSession||chat.draftSession!==App.selectedId)return
             if(Object.keys(chat.attachmentRequests).some(id=>chat.attachmentRequests[id]===chat.draftSession))return
             if(Object.keys(chat.draftRequests).some(id=>chat.draftRequests[id].session===chat.draftSession))return
+            if(chat.unconfirmedSend&&chat.sendRequest<0)chat.settleUnconfirmedSend()
             const revision=App.session.draftRevision||"0"
             if(revision!==chat.draftRevision){
-                if(!chat.draftDirty()||(composer.text===(App.session.draft||"")&&JSON.stringify(chat.attachmentIds())===JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id))))chat.loadDraft()
+                // The send in flight clears the draft; its result reconciles the composer.
+                if(chat.sendRequest>=0)return
+                const brokerText=App.session.draft||"",brokerAttachments=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id))
+                if(!chat.draftDirty()||(composer.text===brokerText&&JSON.stringify(chat.attachmentIds())===brokerAttachments))chat.loadDraft()
+                else if(chat.unconfirmedSend&&chat.unconfirmedSend.session===chat.draftSession&&!brokerText&&brokerAttachments==="[]"&&composer.text===chat.unconfirmedSend.text){
+                    // The send whose reply was lost did go through: the broker cleared this draft.
+                    chat.loadingDraft=true;composer.text="";chat.attachments=[];chat.loadingDraft=false;searchThisTurn.checked=false;chat.loadDraft()
+                }
+                else if(chat.ownsBrokerDraft())chat.adoptBrokerDraft()
                 else {chat.draftConflict=true;draftTimer.stop();return}
             }
             // Text typed while the broker was away is saved once it is back, by this live composer.
@@ -509,7 +564,12 @@ Item {
             if(pending.session!==chat.draftSession)return
             // A view-only save never blocks the draft; the newer draft arrives with the next state.
             // A lost connection is not a conflict: the text stays dirty and is saved after reconnecting.
-            if(value?.error){if(value.code!=="CONNECTION_LOST"&&!pending.viewOnly){chat.draftConflict=true;draftTimer.stop()}return}
+            if(value?.error){
+                // A stale revision after a lost reply: the broker's text is this composer's own save.
+                if(value.code==="REVISION_CONFLICT"&&chat.ownsBrokerDraft()){chat.adoptBrokerDraft();return}
+                if(value.code!=="CONNECTION_LOST"&&!pending.viewOnly){chat.draftConflict=true;draftTimer.stop()}
+                return
+            }
             chat.draftRevision=value.draftRevision||"0";chat.draftBaseline=pending.text;chat.attachmentBaseline=pending.attachments
             chat.viewBaseline=pending.view;chat.remoteView=chat.viewKey(value.view)
             if(pending.deferred)return
@@ -520,15 +580,15 @@ Item {
     }
     Connections {
         target:App
-        function onMessagesChanged(){if(chat.pendingAnchor)Qt.callLater(chat.restoreAnchor);else if(chat.follow&&!chat.pendingQuestions.length)Qt.callLater(()=>{scroll.positionViewAtEnd()})}
+        function onMessagesChanged(){if(chat.unconfirmedSend&&chat.sendRequest<0&&chat.draftSession===App.selectedId)chat.settleUnconfirmedSend();if(chat.pendingAnchor)Qt.callLater(chat.restoreAnchor);else if(chat.follow&&!chat.pendingQuestions.length)Qt.callLater(()=>{scroll.positionViewAtEnd()})}
         function onStateChanged(){chat.syncApprovals();if(chat.follow&&!chat.pendingQuestions.length)Qt.callLater(()=>{scroll.positionViewAtEnd()})}
     }
     onPendingQuestionsChanged: if (follow && pendingQuestions.length) Qt.callLater(() => {
         if (scroll.footerItem) scroll.contentY = Math.max(scroll.originY, Math.min(scroll.footerItem.y, scroll.originY + scroll.contentHeight - scroll.height))
     })
-    Connections { target:App;function onResult(id,value){if(id!==chat.sendRequest)return;chat.sendRequest=-1;if(chat.pendingSession===App.selectedId&&!value?.error){if(composer.text===chat.pendingText)composer.text="";if(JSON.stringify(chat.attachmentIds())===chat.pendingAttachments)chat.attachments=[];chat.draftRevision=App.session.draftRevision||"0";chat.draftBaseline=App.session.draft||"";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));chat.draftConflict=false;searchThisTurn.checked=false}} }
+    Connections { target:App;function onResult(id,value){if(id!==chat.sendRequest)return;chat.sendRequest=-1;if(value?.error&&value.code==="CONNECTION_LOST")chat.unconfirmedSend={text:chat.pendingText,attachments:chat.pendingAttachments,session:chat.pendingSession,turn:chat.pendingTurn,time:chat.pendingTime,connectedAt:0};else if(value?.error&&chat.pendingSession===chat.draftSession&&chat.draftDirty())draftTimer.restart();if(chat.pendingSession===App.selectedId&&!value?.error){chat.unconfirmedSend=null;if(composer.text===chat.pendingText)composer.text="";if(JSON.stringify(chat.attachmentIds())===chat.pendingAttachments)chat.attachments=[];chat.draftRevision=App.session.draftRevision||"0";chat.draftBaseline=App.session.draft||"";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));chat.draftConflict=false;searchThisTurn.checked=false}} }
     Connections { target:App;function onAttachmentRequested(path){chat.importAttachment(path)} }
-    Connections { target:App;function onResult(id,value){if(!(id in chat.attachmentRequests))return;const owner=chat.attachmentRequests[id],next=Object.assign({},chat.attachmentRequests);delete next[id];chat.attachmentRequests=next;if(owner!==App.selectedId){if(!value?.error){App.rpc("attachments.keepInDraft",{sessionId:owner,attachmentId:value.id});App.notify("Attachment saved in its original conversation’s draft.")}return}if(value?.error)chat.attachmentError=String(value.error.message||value.error);else {if(!chat.attachments.some(a=>a.id===value.id))chat.attachments=chat.attachments.concat([value]);chat.draftRevision=App.session.draftRevision||"0";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));if((App.session.draft||"")!==chat.draftBaseline)chat.draftConflict=true;else chat.saveDraft()}} }
+    Connections { target:App;function onResult(id,value){if(!(id in chat.attachmentRequests))return;const owner=chat.attachmentRequests[id],next=Object.assign({},chat.attachmentRequests);delete next[id];chat.attachmentRequests=next;if(owner!==App.selectedId){if(!value?.error){App.rpc("attachments.keepInDraft",{sessionId:owner,attachmentId:value.id});App.notify("Attachment saved in its original conversation’s draft.")}return}if(value?.error)chat.attachmentError=String(value.error.message||value.error);else {if(!chat.attachments.some(a=>a.id===value.id))chat.attachments=chat.attachments.concat([value]);chat.draftRevision=App.session.draftRevision||"0";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));if((App.session.draft||"")!==chat.draftBaseline&&!chat.ownsBrokerDraft())chat.draftConflict=true;else{if((App.session.draft||"")!==chat.draftBaseline)chat.draftBaseline=App.session.draft||"";chat.saveDraft()}}} }
     ContextDrawer { id:contextDrawer;sessionId:App.selectedId;draftText:composer.text;attachmentIds:chat.attachmentIds() }
     Connections { target:App;function onResult(id,value){if(id===chat.recoveryRequest){chat.recoveryRequest=-1;if(chat.recoveryOwner===App.selectedId&&!value?.error)chat.recoverable=value||{}}else if(id===chat.recoveryRestoreRequest){chat.recoveryRestoreRequest=-1;if(value?.error)App.notify(String(value.error.message||value.error));else if(chat.restoreOwner===App.selectedId)chat.loadDraft()}} }
     CDialog {

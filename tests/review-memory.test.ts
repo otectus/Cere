@@ -46,7 +46,7 @@ test("F-003 forgetting an edited note by its visible ID removes every revision, 
     c.remember({ scope_id: scope, claim: tool(text.split(" ")[2]), witness: { observation_id: source, quote: text } });
   }
   const artifact = c.one("SELECT * FROM artifacts WHERE kind='saved' AND record_id=? AND known_to_revision IS NULL", note.id);
-  c.run("INSERT INTO embedding_records VALUES (?,?,?,?,?,?)", artifact.id, artifact.content_revision, "fingerprint", "1", "point", "[1,0]");
+  c.run("INSERT INTO embedding_records(artifact_id,content_revision,fingerprint,generation,point_id,vector) VALUES (?,?,?,?,?,?)", artifact.id, artifact.content_revision, "fingerprint", "1", "point", "[1,0]");
   const erased = c.forget({ scope_id: scope, id: c.list({ scope_id: scope, kind: "saved" }).rows[0].id });
   assert.equal(erased.suppressed, true);
   for (const needle of ["Black", "Ruff", "Biome"]) {

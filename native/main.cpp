@@ -8,7 +8,6 @@
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QLockFile>
-#include <QPalette>
 #include <QIcon>
 #include <QSocketNotifier>
 #include <csignal>
@@ -57,16 +56,10 @@ int main(int argc,char **argv) {
         }
         return 0;
     }
-    QPalette palette=app.palette();
-    palette.setColor(QPalette::Window,QColor("#19202b"));palette.setColor(QPalette::WindowText,QColor("#ecf4fa"));
-    palette.setColor(QPalette::Base,QColor("#101923"));palette.setColor(QPalette::Text,QColor("#ecf4fa"));
-    palette.setColor(QPalette::Button,QColor("#222d3a"));palette.setColor(QPalette::ButtonText,QColor("#ecf4fa"));
-    palette.setColor(QPalette::Highlight,QColor("#396982"));palette.setColor(QPalette::HighlightedText,QColor("#ffffff"));app.setPalette(palette);
     QString root=parser.value("root");
     if(root.isEmpty()) root=qEnvironmentVariable("CERE_ROOT");
     if(root.isEmpty()) root="/usr/share/cere";
     if(!QFileInfo::exists(root+"/qml/Pet.qml")) root=CERE_SOURCE_DIR;
-    app.setWindowIcon(QIcon(root+"/assets/cere-emblem.png"));
     QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath()+"/plugins");
     // Development autostart can launch the binary directly, outside tools/run.sh.
     if(QDir(root+"/.local-deps/usr/lib/qt6/plugins").exists())QCoreApplication::addLibraryPath(root+"/.local-deps/usr/lib/qt6/plugins");

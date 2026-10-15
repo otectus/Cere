@@ -15,7 +15,7 @@ ColumnLayout {
     CText { text:"ElevenLabs · cloud voice";font.weight:Font.DemiBold }
     CText { text:"Spoken reply text is sent to ElevenLabs when this provider is selected. API usage consumes your account credits. Local reference recordings are not uploaded.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { objectName:"elevenCloudConsent";text:"Allow sending spoken text to ElevenLabs";checked:panel.config.allowCloud===true;onClicked:panel.save({allowCloud:checked}) }
-    CText { text:panel.credential.configured?(panel.credential.source==="environment"?"Using ELEVENLABS_API_KEY":"API key saved privately"):"Add an ElevenLabs API key";color:Theme.cyan;font.pixelSize:Theme.secondary }
+    CText { text:panel.credential.configured?(panel.credential.source==="environment"?"Using ELEVENLABS_API_KEY":"API key saved privately"):"Add an ElevenLabs API key";color:Theme.accentText;font.pixelSize:Theme.secondary }
     CField { id:key;objectName:"elevenApiKey";Layout.fillWidth:true;placeholderText:"ElevenLabs API key";echoMode:TextInput.Password;maximumLength:8192;Accessible.name:"ElevenLabs API key" }
     Flow {
         Layout.fillWidth:true;spacing:8

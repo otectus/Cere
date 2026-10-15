@@ -64,8 +64,10 @@ test('native MCP exposes shared memory only with current cloud and remote author
   assert.ok(tools.some((d:any) => d.name === 'memory.search'));
   assert.ok(tools.some((d:any) => d.name === 'memory.save'));
   let query = '';
-  core.memory.recall = async (_session, text) => { query = String(text); return {results:[{text:'shared fact'}]}; };
-  assert.deepEqual(await core.rpc('mcp.call', {token:'test-token', name:'memory.search', args:{query:'earlier decisions'}}), {results:[{text:'shared fact'}]});
+  // Models receive the compact items, not the canonical result's scores, snapshots and witnesses.
+  const item = {ids:['00000000-0000-4000-8000-000000000001'], kind:'note', date:'2026-10-15', text:'shared fact'};
+  core.memory.recall = async (_session, text) => { query = String(text); return {results:[{text:'shared fact'}], items:[item], coverage:['token_budget_trimmed'], budget:{trimmed_items:2}}; };
+  assert.deepEqual(await core.rpc('mcp.call', {token:'test-token', name:'memory.search', args:{query:'earlier decisions'}}), {items:[item], omitted:2});
   assert.equal(query, 'earlier decisions');
   await assert.rejects(core.rpc('mcp.call', {token:'wrong', name:'memory.search', args:{query:'x'}}), /expired/);
   await core.updateSettings({memory:{allowCloudMemory:false}});

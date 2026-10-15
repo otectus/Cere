@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import { Store } from './store.ts';
 import { autoApprove, bypassCategory, categoryEnabled } from './permissions.ts';
 import type { Session, Settings, Message, Approval, Adapter, ProviderEvent, Provider, ModelOption, AgentActivity, RunCompletion, DraftView } from './types.ts';
-import { CodexAdapter, ClaudeAdapter, claudeRestrictedHelp, providerExecutable } from './providers.ts';
+import { CodexAdapter, ClaudeAdapter, CliCompatibilityError, claudeRestrictedHelp, claudeTranscriptTitle, cliStartError, cliVersionCheck, providerExecutable } from './providers.ts';
 import type { Hooks } from './providers.ts';
 import { transportMessage, messagePage, messageChunk } from './transcript.ts';
 import { discoverProviderModels } from './models.ts';
@@ -21,12 +21,12 @@ import type { OllamaMessage, OllamaTool } from './ollama.ts';
 import { orchestrationDefinitions, orchestrate } from './orchestration.ts';
 import { WebSearch, webDefinitions, webUrl, searchProviders } from './web.ts';
 import { Memory, memoryDefinitions } from './memory.ts';
-import { defaultPersonality, personalityMaxLength, validatePersonality } from './personality.ts';
+import { defaultPersonality, personalityMaxLength, validatePersonality, validateAssistantName, validateAvatar } from './personality.ts';
 import { validateAnswers, claudeQuestions } from './questions.ts';
 import { SendQueue } from './send-queue.ts';
 import { ordinarySettings, busy, remoteError } from './execution.ts';
 import type { RemoteExecution } from './execution.ts';
-import { Speech, listVoices, validateVoice, voiceDirectories, ttsTestLine } from './tts.ts';
+import { Speech, listVoices, validateVoice, voiceDirectories, voiceTestLine } from './tts.ts';
 import { stripMemoryCitations } from './citations.ts';
 import { Attachments } from './attachments.ts';
 import { Organization } from './organization.ts';
@@ -61,6 +61,26 @@ export function draftView(value: unknown, text: string): DraftView {
     webSearch: v.webSearch === true, activityExpanded: v.activityExpanded === true,
     anchorId: typeof v.anchorId === 'string' && v.anchorId.length <= 200 ? v.anchorId : '', anchorOffset: offset, atEnd: v.atEnd !== false,
     focus: v.focus === 'composer' ? 'composer' : '' };
+}
+/**
+ * Validates the choices "Save as my defaults" keeps for new general conversations, with the rules
+ * project defaults follow; null clears them. Only the new-conversation dialog reads them: create()
+ * never fills them in, so project, delegated, branched and phone-started conversations are unaffected.
+ */
+function conversationDefaults(value: unknown): Settings['conversationDefaults'] {
+  if (value === null) return null;
+  const keys = ['provider','model','effort','tools','temporary'];
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== keys.length || Object.keys(value).some(key => !keys.includes(key))) throw new Error('Invalid conversation defaults');
+  const d = value as Record<string, any>;
+  if (!(providerIds as readonly string[]).includes(d.provider)) throw new Error('Choose a supported provider');
+  if (typeof d.tools !== 'boolean' || typeof d.temporary !== 'boolean') throw new Error('Invalid conversation defaults');
+  for (const [key,max] of [['model',512],['effort',32]] as const) if (typeof d[key] !== 'string' || d[key].trim().length > max || /[\x00-\x1f\x7f]/.test(d[key])) throw new Error('Invalid default ' + key);
+  const conversation = d.provider === 'ollama' || isApiProvider(d.provider);
+  if (!conversation && d.tools) throw new Error('Desktop tools apply to API and Ollama conversations');
+  if (conversation && d.effort.trim()) throw new Error('This provider uses the model’s default reasoning settings');
+  if (isApiProvider(d.provider) && !d.model.trim()) throw new Error('Choose an API model or enter its model ID');
+  if (d.temporary && d.tools) throw new Error('Temporary conversations cannot use desktop tools');
+  return { provider: d.provider, model: d.model.trim(), effort: d.effort.trim(), tools: d.tools, temporary: d.temporary };
 }
 
 const bodyMoodNames = new Set(Object.keys(JSON.parse(readFileSync(new URL('../assets/motions.json', import.meta.url), 'utf8')).bodyMoods.moods));
@@ -122,7 +142,7 @@ export class Core extends EventEmitter {
       ...this.telemetryContext(s.id),
       save: messages => this.store.set((isApiProvider(s.provider) ? 'api:' : 'ollama:') + s.id, messages),
       tools: () => this.toolsFor(s.id), call: (name, args, signal) => this.callTool(s.id, name, args, signal),
-      prepare: (text, signal, budget, route) => this.settingsFor(s.id).memory.enabled && this.memory.active() ? this.memory.context(s, text, signal, budget, route, this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, signal)) : Promise.resolve(''),
+      prepare: (text, signal, budget, route) => this.settingsFor(s.id).memory.enabled && this.memory.active() ? this.recalling(s.id, () => this.memory.context(s, text, signal, budget, route, this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, signal))) : Promise.resolve(''),
       memorySignal: () => this.memory.controller.signal,
       inference: active => this.memory.service.call('foreground',{active}),
       memoryActive: () => this.settingsFor(s.id).memory.enabled && this.memory.active(), completed: (text, answer, signal) => this.settingsFor(s.id).memory.enabled && this.memoryWritable(s.id) ? this.memory.capture(s, text, answer, signal, () => this.memoryAuthorized(s.id, true, signal)) : Promise.resolve(),
@@ -154,7 +174,25 @@ export class Core extends EventEmitter {
       telemetryValid:()=>epoch===this.telemetry.epoch&&!this.settings.paused&&!this.telemetry.paused};
   }
   stateRevision=0;
-  changed() { this.stateRevision++;this.emit('state', this.snapshot()); }
+  /** State fan-out pacing: the first change after a quiet period goes out at once; a burst collapses into one snapshot per interval. */
+  static readonly stateInterval=100;
+  stateTimer?:NodeJS.Timeout; stateDirty=false; lastStateEmit=0;
+  changed() {
+    this.stateRevision++;
+    if (this.closed) return;
+    // Policy takes effect on the change itself ('changed'); the snapshot that follows is paced.
+    this.emit('changed');
+    const elapsed=Date.now()-this.lastStateEmit;
+    if (!this.stateTimer && elapsed>=Core.stateInterval) { this.emitState(); return; }
+    this.stateDirty=true;
+    if (!this.stateTimer) { this.stateTimer=setTimeout(()=>{ this.stateTimer=undefined; if (this.stateDirty && !this.closed) this.emitState(); }, Math.max(0,Core.stateInterval-elapsed)); this.stateTimer.unref(); }
+  }
+  emitState() { this.stateDirty=false; this.lastStateEmit=Date.now(); this.emit('state', this.snapshot()); }
+  /** A notice or interface command describes the state it follows: a snapshot still pending goes out first. */
+  override emit(event: string|symbol, ...args: any[]): boolean {
+    if ((event==='notice'||event==='ui') && this.stateDirty && !this.closed) this.emitState();
+    return super.emit(event, ...args);
+  }
   snapshot() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
   settingsFor(id: string): Settings {
     const session = this.store.session(id), execution = session.remote;
@@ -216,16 +254,17 @@ export class Core extends EventEmitter {
         if (provider === 'ollama' || isApiProvider(provider)) { await this.refreshProviderModels(provider); return; }
         const command=providerExecutable(provider);
         const result=await exec(command, [provider==='antigravity'?'--help':'--version'], { timeout: 10000 });
-        if(provider==='antigravity'&&!['--input-format','--output-format','--conversation','--disable-slash-commands'].every(flag=>(result.stdout+result.stderr).includes(flag)))throw new Error('Update the agy CLI to a version with headless streaming support');
-        // Help probing only gates remote execution. A provider that cannot prove
-        // restricted-mode support remains usable by its ordinary desktop flow.
-        const help=provider==='claude'?await exec(command,['--help'],{timeout:10000}).catch(()=>({stdout:''})): {stdout:''};
+        if(provider==='antigravity'&&!['--input-format','--output-format','--conversation','--disable-slash-commands'].every(flag=>(result.stdout+result.stderr).includes(flag)))throw new CliCompatibilityError('Update the agy CLI to a version with headless streaming support');
+        // The version decides compatibility. Every supported Claude Code has restricted mode, which gates
+        // remote execution; its help text is read only for a build whose version banner is unreadable.
+        const known=provider==='antigravity'?undefined:cliVersionCheck(provider,result.stdout).version;
+        const help=provider==='claude'&&!known?await exec(command,['--help'],{timeout:10000}).catch(()=>({stdout:''})): {stdout:''};
         if (this.closed) return;
-        this.capabilities[provider] = { ...this.capabilities[provider], available: true, version: provider==='antigravity'?'agy · headless streaming':result.stdout.trim(), managed: true, resume: true, liveAttach: false, questions: provider!=='antigravity', subagents: provider!=='antigravity', remoteRestricted:provider==='codex'||claudeRestrictedHelp(help.stdout) };
+        this.capabilities[provider] = { ...this.capabilities[provider], available: true, version: provider==='antigravity'?'agy · headless streaming':result.stdout.trim(), managed: true, resume: true, liveAttach: false, questions: provider!=='antigravity', subagents: provider!=='antigravity', remoteRestricted:provider==='codex'||provider==='claude'&&(!!known||claudeRestrictedHelp(help.stdout)) };
         this.changed(); await this.refreshProviderModels(provider);
       } catch (error:any) {
         if (this.closed || provider === 'ollama' || isApiProvider(provider)) return;
-        if (!this.capabilities[provider]?.available) this.capabilities[provider] = { available: false, models: [], modelsStatus:'error', error: `${provider} was not found in PATH or did not start` };
+        if (!this.capabilities[provider]?.available) this.capabilities[provider] = { available: false, models: [], modelsStatus:'error', error: cliStartError(provider, error) };
         this.changed();
       }
     }));
@@ -417,6 +456,8 @@ export class Core extends EventEmitter {
       return;
     }
     if (e.type === 'activity') {
+      // Compaction summarizes earlier turns away, recalled packets included; they may be sent again.
+      if (e.text === 'compacting') this.memory.forgetRecent(id);
       const session = this.store.session(id);
       if (this.terminal.has(id) || !['starting','working'].includes(session.status) || !['thinking','speaking','working','delegating','waitingForAgents','compacting','planning'].includes(e.text || '')) return;
       if (session.activity !== e.text) this.updateSession(id, { activity: e.text as Session['activity'] });
@@ -426,13 +467,15 @@ export class Core extends EventEmitter {
       const session = this.store.session(id);
       if (this.terminal.has(id) || ['error','interrupted','disconnected'].includes(session.status)) return;
       if(e.type==='tool'&&Number.isInteger(e.data?.exitCode)&&typeof e.data?.command==='string'&&!session.temporary){this.workflows.observeAction(id,'Provider-reported command',{command:e.data.command.slice(0,7000)},{exitCode:e.data.exitCode});}
+      // A provider notice is kept with tool activity but changes neither the activity nor the spoken reply.
+      const notice = e.type === 'tool' && e.data?.notice === true;
       const activity = e.type === 'tool' ? 'working' : 'speaking';
-      if (['starting','working'].includes(session.status) && session.activity !== activity) this.updateSession(id, { activity });
+      if (!notice && ['starting','working'].includes(session.status) && session.activity !== activity) this.updateSession(id, { activity });
       const key = `${id}:${e.id || randomUUID()}`;
       const existing = this.partials.get(key) || this.store.messageById(key);
       const message: Message = { id: key, sessionId: id, role: e.type === 'tool' ? 'tool' : 'assistant', kind: e.type === 'tool' ? 'tool' : 'text', text: e.type === 'delta' ? (existing?.text || '') + (e.text || '') : e.text || '', time: existing?.time || Date.now(), sources: e.data?.sources || existing?.sources };
-      if (e.type === 'tool' || e.data?.phase === 'commentary') this.speechResponses.delete(id);
-      else this.speechResponses.set(id, message.text.slice(0, 100000));
+      if (!notice && (e.type === 'tool' || e.data?.phase === 'commentary')) this.speechResponses.delete(id);
+      else if (!notice) this.speechResponses.set(id, message.text.slice(0, 100000));
       this.partials.set(key, message);
       if (message.role === 'assistant' && message.text.trim()) this.turnReplies.set(id,message);
       if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(), 80);
@@ -522,7 +565,7 @@ export class Core extends EventEmitter {
     if(this.recovery.pending)throw new Error('Recovery restart is pending');
     if (typeof p.text === 'string' && p.text.trim() === '/tts-test' && !p.images?.length) {
       this.draft(p.id, '', p.expectedDraftRevision);
-      return this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):ttsTestLine, true);
+      return this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):voiceTestLine(this.settings.assistantName), true);
     }
     if (!p.queuedMessageId && this.sendQueue.shouldQueue(this.store.session(p.id))) return this.sendQueue.add(p);
     if(this.sending.has(p.id) || this.stopping.has(p.id))throw new Error('This session is busy. Stop it or wait for completion.');
@@ -573,7 +616,8 @@ export class Core extends EventEmitter {
     this.terminal.delete(s.id); this.pendingCompletions.delete(s.id); this.speechResponses.delete(s.id); this.turnReplies.delete(s.id);
     this.settledReplies.delete(s.id); this.deliveredReplies.delete(s.id);
     const remoteAcceptance=!!onAccepted;
-    s = this.updateSession(s.id, { status: 'starting', activity: 'thinking', error: undefined, agents:[], turnId:p.turnId || randomUUID() });
+    // A turn that recalls memory says so until its context is ready, then it is thinking.
+    s = this.updateSession(s.id, { status: 'starting', activity: effective.memory.enabled && this.memory.active() ? 'recalling' : 'thinking', error: undefined, agents:[], turnId:p.turnId || randomUUID() });
     const submittedDraftRevision=s.draftRevision;
     if(!remoteAcceptance)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
     const userMessageId=randomUUID();
@@ -590,7 +634,7 @@ export class Core extends EventEmitter {
         const controller = new AbortController();
         const epoch = this.memory.controller.signal;
         this.nativeMemoryTurns.set(s.id, { text:userText, turnId:s.turnId, controller, epoch });
-        const context = await this.memory.context(s, userText, controller.signal, 4000, 'cloud', this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, controller.signal));
+        const context = await this.recalling(s.id, () => this.memory.context(s, userText, controller.signal, 4000, 'cloud', this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, controller.signal)));
         controller.signal.throwIfAborted();
         if (context && !epoch.aborted) {
           memorySignal = AbortSignal.any([controller.signal, epoch]);
@@ -620,6 +664,13 @@ export class Core extends EventEmitter {
       throw e;
     }
   }
+  /** While a turn waits for its memory context the session shows "recalling"; afterwards it is thinking again. */
+  async recalling<T>(id: string, work: () => Promise<T>): Promise<T> {
+    const live = () => { try { const s = this.store.session(id); return ['starting','working'].includes(s.status) ? s : undefined; } catch { return undefined; } };
+    if (live() && live()!.activity !== 'recalling') this.updateSession(id, { activity: 'recalling' });
+    try { return await work(); }
+    finally { if (live()?.activity === 'recalling') this.updateSession(id, { activity: 'thinking' }); }
+  }
   /** Why a conversation cannot take image attachments, when its provider or model says so. */
   imageRefusal(s: Session) {
     if (s.provider === 'antigravity') return 'AntiGravity accepts text attachments only. Use an API provider or an Ollama model with Images for pictures.';
@@ -637,7 +688,8 @@ export class Core extends EventEmitter {
     const token = randomBytes(32).toString('hex'); this.tokens.set(token, s.id);
     const generation = (this.generations.get(s.id) || 0) + 1; this.generations.set(s.id, generation);
     const live = () => this.generations.get(s.id) === generation;
-    const hooks: Hooks = { token, restrictive:!!s.remote, policy:verified => { if (live()) this.updateSession(s.id, {effectivePolicy:verified ? 'restricted' : 'unknown'}); }, personality: () => this.settings.personality,
+    const hooks: Hooks = { token, restrictive:!!s.remote, policy:verified => { if (live()) this.updateSession(s.id, {effectivePolicy:verified ? 'restricted' : 'unknown'}); }, personality: () => this.settings.personality, assistantName: () => this.settings.assistantName,
+      memoryGuidance: () => { try { return this.memoryToolsFor(s.id).length > 0; } catch { return false; } },
       bypassCliPermissions: () => this.settingsFor(s.id).bypassCliPermissions,
       automaticApprovalValid: kind => {try{return live()&&!this.terminal.has(s.id)&&this.automaticallyApprove(s.id,{kind,choices:['allow']});}catch{return false;}},
       event: e => { if (live()) this.event(s.id,e); }, native: nativeId => { if (live()) this.updateSession(s.id,{nativeId}); },
@@ -749,10 +801,23 @@ export class Core extends EventEmitter {
     this.emit('notice',{kind:'interrupted',sessionId:id,text});
   }
   async updateSettings(patch: any) {
-    if (patch.expectedRevision !== undefined && patch.expectedRevision !== this.store.get('settingsRevision','0')) throw remoteError('REVISION_CONFLICT','Settings changed on another client. Reload before saving.');
+    // Retired 3D appearance fields may arrive from an older desktop or phone
+    // client. Ignore them so they cannot revive the renderer or be persisted.
+    const { avatarRenderer: _avatarRenderer, avatarModel: _avatarModel, avatarQuality: _avatarQuality, ...acceptedPatch } = patch;
+    patch = acceptedPatch;
+    // Identity is edited as one draft. A paced snapshot can lag an unrelated settings
+    // write, so compare these three baseline values instead of rejecting a safe save.
+    if ('expectedIdentity' in patch) {
+      const keys = ['personality', 'assistantName', 'avatar'] as const, expected = patch.expectedIdentity;
+      if (Object.keys(patch).some(key => ![...keys, 'expectedIdentity', 'expectedRevision'].includes(key))) throw new Error('An identity draft may only update name, avatar and personality');
+      if (!expected || typeof expected !== 'object' || Array.isArray(expected) || Object.keys(expected).length !== keys.length || keys.some(key => expected[key] !== this.settings[key]))
+        throw remoteError('REVISION_CONFLICT','Name, avatar or personality changed on another client. Reload before saving.');
+    } else if (patch.expectedRevision !== undefined && patch.expectedRevision !== this.store.get('settingsRevision','0')) throw remoteError('REVISION_CONFLICT','Settings changed on another client. Reload before saving.');
     const next = structuredClone(this.settings);
     if ('telemetry' in patch) next.telemetry = await telemetryConfiguration(patch.telemetry, next.telemetry);
     if ('personality' in patch) next.personality = validatePersonality(patch.personality);
+    if ('assistantName' in patch) next.assistantName = validateAssistantName(patch.assistantName);
+    if ('avatar' in patch) next.avatar = validateAvatar(patch.avatar);
     if ('voice' in patch) next.voice = validateVoice(patch.voice);
     if ('ttsProvider' in patch) {if(!['local','indextts','elevenlabs'].includes(patch.ttsProvider))throw new IndexError('INVALID_CONFIG');next.ttsProvider=patch.ttsProvider;}
     if ('speechProviders' in patch) {
@@ -797,6 +862,7 @@ export class Core extends EventEmitter {
         next.ollama.model = value.model;
       }
     }
+    if ('conversationDefaults' in patch) next.conversationDefaults = conversationDefaults(patch.conversationDefaults);
     for (const key of ['speechEnabled','speechBrief','topmost','roaming','quiet','reducedMotion','expressiveCues','showMemoryCitations','hidden','paused','onboarding','bypassCliPermissions','bypassComputerPermissions'] as const) if (key in patch) {
       if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}`); next[key] = patch[key];
     }
@@ -980,7 +1046,7 @@ export class Core extends EventEmitter {
         if (s.provider !== 'ollama' && !this.memoryToolsFor(id).some(d => d.name.replaceAll('.', '_') === name)) throw new Error('This tool is disabled in Cere settings');
       };
       authorize();
-      if (name === 'memory_search') { const result = await this.memory.recall(s, p.query, signal); authorize(); return result; }
+      if (name === 'memory_search') { const result = await this.memory.recall(s, p.query, signal); authorize(); return this.memory.searched(s, result); }
       if (name === 'memory_save') return this.memory.save(s, p.text, p.id, undefined, true, signal, authorize);
       if (name === 'memory_forget') return this.memory.forget(s, p.id, signal, authorize);
       if (name === 'memory_inspect') { const result = await this.memory.inspectForModel(s,p.id,signal,authorize); authorize(); return result; }
@@ -1121,8 +1187,7 @@ export class Core extends EventEmitter {
         const {bytesRead} = await f.read(buffer,0,buffer.length,0);
         const lines = buffer.subarray(0,bytesRead).toString().split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
         const meta = lines.find(v => v.sessionId && v.cwd); if (!meta) continue;
-        const first = lines.find(v => v.type === 'user' && typeof v.message?.content === 'string');
-        entries.push({ provider, nativeId: meta.sessionId, cwd: meta.cwd, title: (first?.message.content || meta.sessionId).slice(0,100), mode: 'historical' });
+        entries.push({ provider, nativeId: meta.sessionId, cwd: meta.cwd, title: (claudeTranscriptTitle(lines) || meta.sessionId).slice(0,100), mode: 'historical' });
       } finally { await f.close(); }
     }
     return entries;
@@ -1257,7 +1322,7 @@ export class Core extends EventEmitter {
       case 'transcription.start': {const session=this.store.session(p.sessionId);if(session.temporary)throw new Error('Voice drafts create temporary audio files. Use a saved conversation.');return this.transcription.start({sessionId:session.id});}
       case 'transcription.finish': return this.transcription.finish();
       case 'transcription.cancel': return this.transcription.cancel();
-      case 'tts.test': return { queued: this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):ttsTestLine, true) };
+      case 'tts.test': return { queued: this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):voiceTestLine(this.settings.assistantName), true) };
       case 'tts.speak': { if(typeof p.text!=='string'||!p.text.trim()||p.text.length>20000)throw new Error('Select 1–20,000 characters to speak');return {queued:this.speech.speak(p.text,true)}; }
       case 'tts.stop': this.speech.stop(); return true;
       case 'tts.voices': return { voices: await listVoices(), directories: voiceDirectories() };
@@ -1357,8 +1422,12 @@ export class Core extends EventEmitter {
       default: throw new Error('Unknown Cere method: '+method);
     }
   }
-  async close() {
+  closing?: Promise<void>;
+  /** Closes once; a second caller (a server error followed by shutdown, a test hook) awaits the same close. */
+  close(): Promise<void> { return this.closing ??= this.closeOnce(); }
+  private async closeOnce() {
     this.closed = true;
+    if (this.stateTimer) { clearTimeout(this.stateTimer); this.stateTimer=undefined; }
     for (const session of this.store.sessions()) this.sendQueue.cancel(session.id, 'Cere closed before sending');
     await this.telemetry.close();
     this.workflows.close();this.utilities.close();await this.transcription.close();await this.power.close();

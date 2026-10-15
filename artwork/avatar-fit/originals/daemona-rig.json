@@ -1,0 +1,328 @@
+{
+  "texture": "daemona-puppet.png",
+  "parts": [
+    {
+      "name": "backHair",
+      "bone": "hair",
+      "sourceRect": [
+        24,
+        8,
+        415,
+        314
+      ],
+      "rect": [
+        -54.6,
+        -72.54,
+        106.86,
+        102.96
+      ],
+      "z": 0
+    },
+    {
+      "name": "leftThigh",
+      "bone": "leftThigh",
+      "sourceRect": [
+        883,
+        307,
+        184,
+        236
+      ],
+      "rect": [
+        -16.04,
+        -4,
+        24,
+        43
+      ],
+      "z": 2
+    },
+    {
+      "name": "rightThigh",
+      "bone": "rightThigh",
+      "sourceRect": [
+        1247,
+        307,
+        184,
+        237
+      ],
+      "rect": [
+        -8.09,
+        -4,
+        24,
+        43
+      ],
+      "z": 2
+    },
+    {
+      "name": "leftBoot",
+      "bone": "leftShin",
+      "sourceRect": [
+        110,
+        539,
+        193,
+        240
+      ],
+      "rect": [
+        -18.46,
+        -6,
+        25,
+        39
+      ],
+      "z": 1
+    },
+    {
+      "name": "rightBoot",
+      "bone": "rightShin",
+      "sourceRect": [
+        577,
+        554,
+        181,
+        225
+      ],
+      "rect": [
+        -6.42,
+        -3.111,
+        25,
+        36.111
+      ],
+      "z": 1
+    },
+    {
+      "name": "hips",
+      "bone": "torso",
+      "sourceRect": [
+        474,
+        312,
+        297,
+        222
+      ],
+      "rect": [
+        -25.5,
+        -19,
+        52,
+        40.64789
+      ],
+      "z": 3
+    },
+    {
+      "name": "torso",
+      "bone": "torso",
+      "sourceRect": [
+        138,
+        299,
+        192,
+        239
+      ],
+      "rect": [
+        -23,
+        -56,
+        46,
+        60
+      ],
+      "z": 4
+    },
+    {
+      "name": "leftSleeve",
+      "bone": "leftUpperArm",
+      "sourceRect": [
+        849,
+        555,
+        185,
+        215
+      ],
+      "rect": [
+        -12.77,
+        -4,
+        17,
+        33
+      ],
+      "z": 5
+    },
+    {
+      "name": "rightSleeve",
+      "bone": "rightUpperArm",
+      "sourceRect": [
+        1269,
+        555,
+        180,
+        170
+      ],
+      "rect": [
+        -4.3,
+        -4,
+        17,
+        33
+      ],
+      "z": 5
+    },
+    {
+      "name": "head",
+      "bone": "head",
+      "sourceRect": [
+        443,
+        0,
+        331,
+        304
+      ],
+      "rect": [
+        -37.44,
+        -73.32,
+        74.88,
+        74.88
+      ],
+      "z": 6
+    },
+    {
+      "name": "curiousEyes",
+      "bone": "head",
+      "sourceRect": [
+        1227,
+        811,
+        212,
+        182
+      ],
+      "rect": [
+        -23.907,
+        -50.905,
+        47.815,
+        44.829
+      ],
+      "z": 7,
+      "opacityChannel": "curiousFace"
+    },
+    {
+      "name": "wink",
+      "bone": "head",
+      "sourceRect": [
+        1227,
+        91,
+        212,
+        182
+      ],
+      "rect": [
+        -23.907,
+        -50.905,
+        47.815,
+        44.829
+      ],
+      "z": 8,
+      "opacityChannel": "wink"
+    },
+    {
+      "name": "blink",
+      "bone": "head",
+      "sourceRect": [
+        853,
+        91,
+        212,
+        182
+      ],
+      "rect": [
+        -23.867,
+        -50.905,
+        47.959,
+        44.829
+      ],
+      "z": 9,
+      "opacityChannel": "eyeClose"
+    },
+    {
+      "name": "leftHand",
+      "bone": "leftForearm",
+      "sourceRect": [
+        179,
+        782,
+        117,
+        235
+      ],
+      "rect": [
+        -4.61,
+        -4.5,
+        14,
+        31
+      ],
+      "z": 10,
+      "visibleWhen": {
+        "channel": "leftHandOpen",
+        "max": 0.5
+      }
+    },
+    {
+      "name": "rightHand",
+      "bone": "rightForearm",
+      "sourceRect": [
+        553,
+        783,
+        120,
+        233
+      ],
+      "rect": [
+        -9.39,
+        -4.5,
+        14,
+        31
+      ],
+      "z": 10,
+      "visibleWhen": {
+        "channel": "rightHandOpen",
+        "max": 0.5
+      }
+    },
+    {
+      "name": "leftPalm",
+      "bone": "leftForearm",
+      "sourceRect": [
+        910,
+        782,
+        162,
+        238
+      ],
+      "rect": [
+        -6.56,
+        -4.5,
+        18,
+        31
+      ],
+      "z": 10,
+      "visibleWhen": {
+        "channel": "leftHandOpen",
+        "min": 0.5
+      }
+    },
+    {
+      "name": "rightPalm",
+      "bone": "rightForearm",
+      "sourceRect": [
+        910,
+        782,
+        162,
+        238
+      ],
+      "rect": [
+        -11.44,
+        -4.5,
+        18,
+        31
+      ],
+      "z": 10,
+      "mirrorX": true,
+      "visibleWhen": {
+        "channel": "rightHandOpen",
+        "min": 0.5
+      }
+    }
+  ],
+  "boneOverrides": {
+    "leftForearm": {
+      "x": -5.19
+    },
+    "rightForearm": {
+      "x": 5.05
+    },
+    "leftShin": {
+      "x": -6.78
+    },
+    "rightShin": {
+      "x": 6.26
+    }
+  }
+}

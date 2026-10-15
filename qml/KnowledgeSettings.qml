@@ -75,7 +75,7 @@ ColumnLayout {
             CCheckBox { objectName:"cloudExtractionEnabled";text:"Allow Ollama Cloud memory extraction";checked:knowledge.memory.allowCloudExtraction===undefined?true:knowledge.memory.allowCloudExtraction;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudExtraction:checked}}) }
             CCheckBox { objectName:"cloudMemoryEnabled";text:"Share recalled memory with Codex, Claude and cloud models";checked:knowledge.memory.allowCloudMemory||false;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudMemory:checked}}) }
             CText { text:(knowledge.status.saved||0)+" saved facts · "+Math.max(0,(knowledge.status.total||0)-(knowledge.status.saved||0))+" conversation passages"+((knowledge.status.pending||0)?" · "+knowledge.status.pending+" awaiting embedding":"");color:Theme.muted;font.pixelSize:Theme.secondary }
-            CText { visible:!!knowledge.checkResult;text:knowledge.checkResult;color:Theme.cyan;font.pixelSize:Theme.secondary }
+            CText { visible:!!knowledge.checkResult;text:knowledge.checkResult;color:Theme.accentText;font.pixelSize:Theme.secondary }
             CText { visible:knowledge.status.state==="degraded";text:knowledge.status.error||"Semantic memory is unavailable. Keyword recall is still available.";color:Theme.amber;font.pixelSize:Theme.secondary }
         }
         CText { visible:!!knowledge.memoryError;text:knowledge.memoryError;color:Theme.danger;font.pixelSize:Theme.secondary }

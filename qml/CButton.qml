@@ -35,7 +35,7 @@ Button {
             id: label
             Layout.fillWidth:true; Layout.minimumWidth:0
             text: control.text; font: control.font
-            color: !control.enabled ? Theme.muted : control.danger ? Theme.danger : control.primary ? Theme.cyan : Theme.text
+            color: !control.enabled ? Theme.muted : control.danger ? Theme.danger : control.primary ? Theme.accentText : Theme.text
             horizontalAlignment: control.alignLeft ? Text.AlignLeft : Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight; textFormat: Text.PlainText

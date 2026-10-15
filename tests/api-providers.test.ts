@@ -35,6 +35,18 @@ async function fixture(t:any,provider:ApiProvider,fetcher?:typeof fetch){
   },{key:()=> 'test-secret',fetch:fetcher|| (async(url,init)=>{requests.push({url:String(url),init,body:JSON.parse(String(init?.body))});return sse(events(provider,requests.length===1));})});
   t.after(()=>adapter.close());return{adapter,output,requests,calls,directory,history:()=>history};
 }
+for(const provider of apiProviders)test(`${provider}: assistant name refreshes between turns without persisting system instructions`, async t => {
+  const f = await fixture(t, provider); let name = 'Daemona';
+  f.adapter.hooks.assistantName = () => name;
+  await f.adapter.send('Hello'); await f.adapter.task;
+  const system = (body: any): string => body.instructions || body.system || body.systemInstruction.parts[0].text;
+  for (const request of f.requests) assert.match(system(request.body), /"Daemona"/);
+  assert.ok(f.history().every(message => message.role !== 'system'));
+  name = 'Cere'; await f.adapter.send('Hello again'); await f.adapter.task;
+  assert.match(system(f.requests.at(-1)!.body), /"Cere"/);
+  assert.doesNotMatch(system(f.requests.at(-1)!.body), /"Daemona"/);
+});
+
 for(const provider of apiProviders)test(`${provider}: stream, tool result, image, opaque continuation, and local history`,async t=>{
   const f=await fixture(t,provider), image=join(f.directory,'image.png');await writeFile(image,Buffer.from([137,80,78,71,13,10,26,10]));
   await f.adapter.send('Check this',[image]);await f.adapter.task;
@@ -81,6 +93,29 @@ for(const provider of apiProviders)test(`${provider}: a reply cut at the output 
   const reply=f.history().at(-1)!;assert.equal(reply.role,'assistant');assert.equal(reply.content,'Partial answer');assert.equal(reply.tool_calls,undefined);
   assert.doesNotMatch(JSON.stringify(reply.providerData),/"cut"/);
   if(provider==='anthropic'){assert.equal(bodies[0].max_tokens,4096);assert.match(JSON.stringify(reply.providerData),/sig-kept/);}
+});
+const noArgumentEvents=(provider:ApiProvider):any[]=>provider==='openai'?[
+  {type:'response.completed',response:{status:'completed',output:[{type:'function_call',call_id:'call-1',name:'check',arguments:''}]}},
+]:provider==='anthropic'?[
+  {type:'content_block_start',index:0,content_block:{type:'tool_use',id:'call-1',name:'check',input:{}}},
+  {type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:''}},
+  {type:'content_block_start',index:1,content_block:{type:'tool_use',id:'call-2',name:'check',input:{}}},
+  {type:'message_delta',delta:{stop_reason:'tool_use'}},{type:'message_stop'},
+]:[{candidates:[{content:{role:'model',parts:[{functionCall:{id:'call-1',name:'check'}}]},finishReason:'STOP'}]}];
+for(const provider of apiProviders)test(`${provider}: a tool call without arguments runs with an empty object`,async t=>{
+  const bodies:any[]=[];const f=await fixture(t,provider,async(_url,init)=>{bodies.push(JSON.parse(String(init?.body)));return sse(bodies.length===1?noArgumentEvents(provider):events(provider));});
+  await f.adapter.send('List them');await f.adapter.task;
+  assert.equal(f.output.at(-1).type,'complete');assert.deepEqual(f.calls,Array(provider==='anthropic'?2:1).fill({name:'check',args:{}}));
+  if(provider==='anthropic')assert.deepEqual(bodies[1].messages.at(-2).content.map((b:any)=>b.input),[{},{}]);
+});
+test('anthropic: malformed tool arguments still fail the turn without running a tool',async t=>{
+  const f=await fixture(t,'anthropic',async()=>sse([
+    {type:'content_block_start',index:0,content_block:{type:'tool_use',id:'call-1',name:'check',input:{}}},
+    {type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:'{"value":'}},
+    {type:'message_delta',delta:{stop_reason:'tool_use'}},{type:'message_stop'},
+  ]));
+  await f.adapter.send('Check this');await f.adapter.task;
+  assert.equal(f.output.at(-1).type,'error');assert.match(f.output.at(-1).text,/invalid tool arguments/);assert.equal(f.calls.length,0);
 });
 test('Claude API requests use the catalog output ceiling and context window',async t=>{
   const models=await apiModels('anthropic',{key:()=> 'private',fetch:async()=>Response.json({data:[{id:'claude-test',display_name:'Claude Test',max_input_tokens:1000000,max_tokens:128000}],has_more:false})});

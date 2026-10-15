@@ -1,11 +1,13 @@
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { activatePendingRecovery } from './recovery.ts';
-import { chmod, unlink, lstat, writeFile } from 'node:fs/promises';
+import { chmod, unlink, lstat, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { socketPath, paths, privateDir } from './paths.ts';
+import { socketPath, paths, privateDir, ensureUserPath } from './paths.ts';
 import { Core } from './core.ts';
 import { JsonLines } from './wire.ts';
+import { Fanout } from './fanout.ts';
+import type { FanoutClient } from './fanout.ts';
 import { requirePeerCredentials, sameUserPeer, trustedServer } from './peercred.ts';
 import { MobileGateway } from './remote/server.ts';
 import { linuxNative } from './telemetry/native.ts';
@@ -13,6 +15,9 @@ import { linuxNative } from './telemetry/native.ts';
 const restartStatus = 75;
 requirePeerCredentials();
 process.umask(0o077);
+// Whoever starts the broker (the service, the interface's fallback, a development shell), the
+// provider CLIs in ~/.local/bin are found and every provider process inherits the same PATH.
+ensureUserPath();
 privateDir(paths().runtime);
 const path = socketPath();
 // One broker per runtime directory. A predecessor that is still exiting (a restart) or still
@@ -24,7 +29,8 @@ await (async () => {
     if (native.lock(join(paths().runtime, 'broker.lock')) >= 0) return;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  console.error('Another Cere broker owns this runtime directory; not starting a second one.');
+  const owner = (await readFile(join(paths().runtime, 'broker.pid'), 'utf8').catch(() => '')).trim();
+  console.error(`Another Cere broker${/^\d+$/.test(owner) ? ` (pid ${owner})` : ''} owns this runtime directory; not starting a second one.`);
   process.exit(0);
 })();
 // A listening socket counts as a running broker only when its server is this user.
@@ -38,35 +44,30 @@ async function occupied() {
 if (await occupied()) process.exit(0);
 try { const s = await lstat(path); if (!s.isSocket() || s.uid !== process.getuid?.()) throw new Error('Unsafe broker socket'); await unlink(path); } catch (e:any) { if (e.code !== 'ENOENT') throw e; }
 activatePendingRecovery(paths().state);
-const core = new Core(), clients = new Set<net.Socket>();
+type Client = FanoutClient<net.Socket> & { role?: string };
+const core = new Core(), fanout = new Fanout<net.Socket>(), clients = fanout.clients as Set<Client>;
 const mobile = new MobileGateway(core);
 await mobile.start().catch(error=>{console.error('Cere remote listener unavailable: '+error.message);});
-function send(client: net.Socket, data: unknown) {
-  if (client.destroyed) return;
-  if (client.writableLength > 16*1024*1024) { client.destroy(); return; }
-  client.write(JSON.stringify(data)+'\n');
-}
-const server = net.createServer(client => {
-  if (!sameUserPeer(client)) { client.destroy(); return; }
-  clients.add(client); const lines = new JsonLines(); let subscribed = false;
-  client.setEncoding('utf8'); client.on('error', () => {}); client.on('close', () => {
-    clients.delete(client);
-    const role=(client as any).role;
-    if (['ui','overlay'].includes(role) && ![...clients].some(c=>(c as any).role===role)) core.panel(role,false);
+const send = (client: Client, data: unknown) => fanout.send(client, data);
+const server = net.createServer(socket => {
+  if (!sameUserPeer(socket)) { socket.destroy(); return; }
+  const client: Client = fanout.add(socket); const lines = new JsonLines(); let subscribed = false;
+  socket.setEncoding('utf8'); socket.on('error', () => {}); socket.on('close', () => {
+    fanout.remove(client);
+    const role=client.role;
+    if (role && ['ui','overlay'].includes(role) && ![...clients].some(c=>c.role===role)) core.panel(role,false);
   });
-  client.on('data', chunk => {
+  socket.on('data', chunk => {
     try { lines.push(String(chunk), m => {
       if (!m || typeof m.method !== 'string' || m.id === undefined) { send(client,{id:m?.id ?? null,error:{message:'Invalid request'}}); return; }
-      if (m.method === 'subscribe') { subscribed = true; (client as any).subscribed = true; (client as any).role=m.params?.role; send(client,{id:m.id,result:core.snapshot()}); return; }
-      if (['ui.toggle','ui.expand'].includes(m.method)&&![...clients].some(c=>(c as any).role==='ui')){send(client,{id:m.id,error:{message:'Cere interface is not running'}});return;}
+      if (m.method === 'subscribe') { subscribed = true; client.subscribed = true; client.role=m.params?.role; send(client,{id:m.id,result:core.snapshot()}); return; }
+      if (['ui.toggle','ui.expand'].includes(m.method)&&![...clients].some(c=>c.role==='ui')){send(client,{id:m.id,error:{message:'Cere interface is not running'}});return;}
       if (m.method.startsWith('memory.') && Buffer.byteLength(JSON.stringify(m)) > 1024*1024) { send(client,{id:m.id,error:{code:'INVALID_ARGUMENT',message:'Memory frame exceeds 1 MiB'}}); return; }
       void (m.method.startsWith('remote.') ? core.withMutation(()=>mobile.local(m.method,m.params)) : core.rpc(m.method,m.params)).then(result => send(client,{id:m.id,result}), error => send(client,{id:m.id,error:{code:error.code||'INVALID_ARGUMENT',message:error.message}}));
-    }); } catch { client.destroy(); }
+    }); } catch { socket.destroy(); }
   });
 });
-for (const event of ['state','message','notice','ui']) core.on(event, params => {
-  for (const client of clients) if ((client as any).subscribed) send(client,{method:event,params});
-});
+for (const event of ['state','message','notice','ui']) core.on(event, params => fanout.broadcast(event, params));
 server.on('error', error => { console.error(error.message); process.exitCode=1; void core.close(); });
 server.listen(path, async () => { await chmod(path,0o600); await writeFile(join(paths().runtime,'broker.pid'),String(process.pid),{mode:0o600}); void core.detect(); });
 let closing = false;
@@ -82,12 +83,12 @@ async function closeOwnedWork(){
 }
 async function shutdown() {
   if (closing) return; closing=true;
-  for (const client of clients) client.destroy();
+  for (const client of clients) client.socket.destroy();
   server.close(); await closeOwnedWork(); await unlink(path).catch(() => {}); await unlink(join(paths().runtime,'broker.pid')).catch(()=>{}); process.exit(0);
 }
 core.on('restart',async()=>{
   if(closing)return;closing=true;
-  for(const client of clients)client.destroy();server.close();await closeOwnedWork();
+  for(const client of clients)client.socket.destroy();server.close();await closeOwnedWork();
   await unlink(path).catch(()=>{});await unlink(join(paths().runtime,'broker.pid')).catch(()=>{});
   // A service's own process restarts through systemd: a detached child would be stopped
   // with the service's control group as soon as this process exits.

@@ -196,15 +196,16 @@ test('Ollama uses the saved personality on the next turn and never stores it in 
 
 test('a personality edit during an Ollama tool round waits until the next user turn',async t=>{
   const f=await fixture(t,(_b,res,index)=>{
-    if(index===0){void f.core.updateSettings({personality:'New quiet voice'});reply(res,'',{tool_calls:[{function:{name:'timer_start',arguments:{minutes:60,label:'Test'}}}]});}
+    if(index===0){void f.core.updateSettings({personality:'New quiet voice',assistantName:'Daemona'});reply(res,'',{tool_calls:[{function:{name:'timer_start',arguments:{minutes:60,label:'Test'}}}]});}
     else reply(res,'Finished');
   });
   const s=await session(f,true);await f.core.updateSettings({categories:['timers']});
   await f.core.send({id:s.id,text:'Set a timer'});await finished(f.core,s.id);
   assert.equal(f.requests.length,2);
-  for(const request of f.requests)assert.ok(request.messages[0].content.includes(defaultPersonality));
+  for(const request of f.requests){assert.ok(request.messages[0].content.includes(defaultPersonality));assert.doesNotMatch(request.messages[0].content,/"Daemona"/);}
   await f.core.send({id:s.id,text:'Thanks'});await finished(f.core,s.id);
   assert.match(f.requests[2].messages[0].content,/New quiet voice/);
+  assert.match(f.requests[2].messages[0].content,/"Daemona"/);
 });
 
 test('pinned Ollama prose settles once per response across tool rounds',async t=>{
@@ -222,7 +223,8 @@ test('pinned Ollama prose settles once per response across tool rounds',async t=
 test('tool calls round-trip with context and disabled tools cannot execute',async t=>{
   const f=await fixture(t,(_b,res,index)=>index%2===0?reply(res,'',{tool_calls:[{function:{name:'timer_start',arguments:{minutes:60,label:'Test'}}}]}):reply(res,'Finished'));
   const s=await session(f,true);await f.core.updateSettings({categories:['timers']});
-  const phases:string[]=[];f.core.on('state',state=>{const activity=state.sessions.find((entry:any)=>entry.id===s.id)?.activity;if(activity)phases.push(activity);});
+  // Every activity transition, not only those a paced state snapshot happens to carry.
+  const phases:string[]=[],update=f.core.updateSession.bind(f.core);f.core.updateSession=(id,patch)=>{const saved=update(id,patch);if(id===s.id&&saved.activity)phases.push(saved.activity);return saved;};
   await f.core.send({id:s.id,text:'Set a timer'});await finished(f.core,s.id);
   assert.equal(f.core.store.timers().length,1);
   assert.ok(f.requests[0].tools.some((t:any)=>t.function.name==='timer_start'));
@@ -384,4 +386,19 @@ test('CLI bypass enables delegation without desktop bypass or standing grants', 
   assert.equal(f.core.approvals.size, 0);
   await f.core.power.end(cliPower.id);
   await assert.rejects(f.core.callTool(parent.id, 'sessions_start', { provider: 'codex', prompt: 'Do not send' }, new AbortController().signal), /disabled/);
+});
+
+test('a memory change during a reply ends the turn with a message the user can act on',async t=>{
+  // The model starts streaming, then holds the response open.
+  const f=await fixture(t,(_body,res)=>{res.write(JSON.stringify({message:{role:'assistant',content:'Partial'},done:false})+'\n');});
+  const s=await session(f),events:any[]=[],epoch=new AbortController();let history:OllamaMessage[]=[];
+  const adapter=new OllamaAdapter(s,{token:'fixture',event:event=>events.push(event),native(){},async approve(){return{choice:'deny'};}},{load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[],async call(){},
+    prepare:async()=>'<cere_memory_data>{}</cere_memory_data>',memorySignal:()=>epoch.signal});
+  t.after(()=>adapter.close());
+  await adapter.send('Hello');
+  await until(()=>f.requests.length===1);
+  epoch.abort(Object.assign(new Error('Memory changed while Cere was replying. Send your message again.'),{code:'MEMORY_INVALIDATED'}));
+  await until(()=>events.some(e=>['error','interrupted','complete'].includes(e.type)));
+  const end=events.find(e=>['error','interrupted','complete'].includes(e.type));
+  assert.deepEqual({type:end.type,text:end.text},{type:'error',text:'Memory changed while Cere was replying. Send your message again.'});
 });

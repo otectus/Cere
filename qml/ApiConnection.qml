@@ -10,7 +10,7 @@ ColumnLayout {
     property int refreshRequest:-1
     property string error:""
     Layout.fillWidth:true;spacing:6
-    CText { text:connection.label+" · "+(connection.capability.available?"Ready":connection.capability.configured?"Key configured":"Key needed");font.weight:Font.DemiBold;color:connection.capability.available?Theme.cyan:Theme.amber }
+    CText { text:connection.label+" · "+(connection.capability.available?"Ready":connection.capability.configured?"Key configured":"Key needed");font.weight:Font.DemiBold;color:connection.capability.available?Theme.accentText:Theme.amber }
     CText { text:connection.capability.source==="environment"?"Using "+connection.capability.environment:connection.capability.source==="saved"?"Using a saved key. Leave the field empty to keep it.":"Use an API key for this provider. API usage is billed separately from chat subscriptions.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CField { id:apiKey;objectName:"apiKey_"+connection.provider;Layout.fillWidth:true;placeholderText:"API key";echoMode:TextInput.Password;maximumLength:8192;Accessible.name:connection.label+" API key"
         // Qt drops the accessible name of password fields; screen readers still announce the description.

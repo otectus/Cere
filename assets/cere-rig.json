@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "texture": "cere-puppet-v2.png",
+  "texture": "cere-puppet-reference.png",
   "referenceSize": [
     192,
     208
@@ -14,18 +14,17 @@
     },
     {
       "name": "torso",
-      "parent": "root",
-      "x": 96,
-      "y": 146,
+      "parent": "hips",
+      "x": 0,
+      "y": 0,
       "angle": "bodyTilt",
-      "offsetX": "hipX",
       "offsetY": "breathLift"
     },
     {
       "name": "head",
       "parent": "torso",
       "x": 0,
-      "y": -46,
+      "y": -39.48,
       "angle": "headTilt",
       "offsetX": "headX",
       "offsetY": "headY"
@@ -40,67 +39,67 @@
     {
       "name": "leftUpperArm",
       "parent": "torso",
-      "x": -28,
-      "y": -44,
+      "x": -14.6,
+      "y": -36.12,
       "angle": "leftArm",
       "offsetY": "shoulderLeft"
     },
     {
       "name": "leftForearm",
       "parent": "leftUpperArm",
-      "x": -12.06,
-      "y": 26.73,
+      "x": -6.7984,
+      "y": 20.9232,
       "angle": "leftElbow"
     },
     {
       "name": "rightUpperArm",
       "parent": "torso",
-      "x": 28,
-      "y": -44,
+      "x": 14.6,
+      "y": -36.12,
       "angle": "rightArm",
       "offsetY": "shoulderRight"
     },
     {
       "name": "rightForearm",
       "parent": "rightUpperArm",
-      "x": 12.06,
-      "y": 26.73,
+      "x": 6.7984,
+      "y": 20.9232,
       "angle": "rightElbow"
     },
     {
       "name": "hips",
       "parent": "root",
       "x": 96,
-      "y": 146,
+      "y": 137.81,
       "offsetX": "hipX",
       "offsetY": "hipDrop"
     },
     {
       "name": "leftThigh",
-      "parent": "root",
-      "x": 84,
-      "y": 151,
+      "parent": "hips",
+      "x": -10.6,
+      "y": 6.72,
       "angle": "leftLeg"
     },
     {
       "name": "leftShin",
       "parent": "leftThigh",
-      "x": -10.741379310344827,
-      "y": 25.0,
+      "x": -3.8412,
+      "y": 27.3314,
       "angle": "leftKnee"
     },
     {
       "name": "rightThigh",
-      "parent": "root",
-      "x": 109,
-      "y": 151,
+      "parent": "hips",
+      "x": 10.6,
+      "y": 6.72,
       "angle": "rightLeg"
     },
     {
       "name": "rightShin",
       "parent": "rightThigh",
-      "x": 9.051724137931034,
-      "y": 24.85,
+      "x": 3.8412,
+      "y": 27.3314,
       "angle": "rightKnee"
     }
   ],
@@ -109,169 +108,33 @@
       "name": "backHair",
       "bone": "hair",
       "sourceRect": [
-        45,
-        9,
-        362,
-        301
+        4,
+        4,
+        258,
+        320
       ],
       "rect": [
-        -70,
-        -93,
-        137,
-        132
+        -56.1825,
+        -81,
+        112.3649,
+        139.3673
       ],
       "z": 0
-    },
-    {
-      "name": "leftThigh",
-      "bone": "leftThigh",
-      "sourceRect": [
-        861,
-        294,
-        199,
-        258
-      ],
-      "rect": [
-        -23.522413793103446,
-        -3.04,
-        35,
-        32
-      ],
-      "z": 1
-    },
-    {
-      "name": "rightThigh",
-      "bone": "rightThigh",
-      "sourceRect": [
-        1224,
-        294,
-        204,
-        258
-      ],
-      "rect": [
-        -11.827586206896552,
-        -3.14,
-        35,
-        32
-      ],
-      "z": 1
-    },
-    {
-      "name": "leftBoot",
-      "bone": "leftShin",
-      "sourceRect": [
-        101,
-        530,
-        197,
-        242
-      ],
-      "rect": [
-        -19.5,
-        -7.5,
-        39,
-        33
-      ],
-      "z": 2
-    },
-    {
-      "name": "rightBoot",
-      "bone": "rightShin",
-      "sourceRect": [
-        526,
-        529,
-        194,
-        243
-      ],
-      "rect": [
-        -19.5,
-        -7.5,
-        39,
-        33
-      ],
-      "z": 2
-    },
-    {
-      "name": "hips",
-      "bone": "hips",
-      "sourceRect": [
-        450,
-        299,
-        325,
-        145
-      ],
-      "rect": [
-        -35,
-        -12,
-        70,
-        29.45
-      ],
-      "z": 3
-    },
-    {
-      "name": "torso",
-      "bone": "torso",
-      "sourceRect": [
-        124,
-        306,
-        200,
-        222
-      ],
-      "rect": [
-        -32,
-        -60,
-        64,
-        65
-      ],
-      "z": 4
-    },
-    {
-      "name": "leftSleeve",
-      "bone": "leftUpperArm",
-      "sourceRect": [
-        852,
-        556,
-        172,
-        197
-      ],
-      "rect": [
-        -20.36,
-        -4.1,
-        30,
-        35.18
-      ],
-      "z": 5
-    },
-    {
-      "name": "rightSleeve",
-      "bone": "rightUpperArm",
-      "sourceRect": [
-        1251,
-        552,
-        174,
-        198
-      ],
-      "rect": [
-        -9.04,
-        -4.1,
-        30,
-        35.15
-      ],
-      "z": 5
     },
     {
       "name": "head",
       "bone": "head",
       "sourceRect": [
-        455,
-        12,
-        325,
-        262
+        266,
+        4,
+        339,
+        318
       ],
       "rect": [
-        -52,
-        -90,
-        104,
-        83.84
+        -43.2,
+        -80,
+        86.4,
+        81
       ],
       "z": 6
     },
@@ -279,16 +142,16 @@
       "name": "curiousEyes",
       "bone": "head",
       "sourceRect": [
-        1261,
-        881,
-        150,
-        67
+        714,
+        328,
+        194,
+        97
       ],
       "rect": [
-        -22.72,
-        -44.56,
-        48,
-        21.44
+        -25.9835,
+        -51.9201,
+        52.6171,
+        26.7245
       ],
       "z": 7,
       "opacityChannel": "curiousFace"
@@ -297,16 +160,16 @@
       "name": "wink",
       "bone": "head",
       "sourceRect": [
-        1262,
-        147,
-        150,
-        67
+        296,
+        328,
+        205,
+        104
       ],
       "rect": [
-        -21.44,
-        -46.8,
-        48,
-        21.44
+        -25.8427,
+        -51.8538,
+        52.453,
+        26.4906
       ],
       "z": 8,
       "opacityChannel": "wink"
@@ -315,59 +178,91 @@
       "name": "blink",
       "bone": "head",
       "sourceRect": [
-        884,
-        147,
-        150,
-        67
+        505,
+        328,
+        205,
+        104
       ],
       "rect": [
-        -21.6,
-        -46.8,
-        48,
-        21.44
+        -25.8695,
+        -51.9175,
+        52.5075,
+        26.4906
       ],
       "z": 9,
       "opacityChannel": "eyeClose"
     },
     {
+      "name": "torso",
+      "bone": "torso",
+      "sourceRect": [
+        1058,
+        4,
+        205,
+        233
+      ],
+      "rect": [
+        -20.4,
+        -48.72,
+        41,
+        46.6
+      ],
+      "z": 4
+    },
+    {
+      "name": "hips",
+      "bone": "torso",
+      "sourceRect": [
+        74,
+        328,
+        218,
+        121
+      ],
+      "rect": [
+        -21.7,
+        -5.5,
+        43.6,
+        24.2
+      ],
+      "z": 4.5
+    },
+    {
+      "name": "leftSleeve",
+      "bone": "leftUpperArm",
+      "sourceRect": [
+        4,
+        328,
+        66,
+        193
+      ],
+      "rect": [
+        -5.2434,
+        -4.6182,
+        10.5103,
+        30.7347
+      ],
+      "z": 5,
+      "rotation": 18
+    },
+    {
       "name": "leftHand",
       "bone": "leftForearm",
       "sourceRect": [
-        154,
-        771,
-        137,
-        238
+        916,
+        4,
+        68,
+        274
       ],
       "rect": [
-        -10.96,
-        -3.43,
-        22.8,
-        30
+        -3.6481,
+        -2.867,
+        7.7982,
+        31.422
       ],
       "z": 10,
+      "rotation": 15,
       "visibleWhen": {
         "channel": "leftHandOpen",
-        "max": 0.5
-      }
-    },
-    {
-      "name": "rightHand",
-      "bone": "rightForearm",
-      "sourceRect": [
-        531,
-        770,
-        140,
-        239
-      ],
-      "rect": [
-        -11.55,
-        -3.43,
-        22.8,
-        30
-      ],
-      "z": 10,
-      "visibleWhen": {
-        "channel": "rightHandOpen",
         "max": 0.5
       }
     },
@@ -375,39 +270,117 @@
       "name": "leftPalm",
       "bone": "leftForearm",
       "sourceRect": [
-        882,
-        773,
-        166,
-        235
+        609,
+        4,
+        87,
+        290
       ],
       "rect": [
-        -10.79,
-        -3.3,
-        28.2,
-        29.62
+        -5.4759,
+        -2.867,
+        9.9771,
+        33.2569
       ],
       "z": 10,
+      "rotation": 15,
       "visibleWhen": {
         "channel": "leftHandOpen",
         "min": 0.5
       }
     },
     {
+      "name": "leftThigh",
+      "bone": "leftThigh",
+      "sourceRect": [
+        700,
+        4,
+        104,
+        282
+      ],
+      "rect": [
+        -10.7419,
+        -11.0732,
+        19.8554,
+        53.8387
+      ],
+      "z": 2,
+      "rotation": 8
+    },
+    {
+      "name": "leftBoot",
+      "bone": "leftShin",
+      "sourceRect": [
+        1391,
+        4,
+        124,
+        217
+      ],
+      "rect": [
+        -11.2371,
+        -8.6952,
+        20.9336,
+        36.6338
+      ],
+      "z": 1
+    },
+    {
+      "name": "rightSleeve",
+      "bone": "rightUpperArm",
+      "sourceRect": [
+        4,
+        328,
+        66,
+        193
+      ],
+      "rect": [
+        -5.2669,
+        -4.6182,
+        10.5103,
+        30.7347
+      ],
+      "z": 5,
+      "rotation": -18,
+      "mirrorX": true
+    },
+    {
+      "name": "rightHand",
+      "bone": "rightForearm",
+      "sourceRect": [
+        988,
+        4,
+        66,
+        274
+      ],
+      "rect": [
+        -3.9175,
+        -2.867,
+        7.5688,
+        31.422
+      ],
+      "z": 10,
+      "rotation": -15,
+      "visibleWhen": {
+        "channel": "rightHandOpen",
+        "max": 0.5
+      }
+    },
+    {
       "name": "rightPalm",
       "bone": "rightForearm",
       "sourceRect": [
-        882,
-        773,
-        166,
-        235
+        609,
+        4,
+        87,
+        290
       ],
       "rect": [
-        -17.41,
-        -3.3,
-        28.2,
-        29.62
+        -4.5011,
+        -2.867,
+        9.9771,
+        33.2569
       ],
       "z": 10,
+      "rotation": -15,
       "mirrorX": true,
       "visibleWhen": {
         "channel": "rightHandOpen",
@@ -415,21 +388,39 @@
       }
     },
     {
-      "name": "trouserOverlap",
-      "bone": "hips",
+      "name": "rightThigh",
+      "bone": "rightThigh",
       "sourceRect": [
-        580,
-        357,
-        64,
-        52
+        808,
+        4,
+        104,
+        282
       ],
       "rect": [
-        -9,
-        4,
-        18,
-        12
+        -9.0444,
+        -11.0284,
+        19.7751,
+        53.6208
       ],
-      "z": 0.5
+      "z": 2,
+      "rotation": -8
+    },
+    {
+      "name": "rightBoot",
+      "bone": "rightShin",
+      "sourceRect": [
+        1267,
+        4,
+        120,
+        218
+      ],
+      "rect": [
+        -9.682,
+        -8.864,
+        20.2583,
+        36.8026
+      ],
+      "z": 1
     }
   ],
   "channels": {

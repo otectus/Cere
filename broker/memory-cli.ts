@@ -56,14 +56,16 @@ try {
     );
   if (flags.help) {
     console.log(
-      "cere memory health|doctor|query|inspect|remember|correct|resolve-conflict|forget-preview|forget|erasure-status|workspace|policy-get|policy-update|rebuild|backup|restore\nUse --session SESSION_ID to select a project, --file CLAIM.json or --stdin for structured requests, --json for machine output.",
+      "cere memory health|doctor|query|inspect|remember|correct|resolve-conflict|forget-preview|forget|erasure-status|workspace|policy-get|policy-update|rebuild|backup|restore|compact\nUse --session SESSION_ID to select a project, --file CLAIM.json or --stdin for structured requests, --json for machine output.\ncompact --output BACKUP.sqlite backs memory up to that new file, then removes rows that only erased records still use.",
     );
   } else {
+    // Backup, restore, rebuild and compaction rewrite the whole store and can take minutes.
+    const slow = ["backup", "restore", "rebuild", "compact"].includes(method);
     const result = await request("memory.graph", {
       sessionId: flags.session,
       method,
       params,
-    });
+    }, slow ? 15 * 60000 : 10000);
     console.log(JSON.stringify(result, null, 2));
   }
 } catch (error: any) {

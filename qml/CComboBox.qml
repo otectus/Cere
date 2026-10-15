@@ -19,7 +19,7 @@ ComboBox {
         text: control.textAt(index)
         font: control.font
         highlighted: control.highlightedIndex===index
-        contentItem: Text { text: parent.text; font: control.font; color: parent.highlighted ? Theme.cyan : Theme.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+        contentItem: Text { text: parent.text; font: control.font; color: parent.highlighted ? Theme.accentText : Theme.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter; textFormat: Text.PlainText }
         background: Rectangle { radius: Theme.radiusChip; color: parent.highlighted ? Theme.selected : "transparent" }
     }
     popup: Popup {

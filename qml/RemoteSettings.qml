@@ -18,7 +18,7 @@ CSection {
     function call(method,params){if(requestId>=0)return;error="";operation=method;requestId=App.rpc(method,params||{})}
     function reload(){call("remote.status",{})}
     Component.onCompleted:reload()
-    CText { text:App.state.remote?.listening?"Remote gateway is listening":(App.state.remote?.enabled?"Waiting for a configured network":"Remote gateway is closed");color:App.state.remote?.listening?Theme.cyan:Theme.muted }
+    CText { text:App.state.remote?.listening?"Remote gateway is listening":(App.state.remote?.enabled?"Waiting for a configured network":"Remote gateway is closed");color:App.state.remote?.listening?Theme.accentText:Theme.muted }
     Flow {
         Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:8
         CButton { text:"Refresh";enabled:remote.requestId<0;onClicked:remote.reload() }
@@ -31,7 +31,7 @@ CSection {
     CText { text:"For access away from home, connect both devices to Tailscale and use this PC’s Tailscale IP. Keep Cere monitoring and the VPN enabled. Addresses must belong to this desktop.";color:Theme.muted;font.pixelSize:12 }
     CCheckBox { id:trustedPhone;text:"Trusted phone — no fingerprint or PIN for Cere actions" }
     CText { text:"Trusted mode keeps commands signed. Anyone using the unlocked phone can perform its granted actions. Changing mode requires replacement pairing.";color:Theme.muted;font.pixelSize:12 }
-    CText { visible:!!remote.replacingDevice;text:"Replacing this phone’s pairing while preserving its drafts and conversation cache.";color:Theme.cyan;font.pixelSize:12 }
+    CText { visible:!!remote.replacingDevice;text:"Replacing this phone’s pairing while preserving its drafts and conversation cache.";color:Theme.accentText;font.pixelSize:12 }
     CCheckBox { id:endpointsConfirmed;text:"Update addresses or renew certificate; paired phones will need replacement pairing" }
     CButton { text:"Update gateway addresses / certificate";enabled:endpointsConfirmed.checked&&remote.requestId<0&&addresses.text.trim().length>0;onClicked:{remote.call("remote.configureEndpoints",{addresses:addresses.text.split(",").map(a=>a.trim()).filter(a=>a.length),confirmed:true});endpointsConfirmed.checked=false} }
     CText { visible:!!App.state.remote?.networkError;text:App.state.remote?.networkError||"";color:Theme.amber;font.pixelSize:12 }
@@ -50,7 +50,7 @@ CSection {
     }
     CButton { text:"Load response file…";enabled:remote.requestId<0;Accessible.description:"Choose a text file the phone shared that contains its signed response";onClicked:{const p=App.chooseFile();if(p)remote.call("remote.readPairResponse",{path:p})} }
     CButton { text:"Verify phone response";enabled:remote.requestId<0&&response.text.trim().length>0;onClicked:remote.call("remote.reviewPair",{response:response.text.trim()}) }
-    CText { visible:!!remote.review.sas;text:(remote.review.name||"Phone")+" · Compare both screens:\n"+(remote.review.sas||"")+"\n"+(remote.review.actionAuthentication==="trusted-device"?"Trusted phone: no fingerprint or PIN":"Actions require fingerprint or PIN");color:Theme.cyan;font.pixelSize:16 }
+    CText { visible:!!remote.review.sas;text:(remote.review.name||"Phone")+" · Compare both screens:\n"+(remote.review.sas||"")+"\n"+(remote.review.actionAuthentication==="trusted-device"?"Trusted phone: no fingerprint or PIN":"Actions require fingerprint or PIN");color:Theme.accentText;font.pixelSize:16 }
     CField { id:projects;Layout.fillWidth:true;placeholderText:"Approved project folders, separated by semicolons";Accessible.name:"Approved project paths separated by semicolons" }
     CText { text:"Project folders separated by semicolons. Confirming trusts their local CLI configuration for any native execution cap you select.";color:Theme.muted;font.pixelSize:12 }
     GridLayout {

@@ -69,7 +69,7 @@ CDialog {
         text:center.sessionId?(center.selectedAccess.title||"Selected session")+" · "+(center.selectedAccess.provider||"unknown provider")+" · "+(center.selectedAccess.status||"unavailable"):"Select a session before opening Permission Center."
         color:center.sessionId?Theme.text:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap
     }
-    CText { visible:!!center.selectedAccess.cwd;text:center.selectedAccess.cwd||"";color:Theme.cyan;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+    CText { visible:!!center.selectedAccess.cwd;text:center.selectedAccess.cwd||"";color:Theme.accentText;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     CText {
         visible:!!center.selectedAccess.leaseId
         text:"Power active: "+center.accessLabel(center.selectedAccess)+" · "+center.remaining(center.selectedAccess.expiresAt)+" remaining"

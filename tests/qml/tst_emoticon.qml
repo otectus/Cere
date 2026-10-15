@@ -16,6 +16,26 @@ Item {
             return badge
         }
         function state(settings) { return {sessions:[{id:"a",status:"idle",title:"Alpha"}],settings:settings || {}} }
+        function test_avatarPaletteAndMirror() {
+            var badge = make({snapshot:state({reducedMotion:true})})
+            var mirror = make({mirror:badge})
+            compare(badge.accent, "#49dfff")
+            var original = badge.color.toString(), glyph = badge.glyph
+            for (var id of ["daemona", "jade", "nova"]) {
+                badge.snapshot = state({avatar:id,reducedMotion:true})
+                compare(badge.accent, Cere.Theme.paletteFor(id).accentText)
+                compare(mirror.accent, badge.accent)
+                compare(mirror.color, badge.color)
+                verify(badge.color.toString() !== original)
+                compare(badge.glyph, glyph)
+                badge.snapshot = {settings:{avatar:id},approvals:[{kind:"cli"}]}
+                compare(badge.accent, Cere.Theme.paletteFor(id).amber)
+                verify(badge.accent !== Cere.Theme.paletteFor(id).accentText)
+            }
+            badge.snapshot = state({avatar:"unknown"})
+            compare(badge.color, original)
+            compare(badge.accent, "#49dfff")
+        }
         function test_liveToneAndNewTurn() {
             var badge = make({snapshot:state(), selectedId:"a"})
             badge.observe({id:"answer",sessionId:"a",role:"assistant",text:"You absolute menace. A tiny rebellion. 😏"})

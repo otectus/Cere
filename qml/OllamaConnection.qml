@@ -11,7 +11,7 @@ ColumnLayout {
     property int refreshRequest:-1
     property string error:""
     property bool connecting:false
-    CText { text:"Ollama · "+(connection.capability.modelsStatus==="loading"?"Connecting…":connection.capability.available?"Ready":"Unavailable");color:connection.capability.available?Theme.cyan:Theme.amber;font.weight:Font.DemiBold }
+    CText { text:"Ollama · "+(connection.capability.modelsStatus==="loading"?"Connecting…":connection.capability.available?"Ready":"Unavailable");color:connection.capability.available?Theme.accentText:Theme.amber;font.weight:Font.DemiBold }
     CText { text:"Server URL";color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout {
         Layout.fillWidth:true

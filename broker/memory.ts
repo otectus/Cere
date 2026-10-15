@@ -7,6 +7,10 @@ import type { ModelRoute } from './ollama.ts';
 import { defaultExtractionModel } from './graph-memory/models.ts';
 import { MemoryService } from './graph-memory/service.ts';
 import { predicates } from './graph-memory/contracts.ts';
+import { informativeTerms } from './graph-memory/ranking.ts';
+import { embeddingPrompts } from './graph-memory/prompts.ts';
+import { renderPacket, searchResult } from './graph-memory/packet.ts';
+import { isApiProvider } from './provider-catalog.ts';
 import { citedEvidenceIds } from './citations.ts';
 
 const entityToolSchema={type:'object',properties:{id:{type:'string'},type:{type:'string'},name:{type:'string'}},required:['type','name'],additionalProperties:false};
@@ -74,7 +78,7 @@ export function unitVector(value: unknown): number[] {
   return value.map(n => n/norm);
 }
 export async function embed(host: string, model: string, texts: string[], kind: 'query' | 'document', signal: AbortSignal) {
-  const prefix = /(?:^|\/)nomic-embed-text(?::|$)/.test(model) ? (kind === 'query' ? 'search_query: ' : 'search_document: ') : '';
+  const prompts = embeddingPrompts(model), prefix = kind === 'query' ? prompts.query : prompts.document;
   // Bound by code points, not English token assumptions. In particular, long
   // emoji/CJK passages must not poison the persistent indexing queue. Average
   // short segments into one passage vector without silently dropping any text.
@@ -91,15 +95,49 @@ export async function embed(host: string, model: string, texts: string[], kind: 
     return unitVector(mean);
   });
 }
+/**
+ * Codex, Claude and AntiGravity keep every turn's text, its recalled packet included, in their
+ * own transcript. Ollama and API conversations receive a fresh packet with each request instead.
+ */
+const keepsPackets = (session: Session) => session.provider !== 'ollama' && !isApiProvider(session.provider);
+/** Recent turns whose recalled items a provider's transcript still holds. */
+const recentTurns = 4;
+/**
+ * Items one turn recalls by itself. Excerpts made items smaller; without a count, more of them
+ * filled the same budget instead of the packet shrinking.
+ */
+const automaticItems = 8;
+/** Settles with the promise, or rejects with the signal's reason as soon as the signal aborts. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(value => { signal.removeEventListener('abort', abort); resolve(value); }, error => { signal.removeEventListener('abort', abort); reject(error); });
+  });
+}
 export class Memory {
   store: Store; settings: () => Settings; notify: () => void; service: MemoryService; ready: Promise<void>;
   controller = new AbortController(); revision = 0; scopes = new Map<string, string>(); packets = new Map<string, any>();
+  /**
+   * Evidence recalled in each session's last few turns, for providers that keep packets in their
+   * transcript: an item still there is not sent again. Reset by compaction or another provider thread.
+   */
+  recent = new Map<string, { nativeId: string | null; turns: string[][] }>();
   status = { state: 'idle', error: '', warning: '', total: 0, saved: 0, pending: 0 };
+  /** How long a turn waits for memory before it goes ahead without recalled context. */
+  recallDeadlineMs = 8000;
   constructor(store: Store, settings: () => Settings, notify: () => void = () => {}) {
     this.store = store; this.settings = settings; this.notify = notify;
     if(!store.get('transcriptEpoch',''))store.set('transcriptEpoch',randomUUID());
     this.service = new MemoryService(store.directory, event => {
-      if (event.type === 'invalidate') { this.invalidateTranscript();this.revision++; this.controller.abort(new Error('Memory access changed')); this.controller = new AbortController(); this.packets.clear(); }
+      if (event.type === 'invalidate') {
+        this.invalidateTranscript();this.revision++; this.packets.clear(); this.recent.clear();
+        // A retention expiry only retires cached packets: the next recall reads fresh. A forget
+        // or policy change also ends turns that may still be using the removed content.
+        if (event.cause !== 'expiration') { this.controller.abort(Object.assign(new Error('Memory changed while Cere was replying. Send your message again.'),{code:'MEMORY_INVALIDATED'})); this.controller = new AbortController(); }
+      }
+      if (event.type === 'worker_restarted') { this.setStatus('degraded', 'Memory stopped a request that ran too long and restarted. Replies continue meanwhile.'); return; }
       this.notify();
     });
     this.ready = this.initialize(); this.ready.catch(error => this.setStatus('degraded', error.message));
@@ -123,12 +161,12 @@ export class Memory {
       embedding_model: s.memory.model, extraction_model: s.memory.extractionModel || defaultExtractionModel,
       allow_cloud_extraction: s.memory.allowCloudExtraction ?? true, allow_cloud_memory: s.memory.allowCloudMemory ?? false });
   }
-  invalidate() { this.revision++; this.controller.abort(new Error('Memory settings changed')); this.controller = new AbortController(); this.packets.clear(); void this.ready.then(() => this.configure()).catch(e => this.setStatus('degraded', e.message)); }
+  invalidate() { this.revision++; this.controller.abort(new Error('Memory settings changed')); this.controller = new AbortController(); this.packets.clear(); this.recent.clear(); void this.ready.then(() => this.configure()).catch(e => this.setStatus('degraded', e.message)); }
   summary() { return { ...this.status }; }
   async refresh() { const health = await this.service.call('health'); this.status.total = health.counts.artifacts; this.status.saved = health.counts.saved; this.status.pending = health.queues.outbox; this.notify(); return health; }
   setStatus(state: string, error = '') { this.status = { ...this.status, state, error }; this.notify(); }
   host(session: Session) { return ollamaHost(session.ollama?.host||this.settings().ollama.host); }
-  async scope(session: Session) { await this.ready; const key = memoryScope(session,this.host(session)); let id = this.scopes.get(key); if (!id) { id = (await this.service.call('scope', { key, label: session.cwd })).id; this.scopes.set(key, id!); } return id!; }
+  async scope(session: Session, signal?: AbortSignal) { await (signal ? abortable(this.ready, signal) : this.ready); const key = memoryScope(session,this.host(session)); let id = this.scopes.get(key); if (!id) { id = (await this.service.call('scope', { key, label: session.cwd }, signal)).id; this.scopes.set(key, id!); } return id!; }
   /**
    * Optional post-reply provenance. Returns captured, skipped_by_policy or degraded and
    * never throws: a delivered reply is never reported as failed because memory could
@@ -136,6 +174,7 @@ export class Memory {
    */
   async capture(session: Session, text: string, answer: string, signal?: AbortSignal, authorize?:()=>void): Promise<{ outcome: 'captured' | 'skipped_by_policy' | 'degraded' | 'disabled' }> {
     const packet = this.packets.get(session.id); this.packets.delete(session.id);
+    const offered = this.delivered(session, packet);
     if (!this.active()) return { outcome: 'disabled' };
     let skipped = !!packet?.skipped;
     try {
@@ -145,7 +184,10 @@ export class Memory {
       const response = await this.intake(() => write('observe_text', { scope_id, text: answer || '(empty response)', role: 'assistant', session_id: session.id, source_event_id: randomUUID() }));
       if (!response) skipped = true;
       else if (packet?.snapshot) {
-        const supplied = packet.evidence.map((e: any) => e.id), cited = citedEvidenceIds(answer);
+        // Supplied evidence is what this turn's packet and searches gave the model, plus what an
+        // earlier packet still in its transcript gave it, when the reply cites that.
+        const cited = citedEvidenceIds(answer);
+        const supplied = [...new Set([...cited.filter(id => offered.has(id)), ...(packet.supplied || [])])].slice(0, 24);
         await write('record_response', { scope_id, response_ref: response.id, supplied_evidence_ids: supplied, cited_evidence_ids: cited,
           snapshot_revision: packet.snapshot.revision, policy_epoch: packet.snapshot.policy_epoch, erasure_epoch: packet.snapshot.erasure_epoch });
       }
@@ -156,6 +198,36 @@ export class Memory {
       this.setStatus('degraded', error?.code === 'SOURCE_CHANGED' ? 'Memory changed before this reply was recorded.' : 'Memory could not record this reply.');
       return { outcome: 'degraded' };
     }
+  }
+  /**
+   * A finished turn's packet and search results now sit in a keeping provider's transcript. Returns
+   * the evidence the model holds: this turn's, and for such providers that of recent turns.
+   */
+  private delivered(session: Session, packet: any) {
+    const turn: string[] = packet?.supplied || [];
+    if (!keepsPackets(session)) return new Set(turn);
+    const window = this.window(session);
+    if (turn.length) window.turns = [...window.turns, turn].slice(-recentTurns);
+    return new Set(window.turns.flat());
+  }
+  /** A session's recent-turn record, started again when the provider thread changed. */
+  private window(session: Session) {
+    let window = this.recent.get(session.id);
+    if (!window || (window.nativeId && session.nativeId && window.nativeId !== session.nativeId))
+      this.recent.set(session.id, window = { nativeId: null, turns: [] });
+    window.nativeId ||= session.nativeId || null;
+    return window;
+  }
+  /** After compaction the provider's transcript no longer holds earlier packets. */
+  forgetRecent(sessionId: string) { this.recent.delete(sessionId); }
+  /** A memory_search result for a model. Its evidence counts as supplied to the turn in progress. */
+  searched(session: Session, result: any) {
+    const packet = this.packets.get(session.id);
+    if (packet && !packet.skipped) {
+      packet.supplied = [...new Set([...(packet.supplied || []), ...(result.items || []).flatMap((item: any) => item.ids)])];
+      packet.snapshot ??= result.snapshot;
+    }
+    return searchResult(result);
   }
   /** Runs one memory intake; a policy rejection of the content is a skip, not a failure. */
   async intake<T>(write: () => Promise<T>): Promise<T | null> {
@@ -225,15 +297,18 @@ export class Memory {
    * Recall for one conversation. The route comes from the conversation's saved server
    * and current model metadata, never from alias spelling; an unverifiable route is
    * treated as cloud, so local-only sources and the cloud-recall opt-out fail closed.
+   * `automatic` marks the recall a turn makes for its own message: matches must clear the
+   * relevance floors, and neither the listed observations (the message itself) nor the session's
+   * recent exchange, which the model still has, are recalled.
    */
-  async recall(session: Session, query: unknown, signal: AbortSignal, tokenBudget = 4000, route?: ModelRoute) {
+  async recall(session: Session, query: unknown, signal: AbortSignal, tokenBudget = 4000, route?: ModelRoute, automatic: { exclude_observation_ids?: string[]; recent_session_id?: string } | false = false) {
     if (typeof query !== 'string' || !query.trim() || query.length > 1000) throw new Error('Memory queries need 1–1,000 characters');
-    if (!this.active()) return { results: [], mode: 'disabled', warning: '', evidence: [] } as any;
+    if (!this.active()) return { results: [], items: [], mode: 'disabled', warning: '', evidence: [] } as any;
     const host=this.host(session);
     route=session.provider==='ollama'?route??(await modelRoute(host,session.model,signal)).route:'cloud';
     let result: any;
-    try { result = await this.service.call('retrieve', { scope_id: await this.scope(session), text: query, host, token_budget: tokenBudget,
-      model_route: route }, signal); }
+    try { result = await this.service.call('retrieve', { scope_id: await this.scope(session, signal), text: query, host, token_budget: tokenBudget,
+      model_route: route, ...(automatic ? { relevance_floor: true, max_items: automaticItems, ...automatic } : {}) }, signal); }
     catch (error: any) { if (!this.active() || error.code === 'SOURCE_CHANGED') return { results: [], evidence: [], mode: this.active() ? 'invalidated' : 'disabled', warning: 'Memory changed during this request.' }; throw error; }
     if (!this.active()) return { results: [], evidence: [], mode: 'disabled', warning: '' };
     this.setStatus(result.coverage.length ? 'degraded' : 'ready', result.warning); return result;
@@ -247,32 +322,67 @@ export class Memory {
   async context(session: Session, text: string, signal: AbortSignal, tokenBudget = 4000, route?: ModelRoute, write=true, authorize?:()=>void) {
     this.packets.delete(session.id);
     if (!this.active()) return '';
+    // A turn never waits on memory longer than the deadline: a busy, slow or stopped memory worker
+    // costs this turn its recalled context, not its reply. Stopping the turn still ends the wait.
+    const deadline = AbortSignal.timeout(this.recallDeadlineMs), guard = AbortSignal.any([signal, deadline]);
+    // Housekeeping (projection, extraction, expiry) yields while a turn recalls.
+    void this.service.call('foreground', { active: true }).catch(() => {});
     try {
-      if(!write){authorize?.();signal.throwIfAborted();const packet=await this.recall(session,text.slice(0,1000),signal,tokenBudget,route);authorize?.();return '<cere_memory_data>\n'+JSON.stringify(packet)+'\n</cere_memory_data>';}
-      const scope_id = await this.scope(session);
-      authorize?.();signal.throwIfAborted();
-      const observation=await this.intake(() => this.service.call('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: randomUUID() }, signal));
-      if(!observation){
-        // The query itself is excluded from persistence and recall alike.
-        this.packets.set(session.id,{skipped:true});
-        this.warn('This message was not remembered because memory policy excluded its content.');
-        return '';
-      }
-      if(tokenBudget<128){this.packets.set(session.id,{observed:true,observation_id:observation.id});return '';}
-      this.packets.set(session.id,{observed:true,observation_id:observation.id});
-      const packet = await this.recall(session, text.slice(0, 1000), signal, tokenBudget, route); packet.observed = true; packet.observation_id=observation.id; this.packets.set(session.id, packet);
-      this.store.set('recalled:'+session.id,{ids:(packet.results||[]).map((r:any)=>r.id).filter((id:any)=>typeof id==='string').slice(0,12),time:Date.now()});
-      return '<cere_memory_data>\n' + JSON.stringify(packet) + '\n</cere_memory_data>';
+      return await abortable(this.prepare(session, text, guard, tokenBudget, route, write, authorize), guard);
     } catch (error: any) {
       if (signal.aborted) throw error;
-      this.setStatus('degraded', 'Memory is unavailable for this turn; the conversation continues without recalled context.');
+      this.setStatus('degraded', deadline.aborted ? 'Memory did not answer in time; this reply continues without recalled context.' : 'Memory is unavailable for this turn; the conversation continues without recalled context.');
       return '';
+    } finally {
+      void this.service.call('foreground', { active: false }).catch(() => {});
     }
   }
+  /** The work of context(). Every step checks the turn's guard, so a late result never replaces a newer turn's packet. */
+  private async prepare(session: Session, text: string, signal: AbortSignal, tokenBudget: number, route: ModelRoute | undefined, write: boolean, authorize?:()=>void) {
+    if(!write){
+      authorize?.();signal.throwIfAborted();
+      if(!this.recalls(session,text,route,tokenBudget))return '';
+      const packet=await this.recall(session,text.slice(0,1000),signal,tokenBudget,route,{recent_session_id:session.id});signal.throwIfAborted();authorize?.();
+      return this.present(session,packet).text;
+    }
+    const scope_id = await this.scope(session, signal);
+    authorize?.();signal.throwIfAborted();
+    const observation=await this.intake(() => this.service.call('observe_text', { scope_id, text, role: 'user', session_id: session.id, source_event_id: randomUUID() }, signal));
+    signal.throwIfAborted();
+    if(!observation){
+      // The query itself is excluded from persistence and recall alike.
+      this.packets.set(session.id,{skipped:true});
+      this.warn('This message was not remembered because memory policy excluded its content.');
+      return '';
+    }
+    this.packets.set(session.id,{observed:true,observation_id:observation.id,supplied:[]});
+    if(!this.recalls(session,text,route,tokenBudget)){this.store.set('recalled:'+session.id,{ids:[],time:Date.now()});return '';}
+    const packet = await this.recall(session, text.slice(0, 1000), signal, tokenBudget, route, { exclude_observation_ids: [observation.id], recent_session_id: session.id }); signal.throwIfAborted();
+    const shown = this.present(session, packet);
+    this.packets.set(session.id, { observed: true, observation_id: observation.id, snapshot: packet.snapshot, supplied: shown.items.flatMap((item: any) => item.ids) });
+    this.store.set('recalled:'+session.id,{ids:(packet.results||[]).map((r:any)=>r.id).filter((id:any)=>typeof id==='string').slice(0,12),time:Date.now()});
+    return shown.text;
+  }
+  /**
+   * Whether a turn recalls for its message at all. A cloud route without consent to share memory
+   * would recall nothing, and a message without a topic word, such as "ok, continue", relates to
+   * everything and nothing; the model can still search memory itself.
+   */
+  private recalls(session: Session, text: string, route: ModelRoute | undefined, tokenBudget: number) {
+    const cloud = session.provider !== 'ollama' || route === 'cloud';
+    return tokenBudget >= 128 && (!cloud || !!this.settings().memory.allowCloudMemory) && informativeTerms(text).length > 0;
+  }
+  /** A turn's packet: the compact items, less those still in a keeping provider's transcript. */
+  private present(session: Session, packet: any) {
+    const items: any[] = packet.items || [];
+    const held = keepsPackets(session) ? new Set(this.window(session).turns.flat()) : new Set<string>();
+    const shown = items.filter(item => !(item.ids.length && item.ids.every((id: string) => held.has(id))));
+    return { items: shown, text: renderPacket(shown, packet.budget?.trimmed_items || 0, items.length - shown.length) };
+  }
   async graph(session: Session | undefined, method: string, params: Record<string, unknown> = {}, signal?:AbortSignal, authorize?:()=>void) {
-    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','freeze_episode','consolidate'];
+    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','freeze_episode','consolidate'];
     if (!allowed.includes(method)) throw new Error('This memory method is not exposed to clients');
-    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','erasure_status'].includes(method);
+    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','erasure_status'].includes(method);
     if (!global && !session) throw new Error('Choose a conversation to select its authorized project scope');
     const { scope_id: _scope, owner_id: _owner, ...safe } = params;
     await this.ready;

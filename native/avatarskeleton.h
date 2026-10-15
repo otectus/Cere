@@ -68,15 +68,22 @@ inline qreal channelValue(const QVariantMap &pose, const QString &channel,
     return std::clamp(value, -maximumOffset, maximumOffset);
 }
 
-inline Transform localTransform(const Bone &bone, const QVariantMap &pose)
+// Clockwise in the y-down reference space, matching bone channel angles.
+inline Transform rotation(qreal degrees)
 {
     constexpr qreal pi = 3.14159265358979323846;
-    const qreal radians = channelValue(pose, bone.angleChannel, true) * pi / 180.0;
+    const qreal radians = std::remainder(degrees, 360.0) * pi / 180.0;
     const qreal cosine = std::cos(radians);
     const qreal sine = std::sin(radians);
-    return {cosine, -sine, sine, cosine,
-            bone.x + channelValue(pose, bone.offsetXChannel),
-            bone.y + channelValue(pose, bone.offsetYChannel)};
+    return {cosine, -sine, sine, cosine, 0.0, 0.0};
+}
+
+inline Transform localTransform(const Bone &bone, const QVariantMap &pose)
+{
+    Transform local = rotation(channelValue(pose, bone.angleChannel, true));
+    local.dx = bone.x + channelValue(pose, bone.offsetXChannel);
+    local.dy = bone.y + channelValue(pose, bone.offsetYChannel);
+    return local;
 }
 
 inline QVector<Transform> worldTransforms(const QVector<Bone> &bones,

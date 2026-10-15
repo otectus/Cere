@@ -14,6 +14,7 @@ ColumnLayout {
     readonly property var pendingInput: (App.state.approvals || []).filter(approval => approval.sessionId === sessionId)
     readonly property string activityLabel: {
         switch (App.session.activity) {
+        case "recalling": return "Recalling memory"
         case "thinking": return "Thinking"
         case "speaking": return "Responding"
         case "working": return "Using tools"
@@ -75,7 +76,7 @@ ColumnLayout {
                 CText {
                     visible: panel.activeAgents.length > 0
                     text: panel.activeAgents.length + " active"
-                    color: Theme.cyan
+                    color: Theme.accentText
                     font.pixelSize: Theme.caption
                 }
             }

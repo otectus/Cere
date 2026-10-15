@@ -21,7 +21,7 @@ ColumnLayout {
                     required property string modelData
                     property var capability:(App.state.capabilities||{})[modelData]||({})
                     Layout.fillWidth:true;spacing:5
-                    CText { text:(modelData==="codex"?"Codex":modelData==="antigravity"?"AntiGravity":"Claude Code")+" · "+(capability.available?"Ready":"Unavailable");color:capability.available?Theme.cyan:Theme.amber;font.weight:Font.DemiBold }
+                    CText { text:(modelData==="codex"?"Codex":modelData==="antigravity"?"AntiGravity":"Claude Code")+" · "+(capability.available?"Ready":"Unavailable");color:capability.available?Theme.accentText:Theme.amber;font.weight:Font.DemiBold }
                     CText { text:capability.version||capability.error||"Checking installed CLI…";color:Theme.muted;font.pixelSize:Theme.secondary }
                     CText { visible:modelData==="antigravity";text:"Sign in with agy in a terminal first. Headless actions that need approval are skipped unless allowed in AntiGravity or Cere’s CLI bypass is enabled. Desktop only; text attachments supported.";color:Theme.muted;font.pixelSize:Theme.secondary }
                 }

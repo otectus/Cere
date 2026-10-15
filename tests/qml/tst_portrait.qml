@@ -40,6 +40,28 @@ Item {
         return portrait
     }
 
+    function test_avatar_switch_loads_all_faces_and_name_without_changing_mood() {
+        var portrait = make({settings:({assistantName:"Étoile", reducedMotion:true}), mood:"concerned"})
+        compare(portrait.face, 7)
+        var originalColor = portrait.color.toString()
+        for (var id of ["daemona", "jade", "nova"]) {
+            portrait.blinking = false
+            portrait.avatar = ({id:id,portrait:id+"-portrait-expressions.png"})
+            tryVerify(function() { return portrait.artworkReady }, 10000)
+            compare(portrait.loadedFaces, 12)
+            compare(portrait.face, 7)
+            compare(portrait.color, Cere.Theme.paletteFor(id).portraitSurface)
+            verify(portrait.color.toString() !== originalColor)
+            verify(portrait.description.indexOf("Étoile · ") === 0)
+            portrait.blinking = true
+            compare(portrait.face, 11)
+        }
+        portrait.avatar = ({id:"cere",portrait:"cere-portrait-reference.png"})
+        tryVerify(function() { return portrait.artworkReady }, 10000)
+        compare(portrait.loadedFaces, 12)
+        compare(portrait.color, originalColor)
+    }
+
     function test_activity_precedes_mood_and_speech_is_an_overlay() {
         var portrait = make({
             session: ({ id: "alpha", status: "working", activity: "thinking" }),
@@ -131,8 +153,11 @@ Item {
         compare(portrait.animated, false)
     }
 
-    function test_hover_click_and_every_expression_texture_is_ready() {
-        var portrait = make()
+    function test_hover_click_and_every_expression_texture_is_ready_data() {
+        return ["cere", "daemona", "jade", "nova"].map(function(id) { return {tag:id,id:id} })
+    }
+    function test_hover_click_and_every_expression_texture_is_ready(data) {
+        var portrait = make({avatar:({id:data.id,portrait:data.id === "cere" ? "cere-portrait-reference.png" : data.id+"-portrait-expressions.png"})})
         var expected = ["neutral", "curious", "thinking", "happy", "cheeky", "skeptical", "tender", "concerned", "surprised", "focused", "sleepy"]
         for (var frame = 0; frame < expected.length; ++frame) {
             portrait.mood = expected[frame]

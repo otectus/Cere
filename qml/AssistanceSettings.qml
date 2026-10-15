@@ -57,7 +57,7 @@ ColumnLayout {
         visible:assistance.settings.profile==="broad"
         title:"Standing grants"
         description:"Allow enabled desktop categories in this project for one hour. Provider delegation asks first unless CLI bypass is enabled."
-        CText { text:App.session.cwd||"Select a session to grant access.";color:Theme.cyan;font.pixelSize:Theme.secondary }
+        CText { text:App.session.cwd||"Select a session to grant access.";color:Theme.accentText;font.pixelSize:Theme.secondary }
         GridLayout {
             Layout.fillWidth:true;columns:width>=340?2:1;columnSpacing:8;rowSpacing:8
             CButton { objectName:"grantHour";Layout.fillWidth:true;text:"Grant for 1 hour";enabled:!!App.session.cwd;onClicked:assistance.update({grants:(assistance.settings.grants||[]).filter(g=>g.cwd!==App.session.cwd).concat((assistance.settings.categories||[]).filter(c=>c!=="providers").map(c=>({category:c,cwd:App.session.cwd,expires:Date.now()+3600000})))}) }

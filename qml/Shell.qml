@@ -69,6 +69,7 @@ Rectangle {
     // The conversation's own error banner already says what failed there.
     readonly property bool toastVisible: App.toast.length>0&&!(page===0&&App.toast===(App.session.error||""))
     component HeaderPortrait: CerePortrait {
+        avatar: App.avatar
         Layout.preferredWidth: shell.wide ? 64 : 56
         Layout.preferredHeight: shell.wide ? 64 : 56
         settings: shell.settings
@@ -178,7 +179,7 @@ Rectangle {
                         text:"";help:modelData.label;quiet:true;primary:shell.page===modelData.page
                         leftPadding:6;rightPadding:6
                         Accessible.name:modelData.label;Accessible.role:Accessible.PageTab;Accessible.selected:shell.page===modelData.page
-                        contentItem:CIcon { name:parent.modelData.icon;color:parent.primary?Theme.cyan:Theme.text }
+                        contentItem:CIcon { name:parent.modelData.icon;color:parent.primary?Theme.accentText:Theme.text }
                         onClicked:shell.navigate(modelData.page)
                     }
                 }
@@ -274,7 +275,7 @@ Rectangle {
     CDialog {
         id: welcome; closePolicy: Popup.NoAutoClose
         visible: App.connected && settings.onboarding === true
-        CText { text:"Hey. I’m Cere.";color:Theme.cyan;font.pixelSize:Theme.page;font.bold:true }
+        CText { text:"Hey. I’m "+App.assistantName+".";color:Theme.accentText;font.pixelSize:Theme.page;font.bold:true }
         CText { text:"A little company. A place for your projects.\n\nClick me to talk, drag me somewhere comfortable, or right-click to change my size. Your sessions keep working when this panel closes." }
         CCheckBox { id:startup;text:"Keep me around after login" }
         CText { text:"Desktop AI tools start disabled. Enable the categories you want in Settings. Existing CLI permissions remain in effect.";color:Theme.muted;font.pixelSize:Theme.secondary }

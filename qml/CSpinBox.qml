@@ -16,11 +16,11 @@ SpinBox {
     down.indicator: Rectangle {
         x: 2; y: 2; width: 32; height: control.height-4; radius: Theme.radiusChip
         color: control.down.pressed ? Theme.selected : control.down.hovered ? Theme.raised : "transparent"
-        Text { anchors.centerIn: parent; text: "−"; color: control.down.enabled ? Theme.cyan : Theme.muted; font.family: Theme.font; font.pixelSize: Theme.glyph }
+        Text { anchors.centerIn: parent; text: "−"; color: control.down.enabled ? Theme.accentText : Theme.muted; font.family: Theme.font; font.pixelSize: Theme.glyph }
     }
     up.indicator: Rectangle {
         x: control.width-width-2; y: 2; width: 32; height: control.height-4; radius: Theme.radiusChip
         color: control.up.pressed ? Theme.selected : control.up.hovered ? Theme.raised : "transparent"
-        Text { anchors.centerIn: parent; text: "+"; color: control.up.enabled ? Theme.cyan : Theme.muted; font.family: Theme.font; font.pixelSize: Theme.glyph }
+        Text { anchors.centerIn: parent; text: "+"; color: control.up.enabled ? Theme.accentText : Theme.muted; font.family: Theme.font; font.pixelSize: Theme.glyph }
     }
 }

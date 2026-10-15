@@ -139,7 +139,7 @@ Popup {
         spacing:10
         RowLayout {
             Layout.fillWidth:true
-            CIcon { name:"search";Layout.preferredWidth:22;Layout.preferredHeight:22;color:Theme.cyan }
+            CIcon { name:"search";Layout.preferredWidth:22;Layout.preferredHeight:22;color:Theme.accentText }
             CField {
                 id:search;objectName:"commandPaletteSearch";Layout.fillWidth:true
                 placeholderText:"Search sessions, folders, settings, or desktop…";Accessible.name:"Command palette search"

@@ -23,7 +23,7 @@ CButton {
     Accessible.name:recording?"Finish voice input":transcribing?"Cancel transcription":"Voice input"
     help:transcription.state==="unavailable"?"Set up local voice input in Settings → Voice":recording?"Finish recording":transcribing?"Cancel transcription":"Record a voice message"
     enabled:available&&App.connected&&!!sessionId&&(requestId<0||transcribing)&&((transcription.state!=="recording"&&transcription.state!=="transcribing")||ownsRecording)
-    contentItem:CIcon { name:voiceInput.recording?"stop":voiceInput.transcribing?"close":"microphone";color:!voiceInput.enabled?Theme.muted:voiceInput.recording?Theme.cyan:Theme.text }
+    contentItem:CIcon { name:voiceInput.recording?"stop":voiceInput.transcribing?"close":"microphone";color:!voiceInput.enabled?Theme.muted:voiceInput.recording?Theme.accentText:Theme.text }
     function call(method,params){
         if(requestId>=0&&method!=="transcription.cancel")return
         error="";request=method;requestId=App.rpc(method,params||{})

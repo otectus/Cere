@@ -12,6 +12,8 @@ Popup {
     implicitHeight: Math.min(bodyColumn.implicitHeight+48+footerHeight, parent ? parent.height-32 : 720)
     modal: true; dim: true; focus: true; padding: 24; margins: 16
     bottomPadding:24+footerHeight
+    // A dialog whose body keeps its scroll position between openings can show its top again.
+    function scrollToTop() { viewport.ScrollBar.vertical.position = 0 }
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle {
         color: Theme.surface; radius: Theme.radiusDialog; border.color: Theme.borderStrong

@@ -64,7 +64,7 @@ ColumnLayout {
         CButton { text:"Cancel download";enabled:panel.status.state==="downloading";onClicked:panel.call("indextts.cancelDownload") }
     }
     ProgressBar { Layout.fillWidth:true;visible:panel.status.busy;value:panel.status.progress||0;indeterminate:panel.status.state==="loading" }
-    CText { text:panel.error||panel.status.message||"Not installed";color:panel.error||panel.status.code?Theme.danger:Theme.cyan;font.pixelSize:Theme.secondary }
+    CText { text:panel.error||panel.status.message||"Not installed";color:panel.error||panel.status.code?Theme.danger:Theme.accentText;font.pixelSize:Theme.secondary }
     CText { visible:!!panel.status.code;text:(panel.status.code||"")+" · "+(panel.status.recovery||"");color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout {
         CButton { text:"Refresh devices";enabled:!panel.status.busy;onClicked:panel.call("indextts.refresh") }

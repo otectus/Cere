@@ -1,5 +1,5 @@
 import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { mkdirSync, chmodSync, lstatSync, readlinkSync } from 'node:fs';
 export function paths() {
   const base = process.env.CERE_STATE_DIR;
@@ -9,6 +9,17 @@ export function paths() {
     runtime: process.env.CERE_RUNTIME_DIR ? resolve(process.env.CERE_RUNTIME_DIR)
       : join(process.env.XDG_RUNTIME_DIR || join(tmpdir(), `cere-${process.getuid?.()}`), 'cere'),
   };
+}
+/** Where the Codex and Claude Code installers put their launchers, then the standard system directories. */
+export function userBinDirectories() { return [join(homedir(), '.local/bin'), '/usr/local/bin', '/usr/bin']; }
+/**
+ * A desktop autostart or the user manager can start the broker without ~/.local/bin on PATH, where both
+ * CLI installers put their launchers. Provider processes inherit this PATH, like the service unit's.
+ */
+export function ensureUserPath(env: NodeJS.ProcessEnv = process.env) {
+  const entries = (env.PATH || '').split(delimiter).filter(Boolean), [local, ...system] = userBinDirectories();
+  env.PATH = [...(entries.includes(local) ? [] : [local]), ...entries, ...system.filter(directory => !entries.includes(directory))].join(delimiter);
+  return env.PATH;
 }
 function unsafe(path: string, reason: string): never { throw new Error(`Unsafe Cere directory (${reason}): ${path}`); }
 /**

@@ -34,11 +34,14 @@ cere memory erasure-status --job JOB_ID
 cere memory rebuild --backend graph --dry-run
 cere memory rebuild --backend graph
 cere memory rebuild --backend vector
+cere memory compact --output /private/path/before-compaction.sqlite
 ```
 
 Structured commands (`remember`, `correct`, `resolve-conflict`, `identity`, `policy-update`, and `forget`) accept `--file request.json` or `--stdin`. The session selects the authorized project scope. Corrections require a current slot revision and an exact quote from an existing observation. The inspector exposes the same operations. `health` shows canonical/projection revisions, queues, erasure epochs, and memory counts. Backend failures leave canonical writes available and display degraded coverage; suppression is immediate, but a purge cannot complete while its required backend is unavailable.
 
 Back up with `cere memory backup --output /private/path/memory.sqlite`. Preserve its manifest and the **current** `$XDG_STATE_HOME/cere/graph-memory/erasure-registry.jsonl` independently. The backup command covers graph memory, not the separate main `cere.sqlite` conversation/settings database.
+
+Compact with `cere memory compact --output /private/path/before-compaction.sqlite`. In one step it writes a backup and its manifest to that new path, then removes what erasure left behind: tombstoned assertion versions, artifacts and payloads with their support and lineage rows, finished projection jobs, and change records of erased targets that every projection has passed. Tombstones, erasure jobs, commits, the erasure registry and all live records stay, so erased identifiers remain rejected. Compaction also drops the link between an erased claim and its source. Afterwards, forgetting an entity removes its current claims and their sources, but no longer the sources of claims that were already erased. Memory requests wait while it runs; replies continue without recalled context.
 
 Restore with `cere memory restore --input /private/path/memory.sqlite --staging /private/empty-directory`. It refuses the serving directory and a nonempty staging directory. The current registry is applied before staged queries or projection rebuilds. It does not switch the live profile automatically. Stop the broker before an operator-controlled replacement, preserve private modes and both databases, and retain the newest registry. Do not overwrite a newer registry with the backup's older copy. Projection rebuilds are staged and catch up before becoming active.
 
@@ -49,6 +52,8 @@ Enable the desired collector and approved roots in the graph inspector. Fish han
 Hyprland uses the session's instance socket. To capture titles, turn on **Capture titles of approved applications** and list each application class (for example `kitty`) under the title applications in the inspector; titles of unlisted applications are discarded. Kitty requires an explicitly configured read-only Unix inspection endpoint via `CERE_KITTY_INSPECT_ENDPOINT`; `CERE_KITTY_INSTANCE_ID` supplies a stable configured instance label. Cere never enables broad Kitty remote control automatically. Live Kitty validation remains pending on this development machine. Do not interpret an unknown pane, CWD, or checkout mapping as verified context.
 
 ## Diagnostics and limits
+
+A forget preview, and the source lookup that comes before an erasure, stop after 30 seconds; retention expiry stops after 60 seconds. Neither stops inside a transaction, so an erasure never commits partially. A request that runs past its watchdog limit ends the memory worker. The limit is one minute beyond the request's budget, ten minutes for an erasure or expiry that may be committing, and none for backup, restore, rebuild or compaction. The open transaction rolls back, waiting requests fail, and a new worker starts after replaying any recorded erasure that never committed. `health` reports `maintenance_error` when a housekeeping tick stopped early, and `embedding_error` when background embedding failed; it tries again a minute later.
 
 Logs should contain opaque IDs and error codes, not raw rejected source text or credentials. Development tests use temporary isolated state and runtime directories. Generated databases, logs, packages, dependency bundles, and snapshots are ignored by Git. The erasure registry itself contains opaque identifiers and is runtime state, not a repository deliverable.
 

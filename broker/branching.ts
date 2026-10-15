@@ -7,7 +7,7 @@ export async function forkCodex(session:Session){
   const process=new RpcProcess(providerExecutable('codex'),['app-server'],session.cwd);process.on('fault',()=>{});
   try{
     await process.request('initialize',{clientInfo:{name:'cere-fork',version:'0.1.0'},capabilities:{experimentalApi:true}});process.write({method:'initialized',params:{}});
-    const result=await process.request('thread/fork',{threadId:session.nativeId,cwd:session.cwd,approvalPolicy:'on-request',approvalsReviewer:'user',sandbox:'read-only'});
+    const result=await process.request('thread/fork',{threadId:session.nativeId,excludeTurns:true,cwd:session.cwd,approvalPolicy:'on-request',approvalsReviewer:'user',sandbox:'read-only'});
     const nativeId=result?.thread?.id;if(typeof nativeId!=='string'||!nativeId||nativeId===session.nativeId)throw new Error('The provider did not confirm a new native session');return nativeId;
   }finally{await process.close();}
 }

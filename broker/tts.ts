@@ -13,6 +13,7 @@ import type { Emotion } from './indextts-config.ts';
 
 export const defaultVoice = 'en_US-amy-medium';
 export const ttsTestLine = "Hello, I'm Cere. Local voice is ready. Let's make a little trouble.";
+export function voiceTestLine(name: string) { return ttsTestLine.replace("I'm Cere.", () => `I'm ${name}.`); }
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export type Voice = { id: string; model: string; config: string; sampleRate: number; language: string; backend?: 'kokoro'; runtime?: string; nativeVoice?: string };
 type SpeechSettings = { voice: string; speechEnabled: boolean; quiet: boolean; speechProviders?:Partial<Record<Provider,boolean>>; speechRate?: number; speechPitch?: number; speechVolume?: number; ttsProvider?:'local'|'indextts'|'elevenlabs' };

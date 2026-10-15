@@ -27,12 +27,20 @@ import {
 } from "./contracts.ts";
 import { validateClaim, normalized, stableJSON, span } from "./ontology.ts";
 import { overlaps, remainder, eligibleTime } from "./temporal.ts";
-import { rrf, relationalRank, ftsQuery, estimateTokens } from "./ranking.ts";
+import { rrf, relationalRank, ftsQuery, lexicalFloor, informativeTerms, hasInformativeTerm } from "./ranking.ts";
+import { compactItem, itemTokens, packetOverheadTokens, itemEvidenceLimit } from "./packet.ts";
 
 type Row = Record<string, any>;
 const uuid = () => randomUUID(),
   now = () => Date.now() * 1000,
-  digest = (s: string) => createHash("sha256").update(s).digest("hex");
+  digest = (s: string) => createHash("sha256").update(s).digest("hex"),
+  /** A vector as packed little-endian 32-bit floats, and back. */
+  packVector = (vector: number[]) => {
+    const floats = Float32Array.from(vector);
+    return new Uint8Array(floats.buffer, floats.byteOffset, floats.byteLength);
+  },
+  unpackVector = (bytes: Uint8Array) =>
+    new Float32Array(bytes.byteOffset % 4 ? bytes.slice().buffer : bytes.buffer, bytes.byteOffset % 4 ? 0 : bytes.byteOffset, bytes.byteLength >> 2);
 export class Canonical {
   db: DatabaseSync;
   directory: string;
@@ -42,6 +50,11 @@ export class Canonical {
   batchTransaction = false;
   policy: Policy;
   events: Row[] = [];
+  /** Limits for the call being served, set by the worker: long walks stop at their next checkpoint. */
+  deadline = Infinity;
+  cancelled?: () => boolean;
+  /** Recent forget previews by selector; each stays valid until the next canonical commit. */
+  previews = new Map<string, { revision: number; preview: Row }>();
   constructor(directory: string) {
     this.directory = directory;
     mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -239,6 +252,15 @@ export class Canonical {
   }
   effect(id: string) {
     this.effects.add(id);
+  }
+  /**
+   * Stops a long walk when its caller cancelled it or its time budget is spent. Work inside a
+   * transaction always runs to its commit: an erasure that has begun is never left half applied.
+   */
+  checkpoint() {
+    if (this.db.isTransaction) return;
+    if (this.cancelled?.()) fail("CANCELLED", "Memory request was cancelled");
+    if (Date.now() > this.deadline) fail("DEADLINE_EXCEEDED", "Memory work ran past its time budget");
   }
   tx<T>(fn: (revision: number, time: number) => T): T {
     if(this.db.isTransaction&&this.batchTransaction)return fn(this.revision,this.one('SELECT transaction_us FROM commits WHERE revision=?',this.revision).transaction_us);
@@ -1121,6 +1143,7 @@ export class Canonical {
       if (operation !== "assert" && claim.epistemic_type === 'explicit_user')
         this.events.push({
           type: "invalidate",
+          cause: "correction",
           scope_id: p.scope_id,
           policy_epoch: this.epoch("policy"),
           erasure_epoch: this.epoch("erasure"),
@@ -1373,9 +1396,17 @@ export class Canonical {
       "deadline_ms",
       "intent",
       "backend_coverage",
+      "exclude_observation_ids",
+      "recent_session_id",
+      "relevance_floor",
+      "semantic_floor",
+      "max_items",
     ]);
     const scopes = this.effectiveScopes(p.scope_id);
     const lookupScopes = JSON.stringify(scopes);
+    // Automatic recall keeps only matches that clear a relevance floor; an explicit search lists
+    // weaker matches too, best first.
+    const floor = p.relevance_floor === true;
     const text = safeText(p.text || "memory", 1000),
       route = p.model_route || "local",
       k = this.knowledge(p),
@@ -1411,10 +1442,51 @@ export class Canonical {
           : null;
       },
       cache = new Map<string, Row>();
+    // The turn being answered is already in the conversation, and so is an earlier copy of its
+    // text, such as a message sent again: neither is recalled for it.
+    const excluded = new Set<string>(
+      (Array.isArray(p.exclude_observation_ids) ? p.exclude_observation_ids : [])
+        .filter((id: unknown): id is string => typeof id === "string")
+        .slice(0, 16),
+    );
+    const excludedDigests = new Set<string>();
+    for (const id of excluded) {
+      const body = this.one(
+        "SELECT p.body FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.id=? AND p.erased=0",
+        id,
+      ).body;
+      if (typeof body === "string") excludedDigests.add(digest(body));
+    }
+    // So is the conversation's own recent exchange: its last four user messages and everything
+    // recorded after the first of them. Older turns may have left the model's context.
+    if (typeof p.recent_session_id === "string" && p.recent_session_id) {
+      const since = this.one(
+        "SELECT MIN(captured_us) AS t FROM (SELECT o.captured_us FROM observations o JOIN sources s ON s.id=o.source_id WHERE s.scope_id IN (SELECT value FROM json_each(?)) AND s.kind='user' AND s.external_identity=? AND o.erased=0 ORDER BY o.captured_us DESC LIMIT 4)",
+        lookupScopes,
+        p.recent_session_id,
+      ).t;
+      if (typeof since === "number")
+        for (const o of this.all(
+          "SELECT o.id FROM observations o JOIN sources s ON s.id=o.source_id WHERE s.scope_id IN (SELECT value FROM json_each(?)) AND s.external_identity=? AND o.captured_us>=? AND o.erased=0 LIMIT 64",
+          lookupScopes,
+          p.recent_session_id,
+          since,
+        ))
+          excluded.add(o.id);
+    }
+    const repeated = (a: Row) =>
+      a.kind === "conversation" &&
+      (excluded.has(a.record_id) || a.evidence.some((e: Row) => excludedDigests.has(e.digest)));
+    // Automatic recall skips passages without any topic word, such as "Yup, proceed.": they resemble
+    // every workflow message and tell the model nothing.
+    const glue = (a: Row) =>
+      ["conversation", "episode", "topic"].includes(a.kind) &&
+      !hasInformativeTerm(String(a.text).replace(/^Assistant \(unverified\): /, ""));
     const add = (id: string) => {
       if (cache.has(id)) return cache.get(id)!;
       const a = eligible({ id });
-      if (a) cache.set(id, a);
+      if (!a || repeated(a) || (floor && glue(a))) return null;
+      cache.set(id, a);
       return a;
     };
     const exact: string[] = [],
@@ -1466,22 +1538,31 @@ export class Canonical {
       ))
         if (add(a.id)) exact.push(a.id);
     }
-    const fts = ftsQuery(text),
-      lexical: string[] = [];
+    const fts = ftsQuery(text, floor),
+      lexical: string[] = [],
+      // bm25() is negative; results come best first, so the first match below the floor ends the list.
+      lexicalMinimum = floor
+        ? lexicalFloor(this.one("SELECT COUNT(*) AS n FROM retrieval_documents").n)
+        : -Infinity;
     if (fts)
       for (const a of this.all(
-        "SELECT a.id FROM memory_fts f JOIN retrieval_documents d ON d.rowid=f.rowid JOIN artifacts a ON a.id=d.artifact_id WHERE memory_fts MATCH ? AND a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND a.known_from_revision<=? AND (a.known_to_revision IS NULL OR ?<a.known_to_revision) AND (?!='cloud' OR a.sensitivity!='local_only') ORDER BY bm25(memory_fts),a.id LIMIT 240",
+        "SELECT a.id,bm25(memory_fts) AS rank FROM memory_fts f JOIN retrieval_documents d ON d.rowid=f.rowid JOIN artifacts a ON a.id=d.artifact_id WHERE memory_fts MATCH ? AND a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND a.known_from_revision<=? AND (a.known_to_revision IS NULL OR ?<a.known_to_revision) AND (?!='cloud' OR a.sensitivity!='local_only') ORDER BY rank,a.id LIMIT 240",
         fts,
         lookupScopes,
         k,
         k,
         route,
       )) {
+        if (-a.rank < lexicalMinimum) break;
         if (add(a.id)) lexical.push(a.id);
         if (lexical.length >= 40 || performance.now() > deadline) break;
       }
+    // Similarity is relative to the embedding space: automatic recall takes the calibrated floor
+    // supplied with the query, and never less than the overlay's own 0.4.
+    const semanticMinimum = Math.max(0.4, typeof p.semantic_floor === "number" ? p.semantic_floor : 0);
     const semantic: string[] = [];
     for (const hit of (p.semantic_ids || []).slice(0, 120)) {
+      if (floor && typeof hit !== "string" && !(Number(hit.score) >= semanticMinimum)) continue;
       const a = add(typeof hit === "string" ? hit : hit.artifactId);
       if (
         a &&
@@ -1598,27 +1679,48 @@ export class Canonical {
       conflicts: Row[] = [],
       evidence: Row[] = [],
       results: Row[] = [];
-    const evidenceIds = new Set<string>();
-    let used = 0,
-      trimmed = 0;
+    const evidenceIds = new Set<string>(),
+      items: Row[] = [],
+      passages: string[] = [],
+      terms = informativeTerms(text);
+    // The budget is spent on the compact items models receive (packet.ts), delimiters included.
+    let used = packetOverheadTokens,
+      trimmed = 0,
+      duplicates = 0;
     for (const aid of ordered) {
       const a = cache.get(aid)!;
-      const witnesses = a.evidence.filter((e: Row) => !evidenceIds.has(e.id));
-      const needed = estimateTokens(
-        a.text +
-          JSON.stringify(
-            witnesses.map((e: Row) => ({
-              id: e.id,
-              witness: e.witness,
-              locator: e.locator,
-            })),
-          ),
-      );
-      if (used + needed > budget || evidence.length + witnesses.length > 24) {
+      const passage = a.assertion ? "" : String(a.text).replace(/^Assistant \(unverified\): /, "").trim();
+      // An archived episode or topic repeats its source turns, and a turn can be stored twice. A
+      // passage already shown, or one that mostly repeats a passage shown before it, is left out.
+      if (
+        passage &&
+        passages.some(
+          (shown) => shown.includes(passage) || (passage.includes(shown) && shown.length * 5 >= passage.length * 3),
+        )
+      ) {
+        duplicates++;
+        continue;
+      }
+      const cited = (a.evidence as Row[]).slice(0, itemEvidenceLimit),
+        witnesses = cited.filter((e) => !evidenceIds.has(e.id)),
+        learned = this.one("SELECT transaction_us FROM commits WHERE revision=?", a.content_revision).transaction_us,
+        quote =
+          a.assertion && cited[0] && !items.some((shown) => shown.text.includes(cited[0].witness))
+            ? cited[0].witness
+            : undefined,
+        compact = compactItem(a, learned, quote, terms),
+        needed = itemTokens(compact);
+      if (
+        used + needed > budget ||
+        evidence.length + witnesses.length > 24 ||
+        items.length >= Math.min(80, Number(p.max_items) || 80)
+      ) {
         trimmed++;
         continue;
       }
       used += needed;
+      items.push(compact);
+      if (passage) passages.push(passage);
       for (const e of witnesses) {
         evidenceIds.add(e.id);
         evidence.push({
@@ -1667,12 +1769,7 @@ export class Canonical {
         artifact_id: a.id,
         kind: a.kind === "assertion" ? "saved" : a.kind,
         text: a.text,
-        date: new Date(
-          this.one(
-            "SELECT transaction_us FROM commits WHERE revision=?",
-            a.content_revision,
-          ).transaction_us / 1000,
-        ).toISOString(),
+        date: new Date(learned / 1000).toISOString(),
         sessionId: a.session_id,
         score: ranks.find((r) => r[0] === aid)?.[1] || 1,
         revision: a.content_revision,
@@ -1703,7 +1800,13 @@ export class Canonical {
       ),
       evidence,
       coverage: [...new Set(coverage)],
-      budget: { estimated_tokens: used, limit: budget, trimmed_items: trimmed },
+      budget: {
+        estimated_tokens: items.length ? used : 0,
+        limit: budget,
+        trimmed_items: trimmed,
+        duplicate_items: duplicates,
+      },
+      items,
       metrics: {
         latency_ms: performance.now() - start,
         nodes: nodes.size,
@@ -1933,19 +2036,19 @@ export class Canonical {
   }
   descendants(ids: string[]) {
     const found = new Set(ids),
-      queue = [...ids];
-    while (queue.length) {
-      const id = queue.shift()!;
-      for (const row of this.all(
-        "SELECT derived_id FROM lineage WHERE input_id=? AND role NOT IN ('identity','supersedes') UNION SELECT version_id AS derived_id FROM assertion_versions WHERE subject_id=? OR object_entity_id=? UNION SELECT id AS derived_id FROM artifacts WHERE record_id=?",
-        id,
-        id,
-        id,
-        id,
-      )) {
-        if (!found.has(row.derived_id)) {
-          found.add(row.derived_id);
-          queue.push(row.derived_id);
+      queue = [...found];
+    // A tombstoned record was closed over when it was erased, and its descendants were erased with it.
+    // The walk never re-enters erased history, which can be far larger than the live graph.
+    const children = this.db.prepare(
+      "SELECT d.id FROM (SELECT derived_id AS id FROM lineage WHERE input_id=? AND role NOT IN ('identity','supersedes') UNION SELECT version_id FROM assertion_versions WHERE subject_id=? OR object_entity_id=? UNION SELECT id FROM artifacts WHERE record_id=?) d WHERE NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.target_id=d.id)",
+    );
+    for (let i = 0; i < queue.length; i++) {
+      this.checkpoint();
+      const id = queue[i];
+      for (const row of children.all(id, id, id, id) as Row[]) {
+        if (!found.has(row.id)) {
+          found.add(row.id);
+          queue.push(row.id);
         }
       }
       if (found.size > 200000)
@@ -2070,9 +2173,13 @@ export class Canonical {
   forgetPreview(p: Row) {
     strict(p, ["scope_id", "id", "from_us", "to_us"]);
     this.scope(p.scope_id);
+    // Erasing right after previewing (the usual order) reuses the preview while nothing has committed.
+    const key = JSON.stringify([p.scope_id, p.id ?? null, p.from_us ?? null, p.to_us ?? null]),
+      cached = this.previews.get(key);
+    if (cached && cached.revision === this.revision) return cached.preview;
     const { selector, roots } = this.resolveForget(p.scope_id, p);
     const ids = this.closure(roots, !!p.id);
-    return {
+    const preview = {
       scope_id: p.scope_id,
       selector,
       target_ids: ids,
@@ -2085,12 +2192,17 @@ export class Canonical {
         JSON.stringify([p.scope_id, selector, [...ids].sort(), this.revision]),
       ),
     };
+    this.previews.delete(key);
+    this.previews.set(key, { revision: this.revision, preview });
+    for (const old of this.previews.keys()) if (this.previews.size > 8) this.previews.delete(old);
+    return preview;
   }
   /** Descendant erasure closure with independent-survivor and orphan-entity handling. */
   closure(initial: string[], selected = true) {
     const roots = [...initial];
     // Conservative source occurrence removal: entire supporting source when safe span redaction is not established.
     for (const root of [...roots]) {
+      this.checkpoint();
       for (const e of this.support(root)) roots.push(e.observation_id);
       const ev = this.one(
         "SELECT observation_id FROM evidence WHERE id=?",
@@ -2101,15 +2213,18 @@ export class Canonical {
       if (art.record_id) roots.push(art.record_id);
     }
     if(selected) {
+      // Every claim naming a selected record loses its live supporting sources, including claims that
+      // were already erased: their sources can still name it. One query per root, however long the history.
+      const sources=this.db.prepare("SELECT DISTINCT e.observation_id FROM assertion_versions v JOIN assertion_evidence ae ON ae.version_id=v.version_id AND ae.relation='support' JOIN evidence e ON e.id=ae.evidence_id WHERE (v.version_id=? OR v.subject_id=? OR v.object_entity_id=?) AND e.erased=0");
       for(const root of [...roots]) {
-        const assertions=this.all('SELECT version_id FROM assertion_versions WHERE version_id=? OR subject_id=? OR object_entity_id=?',root,root,root);
-        for(const assertion of assertions)for(const support of this.support(assertion.version_id))roots.push(support.observation_id);
+        this.checkpoint();
+        for(const source of sources.all(root,root,root) as Row[])roots.push(source.observation_id);
       }
     }
-    let ids = this.descendants([...new Set(roots)]);
-    const erasedGroups=new Set(this.all('SELECT id,observation_id,independence_group FROM evidence').filter(e=>ids.includes(e.id)||ids.includes(e.observation_id)).map(e=>e.independence_group));
+    const ids = this.descendants([...new Set(roots)]), included = new Set(ids);
+    const erasedGroups=new Set(this.all('SELECT id,observation_id,independence_group FROM evidence').filter(e=>included.has(e.id)||included.has(e.observation_id)).map(e=>e.independence_group));
     const survivors=new Set<string>();
-    for(const target of ids){const v=this.one('SELECT * FROM assertion_versions WHERE version_id=? AND erased=0 AND known_to_revision IS NULL',target);if(v.version_id&&this.support(target).some(e=>!ids.includes(e.id)&&!ids.includes(e.observation_id)&&!erasedGroups.has(e.independence_group))){survivors.add(v.subject_id);if(v.object_entity_id)survivors.add(v.object_entity_id);}}
+    for(const target of ids){this.checkpoint();const v=this.one('SELECT * FROM assertion_versions WHERE version_id=? AND erased=0 AND known_to_revision IS NULL',target);if(v.version_id&&this.support(target).some(e=>!included.has(e.id)&&!included.has(e.observation_id)&&!erasedGroups.has(e.independence_group))){survivors.add(v.subject_id);if(v.object_entity_id)survivors.add(v.object_entity_id);}}
     const candidates = new Set<string>();
     for (const target of ids) {
       const v = this.one(
@@ -2120,12 +2235,16 @@ export class Canonical {
       if (v.object_entity_id) candidates.add(v.object_entity_id);
     }
     for (const entity of candidates) {
+      this.checkpoint();
       const other = this.all(
         "SELECT version_id FROM assertion_versions WHERE (subject_id=? OR object_entity_id=?) AND erased=0",
         entity,
         entity,
-      ).some((v) => !ids.includes(v.version_id));
-      if (!other && !survivors.has(entity)) ids.push(entity);
+      ).some((v) => !included.has(v.version_id));
+      if (!other && !survivors.has(entity)) {
+        ids.push(entity);
+        included.add(entity);
+      }
     }
     return [...new Set(ids)];
   }
@@ -2186,14 +2305,23 @@ export class Canonical {
         reason,
       });
       const targetSet=new Set<string>(intent.targets),rederive: {version:Row;evidence:Row[]}[]=[];
+      const expiredCandidate=intent.selector?.kind==='candidate_expiration'?String(intent.selector.id):'';
       const erasedGroups=new Set(this.all('SELECT id,observation_id,independence_group FROM evidence').filter(e=>targetSet.has(e.id)||targetSet.has(e.observation_id)).map(e=>e.independence_group));
       for(const target of intent.targets){
         const version=this.one('SELECT * FROM assertion_versions WHERE version_id=? AND erased=0 AND known_to_revision IS NULL',target);
         if(!version.version_id||targetSet.has(version.subject_id)||targetSet.has(version.object_entity_id))continue;
+        // An expired candidate is retired, never re-derived: a copy would inherit the lapsed expiry
+        // and be selected again by the next sweep, without end.
+        if(target===expiredCandidate||(version.expires_at_us!=null&&version.expires_at_us<=time))continue;
         const evidence=this.support(target).filter(e=>!targetSet.has(e.id)&&!targetSet.has(e.observation_id)&&!erasedGroups.has(e.independence_group));
         if(evidence.length)rederive.push({version,evidence});
       }
-      for (const target of intent.targets) {
+      // A target an earlier job erased is already scrubbed and projected as deleted; only records new
+      // to this erasure are touched, so a selector that reaches long erased history stays cheap.
+      const fresh = (intent.targets as string[]).filter(
+        (target) => !this.one("SELECT target_id FROM tombstones WHERE target_id=?", target).target_id,
+      );
+      for (const target of fresh) {
         this.run(
           "INSERT OR IGNORE INTO tombstones VALUES (?,?,?,?)",
           target,
@@ -2276,8 +2404,11 @@ export class Canonical {
       this.run("DELETE FROM read_tokens WHERE scope_id=?", intent.scope_id);
       // The epoch advance and the rescheduling of unrelated queued extraction commit together.
       this.reconcileExtraction();
+      // Retention expiry is routine housekeeping: readers refresh their packets, but live
+      // turns are not aborted for it. A forget or policy change still invalidates them.
       this.events.push({
         type: "invalidate",
+        cause: reason,
         scope_id: intent.scope_id,
         policy_epoch: this.epoch("policy"),
         erasure_epoch: this.epoch("erasure"),
@@ -2416,6 +2547,7 @@ export class Canonical {
       this.reconcileExtraction();
       this.events.push({
         type: "invalidate",
+        cause: "policy",
         policy_epoch: this.epoch("policy"),
         erasure_epoch: this.epoch("erasure"),
       });
@@ -2805,6 +2937,7 @@ export class Canonical {
     ];
     let archived=0,empty=0,failed=0;
     for(const episode of episodes){
+      this.checkpoint();
       try{const outcome:Row=this.consolidate({scope_id:episode.scope_id,id:episode.id});if(outcome.empty)empty++;else archived++;}
       catch(e:any){
         failed++;
@@ -3046,40 +3179,72 @@ export class Canonical {
     )
       fail("SOURCE_CHANGED", "Artifact changed before embedding publication");
     this.run(
-      "INSERT OR REPLACE INTO embedding_records VALUES (?,?,?,?,?,?)",
+      "INSERT OR REPLACE INTO embedding_records(artifact_id,content_revision,fingerprint,generation,point_id,vector,blob) VALUES (?,?,?,?,?,'[]',?)",
       p.artifact_id,
       p.content_revision,
       p.fingerprint,
       p.generation,
       p.point_id,
-      JSON.stringify(p.vector),
+      packVector(p.vector),
     );
     return { eligible: true };
   }
+  /**
+   * Semantic recall over every stored vector of one embedding space in the authorized scopes, best
+   * first, with no projection needed. Also returns this query's own similarity floor: the score
+   * that 95% of the memories searched fall below. On Cere's conversations that kept 78% of the
+   * answers to past questions while admitting about 5% of the store, where any fixed threshold
+   * traded worse; a model's scores differ too much between queries for one number to fit.
+   */
   embeddingSearch(p: Row) {
-    const scopes = JSON.stringify(this.effectiveScopes(p.scope_id));
-    const scores: Row[] = [];
+    const scopes = JSON.stringify(this.effectiveScopes(p.scope_id)),
+      query = Float32Array.from(p.vector),
+      best = new Map<string, Row>();
     for (const row of this.db
       .prepare(
-        "SELECT e.*,a.source_generation FROM embedding_records e JOIN artifacts a ON a.id=e.artifact_id WHERE a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND e.content_revision=a.content_revision AND e.fingerprint=? ORDER BY e.content_revision DESC LIMIT 256",
+        "SELECT e.artifact_id,e.content_revision,e.vector,e.blob,a.source_generation FROM embedding_records e JOIN artifacts a ON a.id=e.artifact_id WHERE e.fingerprint=? AND a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND e.content_revision=a.content_revision ORDER BY e.content_revision DESC LIMIT 100000",
       )
-      .iterate(scopes, p.fingerprint) as Iterable<Row>) {
-      const v = JSON.parse(row.vector);
-      if (v.length !== p.vector.length) continue;
-      scores.push({
+      .iterate(p.fingerprint, scopes) as Iterable<Row>) {
+      if (best.has(row.artifact_id)) continue;
+      const vector: ArrayLike<number> = row.blob ? unpackVector(row.blob) : JSON.parse(row.vector);
+      if (vector.length !== query.length) continue;
+      let score = 0;
+      for (let i = 0; i < query.length; i++) score += vector[i] * query[i];
+      best.set(row.artifact_id, {
         artifactId: row.artifact_id,
         contentRevision: row.content_revision,
         sourceGeneration: row.source_generation,
-        score: v.reduce(
-          (s: number, n: number, i: number) => s + n * p.vector[i],
-          0,
-        ),
+        score,
       });
     }
-    return scores
-      .sort((a, b) => b.score - a.score)
-      .filter((v) => v.score >= 0.4)
-      .slice(0, 40);
+    const ranked = [...best.values()].sort((a, b) => b.score - a.score);
+    return {
+      hits: ranked.filter((hit) => hit.score >= 0.4).slice(0, 40),
+      // Below 40 memories a percentile says little; the 0.4 overlay floor applies alone.
+      floor: ranked.length >= 40 ? ranked[Math.floor(ranked.length * 0.05)].score : null,
+      searched: ranked.length,
+    };
+  }
+  /** Stored memories served by one Ollama server that have no vector in its current space, newest first. */
+  vectorBacklog(p: Row) {
+    return this.all(
+      "SELECT a.id,a.content_revision,a.erasure_epoch,p.body AS text FROM artifacts a JOIN payloads p ON p.id=a.payload_id JOIN scopes s ON s.id=a.scope_id WHERE a.invalidated=0 AND p.erased=0 AND a.known_to_revision IS NULL AND CASE WHEN json_valid(s.external_key) THEN json_extract(s.external_key,'$[0]') END=? AND NOT EXISTS (SELECT 1 FROM embedding_records e WHERE e.artifact_id=a.id AND e.content_revision=a.content_revision AND e.fingerprint=?) ORDER BY a.content_revision DESC LIMIT ?",
+      p.host,
+      p.fingerprint,
+      Math.max(1, Math.min(64, Number(p.limit) || 32)),
+    );
+  }
+  /** Repacks vectors stored as JSON text by earlier versions, a bounded batch per call. */
+  vectorUpgrade() {
+    const rows = this.all(
+      "SELECT rowid AS id,vector FROM embedding_records WHERE blob IS NULL AND vector!='[]' LIMIT 256",
+    );
+    if (rows.length)
+      this.queue(() => {
+        for (const row of rows)
+          this.run("UPDATE embedding_records SET blob=?,vector='[]' WHERE rowid=?", packVector(JSON.parse(row.vector)), row.id);
+      });
+    return { upgraded: rows.length };
   }
   pendingArtifacts(p: Row) {
     return this.all(
@@ -3167,6 +3332,7 @@ export class Canonical {
     );
     let count = 0;
     for (const row of expired) {
+      this.checkpoint();
       const retained=this.policy.retain_evidence?this.all("SELECT DISTINCT e.id FROM evidence e JOIN assertion_evidence ae ON ae.evidence_id=e.id JOIN assertion_versions a ON a.version_id=ae.version_id WHERE e.observation_id=? AND e.erased=0 AND a.erased=0 AND a.status='accepted'",row.id).map(e=>e.id):[];
       if(retained.length){
         // The exact supporting quotations have their own evidence retention.
@@ -3181,10 +3347,70 @@ export class Canonical {
       count++;
     }
     for(const candidate of this.all("SELECT version_id,scope_id FROM assertion_versions WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<? ORDER BY expires_at_us,version_id LIMIT 50",now())){
+      this.checkpoint();
       const intent={id:uuid(),scope_id:candidate.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'candidate_expiration',id:candidate.version_id},targets:this.descendants([candidate.version_id])};
       this.appendRegistry(intent);this.suppress(intent,'expiration');count++;
     }
     return { expired: count };
+  }
+  /**
+   * Removes what erasure leaves behind once nothing can need it: erased assertion versions, invalidated
+   * artifacts and erased payloads that an erasure job tombstoned, with their support and lineage rows;
+   * finished projection jobs; and change records of tombstoned targets that every projection has passed.
+   * Tombstones, erasure jobs, commits, the erasure registry and every live record stay, so erased
+   * identifiers are still rejected and registry replay is unchanged. The backup is taken in the same
+   * worker call, so nothing commits between it and compaction; restoring it is the only undo.
+   */
+  async compact(p: Row) {
+    strict(p, ["output"]);
+    const backup = await this.backup({ output: p.output });
+    const tables = ["assertion_versions", "assertion_evidence", "artifacts", "payloads", "lineage", "outbox", "mutation_effects", "tombstones", "erasure_jobs"];
+    const counts = () => Object.fromEntries(tables.map((table) => [table, this.one(`SELECT COUNT(*) AS n FROM ${table}`).n as number]));
+    const file = join(this.directory, "memory.sqlite"), before = counts(), bytesBefore = statSync(file).size;
+    this.queue(() => {
+      this.db.exec("CREATE TEMP TABLE compact_gone(id TEXT PRIMARY KEY) WITHOUT ROWID;CREATE TEMP TABLE compact_kept(id TEXT PRIMARY KEY) WITHOUT ROWID;");
+      try {
+        this.run("INSERT OR IGNORE INTO compact_gone SELECT v.version_id FROM assertion_versions v JOIN tombstones t ON t.target_id=v.version_id WHERE v.erased=1");
+        this.run("INSERT OR IGNORE INTO compact_gone SELECT a.id FROM artifacts a JOIN tombstones t ON t.target_id=a.id WHERE a.invalidated=1 AND NOT EXISTS (SELECT 1 FROM note_revisions n WHERE n.artifact_id=a.id)");
+        // A payload that any kept row still names stays.
+        this.run("INSERT OR IGNORE INTO compact_kept SELECT payload_id FROM observations WHERE payload_id IS NOT NULL");
+        this.run("INSERT OR IGNORE INTO compact_kept SELECT payload_id FROM events WHERE payload_id IS NOT NULL");
+        this.run("INSERT OR IGNORE INTO compact_kept SELECT payload_id FROM artifacts WHERE id NOT IN (SELECT id FROM compact_gone)");
+        this.run("INSERT OR IGNORE INTO compact_kept SELECT output_payload_id FROM extraction_runs WHERE output_payload_id IS NOT NULL");
+        this.run("INSERT OR IGNORE INTO compact_kept SELECT delta_payload_id FROM commits WHERE delta_payload_id IS NOT NULL");
+        this.run("INSERT OR IGNORE INTO compact_gone SELECT p.id FROM payloads p JOIN tombstones t ON t.target_id=p.id WHERE p.erased=1 AND p.id NOT IN (SELECT id FROM compact_kept)");
+        // Foreign keys stay enforced: a delete that would orphan a kept row fails and rolls everything back.
+        for (const sql of [
+          "DELETE FROM assertion_evidence WHERE version_id IN (SELECT id FROM compact_gone)",
+          "DELETE FROM embedding_records WHERE artifact_id IN (SELECT id FROM compact_gone)",
+          "DELETE FROM retrieval_documents WHERE artifact_id IN (SELECT id FROM compact_gone)",
+          "DELETE FROM assertion_versions WHERE version_id IN (SELECT id FROM compact_gone)",
+          "DELETE FROM artifacts WHERE id IN (SELECT id FROM compact_gone)",
+          "DELETE FROM payloads WHERE id IN (SELECT id FROM compact_gone)",
+          "DELETE FROM lineage WHERE derived_id IN (SELECT id FROM compact_gone) OR input_id IN (SELECT id FROM compact_gone)",
+          "DELETE FROM outbox WHERE state='done'",
+          // Projections read change records only for revisions they have not passed, and packet
+          // validation rejects a tombstoned identifier before it reads them.
+          "DELETE FROM mutation_effects WHERE target_id IN (SELECT target_id FROM tombstones) AND revision<=(SELECT COALESCE(MIN(watermark),0) FROM projection_state WHERE active IN (1,2))",
+        ])
+          this.run(sql);
+      } finally {
+        this.db.exec("DROP TABLE IF EXISTS temp.compact_gone;DROP TABLE IF EXISTS temp.compact_kept;");
+      }
+    });
+    this.previews.clear();
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    this.db.exec("VACUUM");
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    const after = counts();
+    return {
+      backup: backup.output,
+      before,
+      after,
+      removed: Object.fromEntries(tables.map((table) => [table, before[table] - after[table]])),
+      bytes_before: bytesBefore,
+      bytes_after: statSync(file).size,
+    };
   }
   async backup(p: Row) {
     strict(p, ["output"]);
@@ -3415,6 +3641,10 @@ export class Canonical {
       }
       case "embedding_search":
         return this.embeddingSearch(p);
+      case "vector_backlog":
+        return this.vectorBacklog(p);
+      case "vector_upgrade":
+        return this.vectorUpgrade();
       case "extraction_next":
         return this.extractionNext();
       case "extraction_result":
@@ -3437,6 +3667,8 @@ export class Canonical {
         return this.restore(p);
       case "expire":
         return this.expire();
+      case "compact":
+        return this.compact(p);
       case "import_legacy": {
         let count = 0;
         for (const row of p.rows || []) {

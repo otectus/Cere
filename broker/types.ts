@@ -1,7 +1,7 @@
 import { defaultExtractionModel } from './graph-memory/models.ts';
 import { providerIds } from './provider-catalog.ts';
 import { defaultElevenConfig, type ElevenConfig } from './elevenlabs.ts';
-import { defaultPersonality } from './personality.ts';
+import { defaultPersonality, defaultAssistantName, type AvatarId } from './personality.ts';
 import type { RemoteExecution } from './execution.ts';
 import { defaultIndexConfig, type IndexConfig } from './indextts-config.ts';
 
@@ -15,7 +15,7 @@ export type ModelOption = {
   maxOutputTokens?: number;
 };
 export type Status = 'idle' | 'starting' | 'working' | 'waiting' | 'stopping' | 'error' | 'interrupted' | 'disconnected';
-export type SessionActivity = 'thinking' | 'speaking' | 'working' | 'delegating' | 'waitingForAgents' | 'compacting' | 'planning';
+export type SessionActivity = 'recalling' | 'thinking' | 'speaking' | 'working' | 'delegating' | 'waitingForAgents' | 'compacting' | 'planning';
 export type AgentActivity = {
   id: string; name: string; task?: string;
   status: 'starting' | 'running' | 'waiting' | 'completed' | 'failed' | 'interrupted' | 'closed';
@@ -47,6 +47,8 @@ export type DraftView = {
 export type Attachment = { id: string; path: string; name: string; mime: string; kind: 'image' | 'text'; size: number; sha256: string };
 export type SessionFolder = { id: string; name: string; revision: string; created: number; updated: number };
 export type ProjectDefaults = { provider: Provider; model: string; effort: string; tools: boolean; trusted: boolean; temporary: boolean };
+/** What "Save as my defaults" keeps for new general conversations. Trust is confirmed for each conversation's folder instead. */
+export type ConversationDefaults = Omit<ProjectDefaults, 'trusted'>;
 export type Project = { cwd: string; name: string; revision: string; updated: number; favorite: boolean; defaults: ProjectDefaults };
 export type Source = { title: string; url: string };
 export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string };
@@ -61,9 +63,13 @@ export type SearchProvider = 'auto' | 'duckduckgo' | 'brave' | 'mojeek' | 'searx
 export type Settings = {
   telemetry: import('./telemetry/protocol.ts').TelemetryConfig;
   personality: string;
+  assistantName: string;
+  avatar: AvatarId;
   ttsProvider:'local'|'indextts'|'elevenlabs'; indextts:IndexConfig; elevenlabs:ElevenConfig;
   voice: string; speechEnabled: boolean; speechProviders:Record<Provider,boolean>; speechRate:number; speechPitch:number; speechVolume:number; speechBrief:boolean; transcription:{executable:string;model:string};
   ollama: { host: string; model: string };
+  /** The new-conversation dialog's starting choices for general conversations; null keeps its stock choices. Projects keep their own defaults. */
+  conversationDefaults: ConversationDefaults | null;
   webSearch: { enabled: boolean; provider: SearchProvider; searxngUrl: string };
   memory: { enabled: boolean; model: string; extractionModel?: string; allowCloudMemory?: boolean; allowCloudExtraction?: boolean };
   desktopProfile: 'normal'|'focus'|'gaming'|'presentation'; interfaceScale:number; homePositions:Record<string,{x:number;y:number}>;
@@ -117,9 +123,11 @@ export interface Adapter {
 export const defaultSettings: Settings = {
   telemetry: { enabled:false, roots:[], ignores:[], commands:false, output:false },
   personality: defaultPersonality,
+  assistantName: defaultAssistantName, avatar: 'cere',
   ttsProvider:'local', indextts:structuredClone(defaultIndexConfig), elevenlabs:structuredClone(defaultElevenConfig),
   voice: 'en_US-amy-medium', speechEnabled: true, speechProviders:Object.fromEntries(providerIds.map(id=>[id,true])) as Record<Provider,boolean>, speechRate:1, speechPitch:0, speechVolume:1, speechBrief:false, transcription:{executable:'',model:''},
   ollama: { host: 'http://127.0.0.1:11434', model: '' },
+  conversationDefaults: null,
   webSearch: { enabled: false, provider: 'auto', searxngUrl: '' },
   memory: { enabled: false, model: 'nomic-embed-text', extractionModel: defaultExtractionModel },
   desktopProfile: 'normal', interfaceScale:1, homePositions:{},

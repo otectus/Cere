@@ -23,6 +23,7 @@ test('activity wins over conversational mood, greeting, hover and listening', ()
   assert.equal(resolve({ session: { status: 'working', activity: 'thinking' }, mood: 'cheeky', greeting: true, hovered: true, listening: true }).expression, 'thinking');
   assert.equal(resolve({ session: { status: 'working', activity: 'working' }, mood: 'tender' }).expression, 'focused');
   assert.equal(resolve({ session: { status: 'starting', activity: 'planning' }, mood: 'happy' }).expression, 'thinking');
+  assert.equal(resolve({ session: { status: 'starting', activity: 'recalling' }, mood: 'happy' }).expression, 'thinking');
   assert.equal(resolve({ session: { status: 'stopping' }, mood: 'happy' }).expression, 'focused');
 });
 

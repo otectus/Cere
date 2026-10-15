@@ -15,7 +15,7 @@ CButton {
         Rectangle {
             Layout.preferredWidth: 32; Layout.preferredHeight: 32; radius: Theme.radiusControl
             color: control.primary ? Theme.selected : Theme.raised
-            Text { anchors.centerIn: parent; text: control.mark; color: Theme.cyan; font.family: Theme.font; font.pixelSize: Theme.message }
+            Text { anchors.centerIn: parent; text: control.mark; color: Theme.accentText; font.family: Theme.font; font.pixelSize: Theme.message }
         }
         ColumnLayout {
             Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 4
