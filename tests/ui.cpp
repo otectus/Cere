@@ -2567,7 +2567,9 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE(app->session().value("behavior").toMap().value("profileId").toString(),styleId);
         QTRY_VERIFY(item("behaviorWithheld")&&item("behaviorWithheld")->property("text").toString().contains("desktop actions"));
         QVERIFY(item("behaviorSummary")->property("text").toString().contains("Table-free reviewer"));
-        QTRY_COMPARE(item("nextPosture")->property("count").toInt(),6);
+        // "No posture" plus the six built-in postures; RC-02 added Without memory last.
+        QTRY_COMPARE(item("nextPosture")->property("count").toInt(),7);
+        QCOMPARE(item("nextPosture")->property("model").toList().last().toMap().value("label").toString(),QString("Without memory"));
         item("nextPosture")->setProperty("currentIndex",2);click("nextPostureApply");
         QTRY_VERIFY(item("turnPostureChip"));QVERIFY(item("turnPostureChip")->property("text").toString().contains("Review"));
         capture("conversation-style-posture");

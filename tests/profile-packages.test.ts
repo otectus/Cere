@@ -18,7 +18,7 @@ async function broker(t: any, realProviders = false) {
 
 test('A06 a package carries styles and recipes only, previews before importing, and updates by stable id', async t => {
   const source = await broker(t), target = await broker(t);
-  const style = await source.core.rpc('presets.save', { label: 'Reviewer', text: 'Review carefully.', traits: { directness: 2 }, ceiling: { desktop: false }, constraints: ['no-emoji'], expectedRevision: '0' });
+  const style = await source.core.rpc('presets.save', { label: 'Reviewer', text: 'Review carefully.', traits: { directness: 2 }, ceiling: { desktop: false, recall: false }, constraints: ['no-emoji'], expectedRevision: '0' });
   await source.core.rpc('presets.checkpoint', { id: style.id, expectedItemRevision: '1' });
   const recipe = await source.core.workflows.dispatch('recipes.save', { name: 'Audit docs', description: 'Check docs', inputs: [], instructions: 'Audit the docs.', expectedOutput: 'Findings', permissions: { nativeAccess: ['Read files'], description: 'Reads only.' }, runtime: { maxSeconds: 120, maxTurns: 1 } }) as any;
   await source.core.updateSettings({ bypassCliPermissions: true, categories: ['timers'] });
@@ -43,7 +43,7 @@ test('A06 a package carries styles and recipes only, previews before importing, 
   assert.equal(second.digest, preview.digest);
   await target.core.rpc('packages.import', { token: second.token, digest: second.digest });
   const imported = target.core.presets.catalog().items[0];
-  assert.deepEqual([imported.id, imported.label, imported.ceiling, imported.constraints], [style.id, 'Reviewer', { desktop: false }, ['no-emoji']]);
+  assert.deepEqual([imported.id, imported.label, imported.ceiling, imported.constraints], [style.id, 'Reviewer', { desktop: false, recall: false }, ['no-emoji']]);
   assert.equal(target.core.settings.bypassCliPermissions, false, 'importing changes no permission');
   assert.deepEqual(target.core.settings.categories, []);
   // The same package again is unchanged; an edited one updates in place and a recipe gains a version.

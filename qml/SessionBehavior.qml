@@ -49,7 +49,7 @@ CDialog {
     CComboBox { id:styleCombo;objectName:"sessionStyle";Layout.fillWidth:true;model:behavior.styleOptions;textRole:"label";Accessible.name:"Style for this conversation" }
     CText { text:"Pinned posture";font.weight:Font.DemiBold }
     CComboBox { id:postureCombo;objectName:"sessionPosture";Layout.fillWidth:true;model:behavior.postureOptions;textRole:"label";Accessible.name:"Pinned posture" }
-    CText { text:"A pinned posture stays until you change it. Postures can withhold tools; they never add any.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText { text:"A pinned posture stays until you change it. Postures can withhold tools; they never add any. Without memory stops recall for its turns, but what you say is still remembered under your memory settings; a temporary conversation leaves nothing behind.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CText { text:"Standing instructions for this conversation";font.weight:Font.DemiBold }
     CTextArea { id:instructions;objectName:"sessionInstructions";Layout.fillWidth:true;Layout.preferredHeight:80;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;placeholderText:"Added after the style’s own instructions";Accessible.name:"Standing instructions for this conversation" }
     CButton {

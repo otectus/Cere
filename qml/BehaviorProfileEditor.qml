@@ -22,10 +22,10 @@ CDialog {
     property var traits:({})
     signal profileSaved()
     function load(value){profile=value||({});traits=Object.assign({},profile.traits||{});instructions.text=profile.instructions||"";posture.checked=profile.posture===true
-        desktop.checked=profile.ceiling?.desktop===false;delegation.checked=profile.ceiling?.delegation===false;web.checked=profile.ceiling?.web===false;memory.checked=profile.ceiling?.memory===false;extensions.checked=profile.ceiling?.extensions===false
+        desktop.checked=profile.ceiling?.desktop===false;delegation.checked=profile.ceiling?.delegation===false;web.checked=profile.ceiling?.web===false;memory.checked=profile.ceiling?.memory===false;recall.checked=profile.ceiling?.recall===false;extensions.checked=profile.ceiling?.extensions===false
         const checks=profile.constraints||[];noEmoji.checked=checks.indexOf("no-emoji")>=0;noDash.checked=checks.indexOf("no-em-dash")>=0;noTable.checked=checks.indexOf("no-markdown-table")>=0
         error="";feedback="";previewText=""}
-    function ceiling(){const c={};if(desktop.checked)c.desktop=false;if(delegation.checked)c.delegation=false;if(web.checked)c.web=false;if(memory.checked)c.memory=false;if(extensions.checked)c.extensions=false;return c}
+    function ceiling(){const c={};if(desktop.checked)c.desktop=false;if(delegation.checked)c.delegation=false;if(web.checked)c.web=false;if(memory.checked)c.memory=false;if(recall.checked)c.recall=false;if(extensions.checked)c.extensions=false;return c}
     function constraints(){return [noEmoji.checked?"no-emoji":"",noDash.checked?"no-em-dash":"",noTable.checked?"no-markdown-table":""].filter(c=>c)}
     function call(method,params){error="";feedback="";action=method;request=App.rpc(method,params)}
     function save(){call("presets.save",{id:profile.id,label:profile.label,text:profile.text,expectedItemRevision:profile.revision,traits:traits,instructions:instructions.text,ceiling:ceiling(),posture:posture.checked,constraints:constraints()})}
@@ -52,6 +52,7 @@ CDialog {
         CCheckBox { id:delegation;objectName:"withholdDelegation";text:"Delegation" }
         CCheckBox { id:web;objectName:"withholdWeb";text:"Web search" }
         CCheckBox { id:memory;objectName:"withholdMemory";text:"Memory and notes" }
+        CCheckBox { id:recall;objectName:"withholdRecall";text:"Automatic memory recall (new messages are still remembered under your memory settings)" }
         CCheckBox { id:extensions;objectName:"withholdExtensions";text:"Tool servers and custom tools" }
     }
     CText { text:"Formatting checks · a reply that misses one gets a note; its text is never changed";font.weight:Font.DemiBold;wrapMode:Text.Wrap;Layout.fillWidth:true }

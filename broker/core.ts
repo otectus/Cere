@@ -193,7 +193,7 @@ export class Core extends EventEmitter {
         return this.callTool(s.id, name, args, signal).then(value => { end(); return value; }, error => { end(signal.aborted ? 'stopped' : 'failed'); throw error; });
       },
       prepare: (text, signal, budget, route) => {
-        if (this.settingsFor(s.id).memory.enabled && this.memory.active()) { const end = this.spans.start('memory'); return this.recalling(s.id, () => this.memory.context(s, text, signal, budget, route, this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, signal))).then(value => { end(); return value; }, error => { end(signal.aborted ? 'stopped' : 'failed'); throw error; }); }
+        if (this.settingsFor(s.id).memory.enabled && this.memory.active() && !this.withheld(s.id, 'recall')) { const end = this.spans.start('memory'); return this.recalling(s.id, () => this.memory.context(s, text, signal, budget, route, this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, signal))).then(value => { end(); return value; }, error => { end(signal.aborted ? 'stopped' : 'failed'); throw error; }); }
         this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: this.memoryOffReason(s.id), budgetTokens: budget || 0, route: route || 'unknown' });
         return Promise.resolve('');
       },
@@ -744,7 +744,9 @@ export class Core extends EventEmitter {
         const controller = new AbortController();
         const epoch = this.memory.controller.signal;
         this.nativeMemoryTurns.set(s.id, { text:userText, turnId:s.turnId, controller, epoch });
-        const context = await this.recalling(s.id, () => this.memory.context(s, userText, controller.signal, 4000, 'cloud', this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, controller.signal)));
+        // A style that withholds recall supplies no memory text; capture still follows the memory settings.
+        const context = this.withheld(s.id, 'recall') ? (this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: 'style_withheld', route: 'cloud' }), '')
+          : await this.recalling(s.id, () => this.memory.context(s, userText, controller.signal, 4000, 'cloud', this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, controller.signal)));
         controller.signal.throwIfAborted();
         if (context && !epoch.aborted) {
           memorySignal = AbortSignal.any([controller.signal, epoch]);
@@ -1244,7 +1246,8 @@ export class Core extends EventEmitter {
     if (s.temporary) return 'temporary_conversation';
     if (!this.settings.memory.enabled) return 'setting_off';
     if (this.settings.paused) return 'paused';
-    return s.remote ? 'remote_scope' : 'unavailable';
+    if (s.remote) return 'remote_scope';
+    return this.withheld(id, 'recall') ? 'style_withheld' : 'unavailable';
   }
   /**
    * M07 notes tools: offered when a vault is enabled, never to temporary conversations, and to a

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import vm from 'node:vm';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -20,7 +21,7 @@ test('Q04 every outcome and reason the broker can record has plain-language text
   const pairs = new Set<string>();
   for (const match of memorySource.matchAll(/set\('([a-z_]+)',\s*'([a-z_]+)'\)/g)) pairs.add(`${match[1]}/${match[2]}`);
   for (const match of memorySource.matchAll(/outcome:\s*'([a-z_]+)',\s*reason:\s*'([a-z_]+)'/g)) pairs.add(`${match[1]}/${match[2]}`);
-  for (const code of ['temporary_conversation', 'setting_off', 'paused', 'remote_scope', 'unavailable']) pairs.add('disabled/' + code);
+  for (const code of ['temporary_conversation', 'setting_off', 'paused', 'remote_scope', 'unavailable', 'style_withheld']) pairs.add('disabled/' + code);
   pairs.add('timed_out/recall_deadline'); pairs.add('degraded/memory_changed'); pairs.add('degraded/unavailable');
   for (const pair of pairs) if (!pair.startsWith('included/')) assert.ok(reasons.has(pair), `${pair} has no text`);
   for (const code of ['semantic_degraded', 'graph_degraded', 'deadline_partial', 'token_budget_trimmed', 'cloud_memory_denied']) assert.ok(library.knownCoverage().includes(code), code);
@@ -119,4 +120,39 @@ test('M04 the drawer describes each recorded plan layer, keeps unknowns explicit
   assert.equal(rows[3].status, 'withheld: the model routes to the cloud');
   assert.match(library.planSummary(plan), /^ollama · qwen · ≈2,420 tokens of 8,192 in the window · 2 tool rounds/);
   assert.equal(library.planRows(null).length, 0);
+});
+
+test('RC-02 a one-turn Without memory posture sends no recalled memory and says why; the next turn recalls', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'cere-recall-withheld-')), chats: any[] = [];
+  const server = createServer(async (req, res) => {
+    let text = ''; for await (const chunk of req) text += chunk;
+    if (req.url === '/api/tags') res.end(JSON.stringify({ models: [{ model: 'chat', name: 'chat', capabilities: ['completion', 'tools'], digest: 'a'.repeat(64) }] }));
+    else if (req.url === '/api/show') res.end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'general.architecture': 'x', 'x.context_length': 32768 } }));
+    else if (req.url === '/api/chat') { chats.push(JSON.parse(text)); res.end(JSON.stringify({ message: { role: 'assistant', content: 'Noted.' }, done: true }) + '\n'); }
+    else { res.statusCode = 404; res.end('{}'); }
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const store = new Store(dir); store.set('settings', { ollama: { host: `http://127.0.0.1:${(server.address() as any).port}`, model: 'chat' } });
+  const core = new Core(store);
+  t.mock.method(core.memory.service, 'vectorRepo', async () => { throw new Error('No external vector projection in this fixture'); });
+  t.after(async () => { await core.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(dir, { recursive: true, force: true }); });
+  await core.refreshProviderModels('ollama');
+  await core.updateSettings({ memory: { enabled: true } });
+  const session = await core.create({ provider: 'ollama', model: 'chat', cwd: dir });
+  await core.memory.save(core.store.session(session.id), 'The orchid launch moved to Friday.');
+  const send = async (text: string, posture?: string) => {
+    await core.rpc('session.send', { id: session.id, text, ...(posture ? { posture } : {}) });
+    for (let index = 0; index < 400 && core.store.session(session.id).status !== 'idle'; index++) await new Promise(resolve => setTimeout(resolve, 5));
+    return JSON.stringify(chats.at(-1).messages);
+  };
+  const withheld = await send('When is the orchid launch?', 'posture:no-memory');
+  assert.doesNotMatch(withheld, /<cere_memory_data>|moved to Friday/);
+  assert.match(withheld, /Current posture: Without memory, for this turn only/);
+  const [first] = core.memory.outcomes(session.id);
+  assert.deepEqual([first.outcome, first.reason], ['disabled', 'style_withheld']);
+  assert.match(library.describe(first).title + library.describe(first).detail, /withholds automatic memory recall/);
+  const next = await send('Remind me when the orchid launch is.');
+  assert.match(next, /<cere_memory_data>/); assert.match(next, /moved to Friday/);
+  assert.doesNotMatch(next, /Without memory|withholds automatic memory recall/);
+  assert.equal(core.memory.outcomes(session.id)[0].outcome, 'included');
 });

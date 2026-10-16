@@ -147,3 +147,39 @@ test('M02 checkpoints are immutable, restoring makes a new revision, and checked
   core.store.set('behaviorPresets', { schema: 3, revision: '1', items: [] });
   await assert.rejects(core.rpc('presets.list', {}), /newer version of Cere/);
 });
+
+test('RC-02 a recall limit narrows like any other, renders only when set, and can never turn recall on', () => {
+  assert.deepEqual(validCeiling({ recall: false, memory: true }), { recall: false });
+  assert.deepEqual(validCeiling({ recall: true }), {}, 'a true limit could only grant, so it is dropped');
+  assert.throws(() => validCeiling({ remember: false }), /automatic memory recall/);
+  const noMemory = builtinPostures.find(item => item.id === 'posture:no-memory')!;
+  assert.deepEqual([noMemory.label, noMemory.ceiling, noMemory.posture], ['Without memory', { recall: false, memory: false }, true]);
+  const resolved = resolveBehavior({ personality: defaultPersonality, profiles: [profile({ id: 'base' })], sessionProfileId: 'base', postureId: 'posture:no-memory' });
+  assert.deepEqual(resolved.ceiling, { recall: false, memory: false });
+  const block = behaviorInstructions(resolved, 'Cere');
+  assert.match(block, /withholds Cere's memory tools/); assert.match(block, /withholds automatic memory recall: no stored memory is supplied/);
+  assert.doesNotMatch(behaviorInstructions(resolveBehavior({ personality: defaultPersonality, profiles: [profile({ id: 'base', ceiling: { memory: false } })], sessionProfileId: 'base' }), 'Cere'), /recall/);
+});
+
+test('RC-02 a pinned Without memory posture keeps memory out of a CLI turn, still arms capture, and memory off stays off', async t => {
+  const sent: string[] = [];
+  const { core, dir } = await broker(t, (_s: any, hooks: any) => ({ async send(text: string) { sent.push(text); setTimeout(() => hooks.event({ type: 'complete' }), 5); }, async interrupt() {}, async close() {} }));
+  await core.memory.ready;
+  await core.updateSettings({ ollama: { host: 'http://127.0.0.1:9' }, memory: { enabled: true, allowCloudMemory: true } });
+  const session = await core.create({ provider: 'codex', cwd: dir, trusted: true });
+  await core.memory.save(core.store.session(session.id), 'The orchid launch moved to Friday.');
+  const armed: boolean[] = [], finish = core.finishNativeMemory.bind(core);
+  core.finishNativeMemory = (current: any, answer?: string) => { armed.push(core.nativeMemoryTurns.has(current.id)); return finish(current, answer); };
+  const send = async (text: string) => { await core.rpc('session.send', { id: session.id, text }); for (let index = 0; index < 400 && core.store.session(session.id).status !== 'idle'; index++) await new Promise(resolve => setTimeout(resolve, 5)); };
+  const outcome = () => { const [latest] = core.memory.outcomes(session.id); return [latest.outcome, latest.reason]; };
+  await send('When is the orchid launch?');
+  assert.match(sent.at(-1)!, /<cere_memory_data>/); assert.match(sent.at(-1)!, /moved to Friday/);
+  await core.rpc('session.behavior', { id: session.id, postureId: 'posture:no-memory' });
+  await send('Is the orchid launch still on Friday?');
+  assert.doesNotMatch(sent.at(-1)!, /<cere_memory_data>|moved to Friday/);
+  assert.deepEqual(outcome(), ['disabled', 'style_withheld']);
+  assert.deepEqual(armed, [true, true], 'both turns keep their memory capture');
+  await core.updateSettings({ memory: { enabled: false } });
+  await send('And the orchid launch?');
+  assert.deepEqual(outcome(), ['disabled', 'setting_off'], 'with memory off the reason is memory being off');
+});

@@ -19,6 +19,7 @@ var reasonText = {
     "disabled/temporary_conversation": "Temporary conversations never use memory.",
     "disabled/remote_scope": "This turn had no memory access from its device.",
     "disabled/unavailable": "Memory was not available for this conversation.",
+    "disabled/style_withheld": "Not searched: this conversation’s style or posture withholds automatic memory recall.",
     "skipped/no_topic_words": "Not searched: the message had no topic words to look up.",
     "skipped/budget_too_small": "Not searched: the model had no room left for recalled memory.",
     "skipped/message_excluded_by_policy": "Not searched: memory policy excluded this message.",
