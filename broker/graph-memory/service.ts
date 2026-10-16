@@ -19,10 +19,11 @@ import type {
 } from "./adapters/contracts.ts";
 import { ollamaJson, ollamaHost, isCloudModel } from "../ollama.ts";
 import { createHash } from "node:crypto";
-import { fail, entityTypes } from "./contracts.ts";
+import { fail } from "./contracts.ts";
 import { CollectorRpc } from "./collector-rpc.ts";
 import { defaultExtractionModel } from "./models.ts";
 import { embeddingPrompts } from "./prompts.ts";
+import { extractionProposals } from "./proposals.ts";
 import { paths } from "../paths.ts";
 
 type Row = Record<string, any>;
@@ -598,62 +599,7 @@ export class MemoryService {
         prompt_version: result.promptVersion,
         parser_version: result.parserVersion,
       });
-      const entities = new Map(
-        result.proposals.entities.map((e) => [e.temporaryRef, e]),
-      );
-      const proposals:Row[]=[];
-      for (const a of result.proposals.assertions) {
-        const s = entities.get(a.subjectRef),
-          o =
-            "entityRef" in a.object
-              ? entities.get(a.object.entityRef)
-              : undefined;
-        if (!s || !s.aliases[0] || ("entityRef" in a.object && !o)) throw new Error('Unresolved extraction entity');
-        const quote = a.quotes[0];
-        if (!quote || quote.sourceRecordId !== run.observation_id) throw new Error('Unsupported extraction quote');
-        // An uncertain or unparseable interpretation never becomes an exact boundary.
-        const parsed =
-          !a.temporal.uncertain &&
-          a.temporal.interpretation &&
-          /^\d{4}-\d\d-\d\dT/.test(a.temporal.interpretation)
-            ? Date.parse(a.temporal.interpretation) * 1000
-            : NaN;
-        const temporal = Number.isSafeInteger(parsed) ? parsed : null;
-        const uncertain = a.temporal.uncertain || (!!a.temporal.interpretation && temporal === null);
-        const claim = {
-          subject: { type: entityTypes.find(type=>type.toUpperCase()===s.kind), name: s.aliases[0] },
-          predicate: a.predicate,
-          ...(o
-            ? { object: { type: entityTypes.find(type=>type.toUpperCase()===o.kind), name: o.aliases[0] } }
-            : { value: "literal" in a.object ? a.object.literal : null }),
-          qualifiers: a.qualifiers,
-          polarity: a.polarity,
-          modality: a.modality,
-          epistemic_type: a.epistemicType,
-          valid_mode:
-            temporal !== null
-              ? "bounded"
-              : uncertain
-                ? "unknown"
-                : "known_current",
-          valid_from_us: temporal,
-          valid_to_us: null,
-          time_precision: temporal !== null ? "instant" : uncertain ? "approximate" : "unknown",
-          time_expression: a.temporal.expression || "",
-          extraction_confidence: 1,
-        };
-        // Unresolved natural-language corrections remain reviewable candidates; resolved inspector APIs apply intervals.
-        if (a.operation === "changes" || a.operation === "corrects")
-          claim.modality = "reported";
-        proposals.push({
-            claim,
-            witness: {
-              observation_id: run.observation_id,
-              quote: quote.quote,
-              occurrence: quote.occurrenceIndex,
-            },
-          });
-      }
+      const proposals = extractionProposals(result, run.observation_id);
       await this.canonical.call('apply_extraction',{id:run.id,proposals});
     } catch (error) {
       // Route and consent denials are terminal until configuration changes; they are not outages.
