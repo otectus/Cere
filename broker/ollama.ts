@@ -37,7 +37,7 @@ export type OllamaContext = {
   /** Receives the plan of each request as it is sent; a record only, it changes nothing sent. */
   plan?(plan: TurnPlan): void;
   /** A06: the project's convention files, when the project opted in; read fresh for each turn. */
-  conventions?(): Promise<{ text: string; files: { name: string; sha256: string; bytes: number; truncated: boolean }[] }>;
+  conventions?(): Promise<{ text: string; files: { name: string; sha256: string; bytes: number; truncated: boolean }[]; redactions?: number }>;
   /** M06: excerpts from the conversation's bound document collections, within a token budget. */
   documents?(text: string, signal: AbortSignal, budget: number): Promise<{ text: string; detail?: Record<string, any> }>;
 };
@@ -449,14 +449,14 @@ export class OllamaAdapter implements Adapter {
   /** What one request carried, as estimated sizes and codes only (A01); building it sends nothing. */
   plan(p: { round: number; contextSize: number; personality: string; system: OllamaMessage; continuity: ReturnType<typeof continuityBlock>; context: ReturnType<typeof workingContext>;
     memory: string; withheld: boolean; telemetry: string; tools: OllamaTool[]; webSearch: boolean; documents?: { text: string; detail?: Record<string, any> };
-    conventions?: { text: string; files: { name: string; sha256: string; truncated: boolean }[] } }): TurnPlan {
+    conventions?: { text: string; files: { name: string; sha256: string; truncated: boolean }[]; redactions?: number } }): TurnPlan {
     const sum = (items: OllamaMessage[]) => items.reduce((total, message) => total + messageTokens(message), 0);
     const history = p.context.messages.slice(0, p.context.turnStart), current = p.context.messages.slice(p.context.turnStart);
     const layers: PlanLayer[] = [
       { id: 'personality', label: 'Personality block', trust: 'user', tokens: estimateTokens(p.personality), included: true },
       { id: 'operating-rules', label: 'Cere operating rules', trust: 'cere', tokens: Math.max(0, messageTokens(p.system) - estimateTokens(p.personality)), included: true },
       ...(p.conventions?.files.length ? [{ id: 'conventions' as const, label: 'Project conventions', trust: 'untrusted' as const, tokens: estimateTokens(p.conventions.text), included: true,
-        detail: { files: p.conventions.files.map(file => `${file.name} ${file.sha256.slice(0, 12)}${file.truncated ? ' (truncated)' : ''}`) } }] : []),
+        detail: { files: p.conventions.files.map(file => `${file.name} ${file.sha256.slice(0, 12)}${file.truncated ? ' (truncated)' : ''}`), ...(p.conventions.redactions ? { redactions: p.conventions.redactions } : {}) } }] : []),
       { id: 'continuity', label: 'Earlier turns (excerpts)', trust: 'untrusted', tokens: p.continuity.tokens, included: !!p.continuity.text,
         ...(p.continuity.text ? {} : { reason: p.context.omitted ? 'no_room' : 'not_needed' }),
         detail: { turns: p.continuity.turns, omittedBefore: p.continuity.skipped, sources: p.continuity.ids } },

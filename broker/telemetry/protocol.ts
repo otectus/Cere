@@ -7,14 +7,25 @@ export type Event = { v:1; type:'command'|'output'; session:string; seq:number; 
  * capture policy and the bounded ingress queue. They must not mutate state directly. */
 export interface ManagedTerminalEventSink { ingest(event:unknown):void }
 export function redact(value: string): string {
-  return value.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g,'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g,'')
-    .replace(/\b((?:[\w]*)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential)[\w]*\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"?|'(?:\\.|[^'\\\r\n])*'?|[^\s;]+)/gi,'$1[REDACTED]')
-    .replace(/(--[\w-]*(?:password|passwd|secret|token|api[-_]?key|credential)[\w-]*(?:=|\s+))(?:"(?:\\.|[^"\\\r\n])*"?|'(?:\\.|[^'\\\r\n])*'?|[^\s;]+)/gi,'$1[REDACTED]')
-    .replace(/(authorization\s*:\s*)(?:(?:bearer|basic)\s+)?[^\r\n]+/gi,'$1[REDACTED]')
-    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,'[REDACTED]')
-    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9_-]{16,})\b/g,'[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,'[REDACTED]')
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/gi,'$1[REDACTED]@');
+  return redactSecrets(value.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g,'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g,'')).text;
+}
+/**
+ * Credential-shaped text replaced with [REDACTED]: key=value and --flag assignments of passwords,
+ * secrets, tokens and keys, Authorization headers, cloud and service tokens, JWTs and credentials in
+ * URLs. Shared by terminal telemetry and project convention files; `count` is how many were hidden.
+ */
+export function redactSecrets(value: string): { text: string; count: number } {
+  let count = 0;
+  const keep = (_match: string, kept: string) => { count++; return kept + '[REDACTED]'; }, hide = () => { count++; return '[REDACTED]'; };
+  const text = value
+    .replace(/\b((?:[\w]*)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential)[\w]*\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"?|'(?:\\.|[^'\\\r\n])*'?|[^\s;]+)/gi,keep)
+    .replace(/(--[\w-]*(?:password|passwd|secret|token|api[-_]?key|credential)[\w-]*(?:=|\s+))(?:"(?:\\.|[^"\\\r\n])*"?|'(?:\\.|[^'\\\r\n])*'?|[^\s;]+)/gi,keep)
+    .replace(/(authorization\s*:\s*)(?:(?:bearer|basic)\s+)?[^\r\n]+/gi,keep)
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,hide)
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9_-]{16,})\b/g,hide)
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,hide)
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/gi,(_match,scheme)=>{count++;return scheme+'[REDACTED]@';});
+  return { text, count };
 }
 export function clean(value: string): string {
   return redact(value).replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g,'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'')

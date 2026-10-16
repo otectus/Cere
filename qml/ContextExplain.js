@@ -134,6 +134,7 @@ function planRows(plan) {
         else if (layer.id === "tools" && detail.count) extra = plural(detail.count, "tool", "tools")
         else if (layer.id === "personality" && detail.channel) extra = "sent as " + detail.channel
         else if (layer.id === "attachments" && (detail.files || detail.images)) extra = plural(detail.files || 0, "file", "files") + ", " + plural(detail.images || 0, "image", "images")
+        else if (layer.id === "conventions" && detail.files) extra = plural(detail.files.length, "file", "files") + (detail.redactions ? ", " + plural(detail.redactions, "secret", "secrets") + " redacted" : "")
         var status = layer.included ? (layer.reason ? "included · " + (layerReasons[layer.reason] || layer.reason) : "included") : (layerReasons[layer.reason] || layer.reason || "not included")
         return { id: layer.id, label: layer.label + (layer.trust === "untrusted" ? " (reference data)" : ""), size: layer.included ? tokens(layer.tokens) : "", status: status + (extra ? " · " + extra : ""), included: !!layer.included }
     })

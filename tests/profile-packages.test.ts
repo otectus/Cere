@@ -91,4 +91,27 @@ test('A06 project conventions are opt-in, bounded, read fresh each turn, never t
   assert.match(await turn('Third'), /Use spaces now/, 'a changed file shows in the next turn');
   const layer = (await core.rpc('session.context', { id: session.id })).lastPlan.layers.find((item: any) => item.id === 'conventions');
   assert.match(layer.detail.files[0], /^AGENTS\.md [0-9a-f]{12}$/);
+  assert.equal(layer.detail.redactions, undefined, 'nothing to redact, nothing recorded');
+  // RC-12: a credential in a convention file never reaches the model; the plan counts it.
+  await writeFile(join(dir, 'AGENTS.md'), 'Use spaces now. Deploy with OPENAI_API_KEY=sk-test0123456789abcdefghij only.');
+  const sent = await turn('Fourth');
+  assert.doesNotMatch(sent, /sk-test0123456789/); assert.match(sent, /OPENAI_API_KEY=\[REDACTED\] only/);
+  assert.equal((await core.rpc('session.context', { id: session.id })).lastPlan.layers.find((item: any) => item.id === 'conventions').detail.redactions, 1);
+});
+
+test('RC-12 convention files are redacted before they are cut to size, and a file without secrets arrives unchanged', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'cere-conventions-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const clean = 'Plain rules: run npm test.\nNo secrets here: “quotes”, ünïcode, a | table | row, and token counts.\n';
+  await writeFile(join(dir, 'AGENTS.md'), 'Keep tabs.\nAuthorization: Bearer abc.def.ghi\nexport GH=ghp_abcdefghijklmnopqrstuvwxyz0123\n');
+  await writeFile(join(dir, 'CONVENTIONS.md'), clean);
+  const result = await projectConventions(dir);
+  assert.equal(result.redactions, 2);
+  assert.doesNotMatch(result.text, /abc\.def|ghp_abcdef/);
+  const body = JSON.parse(result.text.slice('<cere_project_conventions>\n'.length, -'\n</cere_project_conventions>'.length));
+  assert.ok(body.text.endsWith('## CONVENTIONS.md\n' + clean), 'a file without matches is byte-identical');
+  // A secret straddling the size limit is redacted whole rather than cut in half.
+  await writeFile(join(dir, 'AGENTS.md'), 'x'.repeat(7990) + ' sk-abcdefghijklmnopqrstuvwxyz0123456789');
+  const cut = await projectConventions(dir);
+  assert.doesNotMatch(cut.text, /sk-abc/); assert.equal(cut.redactions, 1); assert.equal(cut.files[0].truncated, true);
 });

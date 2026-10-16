@@ -156,3 +156,9 @@ test('RC-02 a one-turn Without memory posture sends no recalled memory and says 
   assert.doesNotMatch(next, /Without memory|withholds automatic memory recall/);
   assert.equal(core.memory.outcomes(session.id)[0].outcome, 'included');
 });
+
+test('RC-12 the Context drawer says how many secrets were redacted from convention files', () => {
+  const row = (detail: any) => library.planRows({ layers: [{ id: 'conventions', label: 'Project conventions', trust: 'untrusted', tokens: 40, included: true, detail }] })[0].status;
+  assert.equal(row({ files: ['AGENTS.md 0123456789ab'], redactions: 2 }), 'included · 1 file, 2 secrets redacted');
+  assert.equal(row({ files: ['AGENTS.md 0123456789ab', 'CLAUDE.md ba9876543210'] }), 'included · 2 files');
+});
