@@ -134,6 +134,8 @@ public:
     Q_INVOKABLE QString chooseFolder();
     Q_INVOKABLE QString chooseImage();
     Q_INVOKABLE QString chooseFile();
+    /** M15: saves exported text where the user chooses, atomically; returns the path or an empty string. */
+    Q_INVOKABLE QString saveTextAs(const QString &suggestedName,const QString &text);
     Q_INVOKABLE void saveHomePosition();
     Q_INVOKABLE void goHomePosition();
     Q_INVOKABLE void dockPet(const QString &edge);

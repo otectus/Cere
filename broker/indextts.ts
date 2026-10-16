@@ -9,6 +9,7 @@ import type { Store } from './store.ts';
 import { privateDir } from './paths.ts';
 import { IndexEngine } from './indextts-engine.ts';
 import { IndexError, indexError, indexPaths, indexChunks, validateEmotion, defaultEmotion, previewSamples, type IndexConfig, type IndexCapabilities, type VoiceProfile, type Emotion } from './indextts-config.ts';
+import { audioSelection, playbackArgs } from './audio-devices.ts';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 type ModelState='not-installed'|'downloading'|'installed'|'loading'|'ready'|'error';
@@ -160,7 +161,7 @@ export class IndexTTS {
   private async playChunks(chunks:AsyncIterable<{generationId:string;pcm:Buffer}>,sampleRate:number,signal:AbortSignal,tuning:{pitch:number;volume:number},id:string,onAudio:()=>void){
     const format=['-t','raw','-e','signed-integer','-b','16','-L','-c','1'];
     const filter=spawn(this.env.CERE_SOX_BIN||'sox',['-q','-D',...format,'-r',String(sampleRate),'-',...format,'-r','48000','-','rate','48000',...(tuning.pitch?['pitch',String(tuning.pitch*100)]:[]),'vol',String(tuning.volume)],{env:this.env,stdio:['pipe','pipe','ignore']});
-    const player=spawn(this.env.CERE_APLAY_BIN||'aplay',['-q','-t','raw','-r','48000','-f','S16_LE','-c','1'],{env:this.env,stdio:['pipe','ignore','ignore']});
+    const player=spawn(this.env.CERE_APLAY_BIN||'aplay',[...playbackArgs(audioSelection().output),'-q','-t','raw','-r','48000','-f','S16_LE','-c','1'],{env:this.env,stdio:['pipe','ignore','ignore']});
     let failure:IndexError|undefined,started=false;
     const terminate=()=>{filter.kill('SIGKILL');player.kill('SIGKILL');};
     const fail=()=>{failure=new IndexError('PLAYBACK_FAILED');terminate();};

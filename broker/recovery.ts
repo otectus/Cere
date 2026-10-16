@@ -13,7 +13,7 @@ const registry=(directory:string)=>readFileSync(join(directory,'graph-memory','e
 const journalPath=(directory:string)=>join(dirname(directory),'.'+basename(directory)+'-recovery.json');
 const privateFile=(path:string)=>{const s=lstatSync(path);if(!s.isFile()||s.isSymbolicLink()||s.uid!==process.getuid?.()||(s.mode&0o077))throw new Error('Recovery file must be owned by you and private');};
 /** This machine's configuration, secrets and phone pairings; a backup never supplies them. */
-const machineMeta=['indextts.voices','workflow:recipe-definitions','desktopProfilePrevious','memory-pending-erasure','graph-memory-migrated',
+const machineMeta=['indextts.voices','workflow:recipe-definitions','behaviorPresets','desktopProfilePrevious','memory-pending-erasure','graph-memory-migrated',
   'remoteConfig','remoteDesktopId','remoteSchema','remoteLineage','remoteCursorKey'];
 const machineTables=[['remote_devices','id,data'],['remote_commands','device,id,digest,method,data,time'],['remote_audit','seq,time,data']] as const;
 /** Copies regular, owner-private files only; links and foreign files stay behind. */

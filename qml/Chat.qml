@@ -8,9 +8,22 @@ Item {
     objectName:"chatView"
     signal createRequested()
     signal backRequested()
+    signal navigateRequested(string target)
     property bool showBackButton: false
     // Short pages fold the conversation tools into one menu so the conversation keeps its room.
     readonly property bool toolsFolded: height < 560
+    // M01: a posture for the next message only, chosen in Style; it belongs to the conversation it was chosen in.
+    property var turnPosture:({id:"",label:"",session:""})
+    readonly property bool hasTurnPosture:!!turnPosture.id&&turnPosture.session===App.selectedId
+    // M12: site and time limits for this message's web search, kept with the conversation they were set in.
+    property var webSources:({session:"",sites:[],exclude:[],recency:""})
+    readonly property bool hasWebSources:webSources.session===App.selectedId&&(webSources.sites.length>0||webSources.exclude.length>0||!!webSources.recency)
+    function webConstraints(){const value={};if(webSources.sites.length)value.sites=webSources.sites;if(webSources.exclude.length)value.exclude=webSources.exclude;if(webSources.recency)value.recency=webSources.recency;return value}
+    function sourcesLabel(){
+        if(!hasWebSources)return chat.width>=480?"Sources":"…"
+        const parts=[];if(webSources.sites.length)parts.push(webSources.sites.join(", "));if(webSources.exclude.length)parts.push("not "+webSources.exclude.join(", "));if(webSources.recency)parts.push("past "+webSources.recency)
+        return parts.join(" · ")
+    }
     component ConversationTool: CButton {
         id:tool
         readonly property bool iconOnly:chat.width<480
@@ -87,6 +100,7 @@ Item {
         composer.forceActiveFocus()
     }
     property int proposalRequest:-1
+    property int taskProposalRequest:-1
     property bool follow: true
     property string handoff: ""
     property int sendRequest:-1
@@ -355,7 +369,7 @@ Item {
             // Dragging the scrollbar is reading too: it must stop new output from pulling the view down.
             ScrollBar.vertical: CScrollBar { onPressedChanged: if(pressed){chat.follow=false;chat.viewPristine=false}else if(scroll.atYEnd)chat.follow=true }
             model: App.transcript
-            delegate: MessageCard { required property var entry; width:scroll.width-12; message:entry;onProposalRequested:kind=>{chat.proposalRequest=App.rpc("memoryReview.propose",{sessionId:entry.sessionId,messageId:entry.id,kind:kind})};onBranchRequested:text=>{branch.contextText=text;branch.open()};onQuoteRequested:text=>{composer.text+=(composer.text?"\n\n":"")+text.split("\n").map(line=>"> "+line).join("\n")+"\n\n";chat.focusComposer()} }
+            delegate: MessageCard { required property var entry; width:scroll.width-12; message:entry;canExport:true;onProposalRequested:kind=>{chat.proposalRequest=App.rpc("memoryReview.propose",{sessionId:entry.sessionId,messageId:entry.id,kind:kind})};onTaskProposed:text=>{const params={sessionId:entry.sessionId,messageId:entry.id};if(text.trim())params.text=text.trim().slice(0,2000);chat.taskProposalRequest=App.rpc("capsules.proposeTask",params)};onBranchRequested:text=>{branch.contextText=text;branch.open()};onExportRequested:exportDialog.openFor(entry.sessionId,[entry.id]);onQuoteRequested:text=>{composer.text+=(composer.text?"\n\n":"")+text.split("\n").map(line=>"> "+line).join("\n")+"\n\n";chat.focusComposer()} }
             footer:Column {
                 width:scroll.width;spacing:8
                 Text { visible: (App.session.queuedCount||0)>0; text: App.session.queuedCount+" message(s) queued · will send after this turn"; color:Theme.accentText;font.pixelSize:Theme.secondary }
@@ -425,7 +439,8 @@ Item {
             id:composerViewport;anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top;anchors.bottom:composerActions.top;anchors.margins:12;clip:true
             contentWidth:availableWidth;ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar{}
             TextArea {
-                id: composer; objectName:"composer"; enabled: !!App.session.id && !chat.linked; placeholderText: chat.linked ? "Continue in the linked terminal" : !App.session.id ? "Start a session to send a message" : chat.width>=480 ? "Tell me what you have in mind…" : "Enter sends · Shift+Enter for a new line"
+                id: composer; objectName:"composer"; enabled: !!App.session.id && !chat.linked; placeholderText: chat.linked ? "Continue in the linked terminal" : !App.session.id ? "Start a session to send a message" : chat.width>=480 ? "Tell me what you have in mind…" : chat.sendHint
+                Accessible.description: chat.sendHint
                 color: Theme.text; placeholderTextColor: Theme.muted; selectionColor: Theme.selected; font.pixelSize: Theme.message; font.family: Theme.font
                 // Moving to another control keeps the selection, so it survives switching surfaces too.
                 wrapMode: TextEdit.Wrap; selectByMouse: true; persistentSelection: true; background: null
@@ -436,7 +451,8 @@ Item {
                 Keys.onBacktabPressed: event => { const previous=composer.nextItemInFocusChain(false); if(previous&&previous!==composer)previous.forceActiveFocus(Qt.BacktabFocusReason); event.accepted=true }
                 Keys.onPressed: event => {
                     if(event.matches(StandardKey.Paste)){chat.pasteClipboard();event.accepted=true}
-                    else if((event.key===Qt.Key_Return||event.key===Qt.Key_Enter)&&!composer.inputMethodComposing&&!(event.modifiers&Qt.ShiftModifier)){
+                    // Settings › Application chooses the send key; an unhandled Return inserts a line.
+                    else if((event.key===Qt.Key_Return||event.key===Qt.Key_Enter)&&!composer.inputMethodComposing&&chat.sendsOn(event.modifiers)){
                         event.accepted=true
                         if(!event.isAutoRepeat)chat.send()
                     }
@@ -450,9 +466,11 @@ Item {
         CButton { text:chat.width>=480?"Attach":"";iconName:"image";quiet:true;help:"Attach an image or text file";Accessible.name:"Attach a file";enabled:!!App.session.id&&!App.session.temporary&&attachments.length<8;onClicked:{const p=App.chooseFile();if(p)chat.importAttachment(p)} }
         CButton { objectName:"pasteClipboard";text:"Paste";quiet:true;help:"Paste text, images or files (Ctrl+V)";enabled:composer.enabled;onClicked:chat.pasteClipboard() }
         CButton { visible:attachments.length>0;text:chat.width>=480?"Clear":"×";help:"Clear attachments";Accessible.name:"Clear attachments";onClicked:attachments=[] }
-        CCheckBox { id:searchThisTurn;objectName:"searchThisTurn";visible:["ollama","openai","anthropic","google"].includes(App.session.provider)&&App.state.settings?.webSearch?.enabled===true;text:chat.width>=480?"Search web":"Web";enabled:(!chat.busy||chat.canSendWhileBusy)&&!App.state.settings?.paused;Accessible.name:"Search web for this message";Accessible.description:"Search uses the next message as a public query, up to 500 characters";ToolTip.visible:hovered;ToolTip.text:Accessible.description;onToggled:chat.viewPristine=false }
+        CCheckBox { id:searchThisTurn;objectName:"searchThisTurn";visible:["ollama","openai","anthropic","google","compatible"].includes(App.session.provider)&&App.state.settings?.webSearch?.enabled===true;text:chat.width>=480?"Search web":"Web";enabled:(!chat.busy||chat.canSendWhileBusy)&&!App.state.settings?.paused;Accessible.name:"Search web for this message";Accessible.description:"Search uses the next message as a public query, up to 500 characters";ToolTip.visible:hovered;ToolTip.text:Accessible.description;onToggled:chat.viewPristine=false }
+        CButton { id:sourcesButton;objectName:"searchSources";visible:searchThisTurn.visible&&searchThisTurn.checked;quiet:true;implicitHeight:30;font.pixelSize:Theme.secondary;text:chat.sourcesLabel();help:"Limit this search to sites or a time range";Accessible.name:"Search sources";onClicked:sourcesDialog.openFor(App.selectedId) }
+        CButton { objectName:"turnPostureChip";visible:chat.hasTurnPosture;quiet:true;implicitHeight:30;font.pixelSize:Theme.secondary;text:(chat.width>=480?"Next: ":"")+chat.turnPosture.label+"  ×";help:"The next message uses the "+chat.turnPosture.label+" posture. Click to remove it.";Accessible.name:"Remove the posture for the next message";onClicked:chat.turnPosture=({id:"",label:"",session:""}) }
         Item { Layout.fillWidth:true;Layout.minimumWidth:0 }
-        Text { visible:chat.width>=480;text:"Enter sends · Shift+Enter new line";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
+        Text { objectName:"sendKeyHint";visible:chat.width>=480;text:chat.sendHint;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
         CButton {
             id:moreTools;objectName:"conversationMore";visible:chat.toolsFolded&&!!App.session.id
             implicitWidth:implicitHeight;leftPadding:9;rightPadding:9;quiet:true
@@ -463,12 +481,13 @@ Item {
         VoiceInput {
             id:voiceInput;sessionId:App.selectedId;available:composer.enabled
             onTranscriptionAccepted:text=>{composer.insert(composer.cursorPosition,(composer.text?"\n":"")+text);composer.forceActiveFocus()}
+            onNavigationRequested:target=>chat.navigateRequested(target)
         }
         CButton { objectName:"stopMessage";visible:chat.busy;enabled:App.connected;text:"Stop";implicitWidth:64;leftPadding:6;rightPadding:6;font.pixelSize:Theme.body;help:App.connected?"Stop":"Stop is available once Cere reconnects";Accessible.name:"Stop";danger:true;onClicked:App.rpc("session.stop",{id:App.selectedId}) }
         CButton {
             id:sendButton;objectName:"sendMessage";visible:!chat.busy||chat.canSendWhileBusy
             implicitWidth:implicitHeight;leftPadding:9;rightPadding:9
-            help:chat.busy?"Queue message after this turn (Enter)":"Send (Enter) · Shift+Enter for a new line";Accessible.name:"Send";primary:true
+            help:(chat.busy?"Queue message after this turn":"Send")+(chat.sendKey==="button"?"":" ("+chat.sendKeyName+")")+" · "+chat.newLineHint;Accessible.name:"Send";primary:true
             enabled:!!App.session.id&&!chat.linked&&!chat.importingAttachments&&!chat.sendUnconfirmed&&composer.text.trim().length>0&&App.connected
             onClicked:chat.send()
             contentItem: Item {
@@ -498,6 +517,8 @@ Item {
             ConversationTool { objectName:"chatInbox";text:"Inbox · "+(App.state.completions||[]).length;iconName:"inbox";badge:(App.state.completions||[]).length>0;onClicked:inbox.open() }
             ConversationTool { objectName:"chatMemoryReview";text:"Memory review";iconName:"memory";onClicked:memoryReview.open() }
             ConversationTool { objectName:"contextDrawerButton";text:"Context";iconName:"context";onClicked:contextDrawer.open() }
+            ConversationTool { objectName:"chatStyle";text:"Style";iconName:"settings";help:"Style, posture and standing instructions for this conversation";onClicked:sessionBehavior.openFor(App.selectedId,chat.hasTurnPosture?chat.turnPosture.id:"") }
+            ConversationTool { id:extraTools;objectName:"chatMoreTools";text:"More";iconName:"more";help:"Export, transcribe a recording or ground answers in documents";onClicked:extraMenu.popup(extraTools,0,extraTools.height) }
             ConversationTool { visible:!!chat.recoverable.text&&chat.recoverable.state!=="accepted";text:"Recover submission";iconName:"back";onClicked:submissionRecovery.open() }
             ConversationTool { visible:chat.linked;text:"Terminal";iconName:"terminal";onClicked:App.rpc("session.terminal",{id:App.selectedId}) }
         }
@@ -511,10 +532,31 @@ Item {
         CMenuItem { objectName:"menuInbox";text:"Inbox · "+(App.state.completions||[]).length;onTriggered:inbox.open() }
         CMenuItem { objectName:"menuMemoryReview";text:"Memory review";onTriggered:memoryReview.open() }
         CMenuItem { objectName:"menuContext";text:"Context";onTriggered:contextDrawer.open() }
+        CMenuItem { objectName:"menuStyle";text:"Style and posture…";onTriggered:sessionBehavior.openFor(App.selectedId,chat.hasTurnPosture?chat.turnPosture.id:"") }
+        CMenuItem { objectName:"menuExportFolded";text:"Export conversation…";onTriggered:exportDialog.openFor(App.selectedId,[]) }
+        CMenuItem { objectName:"menuTranscribeFolded";text:"Transcribe a recording…";visible:!App.session.temporary;onTriggered:chat.transcribeFile() }
+        CMenuItem { objectName:"menuCollectionsFolded";text:"Document collections…";onTriggered:collections.openFor(App.selectedId) }
         CMenuItem { text:"Recover submission";visible:!!chat.recoverable.text&&chat.recoverable.state!=="accepted";onTriggered:submissionRecovery.open() }
         CMenuItem { text:"Terminal";visible:chat.linked;onTriggered:App.rpc("session.terminal",{id:App.selectedId}) }
     }
-    function send(){if(!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||sendUnconfirmed||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingTurn=App.session.turnId||"";pendingTime=Date.now();pendingAttachments=JSON.stringify(attachmentIds());recordOwn(pendingText,pendingAttachments);sendRequest=App.rpc("session.send",{id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision});follow=true}
+    CMenu {
+        id:extraMenu;objectName:"conversationExtraMenu"
+        CMenuItem { objectName:"menuExport";text:"Export conversation…";onTriggered:exportDialog.openFor(App.selectedId,[]) }
+        CMenuItem { objectName:"menuTranscribe";text:"Transcribe a recording…";visible:!App.session.temporary;onTriggered:chat.transcribeFile() }
+        CMenuItem { objectName:"menuCollections";text:"Document collections…";onTriggered:collections.openFor(App.selectedId) }
+    }
+    function transcribeFile(){const path=App.chooseFile();if(path)transcriptImport.start(App.selectedId,path)}
+    // One send-key policy for the compact panel and the workspace, which share this composer.
+    readonly property string sendKey:["enter","ctrlEnter","button"].indexOf(App.state.settings?.sendKey)>=0?App.state.settings.sendKey:"enter"
+    readonly property string sendKeyName:sendKey==="ctrlEnter"?"Ctrl+Enter":"Enter"
+    readonly property string newLineHint:sendKey==="enter"?"Shift+Enter new line":"Enter new line"
+    readonly property string sendHint:sendKey==="button"?"Send button sends · Enter new line":sendKeyName+" sends · "+newLineHint
+    function sendsOn(modifiers){
+        if(modifiers&Qt.ShiftModifier)return false
+        if(sendKey==="enter")return true
+        return sendKey==="ctrlEnter"&&!!(modifiers&Qt.ControlModifier)
+    }
+    function send(){if(!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||sendUnconfirmed||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingTurn=App.session.turnId||"";pendingTime=Date.now();pendingAttachments=JSON.stringify(attachmentIds());recordOwn(pendingText,pendingAttachments);const params={id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision};if(hasTurnPosture)params.posture=turnPosture.id;if(params.webSearch&&hasWebSources)params.webConstraints=webConstraints();sendRequest=App.rpc("session.send",params);follow=true}
     Timer { id:draftTimer;interval:600;onTriggered:chat.saveDraft(false) }
     Timer { id:anchorTracker;interval:150;onTriggered:chat.trackedAnchor=chat.computeAnchor()||chat.trackedAnchor }
     Timer {
@@ -586,7 +628,7 @@ Item {
     onPendingQuestionsChanged: if (follow && pendingQuestions.length) Qt.callLater(() => {
         if (scroll.footerItem) scroll.contentY = Math.max(scroll.originY, Math.min(scroll.footerItem.y, scroll.originY + scroll.contentHeight - scroll.height))
     })
-    Connections { target:App;function onResult(id,value){if(id!==chat.sendRequest)return;chat.sendRequest=-1;if(value?.error&&value.code==="CONNECTION_LOST")chat.unconfirmedSend={text:chat.pendingText,attachments:chat.pendingAttachments,session:chat.pendingSession,turn:chat.pendingTurn,time:chat.pendingTime,connectedAt:0};else if(value?.error&&chat.pendingSession===chat.draftSession&&chat.draftDirty())draftTimer.restart();if(chat.pendingSession===App.selectedId&&!value?.error){chat.unconfirmedSend=null;if(composer.text===chat.pendingText)composer.text="";if(JSON.stringify(chat.attachmentIds())===chat.pendingAttachments)chat.attachments=[];chat.draftRevision=App.session.draftRevision||"0";chat.draftBaseline=App.session.draft||"";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));chat.draftConflict=false;searchThisTurn.checked=false}} }
+    Connections { target:App;function onResult(id,value){if(id!==chat.sendRequest)return;chat.sendRequest=-1;if(value?.error&&value.code==="CONNECTION_LOST")chat.unconfirmedSend={text:chat.pendingText,attachments:chat.pendingAttachments,session:chat.pendingSession,turn:chat.pendingTurn,time:chat.pendingTime,connectedAt:0};else if(value?.error&&chat.pendingSession===chat.draftSession&&chat.draftDirty())draftTimer.restart();if(chat.pendingSession===App.selectedId&&!value?.error){chat.unconfirmedSend=null;if(composer.text===chat.pendingText)composer.text="";if(JSON.stringify(chat.attachmentIds())===chat.pendingAttachments)chat.attachments=[];chat.draftRevision=App.session.draftRevision||"0";chat.draftBaseline=App.session.draft||"";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));chat.draftConflict=false;searchThisTurn.checked=false}if(!value?.error&&chat.turnPosture.session===chat.pendingSession)chat.turnPosture=({id:"",label:"",session:""});if(!value?.error&&chat.webSources.session===chat.pendingSession)chat.webSources=({session:"",sites:[],exclude:[],recency:""})} }
     Connections { target:App;function onAttachmentRequested(path){chat.importAttachment(path)} }
     Connections { target:App;function onResult(id,value){if(!(id in chat.attachmentRequests))return;const owner=chat.attachmentRequests[id],next=Object.assign({},chat.attachmentRequests);delete next[id];chat.attachmentRequests=next;if(owner!==App.selectedId){if(!value?.error){App.rpc("attachments.keepInDraft",{sessionId:owner,attachmentId:value.id});App.notify("Attachment saved in its original conversation’s draft.")}return}if(value?.error)chat.attachmentError=String(value.error.message||value.error);else {if(!chat.attachments.some(a=>a.id===value.id))chat.attachments=chat.attachments.concat([value]);chat.draftRevision=App.session.draftRevision||"0";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));if((App.session.draft||"")!==chat.draftBaseline&&!chat.ownsBrokerDraft())chat.draftConflict=true;else{if((App.session.draft||"")!==chat.draftBaseline)chat.draftBaseline=App.session.draft||"";chat.saveDraft()}}} }
     ContextDrawer { id:contextDrawer;sessionId:App.selectedId;draftText:composer.text;attachmentIds:chat.attachmentIds() }
@@ -628,12 +670,12 @@ Item {
     CDialog {
         id:handoffDialog;objectName:"handoffDialog"
         property string error:""
-        property var targets:[{id:"codex",displayName:"Codex"},{id:"claude",displayName:"Claude"},{id:"ollama",displayName:"Ollama"},{id:"antigravity",displayName:"AntiGravity"},{id:"openai",displayName:"OpenAI API"},{id:"anthropic",displayName:"Claude API"},{id:"google",displayName:"Google AI API"}].filter(p=>p.id!==App.session.provider)
+        property var targets:[{id:"codex",displayName:"Codex"},{id:"claude",displayName:"Claude"},{id:"ollama",displayName:"Ollama"},{id:"antigravity",displayName:"AntiGravity"},{id:"openai",displayName:"OpenAI API"},{id:"anthropic",displayName:"Claude API"},{id:"google",displayName:"Google AI API"},{id:"compatible",displayName:"Compatible endpoint"}].filter(p=>p.id!==App.session.provider)
         onOpened: {error="";handoffTrust.checked=false;handoffProvider.currentIndex=0;handoffText.text="Continue this work in "+(App.session.cwd||"")+".\n\n"+App.messages.filter(m=>m.role!=="tool").slice(-8).map(m=>m.role+": "+m.text).join("\n\n");if(handoffProvider.currentValue)App.rpc("provider.models",{provider:handoffProvider.currentValue})}
         CText { text:"Review context before sharing";font.pixelSize:Theme.title;font.bold:true }
         CText { text:"Choose a provider for the new conversation. Nothing is sent until you submit its draft.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CComboBox { id:handoffProvider;objectName:"handoffProvider";Layout.fillWidth:true;model:handoffDialog.targets;textRole:"displayName";valueRole:"id";Accessible.name:"Handoff provider";onActivated:if(currentValue)App.rpc("provider.models",{provider:currentValue}) }
-        CComboBox { id:handoffModel;visible:["ollama","openai","anthropic","google"].includes(handoffProvider.currentValue);Layout.fillWidth:true;model:(App.state.capabilities||{})[handoffProvider.currentValue]?.models||[];textRole:"displayName";valueRole:"id";Accessible.name:"Handoff model";currentIndex:Math.max(0,model.findIndex(m=>m.id===App.state.settings?.ollama?.model)) }
+        CComboBox { id:handoffModel;visible:["ollama","openai","anthropic","google","compatible"].includes(handoffProvider.currentValue);Layout.fillWidth:true;model:(App.state.capabilities||{})[handoffProvider.currentValue]?.models||[];textRole:"displayName";valueRole:"id";Accessible.name:"Handoff model";currentIndex:Math.max(0,model.findIndex(m=>m.id===App.state.settings?.ollama?.model)) }
         CCheckBox { id:handoffTrust;objectName:"handoffTrust";visible:!App.state.settings?.bypassCliPermissions&&["codex","claude","antigravity"].includes(handoffProvider.currentValue);text:"I trust this project’s CLI configuration and hooks" }
         CText { visible:!!handoffDialog.error;text:handoffDialog.error;color:Theme.danger;font.pixelSize:Theme.secondary }
         ScrollView {
@@ -647,7 +689,41 @@ Item {
     property int handoffRequest:-1
     Connections{target:App;function onResult(id,value){if(id===chat.handoffRequest){chat.handoffRequest=-1;if(value.error)handoffDialog.error=value.error;else{handoffDialog.close();composer.text=chat.handoff;App.rpc("session.draft",{id:value.id,text:chat.handoff})}}}}
     MemoryReview { id:memoryReview;sessionId:App.selectedId }
+    CDialog {
+        id:sourcesDialog;objectName:"searchSourcesDialog"
+        property string sessionId:""
+        property string error:""
+        readonly property var recencies:[{id:"",label:"Any time"},{id:"day",label:"Past day"},{id:"week",label:"Past week"},{id:"month",label:"Past month"},{id:"year",label:"Past year"}]
+        function openFor(id){sessionId=id;error="";const current=chat.webSources.session===id?chat.webSources:{sites:[],exclude:[],recency:""};onlySites.text=current.sites.join(", ");leaveOut.text=current.exclude.join(", ");recencyPick.currentIndex=Math.max(0,recencies.findIndex(item=>item.id===current.recency));open()}
+        function domains(text){return text.split(/[\s,]+/).map(item=>item.trim().toLowerCase().replace(/^https?:\/\//,"").replace(/\/.*$/,"").replace(/^www\./,"")).filter(item=>item.length>0)}
+        CText { text:"Sources for this search";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { text:"Site limits are sent to the search provider and enforced on its results. A time range is a request: providers that cannot filter by date say so in Context.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CField { id:onlySites;objectName:"searchOnlySites";Layout.fillWidth:true;placeholderText:"Only these sites, such as docs.python.org";Accessible.name:"Only these sites" }
+        CField { id:leaveOut;objectName:"searchExcludeSites";Layout.fillWidth:true;placeholderText:"Leave out these sites";Accessible.name:"Leave out these sites" }
+        CComboBox { id:recencyPick;objectName:"searchRecency";Layout.fillWidth:true;model:sourcesDialog.recencies;textRole:"label";Accessible.name:"How recent" }
+        CText { visible:!!sourcesDialog.error;text:sourcesDialog.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        RowLayout {
+            Layout.fillWidth:true
+            CButton { text:"Clear";Layout.fillWidth:true;onClicked:{chat.webSources=({session:"",sites:[],exclude:[],recency:""});sourcesDialog.close()} }
+            CButton {
+                objectName:"searchSourcesApply";text:"Use for this search";primary:true;Layout.fillWidth:true
+                onClicked:{
+                    const sites=sourcesDialog.domains(onlySites.text),exclude=sourcesDialog.domains(leaveOut.text)
+                    const bad=sites.concat(exclude).find(item=>!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/.test(item))
+                    if(bad){sourcesDialog.error="“"+bad+"” is not a site domain such as docs.python.org";return}
+                    if(sites.length>5||exclude.length>5){sourcesDialog.error="List up to five sites in each field";return}
+                    chat.webSources=({session:sourcesDialog.sessionId,sites:sites,exclude:exclude,recency:sourcesDialog.recencies[recencyPick.currentIndex].id});sourcesDialog.close()
+                }
+            }
+        }
+    }
+    SessionBehavior { id:sessionBehavior;onTurnPostureChosen:(id,label)=>chat.turnPosture=({id:id,label:label,session:sessionBehavior.sessionId}) }
+    ConversationExport { id:exportDialog }
+    TranscriptImport { id:transcriptImport;onInsertRequested:text=>{composer.insert(composer.cursorPosition,(composer.text?"\n":"")+text);composer.forceActiveFocus()} }
+    KnowledgeCollections { id:collections }
     BranchDialog { id:branch }
     CompletionInbox { id:inbox }
-    Connections { target:App;function onResult(id,value){if(id!==chat.proposalRequest)return;chat.proposalRequest=-1;if(value?.error)App.notify(String(value.error.message||value.error));else memoryReview.open()} }
+    Connections { target:App;function onResult(id,value){
+        if(id===chat.taskProposalRequest){chat.taskProposalRequest=-1;App.notify(value?.error?String(value.error.message||value.error):"Proposed as a project task. Accept it in Project workflows before it counts.");return}
+        if(id!==chat.proposalRequest)return;chat.proposalRequest=-1;if(value?.error)App.notify(String(value.error.message||value.error));else memoryReview.open()} }
 }

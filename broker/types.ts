@@ -35,6 +35,8 @@ export type Session = {
   queuedCount?: number;
   temporary?: boolean;
   view?: DraftView;
+  /** M01: this conversation's own style, pinned posture and standing instructions. Style only, never authority. */
+  behavior?: { profileId?: string; postureId?: string; instructions?: string };
 };
 /** Desktop composer and reading position, carried between the compact panel and the workspace. */
 export type DraftView = {
@@ -49,9 +51,13 @@ export type SessionFolder = { id: string; name: string; revision: string; create
 export type ProjectDefaults = { provider: Provider; model: string; effort: string; tools: boolean; trusted: boolean; temporary: boolean };
 /** What "Save as my defaults" keeps for new general conversations. Trust is confirmed for each conversation's folder instead. */
 export type ConversationDefaults = Omit<ProjectDefaults, 'trusted'>;
-export type Project = { cwd: string; name: string; revision: string; updated: number; favorite: boolean; defaults: ProjectDefaults };
+export type Project = { cwd: string; name: string; revision: string; updated: number; favorite: boolean; defaults: ProjectDefaults; behaviorProfileId?: string;
+  /** A06: whether Cere-managed API/Ollama turns read the project's convention files. */
+  conventions?: boolean };
 export type Source = { title: string; url: string };
-export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string };
+export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string;
+  /** M02: formatting checks this reply did not meet. A note only: the text is never changed. */
+  styleNotes?: { constraint: string; label: string; count: number }[] };
 export type RunCompletion = {
   id: string; sessionId: string; turnId?: string; title: string; provider: Provider; cwd: string; time: number;
   message: Message & { truncated?: boolean };
@@ -77,6 +83,22 @@ export type Settings = {
   motionIntensity: number; expressiveCues: boolean; idleEnergy: 'calm' | 'lively';
   /** Show memory citation markers ([evidence:ID]) in replies; stored replies keep them either way. */
   showMemoryCitations: boolean;
+  /** Which key sends from the composer; Shift+Enter always adds a line. */
+  sendKey: 'enter' | 'ctrlEnter' | 'button';
+  /** M07: an optional Markdown notes vault the user chose; cloud models read it only when allowed. */
+  notesVault: { path: string; enabled: boolean; allowCloud: boolean };
+  /** M13: one OpenAI-compatible chat endpoint. Its capabilities are the user's declaration, not verified. */
+  compatible: CompatibleEndpoint;
+  /** A02: outbound MCP tool servers. Secret values live in the owner-only secrets file, never here. */
+  extensions: import('./extensions.ts').ExtensionServer[];
+  /** M23: declarative HTTP and command tools. Credentials live in the owner-only secrets file. */
+  customTools: import('./custom-tools.ts').CustomTool[];
+  /** M10: chosen microphone and speaker IDs ("pw:<node>" or "alsa:<device>"); empty is the system default. */
+  audio: { input: string; output: string };
+  /** M21: spoken commands from the allowlist; off by default and shown before running unless confirm is off. */
+  voiceCommands: { enabled: boolean; confirm: boolean; speakFeedback: boolean };
+  /** M16: measure responsiveness (durations only) while on. */
+  responsiveness: boolean;
   hidden: boolean; profile: 'manual' | 'scoped' | 'broad'; paused: boolean;
   bypassCliPermissions: boolean; bypassComputerPermissions: boolean;
   categories: string[]; grants: { category: string; cwd: string; expires: number }[];
@@ -102,6 +124,8 @@ export type Approval = {
 export type ProviderEvent = { type: string; id?: string; text?: string; data?: any };
 export type SendOptions = {
   webSearch?: boolean;
+  /** M12: site and date constraints for this message's web search. */
+  webConstraints?: import('./web-plan.ts').SearchConstraints;
   /** Reauthorize immediately before the provider request can leave the broker. */
   beforeAccept?: () => void;
   /** The request left the broker, so a missing acknowledgement has an unknown outcome. */
@@ -112,6 +136,8 @@ export type SendOptions = {
   onRejected?: () => void;
   /** The provider accepted the turn. Unlike onAccepted, send() does not wait for it. */
   acknowledged?: () => void;
+  /** The transcript message of the user's turn, kept with Cere-managed history as its source. */
+  messageId?: string;
 };
 export interface Adapter {
   /** Refuses input this provider cannot accept, before the turn is recorded or dispatched. */
@@ -132,10 +158,13 @@ export const defaultSettings: Settings = {
   memory: { enabled: false, model: 'nomic-embed-text', extractionModel: defaultExtractionModel },
   desktopProfile: 'normal', interfaceScale:1, homePositions:{},
   topmost: true, scale: 1, roaming: false, quiet: false, reducedMotion: false, motionIntensity: .7, expressiveCues: true, idleEnergy: 'lively', hidden: false,
-  showMemoryCitations: false,
+  showMemoryCitations: false, sendKey: 'enter', notesVault: { path: '', enabled: false, allowCloud: false },
+  compatible: { baseUrl: '', label: '', requiresKey: true, tools: false, images: false, streaming: true, usage: false, contextLength: 0, maxOutputTokens: 0 },
+  extensions: [], customTools: [], audio: { input: '', output: '' }, voiceCommands: { enabled: false, confirm: true, speakFeedback: false }, responsiveness: false,
   profile: 'scoped', paused: false, bypassCliPermissions: false, bypassComputerPermissions: false, categories: [], grants: [],
   position: { output: '', x: 0.86, y: 0.78 }, roamArea: { left: 0.05, right: 0.95, top: 0.5, bottom: 0.95 },
   onboarding: true, scripts: [],
 };
 
+export type CompatibleEndpoint = { baseUrl: string; label: string; requiresKey: boolean; tools: boolean; images: boolean; streaming: boolean; usage: boolean; contextLength: number; maxOutputTokens: number };
 export type ToolDefinition = { name: string; title: string; category: string; description: string; schema: Record<string, any>; required?: string[]; readOnly?: boolean };

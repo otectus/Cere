@@ -3,6 +3,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { withHttpRetry, HttpStatusError, type RetryOptions } from './http-retry.ts';
 import { indexChunks } from './indextts-config.ts';
+import { audioSelection, playbackArgs } from './audio-devices.ts';
 
 export type ElevenConfig={voiceId:string;modelId:string;allowCloud:boolean};
 export const defaultElevenConfig:ElevenConfig={voiceId:'',modelId:'eleven_flash_v2_5',allowCloud:false};
@@ -81,7 +82,7 @@ export class ElevenLabs{
     combined.throwIfAborted();
     const format=['-t','raw','-e','signed-integer','-b','16','-L','-c','1','-r','24000'];
     const filter=spawn(env.CERE_SOX_BIN||'sox',['-q','-D',...format,'-',...format,'-',...(tuning.rate!==1?['tempo',String(tuning.rate)]:[]),...(tuning.pitch?['pitch',String(tuning.pitch*100)]:[]),'vol',String(tuning.volume)],{env,stdio:['pipe','pipe','ignore']});
-    const player=spawn(env.CERE_APLAY_BIN||'aplay',['-q','-t','raw','-r','24000','-f','S16_LE','-c','1'],{env,stdio:['pipe','ignore','ignore']});
+    const player=spawn(env.CERE_APLAY_BIN||'aplay',[...playbackArgs(audioSelection().output),'-q','-t','raw','-r','24000','-f','S16_LE','-c','1'],{env,stdio:['pipe','ignore','ignore']});
     const children=[filter,player];let failure:Error|undefined;
     const stop=()=>{for(const c of children)c.kill('SIGKILL');};
     const fail=()=>{failure||=new ElevenError('PLAYBACK');controller.abort();};

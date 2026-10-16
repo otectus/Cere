@@ -68,6 +68,27 @@ Integrity fixtures run in a separate store. They check that a positive and negat
 
 The relational ranker **failed** its improvement gate against fusion without the ranker. The difference was 0.0 points because the corpus graphs are at most two hops deep, with no competing neighbours in the top 10. Accepted-assertion precision on real extraction output and production semantic quality are **unmeasured**. The corpus text is synthetic and anchored by known entity IDs, so this run measures eligibility, temporal and conflict behaviour, not natural-language recall. Latencies are in-process timings on a small store and are not comparable with the 100k workload.
 
+## Natural-language and document-collection baselines
+
+Measured on 2026-10-15 and pinned as floors by the tests named below. Both runners work offline in a temporary canonical store, never call a model or any network service, and report embedding-backed recall as `unmeasured`.
+
+```sh
+node benchmarks/memory/nl-baseline.ts
+node benchmarks/memory/document-baseline.ts
+node --test tests/memory-nl-baseline.test.ts tests/document-baseline.test.ts
+```
+
+`nl-baseline.ts` stores 20 preferences, decisions, tasks and facts in everyday wording (`tests/fixtures/memory/natural-language-cases.json`), among 60 filler passages, and asks paraphrased questions without entity anchors. It also plants 3 corrections, 5 questions that should find nothing, 2 look-alikes in another project's scope and 2 forgotten memories.
+
+| Mode | Recall@1 | Recall@8 | MRR@8 | Correction found | Correction ranked first | Abstention |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Automatic recall | 0.80 | 0.90 | 0.85 | 1.00 | 0.667 | 0.80 |
+| Explicit search | 0.80 | 0.95 | 0.86 | 1.00 | 0.667 | 0.80 |
+
+No other scope's memory and no forgotten memory was returned. Automatic packets stayed at p90 342 estimated tokens and at most 4 items. Correction-first ranking was unstable at first (0.333 or 0.667 between runs), because exactly tied scores fell back to random record IDs; ties now go to the more recently learned record, and the test pins 0.667.
+
+`document-baseline.ts` indexes six project documents into a document collection's own scope with the collection chunker (`tests/fixtures/memory/document-cases.json`) and asks 13 paraphrased questions with the retrieval settings a turn uses (local route, relevance floor, six items), calling the canonical engine directly rather than through the memory worker. Hit@1 is 0.923, hit@3 is 1.0, MRR is 0.962 and abstention on 3 unrelated questions is 0.667. Every returned chunk resolved to its file and content hash, no chunk exceeded its size, a forgotten document returned nothing, and project memory and the collection never answered for each other.
+
 ## Real cloud extraction
 
 `benchmarks/memory/extraction-results.json` preserves two actual five-case runs against `gpt-oss:20b-cloud`, digest `9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae`. The expected labels were unchanged between runs.

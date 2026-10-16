@@ -4,6 +4,7 @@ import { realpath, stat } from 'node:fs/promises';
 import type { Core } from './core.ts';
 import type { Session } from './types.ts';
 import { busy, remoteError, type RemoteExecution } from './execution.ts';
+import { validConstraints } from './web-plan.ts';
 
 type Entry = { params: any; execution?: RemoteExecution; configRevision: string; provenance?: RemoteExecution; messageId: string; text: string };
 
@@ -36,6 +37,8 @@ export class SendQueue {
         if(typeof p.text!=='string'||!p.text.trim()||p.text.length>100000)throw new Error('Enter a message of up to 100,000 characters');
         if(p.webSearch!==undefined&&typeof p.webSearch!=='boolean')throw new Error('Invalid web search choice');
         if(p.webSearch&&(!settings.webSearch.enabled||settings.paused||p.text.length>500||execution&&!execution.caps.includes('web')))throw new Error('Web search is unavailable for this message');
+        if(p.posture!==undefined)this.core.posture(p.posture);
+        if(p.webConstraints!==undefined&&(!p.webSearch||!Object.keys(validConstraints(p.webConstraints)).length))throw new Error('Search constraints apply only to a message that searches the web');
         if(this.entries(id).length>=20)throw new Error('Twenty messages are already queued. Wait for a turn or stop before sending more.');
         check?.();return s;
       };
@@ -48,7 +51,7 @@ export class SendQueue {
       if(images.length+attached.images.length>4)throw new Error('Attach at most four images');
       const session=validate(), messageId=randomUUID(), turnId=p.turnId||randomUUID();
       const text=p.text+(attached.assets.length?'\n\nAttached files: '+attached.assets.map(a=>a.name).join(', '):'')+(images.length?'\n\nAttached: '+images.join(', '):'');
-      const entry:Entry={params:{id,text:p.text,attachmentIds:attached.assets.map(a=>a.id),images,webSearch:p.webSearch,turnId,queuedMessageId:messageId,expectedConfigRevision:session.configRevision||'0'},
+      const entry:Entry={params:{id,text:p.text,attachmentIds:attached.assets.map(a=>a.id),images,webSearch:p.webSearch,...(p.posture!==undefined?{posture:p.posture}:{}),...(p.webConstraints!==undefined?{webConstraints:validConstraints(p.webConstraints)}:{}),turnId,queuedMessageId:messageId,expectedConfigRevision:session.configRevision||'0'},
         execution:execution?structuredClone(execution):undefined,provenance:session.remote?structuredClone(session.remote):undefined,configRevision:session.configRevision||'0',messageId,text};
       const queue=[...this.entries(id),entry];
       // Persist the queue, transcript row and draft consumption as one acceptance.

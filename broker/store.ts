@@ -91,7 +91,7 @@ export class Store {
     this.transaction(() => {
       this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
       this.db.prepare('DELETE FROM message_bookmarks WHERE session_id=?').run(id);
-      for (const prefix of ['submission:','sendQueue:','sendQueueDispatch:','ollama:','api:','link:','workflow-run:','recalled:']) this.db.prepare('DELETE FROM meta WHERE key=?').run(prefix + id);
+      for (const prefix of ['submission:','sendQueue:','sendQueueDispatch:','ollama:','api:','link:','workflow-run:','recalled:','recall-outcomes:','turn-plan:']) this.db.prepare('DELETE FROM meta WHERE key=?').run(prefix + id);
       if (!Number(this.db.prepare('DELETE FROM sessions WHERE id=?').run(id).changes)) throw new Error('Session no longer exists');
     });
     this.sessionsRevision++; this.catalogRevision++;
@@ -105,6 +105,12 @@ export class Store {
       telemetry: { ...defaultSettings.telemetry, ...saved.telemetry },
       ollama: { ...defaultSettings.ollama, host: process.env.CERE_OLLAMA_HOST || process.env.OLLAMA_HOST || defaultSettings.ollama.host, ...saved.ollama },
       webSearch: { ...defaultSettings.webSearch, ...saved.webSearch },
+      notesVault: { ...defaultSettings.notesVault, ...saved.notesVault },
+      compatible: { ...defaultSettings.compatible, ...saved.compatible },
+      extensions: Array.isArray(saved.extensions) ? saved.extensions : [],
+      customTools: Array.isArray(saved.customTools) ? saved.customTools : [],
+      audio: { ...defaultSettings.audio, ...saved.audio },
+      voiceCommands: { ...defaultSettings.voiceCommands, ...saved.voiceCommands },
       memory: { ...defaultSettings.memory, ...saved.memory } };
   }
   sessions(): Session[] { return [...this.db.prepare('SELECT data FROM sessions').all(),...this.volatile.prepare('SELECT data FROM sessions').all()].map(r => JSON.parse(r.data as string)).sort((a,b) => b.updated-a.updated); }

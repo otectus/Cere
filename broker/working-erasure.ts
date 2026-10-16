@@ -30,7 +30,10 @@ export function eraseWorkingCopies(store:Store,session:Session,matches:ErasureMa
   const capsuleKey='capsule:'+session.cwd,capsule=store.get<any>(capsuleKey,null);
   if(capsule){
     const sourceBound=Array.isArray(capsule.sources)&&capsule.sources.some((source:any)=>identified(source?.messageId,source?.turnId,source?.sourceEventId));
-    store.set(capsuleKey,sourceBound?{...capsule,goal:removedText,decisions:[],constraints:[],questions:[],nextSteps:[],sources:capsule.sources.filter((source:any)=>!identified(source?.messageId,source?.turnId,source?.sourceEventId))}:scrub(capsule));
+    // A task taken from an erased message goes with it; other tasks keep their state, scrubbed.
+    const tasks=Array.isArray(capsule.tasks)?scrub(capsule.tasks.filter((task:any)=>!(task?.sources||[]).some((source:any)=>identified(source?.messageId,source?.turnId,source?.sourceEventId)))):undefined;
+    const open=(tasks||[]).filter((task:any)=>task.state==='accepted'||task.state==='active').map((task:any)=>task.text);
+    store.set(capsuleKey,sourceBound?{...capsule,goal:removedText,decisions:[],constraints:[],questions:[],nextSteps:tasks?open:[],...(tasks?{tasks}:{}),sources:capsule.sources.filter((source:any)=>!identified(source?.messageId,source?.turnId,source?.sourceEventId))}:{...scrub(capsule),...(tasks?{tasks,nextSteps:open}:{})});
   }
   const runKey='workflow-run:'+session.id,run=store.get<any>(runKey,null);if(run)store.set(runKey,{...scrub(run),...(identified(run.messageId,run.turnId,run.sourceEventId)?{prompt:removedText}:{})});
   store.set('workflow:results',store.get<any[]>('workflow:results',[]).flatMap(row=>row.sessionId===session.id?(identified(row.messageId,row.turnId,row.sourceEventId)?[]:[scrub(row)]):[row]));

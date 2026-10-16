@@ -2,7 +2,7 @@
 
 // Display names shared by every surface that names a provider.
 const providerNames = {codex: "Codex", claude: "Claude", ollama: "Ollama", antigravity: "AntiGravity",
-    openai: "OpenAI API", anthropic: "Claude API", google: "Google AI API"}
+    openai: "OpenAI API", anthropic: "Claude API", google: "Google AI API", compatible: "Compatible endpoint"}
 
 function provider(id) {
     const value = String(id || "")

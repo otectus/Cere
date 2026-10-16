@@ -246,8 +246,7 @@ export class MemoryService {
    * models are refused, so local-only sources never leave through indexing. A
    * user-configured remote Ollama server remains supported; it is not cloud.
    */
-  async identity(host: string, signal: AbortSignal) {
-    const model = this.configuration.embedding_model;
+  async identity(host: string, signal: AbortSignal, model = this.configuration.embedding_model) {
     const tags = await ollamaJson(host, "tags", undefined, signal);
     const m = tags.models?.find((m: Row) =>
       [model, model + ":latest"].includes(m.name || m.model),
@@ -278,9 +277,9 @@ export class MemoryService {
     texts: string[],
     kind: "query" | "document",
     signal: AbortSignal,
+    model = this.configuration.embedding_model,
   ) {
-    const prompts = embeddingPrompts(this.configuration.embedding_model),
-      model = this.configuration.embedding_model,
+    const prompts = embeddingPrompts(model),
       prefix = kind === "query" ? prompts.query : prompts.document;
     const chunks = texts.map((t) => {
       const points = Array.from(t),
@@ -496,6 +495,23 @@ export class MemoryService {
       });
       return false;
     }
+  }
+  /**
+   * M09: what switching the embedding model would change, measured before it is applied. Each model's
+   * vectors live in their own fingerprinted space; nothing is mixed, and the old space is kept.
+   */
+  async embeddingImpact(host: string, candidate: string, signal: AbortSignal) {
+    const counts = await this.canonical.call("embedding_impact", {}, signal);
+    const describe = async (model: string) => {
+      const identity = await this.identity(host, signal, model), [probe] = await this.embed(host, ["Cere memory embedding probe"], "document", signal, model);
+      const fingerprint = this.fingerprint(identity, probe.length);
+      return { model, fingerprint, dimension: probe.length, records: counts.spaces.find((space: Row) => space.fingerprint === fingerprint)?.records || 0 };
+    };
+    let current: Row;
+    try { current = await describe(this.configuration.embedding_model); } catch (error: any) { signal.throwIfAborted(); current = { model: this.configuration.embedding_model, error: String(error?.message || error).slice(0, 300) }; }
+    const next = await describe(candidate);
+    return { artifacts: counts.artifacts, current, next, unchanged: current.fingerprint === next.fingerprint, missing: Math.max(0, counts.artifacts - next.records),
+      spaces: counts.spaces.length };
   }
   /** The configured model's embedding space on one server, measured again after five minutes. */
   async space(host: string, signal: AbortSignal) {
@@ -905,6 +921,7 @@ export class MemoryService {
     if (method === "configure") return this.configure(p as MemoryConfiguration);
     if (method === "retrieve") return this.retrieve(p, signal);
     if (method === "workspace") return this.workspace();
+    if (method === "embedding_impact_check") return this.embeddingImpact(p.host, p.model, signal!);
     if (method === "foreground") {
       this.foreground = Math.max(0, this.foreground + (p.active ? 1 : -1));
       return { foreground: this.foreground };

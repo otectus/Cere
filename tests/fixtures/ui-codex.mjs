@@ -59,6 +59,10 @@ createInterface({input:process.stdin}).on('line',line=>{
       const id='ea105855-1459-41da-b270-d370d2b54457';
       event('item/completed',{item:{id:`reply-${turn}`,type:'agentMessage',phase:'final_answer',text:`You prefer **Ruff** for linting [evidence:${id}].\n\nEvidence: [evidence:${id}]`}});
       event('turn/completed',{turn:{id:`turn-${turn}`,status:'completed'}});
+    }else if(prompt.startsWith('Pinned recipe:')){
+      // M17: a recipe reply that has only some of the sections its recipe asks for.
+      event('item/completed',{item:{id:`reply-${turn}`,type:'agentMessage',phase:'final_answer',text:'## Assessment\nOption A is simpler.'}});
+      event('turn/completed',{turn:{id:`turn-${turn}`,status:'completed'}});
     }else if(prompt.startsWith('completion-rich')){
       // UI review fixture: a long reply with fenced code, nested lists, a wide table, an image, long URLs and paths.
       const image=prompt.includes(':')?prompt.slice(prompt.indexOf(':')+1):'';

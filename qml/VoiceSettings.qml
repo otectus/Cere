@@ -63,7 +63,7 @@ CSection {
             }
         }
     }
-    Component.onCompleted:if(App.connected&&available)refresh()
+    Component.onCompleted:{if(App.connected&&available)refresh();loadDevices()}
     CCheckBox {
         objectName:"speechEnabled";text:"Read replies aloud";checked:voiceSettings.settings.speechEnabled===true
         onClicked:App.rpc("settings.update",{speechEnabled:checked})
@@ -73,7 +73,7 @@ CSection {
     Flow {
         Layout.fillWidth:true;spacing:8
         Repeater {
-            model:[{id:"codex",name:"Codex"},{id:"claude",name:"Claude Code"},{id:"ollama",name:"Ollama"},{id:"antigravity",name:"AntiGravity"},{id:"openai",name:"OpenAI API"},{id:"anthropic",name:"Claude API"},{id:"google",name:"Google AI API"}]
+            model:[{id:"codex",name:"Codex"},{id:"claude",name:"Claude Code"},{id:"ollama",name:"Ollama"},{id:"antigravity",name:"AntiGravity"},{id:"openai",name:"OpenAI API"},{id:"anthropic",name:"Claude API"},{id:"google",name:"Google AI API"},{id:"compatible",name:"Compatible endpoint"}]
             delegate:CCheckBox {
                 required property var modelData
                 objectName:"speechProvider_"+modelData.id;text:modelData.name
@@ -140,6 +140,48 @@ CSection {
         onClicked:App.rpc("settings.update",{transcription:{executable:whisperExecutable.text.trim(),model:whisperModel.text.trim()}})
     }
     CText { text:"Follow the whisper.cpp README at github.com/ggml-org/whisper.cpp: build whisper-cli locally and download a GGML model with the project’s model script. Paste both absolute paths above. Audio capture uses PipeWire pw-record, with ALSA arecord as a fallback. Recordings are limited to 60 seconds and deleted after finish, cancel, or error.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+    // M21: spoken commands from a fixed list; the transcript stays ordinary text unless it is one of them.
+    CText { text:"Voice commands";font.weight:Font.DemiBold }
+    CCheckBox { objectName:"voiceCommandsEnabled";text:"Recognize spoken commands";checked:voiceSettings.settings.voiceCommands?.enabled===true;onClicked:App.rpc("settings.update",{voiceCommands:{enabled:checked}}) }
+    CCheckBox { objectName:"voiceCommandsConfirm";visible:voiceSettings.settings.voiceCommands?.enabled===true;text:"Show a command before running it";checked:voiceSettings.settings.voiceCommands?.confirm!==false;onClicked:App.rpc("settings.update",{voiceCommands:{confirm:checked}}) }
+    CCheckBox { objectName:"voiceCommandsSpeak";visible:voiceSettings.settings.voiceCommands?.enabled===true;text:"Say navigation commands aloud";checked:voiceSettings.settings.voiceCommands?.speakFeedback===true;onClicked:App.rpc("settings.update",{voiceCommands:{speakFeedback:checked}}) }
+    CText { text:"Say only the command, optionally starting with "+App.assistantName+": “stop speaking”, “read that again”, “stop the reply”, “open settings”, “show conversations”, “open desktop” or “new conversation”. Anything else stays text for your draft. Commands never answer a permission question; the Stop button always works.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    // M10: which microphone records and which speaker plays. A chosen device that is unplugged is
+    // reported instead of quietly using another one.
+    CText { text:"Audio devices";font.weight:Font.DemiBold }
+    property var audioDevices:({backend:"",inputs:[],outputs:[]})
+    property int devicesRequest:-1
+    property string devicesError:""
+    function loadDevices(){devicesError="";devicesRequest=App.rpc("audio.devices",{})}
+    function deviceChoices(list,chosen){
+        const items=[{id:"",label:"System default"}].concat(list.map(device=>({id:device.id,label:device.label+(device.isDefault?" · current default":"")})))
+        return chosen&&!list.some(device=>device.id===chosen)?items.concat([{id:chosen,label:chosen.replace(/^(pw|alsa):/,"")+" · not connected"}]):items
+    }
+    readonly property var audioChoice:settings.audio||({input:"",output:""})
+    readonly property var inputChoices:deviceChoices(audioDevices.inputs||[],audioChoice.input)
+    readonly property var outputChoices:deviceChoices(audioDevices.outputs||[],audioChoice.output)
+    GridLayout {
+        Layout.fillWidth:true;columns:width>=520?2:1;columnSpacing:8;rowSpacing:6
+        CText { text:"Microphone";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CComboBox {
+            id:inputDevice;objectName:"audioInputDevice";Layout.fillWidth:true;model:voiceSettings.inputChoices;textRole:"label";valueRole:"id";Accessible.name:"Microphone"
+            currentIndex:Math.max(0,voiceSettings.inputChoices.findIndex(item=>item.id===voiceSettings.audioChoice.input))
+            onActivated:App.rpc("settings.update",{audio:{input:currentValue}})
+        }
+        CText { text:"Speaker";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CComboBox {
+            id:outputDevice;objectName:"audioOutputDevice";Layout.fillWidth:true;model:voiceSettings.outputChoices;textRole:"label";valueRole:"id";Accessible.name:"Speaker"
+            currentIndex:Math.max(0,voiceSettings.outputChoices.findIndex(item=>item.id===voiceSettings.audioChoice.output))
+            onActivated:App.rpc("settings.update",{audio:{output:currentValue}})
+        }
+    }
+    RowLayout {
+        Layout.fillWidth:true
+        CText { objectName:"audioDevicesStatus";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.caption;color:voiceSettings.devicesError||voiceSettings.audioDevices.error?Theme.amber:Theme.muted
+            text:voiceSettings.devicesError||voiceSettings.audioDevices.error||(voiceSettings.audioDevices.backend?(voiceSettings.audioDevices.backend==="pipewire"?"Devices from PipeWire":"Devices from ALSA")+" · "+(voiceSettings.audioDevices.inputs||[]).length+" microphones, "+(voiceSettings.audioDevices.outputs||[]).length+" speakers. A chosen speaker plays through Cere’s own player.":"Listing devices…") }
+        CButton { objectName:"audioDevicesRefresh";text:"Refresh";enabled:voiceSettings.devicesRequest<0;onClicked:voiceSettings.loadDevices() }
+    }
+    Connections { target:App;function onResult(id,value){if(id!==voiceSettings.devicesRequest)return;voiceSettings.devicesRequest=-1;if(value?.error)voiceSettings.devicesError=String(value.error);else voiceSettings.audioDevices=value} }
     Connections {
         target:App
         function onStateChanged(){

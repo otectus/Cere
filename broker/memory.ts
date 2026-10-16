@@ -107,6 +107,21 @@ const recentTurns = 4;
  * filled the same budget instead of the packet shrinking.
  */
 const automaticItems = 8;
+/**
+ * What one turn's automatic recall did, kept per conversation for the last turns: outcome and reason
+ * codes, counts and budget only, never query or memory text. It is recorded when the turn is
+ * prepared, so it describes that moment's memory health, not today's. Reading it runs no retrieval.
+ */
+export type RecallOutcome = {
+  turnId: string; time: number;
+  outcome: 'disabled' | 'skipped' | 'no_eligible_sources' | 'no_match' | 'already_supplied' | 'included' | 'timed_out' | 'degraded';
+  reason: string; coverage: string[];
+  items: number; held: number; trimmed: number; candidates: number;
+  budgetTokens: number; estimatedTokens: number;
+  route: 'local' | 'cloud' | 'unknown'; memoryState: string; memoryRevision: number | null; latencyMs: number;
+};
+export const recallOutcomeKey = (sessionId: string) => 'recall-outcomes:' + sessionId;
+const recallOutcomeHistory = 20;
 /** Settles with the promise, or rejects with the signal's reason as soon as the signal aborts. */
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason);
@@ -288,6 +303,12 @@ export class Memory {
   }
   async forget(session: Session, id: unknown, signal?:AbortSignal, authorize?:()=>void) { return this.erase(session,{id},signal,authorize); }
   async clear(session: Session, signal?:AbortSignal, authorize?:()=>void) { return this.erase(session,{},signal,authorize); }
+  /** M09: the effect of switching the embedding model, measured with that model before anything changes. */
+  async embeddingImpact(model: unknown, signal = AbortSignal.timeout(60_000)) {
+    if (typeof model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(model)) throw new Error('Enter an Ollama embedding model name');
+    await this.ready;
+    return this.service.call('embedding_impact_check', { host: this.settings().ollama.host, model }, signal);
+  }
   async check(signal = new AbortController().signal) {
     await this.ready; const { ollama, memory } = this.settings();
     try { const identity = await this.service.identity(ollama.host, signal); const [vector] = await embed(ollama.host, memory.model, ['Cere memory connection check'], 'query', signal); this.setStatus('ready'); return { model: memory.model, dimensions: vector.length, digest: identity.digest }; }
@@ -321,29 +342,46 @@ export class Memory {
    */
   async context(session: Session, text: string, signal: AbortSignal, tokenBudget = 4000, route?: ModelRoute, write=true, authorize?:()=>void) {
     this.packets.delete(session.id);
-    if (!this.active()) return '';
+    const started = performance.now(), trace: Partial<RecallOutcome> = { route: session.provider === 'ollama' ? route ?? 'unknown' : 'cloud', budgetTokens: tokenBudget };
+    if (!this.active()) { this.recordOutcome(session.id, { ...trace, outcome: 'disabled', reason: this.settings().paused ? 'paused' : 'setting_off' }, started); return ''; }
     // A turn never waits on memory longer than the deadline: a busy, slow or stopped memory worker
     // costs this turn its recalled context, not its reply. Stopping the turn still ends the wait.
     const deadline = AbortSignal.timeout(this.recallDeadlineMs), guard = AbortSignal.any([signal, deadline]);
     // Housekeeping (projection, extraction, expiry) yields while a turn recalls.
     void this.service.call('foreground', { active: true }).catch(() => {});
     try {
-      return await abortable(this.prepare(session, text, guard, tokenBudget, route, write, authorize), guard);
+      const value = await abortable(this.prepare(session, text, guard, tokenBudget, route, write, authorize, trace), guard);
+      this.recordOutcome(session.id, { ...trace, outcome: trace.outcome || 'no_match', reason: trace.reason || 'nothing_cleared_relevance' }, started);
+      return value;
     } catch (error: any) {
       if (signal.aborted) throw error;
       this.setStatus('degraded', deadline.aborted ? 'Memory did not answer in time; this reply continues without recalled context.' : 'Memory is unavailable for this turn; the conversation continues without recalled context.');
+      this.recordOutcome(session.id, { ...trace, outcome: deadline.aborted ? 'timed_out' : 'degraded', reason: deadline.aborted ? 'recall_deadline' : error?.code === 'SOURCE_CHANGED' ? 'memory_changed' : 'unavailable' }, started);
       return '';
     } finally {
       void this.service.call('foreground', { active: false }).catch(() => {});
     }
   }
+  /** Stores one turn's recall outcome, replacing an earlier record for the same turn. Codes and counts only. */
+  recordOutcome(sessionId: string, value: Partial<RecallOutcome>, started?: number) {
+    let turnId = '';
+    try { turnId = this.store.session(sessionId).turnId || ''; } catch { return; }
+    const record: RecallOutcome = { turnId, time: Date.now(), outcome: value.outcome || 'degraded', reason: value.reason || '', coverage: (value.coverage || []).slice(0, 12),
+      items: value.items || 0, held: value.held || 0, trimmed: value.trimmed || 0, candidates: value.candidates || 0,
+      budgetTokens: value.budgetTokens || 0, estimatedTokens: value.estimatedTokens || 0, route: value.route || 'unknown',
+      memoryState: this.status.state, memoryRevision: value.memoryRevision ?? null, latencyMs: started === undefined ? 0 : Math.round(performance.now() - started) };
+    const earlier = this.outcomes(sessionId).filter(row => !turnId || row.turnId !== turnId);
+    this.store.set(recallOutcomeKey(sessionId), [record, ...earlier].slice(0, recallOutcomeHistory));
+  }
+  outcomes(sessionId: string): RecallOutcome[] { return this.store.get<RecallOutcome[]>(recallOutcomeKey(sessionId), []); }
   /** The work of context(). Every step checks the turn's guard, so a late result never replaces a newer turn's packet. */
-  private async prepare(session: Session, text: string, signal: AbortSignal, tokenBudget: number, route: ModelRoute | undefined, write: boolean, authorize?:()=>void) {
+  private async prepare(session: Session, text: string, signal: AbortSignal, tokenBudget: number, route: ModelRoute | undefined, write: boolean, authorize?:()=>void, trace: Partial<RecallOutcome> = {}) {
     if(!write){
       authorize?.();signal.throwIfAborted();
-      if(!this.recalls(session,text,route,tokenBudget))return '';
+      const skip=this.recallSkip(session,text,route,tokenBudget);
+      if(skip){Object.assign(trace,skip);return '';}
       const packet=await this.recall(session,text.slice(0,1000),signal,tokenBudget,route,{recent_session_id:session.id});signal.throwIfAborted();authorize?.();
-      return this.present(session,packet).text;
+      const shown=this.present(session,packet);this.classify(trace,packet,shown);return shown.text;
     }
     const scope_id = await this.scope(session, signal);
     authorize?.();signal.throwIfAborted();
@@ -353,24 +391,47 @@ export class Memory {
       // The query itself is excluded from persistence and recall alike.
       this.packets.set(session.id,{skipped:true});
       this.warn('This message was not remembered because memory policy excluded its content.');
+      Object.assign(trace,{outcome:'skipped',reason:'message_excluded_by_policy'});
       return '';
     }
     this.packets.set(session.id,{observed:true,observation_id:observation.id,supplied:[]});
-    if(!this.recalls(session,text,route,tokenBudget)){this.store.set('recalled:'+session.id,{ids:[],time:Date.now()});return '';}
+    const skip=this.recallSkip(session,text,route,tokenBudget);
+    if(skip){this.store.set('recalled:'+session.id,{ids:[],time:Date.now()});Object.assign(trace,skip);return '';}
     const packet = await this.recall(session, text.slice(0, 1000), signal, tokenBudget, route, { exclude_observation_ids: [observation.id], recent_session_id: session.id }); signal.throwIfAborted();
     const shown = this.present(session, packet);
     this.packets.set(session.id, { observed: true, observation_id: observation.id, snapshot: packet.snapshot, supplied: shown.items.flatMap((item: any) => item.ids) });
     this.store.set('recalled:'+session.id,{ids:(packet.results||[]).map((r:any)=>r.id).filter((id:any)=>typeof id==='string').slice(0,12),time:Date.now()});
+    this.classify(trace, packet, shown);
     return shown.text;
   }
   /**
-   * Whether a turn recalls for its message at all. A cloud route without consent to share memory
-   * would recall nothing, and a message without a topic word, such as "ok, continue", relates to
-   * everything and nothing; the model can still search memory itself.
+   * Why a turn does not recall for its message, or null when it does. A cloud route without consent
+   * to share memory would recall nothing, and a message without a topic word, such as "ok, continue",
+   * relates to everything and nothing; the model can still search memory itself.
    */
-  private recalls(session: Session, text: string, route: ModelRoute | undefined, tokenBudget: number) {
+  private recallSkip(session: Session, text: string, route: ModelRoute | undefined, tokenBudget: number): Pick<RecallOutcome, 'outcome' | 'reason'> | null {
     const cloud = session.provider !== 'ollama' || route === 'cloud';
-    return tokenBudget >= 128 && (!cloud || !!this.settings().memory.allowCloudMemory) && informativeTerms(text).length > 0;
+    if (tokenBudget < 128) return { outcome: 'skipped', reason: 'budget_too_small' };
+    if (cloud && !this.settings().memory.allowCloudMemory) return { outcome: 'no_eligible_sources', reason: 'cloud_memory_not_allowed' };
+    if (!informativeTerms(text).length) return { outcome: 'skipped', reason: 'no_topic_words' };
+    return null;
+  }
+  /** Classifies a finished recall from the worker's own coverage codes and counts; it never recalls again. */
+  private classify(trace: Partial<RecallOutcome>, packet: any, shown: { items: any[] }) {
+    const coverage: string[] = Array.isArray(packet.coverage) ? packet.coverage.filter((code: unknown) => typeof code === 'string').slice(0, 12) : [];
+    const total = (packet.items || []).length;
+    Object.assign(trace, { coverage, items: shown.items.length, held: total - shown.items.length, trimmed: packet.budget?.trimmed_items || 0,
+      candidates: packet.metrics?.candidates || 0, estimatedTokens: packet.budget?.estimated_tokens || 0, memoryRevision: packet.snapshot?.revision ?? null });
+    const set = (outcome: RecallOutcome['outcome'], reason: string) => { trace.outcome = outcome; trace.reason = reason; };
+    if (packet.mode === 'disabled') return set('disabled', 'setting_off');
+    if (packet.mode === 'invalidated') return set('degraded', 'memory_changed');
+    if (!total) {
+      if (coverage.includes('cloud_memory_denied')) return set('no_eligible_sources', 'cloud_memory_not_allowed');
+      if (coverage.some(code => ['semantic_degraded', 'graph_degraded', 'deadline_partial'].includes(code))) return set('degraded', 'no_match_partial_coverage');
+      return set('no_match', 'nothing_cleared_relevance');
+    }
+    if (!shown.items.length) return set('already_supplied', 'items_held_from_recent_turns');
+    set('included', coverage.length ? 'partial_coverage' : 'complete');
   }
   /** A turn's packet: the compact items, less those still in a keeping provider's transcript. */
   private present(session: Session, packet: any) {
@@ -380,9 +441,9 @@ export class Memory {
     return { items: shown, text: renderPacket(shown, packet.budget?.trimmed_items || 0, items.length - shown.length) };
   }
   async graph(session: Session | undefined, method: string, params: Record<string, unknown> = {}, signal?:AbortSignal, authorize?:()=>void) {
-    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','freeze_episode','consolidate'];
+    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology'];
     if (!allowed.includes(method)) throw new Error('This memory method is not exposed to clients');
-    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','erasure_status'].includes(method);
+    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','erasure_status','ontology'].includes(method);
     if (!global && !session) throw new Error('Choose a conversation to select its authorized project scope');
     const { scope_id: _scope, owner_id: _owner, ...safe } = params;
     await this.ready;

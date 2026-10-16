@@ -30,8 +30,10 @@ ColumnLayout {
         currentIndex:Math.max(0,connection.choices.findIndex(m=>m.id===connection.settings.model))
         onActivated:{connection.connecting=false;connection.error="";connection.saveRequest=App.rpc("settings.update",{ollama:{model:currentValue}})}
     }
-    CText { visible:connection.capability.modelsStatus==="ready"&&!(connection.capability.models||[]).length;text:"No chat models are available. Pull a chat model with Ollama, then Refresh.";color:Theme.amber;font.pixelSize:Theme.secondary }
+    CText { visible:connection.capability.modelsStatus==="ready"&&!(connection.capability.models||[]).length;text:"No chat models are available. Download one in Manage local models, then Refresh.";color:Theme.amber;font.pixelSize:Theme.secondary }
     CText { visible:!!connection.error||!!connection.capability.modelsError;text:connection.error||connection.capability.modelsError||"";color:Theme.danger;font.pixelSize:Theme.secondary }
+    CButton { objectName:"manageLocalModels";text:"Manage local models…";enabled:App.connected;help:"Download, load, unload or delete models on this Ollama server";onClicked:localModels.openList() }
+    LocalModels { id:localModels }
     Connections { target:App;function onResult(id,value){
         if(id===connection.saveRequest){connection.saveRequest=-1;if(value?.error)connection.error=value.error;else{host.text=connection.settings.host;if(connection.connecting&&connection.capability.modelsStatus!=="loading")connection.refreshRequest=App.rpc("provider.models",{provider:"ollama"})}}
         else if(id===connection.refreshRequest){connection.refreshRequest=-1;if(value?.error)connection.error=value.error}

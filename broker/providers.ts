@@ -18,6 +18,8 @@ export type Hooks = {
   automaticApprovalValid?: (kind: Approval['kind']) => boolean;
   personality?: () => string;
   assistantName?: () => string;
+  /** The complete rendered behavior block (M01). Without it, the plain personality block is used. */
+  behavior?: () => string;
   /** Whether Cere offers this session its memory tools, so the memory guidance applies. */
   memoryGuidance?: () => boolean;
   restrictive?: boolean;
@@ -209,8 +211,10 @@ export class CodexAdapter implements Adapter {
   items = new Map<string, { threadId?: string; item: any }>();
   constructor(session: Session, hooks: Hooks) {
     this.session = session; this.hooks = hooks;
-    this.launch(hooks.personality?.() ?? defaultPersonality, hooks.assistantName?.() ?? defaultAssistantName, hooks.memoryGuidance?.() ?? true);
+    this.launch(this.behaviorBlock(), hooks.assistantName?.() ?? defaultAssistantName, hooks.memoryGuidance?.() ?? true);
   }
+  /** The behavior block this thread receives: the resolved profile, or the plain personality block. */
+  behaviorBlock() { return this.hooks.behavior?.() ?? personalityInstructions(this.hooks.personality?.() ?? defaultPersonality, this.hooks.assistantName?.() ?? defaultAssistantName); }
   launch(personality: string, assistantName: string, memory: boolean) {
     this.process = new RpcProcess(providerExecutable('codex'), ['app-server'], this.session.cwd);
     this.process.on('fault', error => this.hooks.event({ type: 'error', text: error.message }));
@@ -228,7 +232,7 @@ export class CodexAdapter implements Adapter {
       approvalPolicy: this.hooks.restrictive ? 'on-request' : config.approval_policy ?? 'on-request',
       approvalsReviewer: this.hooks.restrictive ? 'user' : config.approvals_reviewer ?? 'user',
       sandbox: this.hooks.restrictive ? (config.sandbox_mode === 'read-only' ? 'read-only' : 'workspace-write') : config.sandbox_mode ?? 'read-only',
-      developerInstructions: [config.developer_instructions, personalityInstructions(personality, assistantName), memory && memoryInstructions].filter(Boolean).join('\n\n'),
+      developerInstructions: [config.developer_instructions, personality, memory && memoryInstructions].filter(Boolean).join('\n\n'),
       config: { 'mcp_servers.cere': mcpConfig(this.hooks.token, this.session.id) } };
     if (this.session.model) params.model = this.session.model;
     // Cere owns the displayed transcript. Hydrating Codex's full turn history here
@@ -458,7 +462,7 @@ export class CodexAdapter implements Adapter {
   }
   async send(text: string, images: string[] = [], options: SendOptions = {}) {
     if (this.released) throw new Error('This Codex session was closed; start the turn again');
-    const personality = this.hooks.personality?.() ?? defaultPersonality;
+    const personality = this.behaviorBlock();
     const assistantName = this.hooks.assistantName?.() ?? defaultAssistantName;
     const memory = this.hooks.memoryGuidance?.() ?? true;
     await this.ready;
@@ -586,7 +590,7 @@ export class ClaudeAdapter implements Adapter {
     const promptPath = join(promptDirectory, 'system.txt');
     let proc: RpcProcess;
     try {
-      writeFileSync(promptPath, personalityInstructions(this.hooks.personality?.() ?? defaultPersonality, this.hooks.assistantName?.()) + ((this.hooks.memoryGuidance?.() ?? true) ? '\n' + memoryInstructions : ''), { mode: 0o600 });
+      writeFileSync(promptPath, (this.hooks.behavior?.() ?? personalityInstructions(this.hooks.personality?.() ?? defaultPersonality, this.hooks.assistantName?.())) + ((this.hooks.memoryGuidance?.() ?? true) ? '\n' + memoryInstructions : ''), { mode: 0o600 });
       if(this.hooks.restrictive&&images.length){
         const mediaDirectory=join(promptDirectory,'media');mkdirSync(mediaDirectory,{mode:0o700});
         images=images.map((source,index)=>{const bytes=readFileSync(source),target=join(mediaDirectory,`attachment-${index+1}${imageExtension(bytes)}`);writeFileSync(target,bytes,{mode:0o600});return target;});

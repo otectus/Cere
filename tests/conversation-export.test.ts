@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { Core } from '../broker/core.ts';
+import { Store } from '../broker/store.ts';
+
+test('M15 exports only visible selected messages with sources, keeps code intact and needs a deliberate choice for temporary chats', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'cere-export-'));
+  const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
+  t.after(async () => { await core.close(); await rm(dir, { recursive: true, force: true }); });
+  const session = await core.create({ provider: 'codex', cwd: dir, trusted: true, title: 'Release: plan / notes?' });
+  const put = (id: string, role: string, text: string, extra: any = {}) => core.putMessage({ id, sessionId: session.id, role, text, time: Date.parse('2026-10-15T12:00:00Z'), ...extra });
+  put('u1', 'user', 'How do I build it?\n\nAttached files: notes.txt');
+  put('a1', 'assistant', 'Run this [evidence:0f6e8a3c-2b1d-4c5e-9f7a-1b2c3d4e5f60]:\n\n```sh\nnpm run build\n```', { sources: [{ title: 'Build [docs]', url: 'https://example.org/build' }] });
+  put('t1', 'tool', 'npm run build\nexit 0', { kind: 'tool' });
+  put('a2', 'assistant', 'A private follow-up the user did not select.');
+  const all = await core.rpc('session.export', { id: session.id });
+  assert.equal(all.messages, 3, 'tool activity is left out unless asked for');
+  assert.match(all.text, /^# Release: plan \/ notes\?\n\n_Exported from Cere on .* · codex · /);
+  assert.match(all.text, /## You · 2026-10-15 12:00 UTC\n\nHow do I build it\?\n\nAttached files: notes\.txt/);
+  assert.match(all.text, /```sh\nnpm run build\n```/, 'code fences survive');
+  assert.match(all.text, /Sources:\n- \[Build docs\]\(https:\/\/example\.org\/build\)/);
+  assert.doesNotMatch(all.text, /\[evidence:0f6e8a3c-2b1d-4c5e-9f7a-1b2c3d4e5f60\]/, 'citation markers follow the display setting');
+  assert.match((await core.rpc('session.export', { id: session.id, showCitations: true })).text, /\[evidence:0f6e8a3c-2b1d-4c5e-9f7a-1b2c3d4e5f60\]/);
+  assert.equal(all.filename, 'Release plan notes.md');
+  const selected = await core.rpc('session.export', { id: session.id, messageIds: ['a1'], format: 'text' });
+  assert.equal(selected.messages, 1); assert.doesNotMatch(selected.text, /private follow-up|How do I build/);
+  assert.match(selected.text, /^Release: plan \/ notes\?\nExported from Cere/);
+  assert.match((await core.rpc('session.export', { id: session.id, includeTools: true })).text, /## Tool activity · .*\n\n```text\nnpm run build\nexit 0\n```/);
+  await assert.rejects(core.rpc('session.export', { id: session.id, messageIds: ['gone'] }), /no longer in this conversation/);
+  await assert.rejects(core.rpc('session.export', { id: session.id, format: 'html' }), /Markdown or plain text/);
+  const temporary = await core.create({ provider: 'codex', cwd: dir, trusted: true, temporary: true });
+  core.putMessage({ id: 'x1', sessionId: temporary.id, role: 'user', text: 'Temporary words', time: 1 });
+  await assert.rejects(core.rpc('session.export', { id: temporary.id }), /temporary conversation/);
+  assert.match((await core.rpc('session.export', { id: temporary.id, confirmTemporary: true })).text, /Temporary words/);
+});

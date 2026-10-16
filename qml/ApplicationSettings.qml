@@ -11,6 +11,19 @@ ColumnLayout {
         CButton { objectName:"copyShortcut";text:"Copy Hyprland shortcut";help:"Copy a suggested Super+C binding for a Lua configuration";onClicked:App.copy('hl.bind("SUPER + C", hl.dsp.exec_cmd("cere toggle"))') }
     }
     CSection {
+        title:"Conversation input"
+        description:"Choose which key sends a message. Shift+Enter always adds a new line, in the compact panel and the workspace."
+        CComboBox {
+            id:sendKeyChoice;objectName:"sendKey";Layout.fillWidth:true
+            readonly property var choices:[{value:"enter",label:"Enter sends · Shift+Enter adds a line"},{value:"ctrlEnter",label:"Ctrl+Enter sends · Enter adds a line"},{value:"button",label:"Only the Send button sends · Enter adds a line"}]
+            model:choices;textRole:"label"
+            currentIndex:Math.max(0,choices.findIndex(choice=>choice.value===(App.state.settings?.sendKey||"enter")))
+            enabled:App.connected
+            Accessible.name:"Send messages with"
+            onActivated:index=>{if(choices[index].value!==(App.state.settings?.sendKey||"enter"))App.rpc("settings.update",{sendKey:choices[index].value})}
+        }
+    }
+    CSection {
         title:"Maintenance"
         description:"Back up or restore Cere’s state, or check the application’s health."
         GridLayout {

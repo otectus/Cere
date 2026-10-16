@@ -65,5 +65,15 @@ ColumnLayout {
         }
         Repeater { model:assistance.settings.grants||[];CText { required property var modelData;text:modelData.category+" · expires "+new Date(modelData.expires).toLocaleTimeString(Qt.locale(),"h:mm AP");color:Theme.muted;font.pixelSize:Theme.caption } }
     }
+    CSection {
+        title:"Tool servers (MCP)"
+        description:"Add tools from programs you choose. Each call asks first unless you allow that tool."
+        ToolServers {}
+    }
+    CSection {
+        title:"Custom tools"
+        description:"One HTTP request or one program, with inputs the model may fill in."
+        CustomTools {}
+    }
     PermissionCenter { id:permissionCenter }
 }

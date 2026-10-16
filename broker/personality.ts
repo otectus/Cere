@@ -42,6 +42,28 @@ export function validatePersonality(value: unknown): string {
   return value;
 }
 
+/**
+ * Read-only preview of the personality block, rendered by the same personalityInstructions the
+ * providers receive. Editor values pass the same validators as a save; a field left out keeps its
+ * saved value, as an update without it would. It writes nothing and recalls nothing, and it covers
+ * only Cere's personality block: providers and projects can add other instructions.
+ */
+export function personalityPreview(input: unknown, saved: { personality: string; assistantName: string; revision: string }) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['personality', 'assistantName'].includes(key)))
+    throw new Error('A personality preview takes only the name and personality text');
+  const p = input as Record<string, unknown>;
+  const personality = 'personality' in p ? validatePersonality(p.personality) : saved.personality;
+  const assistantName = 'assistantName' in p ? validateAssistantName(p.assistantName) : saved.assistantName;
+  const draft = personalityInstructions(personality, assistantName), current = personalityInstructions(saved.personality, saved.assistantName);
+  return {
+    scope: 'cere-personality-block' as const,
+    draft, saved: current, settingsRevision: saved.revision,
+    matchesSaved: personality === saved.personality && assistantName === saved.assistantName,
+    characters: { draft: draft.length, saved: current.length },
+    note: 'Cere’s personality block. Provider and project instructions may add other context.',
+  };
+}
+
 export function personalityInstructions(value = defaultPersonality, name = defaultAssistantName): string {
   const assistantName = validateAssistantName(name);
   const style = value === defaultPersonality ? value.replace('You are Cere,', () => `You are ${assistantName},`) : value;

@@ -54,12 +54,24 @@ class UiCheck : public QObject {
         std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem*root)->QQuickItem*{if(!root->isVisible())return nullptr;if(root->objectName()==name)return root;for(auto child:root->childItems())if(auto match=find(child))return match;return nullptr;};
         return find(window->contentItem());
     }
-    void click(const QString &name){
+    // Scrolls every scrolling ancestor until the control is in view.
+    void scrollTo(const QString &name){
         auto control=item(name);QVERIFY2(control,qPrintable(name));
         for(auto parent=control->parentItem();parent;parent=parent->parentItem())if(parent->property("contentY").isValid()&&parent->property("contentHeight").toDouble()>parent->height()){
             const auto y=control->mapToItem(parent,QPointF(control->width()/2,control->height()/2)).y();
             if(y<10||y>parent->height()-10){parent->setProperty("contentY",std::clamp(parent->property("contentY").toDouble()+y-parent->height()/2,0.,parent->property("contentHeight").toDouble()-parent->height()));QTest::qWait(60);}
         }
+    }
+    // Clicks once the control has stopped moving: a page that is still laying out late content can
+    // shift a row under the pointer between finding it and clicking it.
+    void stableClick(const QString &name){
+        scrollTo(name);QPointF last(-1,-1);
+        for(int stable=0,tries=0;stable<3&&tries<40;++tries){QTest::qWait(50);auto control=item(name);QVERIFY2(control,qPrintable(name));const auto at=control->mapToScene(QPointF(0,0));stable=at==last?stable+1:0;last=at;}
+        click(name);
+    }
+    void click(const QString &name){
+        auto control=item(name);QVERIFY2(control,qPrintable(name));
+        scrollTo(name);
         QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());QTest::qWait(120);
     }
     // Opens a conversation tool from its row, or from More when a short page folds the row away (F-03).
@@ -67,6 +79,16 @@ class UiCheck : public QObject {
         if(item(row)){click(row);return;}
         click("conversationMore");QTRY_VERIFY2(item(entry),qPrintable(entry));click(entry);
     }
+    // A conversation tool that lives under More, or in the folded menu on short pages.
+    void extraTool(const QString &entry){
+        if(item("chatMoreTools")){click("chatMoreTools");QTRY_VERIFY2(item(entry),qPrintable(entry));click(entry);return;}
+        click("conversationMore");QTRY_VERIFY2(item(entry+"Folded"),qPrintable(entry));click(entry+"Folded");
+    }
+    QObject *dialog(const QString &name){
+        for(auto candidate:window->findChildren<QObject*>(name))if(candidate->property("opened").toBool())return candidate;
+        const auto all=window->findChildren<QObject*>(name);return all.isEmpty()?nullptr:all.first();
+    }
+    void writeFile(const QString &path,const QByteArray &bytes){QFile f(path);QVERIFY2(f.open(QIODevice::WriteOnly),qPrintable(path));f.write(bytes);}
     // Settings shows one category at a time. These open the category holding a control, or a category
     // by id, the way a deep link does, and wait until it shows.
     QQuickItem *openSetting(const QString &name){
@@ -250,7 +272,10 @@ private slots:
             QVERIFY2(!saved.contains("error"),qPrintable(saved.value("error").toString()));
         }
         click("tab_Sessions");click("newSession");
-        auto provider=item("sessionProvider");QVERIFY(provider);QCOMPARE(provider->property("count").toInt(),7);
+        auto provider=item("sessionProvider");QVERIFY(provider);QCOMPARE(provider->property("count").toInt(),8);
+        // M13: the compatible endpoint takes a typed model ID, and tools only when they are declared.
+        provider->setProperty("currentIndex",7);QTest::qWait(50);
+        QVERIFY(item("sessionCustomModel"));QVERIFY(!item("sessionEffort"));QVERIFY(item("sessionTools"));QVERIFY(!item("sessionTools")->isEnabled());
         for(int index=4;index<7;index++){
             provider->setProperty("currentIndex",index);QTest::qWait(50);
             QVERIFY(item("sessionCustomModel"));QVERIFY(!item("sessionEffort"));
@@ -419,6 +444,375 @@ private slots:
         QCOMPARE(app->state().value("settings").toMap().value("personality").toString(),QString());
         click("personalitySave");QTRY_COMPARE(app->state().value("settings").toMap().value("personality").toString(),original);
         QVERIFY(openSetting("personalityText"));QTest::qWait(100);capture("personality-settings");
+    }
+    // Q01/Q03: a saved style only fills the editor, the existing Save applies it, and the preview
+    // shows the exact personality block for the editor's current text.
+    void behaviorPresetsAndPreview(){
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"personality",original.value("personality")},{"assistantName",original.value("assistantName")}});
+            for(const auto &entry:call("presets.list").value("items").toList())call("presets.delete",{{"id",entry.toMap().value("id")},{"expectedItemRevision",entry.toMap().value("revision")}});click("tab_Chat");});
+        auto editor=openSetting("behaviorPresetPicker");QVERIFY(editor);editor=item("personalityText");QVERIFY(editor);
+        const auto revision=app->state().value("settingsRevision").toString();
+        editor->setProperty("text","Be calm. Ask for logs before guessing.");
+        item("behaviorPresetLabel")->setProperty("text","Calm troubleshooting");
+        click("behaviorPresetSave");
+        QTRY_COMPARE(item("behaviorPresetPicker")->property("count").toInt(),1);
+        QCOMPARE(app->state().value("settingsRevision").toString(),revision);
+        QCOMPARE(app->state().value("settings").toMap().value("personality"),original.value("personality"));
+        // Loading over unsaved edits asks first; the applied personality does not change until Save.
+        editor->setProperty("text","An unsaved draft");
+        click("behaviorPresetLoad");QTRY_VERIFY(item("behaviorPresetReplace"));click("behaviorPresetReplace");
+        QCOMPARE(editor->property("text").toString(),QString("Be calm. Ask for logs before guessing."));
+        QCOMPARE(app->state().value("settings").toMap().value("personality"),original.value("personality"));
+        QVERIFY(item("personalitySave")->isEnabled());
+        // An unrelated settings update keeps the loaded draft.
+        QVERIFY(!call("settings.update",{{"quiet",false}}).contains("error"));QTest::qWait(150);
+        QCOMPARE(editor->property("text").toString(),QString("Be calm. Ask for logs before guessing."));
+        // The preview follows the editor, labels its scope and drops answers for text it no longer holds.
+        click("personalityPreviewToggle");
+        QTRY_VERIFY(item("personalityPreviewDraft")&&item("personalityPreviewDraft")->property("text").toString().contains("Be calm. Ask for logs before guessing."));
+        QVERIFY(item("personalityPreviewSaved")->property("text").toString().startsWith("Cere conversation style"));
+        editor->setProperty("text","Be terse.");
+        QTRY_VERIFY(item("personalityPreviewDraft")->property("text").toString().contains("Be terse."));
+        QTRY_VERIFY(item("personalityPreviewStatus")->property("text").toString().contains("differs from the saved block"));
+        capture("personality-presets-preview");
+        click("personalitySave");
+        QTRY_COMPARE(app->state().value("settings").toMap().value("personality").toString(),QString("Be terse."));
+        QTRY_VERIFY(item("personalityPreviewStatus")->property("text").toString().contains("matches the saved block"));
+        // Deleting the style leaves the applied text and the editor alone.
+        click("behaviorPresetDelete");QTRY_VERIFY(item("behaviorPresetDeleteConfirmed"));click("behaviorPresetDeleteConfirmed");
+        QTRY_COMPARE(item("behaviorPresetPicker")->property("count").toInt(),0);
+        QCOMPARE(app->state().value("settings").toMap().value("personality").toString(),QString("Be terse."));
+        QCOMPARE(editor->property("text").toString(),QString("Be terse."));
+        QCOMPARE(app->state().value("settings").toMap().value("avatar"),original.value("avatar"));
+        QCOMPARE(app->state().value("settings").toMap().value("voice"),original.value("voice"));
+    }
+    // Q08: one send-key policy in both composers; Q02: the palette opens the recipe chooser without
+    // sending or drafting; Q04: the Context drawer shows the recorded recall outcome for the turn.
+    void sendKeysRecipesAndContext(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"sendKey","enter"},{"topmost",true}});restoreWorkspace();click("tab_Chat");});
+        restoreWorkspace();click("tab_Chat");
+        const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Send key check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
+        QVERIFY(!call("settings.update",{{"sendKey","ctrlEnter"}}).contains("error"));
+        QTRY_VERIFY(item("composer"));auto composer=item("composer");
+        QTRY_COMPARE(item("sendKeyHint")->property("text").toString(),QString("Ctrl+Enter sends · Enter new line"));
+        QTest::qWait(300);composer->forceActiveFocus();QTRY_VERIFY(composer->hasActiveFocus());
+        for(const auto ch:QByteArray("completion-ctrl"))QTest::keyClick(window,ch);
+        QTest::keyClick(window,Qt::Key_Return);QTest::qWait(150);
+        QCOMPARE(composer->property("text").toString(),QString("completion-ctrl\n"));QCOMPARE(app->messages().size(),0);
+        for(const auto ch:QByteArray("line"))QTest::keyClick(window,ch);
+        QTest::keyClick(window,Qt::Key_Return,Qt::ControlModifier);
+        QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);
+        QCOMPARE(app->messages().first().toMap().value("text").toString(),QString("completion-ctrl\nline"));
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        // Button-only: no key sends, in the compact panel too.
+        QVERIFY(!call("settings.update",{{"sendKey","button"},{"topmost",false}}).contains("error"));QTest::qWait(300);
+        app->closePanel();app->togglePanel();QTRY_VERIFY((window=titled("Cere Panel")));QTest::qWait(150);
+        click("tab_Sessions");click("session_"+session);QTRY_VERIFY((composer=item("composer")));
+        QTRY_VERIFY(composer->property("placeholderText").toString()=="Send button sends · Enter new line"||item("sendKeyHint"));
+        const auto count=app->messages().size();
+        composer->forceActiveFocus();for(const auto ch:QByteArray("completion-button"))QTest::keyClick(window,ch);
+        QTest::keyClick(window,Qt::Key_Return);QTest::keyClick(window,Qt::Key_Return,Qt::ControlModifier);QTest::qWait(200);
+        QCOMPARE(app->messages().size(),count);QCOMPARE(composer->property("text").toString(),QString("completion-button\n"));
+        click("sendMessage");QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=count+2,10000);
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        // The palette's recipe route opens the chooser only: no conversation, draft or send.
+        restoreWorkspace();click("tab_Chat");item("composer")->setProperty("text","Keep this draft");QTest::qWait(700);
+        const auto sessions=app->state().value("sessionCount").toInt();
+        QTest::keyClick(window,Qt::Key_K,Qt::ControlModifier);QTRY_VERIFY(item("commandPaletteSearch"));
+        item("commandPaletteSearch")->setProperty("text","recipes");QTest::qWait(150);
+        QTRY_VERIFY(item("command_page_recipes"));QTest::keyClick(window,Qt::Key_Return);
+        QTRY_VERIFY(item("recipePicker"));
+        QVERIFY(item("workflowTab1")->property("primary").toBool());
+        QTRY_VERIFY(item("recipePicker")->property("count").toInt()>=8);
+        QTest::qWait(300);capture("palette-recipes");
+        QCOMPARE(app->state().value("sessionCount").toInt(),sessions);
+        QCOMPARE(app->selectedId(),session);QCOMPARE(app->session().value("draft").toString(),QString("Keep this draft"));
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        // Opening Workflows normally still starts on Project.
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");QTRY_VERIFY(item("workflowTab0"));
+        QVERIFY(item("workflowTab0")->property("primary").toBool());QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        // The drawer reads the turn's recorded recall outcome; memory is off in this profile.
+        tool("contextDrawerButton","menuContext");QTRY_VERIFY(item("recallOutcomeTitle"));
+        QTRY_COMPARE(item("recallOutcomeTitle")->property("text").toString(),QString("Memory is off in Settings."));
+        QVERIFY(item("recallOutcomeTime")->property("text").toString().contains("current memory health may differ"));
+        // M04: the last request's plan is shown as recorded, with the CLI's own context named as unknown.
+        QTRY_VERIFY(item("planSummary")&&item("planSummary")->property("text").toString().startsWith("codex"));
+        QVERIFY(item("planLayer_personality"));QVERIFY(item("planLayer_current-turn"));
+        QVERIFY(item("planUnknown")->property("text").toString().contains("AGENTS.md or CLAUDE.md"));
+        capture("context-recall-outcome");click("closeContextDrawer");
+        item("composer")->setProperty("text","");
+    }
+    // M08: tasks move only by explicit choices; done needs a reason or a passing check.
+    void projectTaskLifecycle(){
+        const auto restore=qScopeGuard([&]{restoreWorkspace();click("tab_Chat");});
+        restoreWorkspace();click("tab_Chat");
+        const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Task lifecycle"}});
+        QTRY_VERIFY(app->selectedId()!=previous);
+        QTRY_VERIFY(item("composer"));item("composer")->forceActiveFocus();
+        for(const auto ch:QByteArray("completion-task"))QTest::keyClick(window,ch);
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QString reply;for(const auto &m:app->messages())if(m.toMap().value("role")=="assistant")reply=m.toMap().value("id").toString();
+        QVERIFY(!reply.isEmpty());
+        click("messageActions_"+reply);QTRY_VERIFY(item("proposeTask"));click("proposeTask");
+        QTRY_VERIFY(!call("capsules.get",{{"sessionId",app->selectedId()}}).value("tasks").toList().isEmpty());
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");QTRY_VERIFY(item("capsuleTask_0"));
+        // The model's suggestion waits for acceptance.
+        QVERIFY(item("taskAccept_0"));QVERIFY(!item("taskDone_0"));
+        click("taskAccept_0");QTRY_VERIFY(item("taskDone_0"));
+        item("capsuleNewTask")->setProperty("text","Write the release notes");click("capsuleAddTask");
+        QTRY_COMPARE(call("capsules.get",{{"sessionId",app->selectedId()}}).value("tasks").toList().size(),2);
+        click("taskDone_0");QTRY_VERIFY(item("taskDoneNote"));
+        QVERIFY(!item("taskDoneConfirm")->isEnabled());
+        item("taskDoneNote")->setProperty("text","Checked by hand with the team.");
+        QTRY_VERIFY(item("taskDoneConfirm")->isEnabled());click("taskDoneConfirm");
+        QTRY_VERIFY([&]{for(const auto &task:call("capsules.get",{{"sessionId",app->selectedId()}}).value("tasks").toList())if(task.toMap().value("state")=="done")return task.toMap().value("completion").toMap().value("note").toString()=="Checked by hand with the team.";return false;}());
+        QTest::qWait(300);capture("project-tasks");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+    }
+    // M17: a project's required check is chosen in Project workflows and judged on each result; a
+    // recipe reply missing its sections is flagged on its result without changing the reply.
+    void requiredChecksAndOutputSections(){
+        const auto original=app->state().value("settings").toMap().value("scripts");
+        QString session;
+        const auto restore=qScopeGuard([&]{
+            if(!session.isEmpty())call("capsules.setRequiredChecks",{{"sessionId",session},{"expectedRevision",call("capsules.get",{{"sessionId",session}}).value("revision")},{"scriptIds",QVariantList{}}});
+            call("settings.update",{{"scripts",original}});restoreWorkspace();click("tab_Chat");});
+        restoreWorkspace();click("tab_Chat");
+        const QVariantMap script{{"id","ui-required-check"},{"name","Unit tests"},{"executable","/usr/bin/true"},{"args",QVariantList{}},{"cwd",data.path()},{"timeout",60000}};
+        QVERIFY(!call("settings.update",{{"scripts",QVariantList{script}}}).contains("error"));
+        const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Required checks"}});
+        QTRY_VERIFY(app->selectedId()!=previous);session=app->selectedId();
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");QTRY_VERIFY(item("requiredCheck_0"));
+        click("requiredCheck_0");
+        QTRY_COMPARE(call("capsules.get",{{"sessionId",session}}).value("requiredChecks").toList().size(),1);
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        // A recipe run: its reply has one of the three sections the recipe asks for.
+        const auto preview=call("recipes.prepare",{{"sessionId",session},{"recipeId","compare-options"},{"inputs",QVariantMap{{"goal","Pick a parser"},{"options","Hand-written\nGenerated"}}}});
+        QVERIFY2(!preview.contains("error"),qPrintable(preview.value("error").toString()));
+        const auto drafted=call("recipes.createDraft",{{"previewToken",preview.value("token")},{"reviewed",true}});
+        QVERIFY2(!drafted.contains("error"),qPrintable(drafted.value("error").toString()));
+        const auto run=drafted.value("session").toMap().value("id").toString();
+        app->select(run);QTRY_COMPARE(app->selectedId(),run);QTRY_VERIFY(item("composer")&&item("composer")->property("text").toString().startsWith("Pinned recipe:"));
+        click("sendMessage");QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");click("workflowTab2");
+        QTRY_VERIFY(item("resultContract"));
+        QCOMPARE(item("resultContract")->property("text").toString(),QString("Output sections missing: Recommendation, Open questions. The reply is shown as written."));
+        QTRY_VERIFY(item("resultCheck_0"));QVERIFY(item("resultCheck_0")->property("text").toString().startsWith("Required · Unit tests · not run"));
+        QString reply;for(const auto &m:app->messages())if(m.toMap().value("role")=="assistant")reply=m.toMap().value("text").toString();
+        QCOMPARE(reply,QString("## Assessment\nOption A is simpler."));
+        QTest::qWait(200);capture("result-checks-and-sections");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+    }
+    // M12: a message's search sources reach the provider, and Context shows what was sent and
+    // what could only be requested; the sources are spent with the message.
+    void searchSourcesForOneMessage(){
+        const auto original=app->state().value("settings").toMap().value("webSearch");
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"webSearch",original}});restoreWorkspace();click("tab_Chat");});
+        restoreWorkspace();click("tab_Chat");
+        QVERIFY(!call("settings.update",{{"webSearch",QVariantMap{{"enabled",true},{"provider","searxng"},{"searxngUrl",qEnvironmentVariable("CERE_OLLAMA_HOST")}}}}).contains("error"));
+        const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","ollama"},{"model","fixture-plain:latest"},{"cwd",data.path()},{"title","Search sources"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
+        QTRY_VERIFY(item("searchThisTurn"));click("searchThisTurn");QTRY_VERIFY(item("searchSources"));
+        click("searchSources");QTRY_VERIFY(item("searchOnlySites"));
+        item("searchOnlySites")->setProperty("text","not a domain");click("searchSourcesApply");QTest::qWait(100);
+        QVERIFY(item("searchSourcesApply"));
+        item("searchOnlySites")->setProperty("text","https://docs.ollama.com/api");item("searchRecency")->setProperty("currentIndex",2);click("searchSourcesApply");
+        QTRY_COMPARE(item("searchSources")->property("text").toString(),QString("docs.ollama.com · past week"));
+        item("composer")->setProperty("text","ollama embeddings");click("sendMessage");
+        QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QTRY_VERIFY(!item("searchSources"));
+        tool("contextDrawerButton","menuContext");QTRY_VERIFY(item("webSearchTrace"));
+        QVERIFY(item("webSearchTrace")->property("text").toString().startsWith("SearXNG · 1 result"));
+        const auto detail=item("webSearchDetail")->property("text").toString();
+        QVERIFY2(detail.contains("only docs.ollama.com (query operator and result filter)")&&detail.contains("time_range=week")&&detail.contains("result dates are not checked"),qPrintable(detail));
+        scrollTo("webSearchDetail");QTest::qWait(200);capture("search-sources-trace");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        QCOMPARE(call("session.context",{{"id",session}}).value("webSearches").toList().size(),1);
+    }
+    // M13: an OpenAI-compatible endpoint set up in Connections, used for a conversation, with its
+    // declaration labelled as unverified and the endpoint's own token counts shown in Context.
+    void compatibleEndpointConversation(){
+        const auto original=app->state().value("settings").toMap().value("compatible");
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"compatible",original}});restoreWorkspace();click("tab_Chat");});
+        QVERIFY(openSetting("compatibleBaseUrl"));
+        item("compatibleBaseUrl")->setProperty("text",qEnvironmentVariable("CERE_OLLAMA_HOST")+"/v1/");
+        item("compatibleLabel")->setProperty("text","Fixture endpoint");
+        if(item("compatibleRequiresKey")->property("checked").toBool())click("compatibleRequiresKey");
+        if(!item("compatibleUsage")->property("checked").toBool())click("compatibleUsage");
+        click("compatibleSave");
+        QTRY_COMPARE_WITH_TIMEOUT(item("compatibleStatus")->property("text").toString(),QString("Fixture endpoint · Ready"),8000);
+        QCOMPARE(app->state().value("settings").toMap().value("compatible").toMap().value("baseUrl").toString(),qEnvironmentVariable("CERE_OLLAMA_HOST")+"/v1");
+        QCOMPARE(item("compatibleKeyNote")->property("text").toString(),QString("This endpoint is declared to need no key."));
+        QTRY_VERIFY(item("compatibleModels")->property("text").toString().endsWith("models listed by the endpoint."));
+        QTest::qWait(150);capture("compatible-endpoint-settings");
+        click("tab_Chat");const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","compatible"},{"model","fixture-chat:latest"},{"cwd",data.path()},{"title","Compatible check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);
+        item("composer")->setProperty("text","Hello endpoint");click("sendMessage");
+        QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QCOMPARE(app->messages().last().toMap().value("text").toString(),QString("Hello from the compatible endpoint."));
+        tool("contextDrawerButton","menuContext");QTRY_VERIFY(item("planReported"));
+        QCOMPARE(item("planReported")->property("text").toString(),QString("Fixture endpoint reported 120 in, 7 out tokens for this request."));
+        QVERIFY(item("planUnknown")->property("text").toString().contains("as you declared them; not verified"));
+        QVERIFY(item("planUnknown")->property("text").toString().contains("Cere assumes 8,192 tokens"));
+        scrollTo("planReported");QTest::qWait(150);capture("compatible-endpoint-context");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+    }
+    // A02: a tool server added and started from Settings lists its tools; allowing one is the user's
+    // decision, and a tool the server cannot describe is shown as unusable.
+    void toolServerSettings(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"extensions",QVariantList{}}});restoreWorkspace();click("tab_Chat");});
+        const auto node=QStandardPaths::findExecutable("node");QVERIFY(!node.isEmpty());
+        QVERIFY(openSetting("addToolServer"));click("addToolServer");QTRY_VERIFY(item("toolServerFormName"));
+        item("toolServerFormName")->setProperty("text","Fixture tools");
+        item("toolServerFormCommand")->setProperty("text",node);
+        item("toolServerFormArgs")->setProperty("text",QString(CERE_SOURCE_DIR)+"/tests/fixtures/mcp-server.mjs\n"+data.path()+"/mcp-ui.log");
+        item("toolServerFormCwd")->setProperty("text",data.path());
+        item("toolServerFormSecrets")->setProperty("text","FIXTURE_TOKEN");
+        click("toolServerFormEnabled");click("toolServerFormSave");
+        QTRY_VERIFY(item("toolServerName_0"));
+        QCOMPARE(item("toolServerName_0")->property("text").toString(),QString("Fixture tools"));
+        QTRY_VERIFY(item("toolServerState_0")->property("text").toString().startsWith("Not running"));
+        click("toolServerStart_0");
+        QTRY_VERIFY_WITH_TIMEOUT(item("toolServerState_0")->property("text").toString().startsWith("Running"),10000);
+        QTRY_VERIFY(item("toolServerAllow_0_lookup"));
+        QVERIFY(!item("toolServerAllow_0_broken")->isEnabled());
+        stableClick("toolServerAllow_0_lookup");
+        QTRY_COMPARE(app->state().value("settings").toMap().value("extensions").toList().value(0).toMap().value("allowed").toList(),QVariantList{"lookup"});
+        QVERIFY(!app->state().value("settings").toMap().value("extensions").toList().value(0).toMap().contains("FIXTURE_TOKEN"));
+        scrollTo("toolServerAllow_0_lookup");QTest::qWait(150);capture("tool-servers");
+    }
+    // M23: a custom HTTP tool written in the editor is saved with its slots, and its key is kept
+    // outside settings; an address outside the local rules is refused with a reason.
+    void customToolEditor(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"customTools",QVariantList{}}});restoreWorkspace();click("tab_Chat");});
+        QVERIFY(openSetting("addCustomTool"));click("addCustomTool");QTRY_VERIFY(item("customToolFormName"));
+        item("customToolFormName")->setProperty("text","get_item");
+        item("customToolFormDescription")->setProperty("text","Fetch one item by its ID.");
+        item("customToolFormInputs")->setProperty("text","id | string | required | Item ID");
+        item("customToolFormUrl")->setProperty("text","http://127.0.0.1:9/items/{id}");
+        item("customToolFormCredential")->setProperty("currentIndex",1);
+        click("customToolFormSave");
+        QTRY_VERIFY(item("customToolsError")&&item("customToolsError")->property("text").toString().contains("Allow private addresses"));
+        click("customToolFormPrivate");click("customToolFormSave");
+        QTRY_VERIFY(item("customToolName_0"));
+        const auto saved=app->state().value("settings").toMap().value("customTools").toList().value(0).toMap();
+        QCOMPARE(saved.value("http").toMap().value("url").toString(),QString("http://127.0.0.1:9/items/{id}"));
+        QCOMPARE(saved.value("inputs").toList().value(0).toMap().value("required").toBool(),true);
+        QCOMPARE(item("customToolSummary_0")->property("text").toString(),QString("GET http://127.0.0.1:9/items/{id}"));
+        item("customToolCredential_0")->setProperty("text","ui-secret-key");
+        QTRY_VERIFY(!app->state().value("customTools").toList().isEmpty());
+        QVERIFY(!QJsonDocument::fromVariant(app->state()).toJson().contains("ui-secret-key"));
+        scrollTo("customToolSummary_0");QTest::qWait(150);capture("custom-tools");
+    }
+    // M10: the microphone and speaker choosers start at the system default, list what the host has, and
+    // name a chosen device that is not connected instead of hiding it.
+    void audioDeviceChoosers(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"audio",QVariantMap{{"input",""},{"output",""}}}});restoreWorkspace();click("tab_Chat");});
+        auto combo=openSetting("audioInputDevice");if(!combo)QSKIP("Voice settings are unavailable in this build");
+        QTRY_VERIFY_WITH_TIMEOUT(!item("audioDevicesStatus")->property("text").toString().startsWith("Listing"),8000);
+        QCOMPARE(item("audioInputDevice")->property("currentText").toString(),QString("System default"));
+        QVERIFY(!call("settings.update",{{"audio",QVariantMap{{"output","pw:cere-test-missing-sink"}}}}).contains("error"));
+        QTRY_COMPARE(item("audioOutputDevice")->property("currentText").toString(),QString("cere-test-missing-sink · not connected"));
+        scrollTo("audioOutputDevice");QTest::qWait(150);capture("audio-devices");
+    }
+    // M21: commands are switched on in Voice settings; a recognized command is shown with Run and
+    // Insert-as-text choices, and running Open Settings navigates. (Recording itself is not driven here:
+    // that would capture the host microphone; the broker tests cover transcription to command.)
+    void voiceCommandReview(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"voiceCommands",QVariantMap{{"enabled",false},{"confirm",true},{"speakFeedback",false}}}});restoreWorkspace();click("tab_Chat");});
+        if(!openSetting("voiceCommandsEnabled"))QSKIP("Voice settings are unavailable in this build");
+        click("voiceCommandsEnabled");
+        QTRY_VERIFY(app->state().value("settings").toMap().value("voiceCommands").toMap().value("enabled").toBool());
+        QTRY_VERIFY(item("voiceCommandsConfirm"));QVERIFY(item("voiceCommandsConfirm")->property("checked").toBool());
+        click("tab_Chat");const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Voice command check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);
+        QObject *voice=nullptr;QTRY_VERIFY((voice=item("voiceRecord")));
+        voice->setProperty("resultSessionId",app->selectedId());
+        voice->setProperty("command",QVariantMap{{"id","open-settings"},{"label","Open Settings"},{"confirm",true}});
+        auto review=dialog("transcriptionReview");QVERIFY(review);QVERIFY(QMetaObject::invokeMethod(review,"open"));
+        QTRY_VERIFY(item("voiceCommandRecognized"));
+        QCOMPARE(item("voiceCommandRecognized")->property("text").toString(),QString("Recognized: Open Settings"));
+        QCOMPARE(item("acceptTranscription")->property("text").toString(),QString("Insert as text instead"));
+        capture("voice-command-review");
+        click("voiceCommandRun");
+        QTRY_VERIFY(item("settingsPage"));
+        QTRY_VERIFY(app->property("toast").toString().contains("Voice command: Open Settings"));
+    }
+    // M16: measuring is switched on in Health; a reply then shows its timings, and the reviewed export
+    // carries the aggregates without conversation text.
+    void responsivenessMeasurements(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"responsiveness",false}});QTest::keyClick(window,Qt::Key_Escape);restoreWorkspace();click("tab_Chat");});
+        QVERIFY(openSetting("openHealth"));click("openHealth");QTRY_VERIFY(item("measureResponsiveness"));
+        click("measureResponsiveness");
+        QTRY_VERIFY(app->state().value("settings").toMap().value("responsiveness").toBool());
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        click("tab_Chat");const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Timing check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);
+        item("composer")->setProperty("text","completion-timing");click("sendMessage");
+        QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QVERIFY(openSetting("openHealth"));click("openHealth");
+        QTRY_VERIFY(item("span_turn")&&item("span_turn")->property("text").toString().startsWith("Whole reply · 1 measured"));
+        QVERIFY(item("span_first-token")->property("text").toString().startsWith("First reply text · 1 measured"));
+        const auto preview=call("diagnostics.preview");
+        QVERIFY(preview.value("text").toString().contains("\"responsiveness\""));
+        QVERIFY(!preview.value("text").toString().contains("completion-timing"));
+        scrollTo("span_turn");QTest::qWait(150);capture("responsiveness");
+    }
+    // A04: a model download shows as background work in the status bar and can be cancelled there.
+    void backgroundWorkIndicator(){
+        const auto restore=qScopeGuard([&]{call("models.cancelPull");QTest::qWait(200);call("models.dismissPull");restoreWorkspace();click("tab_Chat");});
+        restoreWorkspace();click("tab_Chat");
+        QVERIFY(!item("backgroundWork"));
+        const auto pulled=call("models.pull",{{"model","fixture-slow-pull"}});QVERIFY2(pulled.value("error").toString().isEmpty()&&pulled.value("status")=="starting",QJsonDocument::fromVariant(pulled).toJson(QJsonDocument::Compact).constData());
+        QTRY_VERIFY(item("backgroundWork"));
+        QCOMPARE(item("backgroundWork")->property("text").toString(),QString("1 background task"));
+        click("backgroundWork");QTRY_VERIFY(item("backgroundJob_0"));
+        QVERIFY(item("backgroundJob_0")->property("text").toString().startsWith("Downloading fixture-slow-pull"));
+        capture("background-work");
+        click("backgroundJobCancel_0");
+        QTRY_VERIFY(!item("backgroundWork"));
+        QTRY_COMPARE(app->state().value("modelPull").toMap().value("status").toString(),QString("cancelled"));
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(100);
+    }
+    // M14: a reviewed recipe preview becomes a schedule only with the unattended confirmation; the
+    // schedule lists its next time, and nothing runs when it is made.
+    void scheduleReviewedRecipe(){
+        const auto restore=qScopeGuard([&]{
+            // Schedules are read from the Workflows dialog, which loaded them; none may outlive this slot.
+            if(auto workflows=dialog("workflowsDialog"))for(const auto &row:workflows->property("schedules").toList())call("schedules.delete",{{"id",row.toMap().value("id")}});
+            restoreWorkspace();click("tab_Chat");});
+        restoreWorkspace();click("tab_Chat");
+        const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Schedule check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto sessions=app->state().value("sessionCount").toInt();
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");click("workflowTab1");QTRY_VERIFY(item("recipePicker"));
+        auto picker=item("recipePicker");
+        for(int index=0;index<picker->property("count").toInt();++index){picker->setProperty("currentIndex",index);if(picker->property("currentText").toString()=="Review a proposed plan")break;}
+        QVERIFY(QMetaObject::invokeMethod(picker,"activated",Q_ARG(int,picker->property("currentIndex").toInt())));
+        QTRY_VERIFY(item("recipeInput_plan"));item("recipeInput_plan")->setProperty("text","Ship on Friday");
+        click("prepareRecipe");QTRY_VERIFY(item("scheduleRecipe"));
+        click("scheduleRecipe");QTRY_VERIFY(item("scheduleFormSave"));
+        QVERIFY(!item("scheduleFormSave")->isEnabled());
+        click("scheduleFormUnattended");QTRY_VERIFY(item("scheduleFormSave")->isEnabled());
+        item("scheduleFormTime")->setProperty("text","23:59");
+        click("scheduleFormSave");
+        QTRY_VERIFY(item("scheduleStatus_0"));
+        QVERIFY(item("scheduleStatus_0")->property("text").toString().startsWith("Next: "));
+        QCOMPARE(app->state().value("sessionCount").toInt(),sessions);
+        scrollTo("scheduleStatus_0");QTest::qWait(150);capture("recipe-schedule");
+        QCOMPARE(dialog("workflowsDialog")->property("schedules").toList().size(),1);
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
     }
     void assistantIdentitySettings(){
         const auto original=app->state().value("settings").toMap();
@@ -668,9 +1062,13 @@ const auto fence = "```";
 Unicode: café ✦ 日本語
 )MD")+"\n![Local image]("+QUrl::fromLocalFile(imagePath).toString()+")\n";
         const auto previous=app->selectedId();
+        auto model=static_cast<TranscriptModel*>(static_cast<QSortFilterProxyModel*>(app->transcript())->sourceModel());
+        // Selecting the new conversation clears the transcript and then reloads it from the broker. The
+        // fixture row is injected only after that reload, or the reload would replace it mid-test.
+        QSignalSpy resets(model,&QAbstractItemModel::modelReset);
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Markdown rendering"}});
         QTRY_VERIFY(app->selectedId()!=previous);
-        auto model=static_cast<TranscriptModel*>(static_cast<QSortFilterProxyModel*>(app->transcript())->sourceModel());
+        QTRY_VERIFY(resets.count()>=2);
         model->reset({QVariantMap{{"id","markdown"},{"role","assistant"},{"text",markdown}}});
         QTRY_VERIFY(item("messageBody_markdown"));
         auto body=item("messageBody_markdown");
@@ -835,7 +1233,7 @@ Unicode: café ✦ 日本語
         QTest::qWait(100);capture("ollama-settings");
         click("tab_Sessions");click("newSession");
         auto provider=item("sessionProvider");QVERIFY(provider);
-        QCOMPARE(provider->property("count").toInt(),7);
+        QCOMPARE(provider->property("count").toInt(),8); // M13 added the compatible endpoint.
         provider->setProperty("currentIndex",2);QVERIFY(QMetaObject::invokeMethod(provider,"activated",Q_ARG(int,2)));
         QTRY_COMPARE(item("sessionModel")->property("count").toInt(),3);
         QCOMPARE(item("sessionModel")->property("currentValue").toString(),QString());
@@ -863,7 +1261,7 @@ Unicode: café ✦ 日本語
         QVERIFY(!item("ollamaSessionTools")->isEnabled());capture("ollama-model-options");
         click("ollamaSessionSave");QTRY_COMPARE(app->session().value("model").toString(),QString("fixture-plain:latest"));
         QCOMPARE(app->state().value("settings").toMap().value("ollama").toMap().value("model").toString(),QString("fixture-chat:latest"));
-        tool("chatHandoff","menuHandoff");QCOMPARE(item("handoffProvider")->property("count").toInt(),6);
+        tool("chatHandoff","menuHandoff");QCOMPARE(item("handoffProvider")->property("count").toInt(),7); // Every provider but this one, including M13's compatible endpoint.
         QVERIFY(item("handoffTrust"));QVERIFY(!item("handoffCreate")->isEnabled());
         item("handoffTrust")->setProperty("checked",true);click("handoffCreate");
         QTRY_COMPARE(app->session().value("provider").toString(),QString("codex"));
@@ -2094,6 +2492,229 @@ Unicode: café ✦ 日本語
     // env -u HYPRLAND_INSTANCE_SIGNATURE DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent QT_QUICK_BACKEND=software
     //   QT_QPA_PLATFORM=offscreen:configfile=tests/fixtures/offscreen-screens.json build/cere-ui-check SLOT...
     // F-042 policy display, F-006 forget binding, F-019 correction round trip.
+    // M05: pin and unpin a fact, read its timeline and related facts, and fill a typed correction.
+    void memoryCurationPinsAndTimeline(){
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"memory",QVariantMap{{"enabled",false}}}});restoreWorkspace();});
+        click("tab_Chat");const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","ollama"},{"model","fixture-plain:latest"},{"cwd",data.path()},{"title","Curation check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"model","nomic-embed-text"}}}}).contains("error"));
+        auto graph=[&](const QString &method,const QVariantMap &params){return call("memory.graph",{{"sessionId",session},{"method",method},{"params",params}});};
+        const auto saved=call("memory.save",{{"sessionId",session},{"text","The orchid project uses npm for installs."}});QVERIFY2(!saved.contains("error"),qPrintable(saved.value("error").toString()));
+        const auto claim=QVariantMap{{"subject",QVariantMap{{"type","Project"},{"name","orchid"}}},{"predicate","USES_TOOL"},{"object",QVariantMap{{"type","Tool"},{"name","npm"}}}};
+        const auto remembered=graph("remember",{{"claim",claim},{"witness",QVariantMap{{"observation_id",saved.value("id")},{"quote","The orchid project uses npm for installs."}}}});
+        QVERIFY2(!remembered.contains("error"),qPrintable(remembered.value("error").toString()));
+        const auto assertion=remembered.value("id").toString();
+        auto inspected=graph("inspect",{{"id",assertion}});
+        const auto later=call("memory.save",{{"sessionId",session},{"text","Correction: the orchid project uses pnpm for installs."}});
+        auto corrected=claim;corrected["object"]=QVariantMap{{"type","Tool"},{"name","pnpm"}};
+        const auto correction=graph("correct",{{"id",assertion},{"expected_revision",inspected.value("record").toMap().value("aggregate_revision")},{"claim",corrected},{"witness",QVariantMap{{"observation_id",later.value("id")},{"quote","the orchid project uses pnpm for installs."}}}});
+        QVERIFY2(!correction.contains("error"),qPrintable(correction.value("error").toString()));
+        const auto current=correction.value("id").toString();
+        QVERIFY(openSetting("manageMemories"));click("manageMemories");
+        auto open=item("openGraphInspector");QVERIFY(open);QVERIFY(QMetaObject::invokeMethod(open,"clicked"));
+        QTRY_VERIFY(item("graphMemoryDetails"));
+        QObject *inspector=nullptr;
+        for(auto w:qGuiApp->allWindows())for(auto candidate:w->findChildren<QObject*>("graphMemoryInspector"))if(candidate->property("opened").toBool())inspector=candidate;
+        QVERIFY(inspector);QTRY_COMPARE(inspector->property("pending").toInt(),-1);
+        QVERIFY(QMetaObject::invokeMethod(inspector,"openRecord",Q_ARG(QVariant,current)));
+        QTRY_VERIFY(item("graphMemoryPin"));
+        QVERIFY(item("graphMemoryPinState")->property("text").toString().startsWith("Not pinned"));
+        item("graphMemoryPinNote")->setProperty("text","House convention");click("graphMemoryPin");
+        QTRY_VERIFY(item("graphMemoryUnpin"));
+        QVERIFY(item("graphMemoryPinState")->property("text").toString().contains("House convention"));
+        QCOMPARE(graph("pins",{}).value("total").toInt(),1);
+        click("graphMemoryTimeline");QTRY_VERIFY(item("timelineEntry_1"));
+        QVERIFY(item("timelineEntry_0"));
+        click("graphMemoryNeighborhood");QTRY_VERIFY(item("neighborEdge_0"));
+        QVERIFY(item("neighborEdge_0")->property("text").toString().contains("USES_TOOL pnpm"));
+        // The typed form writes into the structured correction without sending it.
+        QTRY_VERIFY(item("correctionPredicate"));
+        item("correctionObject")->setProperty("text","bun");item("correctionWitness")->setProperty("text","observation");item("correctionQuote")->setProperty("text","uses bun");
+        click("correctionApplyForm");
+        const auto body=QJsonDocument::fromJson(item("graphMemoryMutation")->property("text").toString().toUtf8()).object();
+        QCOMPARE(body["claim"].toObject()["object"].toObject()["name"].toString(),QString("bun"));
+        QCOMPARE(body["witness"].toObject()["quote"].toString(),QString("uses bun"));
+        QCOMPARE(graph("timeline",{{"id",current}}).value("entries").toList().size(),2);
+        QTest::qWait(200);capture("memory-curation");
+        click("graphMemoryUnpin");QTRY_VERIFY(item("graphMemoryPin"));
+        QCOMPARE(graph("pins",{}).value("total").toInt(),0);
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(100);click("closeMemory");
+    }
+    // M01/M02: a style's details and checkpoint, a conversation's own style, a posture for one message
+    // recorded in the turn plan, and a reply's missed formatting check shown without changing the reply.
+    void behaviorStylePostureAndChecks(){
+        const auto restore=qScopeGuard([&]{for(const auto &entry:call("presets.list").value("items").toList())call("presets.delete",{{"id",entry.toMap().value("id")},{"expectedItemRevision",entry.toMap().value("revision")}});restoreWorkspace();click("tab_Chat");});
+        const auto created=call("presets.save",{{"label","Table-free reviewer"},{"text","Review carefully."},{"expectedRevision",call("presets.list").value("revision")}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        const auto styleId=created.value("id").toString();
+        QVERIFY(openSetting("behaviorPresetDetails"));QTRY_COMPARE(item("behaviorPresetPicker")->property("count").toInt(),1);
+        click("behaviorPresetDetails");QTRY_VERIFY(item("behaviorProfileSave"));
+        auto slider=item("trait_directness");QVERIFY(slider);slider->setProperty("value",2);QVERIFY(QMetaObject::invokeMethod(slider,"moved"));
+        click("checkNoTable");click("withholdDesktop");click("behaviorProfileSave");
+        QTRY_VERIFY(call("presets.list").value("items").toList().value(0).toMap().value("constraints").toList().contains("no-markdown-table"));
+        const auto saved=call("presets.list").value("items").toList().value(0).toMap();
+        QCOMPARE(saved.value("traits").toMap().value("directness").toInt(),2);
+        QCOMPARE(saved.value("ceiling").toMap(),(QVariantMap{{"desktop",false}}));
+        click("behaviorCheckpoint");
+        QTRY_COMPARE(call("presets.list").value("items").toList().value(0).toMap().value("checkpoints").toList().size(),1);
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        click("tab_Chat");const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Style check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
+        tool("chatStyle","menuStyle");QTRY_VERIFY(item("sessionStyle"));QTRY_COMPARE(item("sessionStyle")->property("count").toInt(),2);
+        item("sessionStyle")->setProperty("currentIndex",1);click("sessionBehaviorSave");
+        QTRY_COMPARE(app->session().value("behavior").toMap().value("profileId").toString(),styleId);
+        QTRY_VERIFY(item("behaviorWithheld")&&item("behaviorWithheld")->property("text").toString().contains("desktop actions"));
+        QVERIFY(item("behaviorSummary")->property("text").toString().contains("Table-free reviewer"));
+        QTRY_COMPARE(item("nextPosture")->property("count").toInt(),6);
+        item("nextPosture")->setProperty("currentIndex",2);click("nextPostureApply");
+        QTRY_VERIFY(item("turnPostureChip"));QVERIFY(item("turnPostureChip")->property("text").toString().contains("Review"));
+        capture("conversation-style-posture");
+        item("composer")->setProperty("text","completion-rich");click("sendMessage");
+        QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QTRY_VERIFY(!item("turnPostureChip"));
+        const auto layer=call("session.context",{{"id",session}}).value("lastPlan").toMap().value("layers").toList().value(0).toMap().value("detail").toMap();
+        QCOMPARE(layer.value("posture").toString(),QString("Review (this turn)"));QCOMPARE(layer.value("style").toString(),QString("Table-free reviewer"));
+        QTRY_VERIFY(item("styleNotes"));QVERIFY(item("styleNotes")->property("text").toString().contains("No Markdown tables"));
+        const auto reply=app->messages().last().toMap();
+        QVERIFY(reply.value("text").toString().contains("| Column 0 heading"));QCOMPARE(reply.value("styleNotes").toList().size(),1);
+        scrollTo("styleNotes");QTest::qWait(150);capture("style-check-note");
+    }
+    // M06: a collection created, filled, indexed and bound from a conversation; M15: exporting a
+    // temporary conversation needs a deliberate choice; A06: a package previews before it imports.
+    void collectionsExportAndPackages(){
+        const auto restore=qScopeGuard([&]{
+            for(const auto &entry:call("collections.list").value("collections").toList())call("collections.delete",{{"id",entry.toMap().value("id")},{"expectedRevision",entry.toMap().value("revision")},{"confirmed",true}});
+            for(const auto &entry:call("presets.list").value("items").toList())call("presets.delete",{{"id",entry.toMap().value("id")},{"expectedItemRevision",entry.toMap().value("revision")}});
+            call("settings.update",{{"memory",QVariantMap{{"enabled",false}}}});restoreWorkspace();click("tab_Chat");});
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"model","nomic-embed-text"}}}}).contains("error"));
+        const auto docs=data.path()+"/collection-docs";QVERIFY(QDir().mkpath(docs+"/guide"));
+        writeFile(docs+"/guide/install.md","# Install\n\nRun make bootstrap before the first build.");
+        writeFile(docs+"/notes.txt","The staging server is called heron.");
+        click("tab_Chat");const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Collections check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
+        extraTool("menuCollections");QTRY_VERIFY(item("collectionName"));
+        item("collectionName")->setProperty("text","Team docs");click("collectionCreate");
+        QTRY_VERIFY_WITH_TIMEOUT(item("collectionTitle_0"),10000);
+        const auto collection=call("collections.list").value("collections").toList().value(0).toMap();
+        const auto added=call("collections.addSource",{{"id",collection.value("id")},{"expectedRevision",collection.value("revision")},{"path",docs}});
+        QVERIFY2(!added.contains("error"),qPrintable(added.value("error").toString()));
+        auto library=dialog("knowledgeCollections");QVERIFY(library);QVERIFY(QMetaObject::invokeMethod(library,"reload"));
+        QTRY_VERIFY(item("collectionIndex_0")&&item("collectionIndex_0")->isEnabled()&&item("collectionStatus_0")->property("text").toString().contains("not indexed yet"));
+        click("collectionIndex_0");
+        QTRY_VERIFY_WITH_TIMEOUT(item("collectionStatus_0")&&item("collectionStatus_0")->property("text").toString().startsWith("2 files"),20000);
+        click("collectionBindSession_0");
+        QTRY_VERIFY(call("collections.list",{{"sessionId",session}}).value("collections").toList().value(0).toMap().value("bound").toMap().value("session").toBool());
+        capture("document-collections");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        extraTool("menuExport");QTRY_VERIFY(item("exportSave"));
+        QVERIFY(item("exportSave")->isEnabled());QVERIFY(!item("exportKeepTemporary"));
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"temporary",true},{"title","Temporary export"}});
+        QTRY_VERIFY(app->session().value("temporary").toBool());
+        extraTool("menuExport");QTRY_VERIFY(item("exportKeepTemporary"));
+        QVERIFY(!item("exportSave")->isEnabled());click("exportKeepTemporary");QTRY_VERIFY(item("exportSave")->isEnabled());
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        const auto style=call("presets.save",{{"label","Portable reviewer"},{"text","Review portably."},{"expectedRevision",call("presets.list").value("revision")}});
+        QVERIFY(openSetting("packageExport"));click("packageExport");QTRY_VERIFY(item("packageStyle_0"));
+        QVERIFY(!item("packageExportSave")->isEnabled());click("packageStyle_0");QTRY_VERIFY(item("packageExportSave")->isEnabled());
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        const auto exported=call("packages.export",{{"profiles",QVariantList{style.value("id")}}});
+        writeFile(data.path()+"/styles.json",exported.value("text").toString().toUtf8());
+        QVERIFY(!call("presets.delete",{{"id",style.value("id")},{"expectedItemRevision",style.value("revision")}}).contains("error"));
+        auto packages=dialog("packageDialog");QVERIFY(packages);
+        QVERIFY(QMetaObject::invokeMethod(packages,"previewFile",Q_ARG(QVariant,data.path()+"/styles.json")));
+        QTRY_VERIFY(item("packageItem_0"));QCOMPARE(item("packageItem_0")->property("text").toString(),QString("Style · Portable reviewer"));
+        QCOMPARE(call("presets.list").value("items").toList().size(),0);
+        capture("package-import-preview");
+        click("packageImportConfirm");
+        QTRY_VERIFY(item("packageFeedback")&&item("packageFeedback")->property("text").toString().startsWith("Imported 1 item"));
+        QCOMPARE(call("presets.list").value("items").toList().value(0).toMap().value("id"),style.value("id"));
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+    }
+    // M09: a download with progress, loading a model, a reviewed embedding switch and a guarded delete;
+    // M20: a recording transcribed locally and reviewed before it enters the draft; M07: a notes folder
+    // whose private notes stay out, searched with backlinks from the utility shelf.
+    void localModelsTranscriptionAndNotes(){
+        const auto restore=qScopeGuard([&]{
+            call("models.delete",{{"model","fixture-embed-2:latest"},{"confirmed",true}});
+            call("settings.update",{{"memory",QVariantMap{{"enabled",false},{"model","nomic-embed-text"}}},{"transcription",QVariantMap{{"executable",""},{"model",""}}},{"notesVault",QVariantMap{{"enabled",false},{"path",""}}}});
+            restoreWorkspace();click("tab_Chat");});
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"model","nomic-embed-text"}}}}).contains("error"));
+        QVERIFY(openSetting("manageLocalModels"));click("manageLocalModels");QTRY_VERIFY(item("localModelName_0"));
+        auto find=[&](const QString &name){for(int i=0;i<30;i++){auto label=item(QString("localModelName_%1").arg(i));if(label&&label->property("text").toString()==name)return i;}return -1;};
+        QTRY_VERIFY(find("nomic-embed-text:latest")>=0);
+        QVERIFY(!item(QString("localModelDelete_%1").arg(find("nomic-embed-text:latest")))->isEnabled());
+        item("modelPullName")->setProperty("text","fixture-embed-2");click("modelPull");
+        QTRY_VERIFY_WITH_TIMEOUT(item("modelPullStatus")&&item("modelPullStatus")->property("text").toString().startsWith("Downloaded fixture-embed-2"),10000);
+        // The list reloads when the download finishes; act on it once it has settled.
+        auto models=dialog("localModels");QVERIFY(models);
+        QTRY_VERIFY(find("fixture-embed-2:latest")>=0&&models->property("listRequest").toInt()<0&&models->property("request").toInt()<0);
+        const auto loadName=QString("localModelLoad_%1").arg(find("fixture-embed-2:latest"));
+        auto shown=[&]{return item("localModelsError")?item("localModelsError")->property("text").toString():QString("no error shown");};
+        QVERIFY(QMetaObject::invokeMethod(item(loadName),"clicked"));
+        QTRY_VERIFY2(item(loadName)&&item(loadName)->property("text").toString()=="Unload",qPrintable(shown()));
+        capture("local-models");
+        QVERIFY(QMetaObject::invokeMethod(item(loadName),"clicked"));
+        QTRY_VERIFY2(item(loadName)&&item(loadName)->property("text").toString()=="Load for 10 minutes",qPrintable(shown()));
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        QVERIFY(openSetting("embeddingModel"));item("embeddingModel")->setProperty("text","fixture-embed-2");click("memoryCheck");
+        QTRY_VERIFY_WITH_TIMEOUT(item("embeddingImpactText")&&item("embeddingImpactText")->property("text").toString().contains("will be re-embedded"),15000);
+        QVERIFY(item("embeddingImpactText")->property("text").toString().contains("never mixed"));
+        QCOMPARE(app->state().value("settings").toMap().value("memory").toMap().value("model").toString(),QString("nomic-embed-text"));
+        click("embeddingKeep");QTRY_COMPARE(item("embeddingModel")->property("text").toString(),QString("nomic-embed-text"));
+        QVERIFY(openSetting("manageLocalModels"));click("manageLocalModels");QTRY_VERIFY(find("fixture-embed-2:latest")>=0);
+        click(QString("localModelDelete_%1").arg(find("fixture-embed-2:latest")));QTRY_VERIFY(item("localModelDeleteConfirmed"));click("localModelDeleteConfirmed");
+        QTRY_VERIFY(item("localModelName_0")&&find("fixture-embed-2:latest")<0);
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+        // M20 with a local whisper.cpp stand-in and a 16 kHz WAV file.
+        const auto node=QStandardPaths::findExecutable("node");QVERIFY(!node.isEmpty());
+        const auto whisper=data.path()+"/whisper-fixture.mjs";
+        writeFile(whisper,("#!"+node+"\nimport {writeFileSync} from 'node:fs';\nconst args=process.argv.slice(2);\nwriteFileSync(args[args.indexOf('--output-file')+1]+'.txt','Imported meeting notes');\n").toUtf8());
+        QVERIFY(QFile::setPermissions(whisper,QFileDevice::ReadOwner|QFileDevice::WriteOwner|QFileDevice::ExeOwner));
+        writeFile(data.path()+"/whisper-model.bin","fixture model");
+        QByteArray wav("RIFF");const quint32 samples=1600;
+        auto le32=[](quint32 v){QByteArray b(4,0);for(int i=0;i<4;i++)b[i]=char((v>>(8*i))&0xff);return b;};
+        auto le16=[](quint16 v){QByteArray b(2,0);b[0]=char(v&0xff);b[1]=char(v>>8);return b;};
+        wav+=le32(36+samples*2)+"WAVEfmt "+le32(16)+le16(1)+le16(1)+le32(16000)+le32(32000)+le16(2)+le16(16)+"data"+le32(samples*2)+QByteArray(samples*2,0);
+        writeFile(data.path()+"/meeting.wav",wav);
+        QVERIFY(!call("settings.update",{{"transcription",QVariantMap{{"executable",whisper},{"model",data.path()+"/whisper-model.bin"}}}}).contains("error"));
+        click("tab_Chat");const auto previous=app->selectedId();
+        app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Recording check"}});
+        QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
+        const auto before=app->messages().size();
+        auto importer=dialog("transcriptImport");QVERIFY(importer);
+        QVERIFY(QMetaObject::invokeMethod(importer,"start",Q_ARG(QVariant,session),Q_ARG(QVariant,data.path()+"/meeting.wav")));
+        QTRY_VERIFY_WITH_TIMEOUT(item("transcriptImportText")&&item("transcriptImportText")->property("text").toString()==QString("Imported meeting notes"),20000);
+        QVERIFY(item("transcriptImportSource")->property("text").toString().startsWith("meeting.wav · "));
+        item("transcriptImportText")->setProperty("text","Imported meeting notes, reviewed");
+        capture("transcript-import-review");
+        click("transcriptImportInsert");
+        QTRY_VERIFY(item("composer")->property("text").toString().contains("Imported meeting notes, reviewed"));
+        QTest::qWait(300);QCOMPARE(app->messages().size(),before);
+        item("composer")->setProperty("text","");
+        // M07: a notes folder; private notes are counted, never listed.
+        const auto vault=data.path()+"/vault";QVERIFY(QDir().mkpath(vault));
+        writeFile(vault+"/Orchid.md","# Orchid\n\nThe orchid launch is on Tuesday. See [[Checklist]].");
+        writeFile(vault+"/Checklist.md","# Checklist\n\n- Mention [[Orchid]] in the notes.");
+        writeFile(vault+"/diary.md","---\nprivate: true\n---\nThe orchid diary is private.");
+        QVERIFY(openSetting("notesVaultEnabled"));
+        QVERIFY(!call("settings.update",{{"notesVault",QVariantMap{{"path",vault},{"enabled",true}}}}).contains("error"));
+        auto knowledge=item("notesVaultStatus");Q_UNUSED(knowledge);
+        QTRY_VERIFY(item("notesVaultChoose")&&item("notesVaultChoose")->property("text").toString()==QString("Change folder…"));
+        click("notesVaultEnabled");click("notesVaultEnabled");
+        QTRY_VERIFY(item("notesVaultStatus")&&item("notesVaultStatus")->property("text").toString().startsWith("2 readable notes · 1 private notes skipped"));
+        click("tab_Desktop");click("desktopOfflineTools");QTRY_VERIFY(item("vaultQuery"));
+        item("vaultQuery")->setProperty("text","orchid");click("vaultSearch");
+        QTRY_VERIFY(item("vaultResult_0"));QVERIFY(!item("vaultResult_2"));
+        for(int i=0;i<2;i++)QVERIFY(!item(QString("vaultResult_%1").arg(i))->property("text").toString().contains("diary"));
+        click("vaultResult_0");QTRY_VERIFY(item("vaultNoteTitle"));
+        QTRY_VERIFY(item("vaultBacklink_0"));
+        capture("notes-folder-backlinks");
+        QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(150);
+    }
     void graphInspectorPolicyForgetAndCorrection(){
         // Memory recall changes later fixture prompts, so it is switched back off (the default).
         const auto restore=qScopeGuard([&]{call("settings.update",{{"memory",QVariantMap{{"enabled",false}}}});restoreWorkspace();});

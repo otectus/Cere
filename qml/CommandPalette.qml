@@ -20,6 +20,7 @@ Popup {
     signal settingsRequested(string category, string target)
     signal pageRequested(int page)
     signal desktopRequested(string query)
+    signal workflowsRequested()
 
     property var apps:[]
     property var windows:[]
@@ -42,7 +43,9 @@ Popup {
             {id:"page:sessions",kind:"page",title:"Sessions",detail:"Browse and organize conversations",page:1},
             {id:"page:desktop",kind:"page",title:"Desktop",detail:"Actions, apps, and windows",page:2},
             {id:"page:settings",kind:"page",title:"Settings",detail:"Configure Cere",page:3},
-            {id:"page:projects",kind:"page",title:"Projects",detail:"Project folders, defaults and quick sessions",page:4}
+            {id:"page:projects",kind:"page",title:"Projects",detail:"Project folders, defaults and quick sessions",page:4},
+            // Opens the recipe chooser only: choosing, previewing and sending stay separate, reviewed steps.
+            {id:"page:recipes",kind:"workflow",title:"Project recipes",detail:"Reviewed one-turn recipes: compare options, review a plan, prepare a handoff…",search:"project recipes workflows starters compare options review plan handoff explain subsystem diff crash release error"}
         ]
         entries=entries.concat((App.state.sessions||[]).map(session=>({
             id:"session:"+session.id,kind:"session",title:session.title||"Untitled session",
@@ -67,7 +70,7 @@ Popup {
         let matches=allEntries.filter(entry=>{
             if(seen[entry.id])return false
             seen[entry.id]=true
-            if(!query){const destination=destinationId(entry);return favorites.indexOf(destination)>=0||recents.indexOf(destination)>=0||entry.kind==="page"||entry.kind==="bookmark"}
+            if(!query){const destination=destinationId(entry);return favorites.indexOf(destination)>=0||recents.indexOf(destination)>=0||entry.kind==="page"||entry.kind==="workflow"||entry.kind==="bookmark"}
             return (entry.search||entry.title+" "+entry.detail+" "+entry.kind).toLowerCase().indexOf(query)>=0
         })
         matches.sort((a,b)=>{
@@ -82,7 +85,7 @@ Popup {
                 const titleA=a.title.toLowerCase(),titleB=b.title.toLowerCase()
                 const exactA=titleA===query?0:titleA.startsWith(query)?1:2,exactB=titleB===query?0:titleB.startsWith(query)?1:2
                 if(exactA!==exactB)return exactA-exactB
-                const kinds={bookmark:0,capsule:1,transcript:2,settings:3,session:4,folder:5,project:6,page:7,action:8,app:9,window:10,script:11}
+                const kinds={bookmark:0,capsule:1,transcript:2,settings:3,session:4,folder:5,project:6,page:7,workflow:7,action:8,app:9,window:10,script:11}
                 const kindA=kinds[a.kind]===undefined?20:kinds[a.kind],kindB=kinds[b.kind]===undefined?20:kinds[b.kind]
                 if(kindA!==kindB)return kindA-kindB
             }
@@ -117,6 +120,7 @@ Popup {
         else if(entry.kind==="folder")folderRequested(entry.value)
         else if(entry.kind==="settings")settingsRequested(entry.value.category,entry.value.target)
         else if(entry.kind==="page")pageRequested(entry.page)
+        else if(entry.kind==="workflow")workflowsRequested()
         else if(entry.kind==="script"){
             scriptReview.script=entry.value
             close();Qt.callLater(()=>scriptReview.open())

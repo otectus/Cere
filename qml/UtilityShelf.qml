@@ -13,6 +13,9 @@ CDialog {
     property var windows:[]
     property string runningRoutineId:""
     property string feedback:""
+    // M07: the Markdown notes folder chosen in Settings › Knowledge, searched on demand with backlinks.
+    property var vaultResults:[]
+    property var vaultNote:null
     function call(method,args){const id=App.rpc(method,args||{});const p=Object.assign({},pending);p[id]=method;pending=p}
     function refresh(){call("utility.list")}
     onOpened:refresh()
@@ -27,6 +30,7 @@ CDialog {
                 Layout.fillWidth:true
                 CCheckBox { visible:modelData.kind==="task";checked:modelData.done;Accessible.name:"Complete "+modelData.title;onClicked:shelf.call("utility.save",Object.assign({},modelData,{done:checked,expectedRevision:modelData.revision})) }
                 CButton { Layout.fillWidth:true;text:modelData.title;alignLeft:true;onClicked:{shelf.selected=modelData;entryTitle.text=modelData.title;entryText.text=modelData.text;entryKind.currentIndex=modelData.kind==="task"?1:0} }
+                CButton { visible:modelData.kind==="task"&&!!App.selectedId&&!App.session.temporary;text:"To project";help:"Move this task into the selected conversation’s project tasks";onClicked:shelf.call("capsules.adoptUtilityTask",{sessionId:App.selectedId,entryId:modelData.id,expectedRevision:modelData.revision}) }
                 CButton { text:"Delete";onClicked:shelf.call("utility.delete",{id:modelData.id,expectedRevision:modelData.revision}) }
             }
         }
@@ -36,6 +40,31 @@ CDialog {
             CComboBox { id:entryKind;model:["Note","Task"];Accessible.name:"Entry type" }
             CButton { text:shelf.selected.id?"Save changes":"Add";enabled:entryTitle.text.trim().length>0;onClicked:shelf.call("utility.save",{id:shelf.selected.id,expectedRevision:shelf.selected.revision,kind:entryKind.currentIndex?"task":"note",title:entryTitle.text,text:entryText.text,done:shelf.selected.done===true}) }
             CButton { text:"New";onClicked:{shelf.selected={};entryTitle.clear();entryText.clear()} }
+        }
+    }
+    CSection {
+        objectName:"vaultSection";visible:App.state.settings?.notesVault?.enabled===true
+        title:"Notes folder"
+        RowLayout {
+            Layout.fillWidth:true
+            CField { id:vaultQuery;objectName:"vaultQuery";Layout.fillWidth:true;placeholderText:"Search your notes";maximumLength:500;Accessible.name:"Search the notes folder";onAccepted:if(text.trim())shelf.call("notes.search",{query:text.trim()}) }
+            CButton { objectName:"vaultSearch";text:"Search";enabled:vaultQuery.text.trim().length>0;onClicked:shelf.call("notes.search",{query:vaultQuery.text.trim()}) }
+        }
+        Repeater {
+            model:shelf.vaultResults
+            CButton { required property var modelData;required property int index;objectName:"vaultResult_"+index;Layout.fillWidth:true;alignLeft:true;text:modelData.title+" · "+modelData.path;onClicked:shelf.call("notes.read",{path:modelData.path}) }
+        }
+        ColumnLayout {
+            visible:!!shelf.vaultNote;Layout.fillWidth:true;spacing:6
+            CText { objectName:"vaultNoteTitle";text:shelf.vaultNote?.title||"";font.weight:Font.DemiBold;Layout.fillWidth:true;elide:Text.ElideRight }
+            CText { visible:(shelf.vaultNote?.tags||[]).length>0;text:"#"+(shelf.vaultNote?.tags||[]).join("  #");color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+            CTextArea { objectName:"vaultNoteText";Layout.fillWidth:true;Layout.preferredHeight:160;readOnly:true;wrapMode:TextEdit.Wrap;textFormat:TextEdit.PlainText;text:(shelf.vaultNote?.text||"")+(shelf.vaultNote?.truncated?"\n…":"");Accessible.name:"Note text" }
+            CText { text:(shelf.vaultNote?.backlinks||[]).length?"Linked from":"No other notes link here.";color:Theme.muted;font.pixelSize:Theme.secondary }
+            Flow {
+                Layout.fillWidth:true;spacing:6
+                Repeater { model:shelf.vaultNote?.backlinks||[];CButton { required property var modelData;required property int index;objectName:"vaultBacklink_"+index;quiet:true;text:modelData.title;help:modelData.path;onClicked:shelf.call("notes.read",{path:modelData.path}) } }
+            }
+            CButton { text:"Open in its editor";onClicked:App.openPath((App.state.settings?.notesVault?.path||"")+"/"+shelf.vaultNote.path) }
         }
     }
     CSection {
@@ -106,8 +135,11 @@ CDialog {
             if(method==="windows.list"){shelf.windows=value||[];return}
             if(method==="utility.list")shelf.entries=value||[]
             else if(method==="utility.save"||method==="utility.delete"){shelf.refresh();shelf.selected={};entryTitle.clear();entryText.clear()}
+            else if(method==="capsules.adoptUtilityTask"){shelf.refresh();shelf.feedback="Moved to the project tasks of "+(value.capsule?.cwd||"this project")+". Find it in Project workflows."}
             else if(method==="utility.calculate"||method==="utility.convert")shelf.feedback="Result: "+value.value
             else if(method==="routine.preview")shelf.preview=value
+            else if(method==="notes.search"){shelf.vaultResults=value.results||[];shelf.vaultNote=null;if(!shelf.vaultResults.length)shelf.feedback="No readable notes match. Private notes are never searched."}
+            else if(method==="notes.read")shelf.vaultNote=value
             else if(method==="routine.run"){shelf.routineResult=value;shelf.preview={};shelf.feedback="Routine "+value.state+(value.error?": "+value.error:"")}
         }
     }

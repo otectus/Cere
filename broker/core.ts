@@ -16,12 +16,25 @@ import { discoverProviderModels } from './models.ts';
 import { actionDefinitions, validateAction, desktopAction, applications, windows, audioStatus, mediaStatus, exec } from './desktop.ts';
 import { RpcProcess } from './wire.ts';
 import { paths } from './paths.ts';
-import { OllamaAdapter, ollamaHost, ollamaModels } from './ollama.ts';
+import { OllamaAdapter, modelRoute, ollamaHost, ollamaModels } from './ollama.ts';
 import type { OllamaMessage, OllamaTool } from './ollama.ts';
 import { orchestrationDefinitions, orchestrate } from './orchestration.ts';
 import { WebSearch, webDefinitions, webUrl, searchProviders } from './web.ts';
+import type { SearchTrace } from './web.ts';
+import { validConstraints } from './web-plan.ts';
+import { boundedPlan, estimateTokens, type TurnPlan } from './context-plan.ts';
 import { Memory, memoryDefinitions } from './memory.ts';
-import { defaultPersonality, personalityMaxLength, validatePersonality, validateAssistantName, validateAvatar } from './personality.ts';
+import { defaultPersonality, personalityInstructions, personalityMaxLength, personalityPreview, validatePersonality, validateAssistantName, validateAvatar } from './personality.ts';
+import { BehaviorPresets } from './behavior-presets.ts';
+import { behaviorInstructions, builtinPostures, resolveBehavior, type ResolvedBehavior, type ToolCeiling } from './behavior.ts';
+import { checkReply } from './style-checks.ts';
+import { exportConversation } from './conversation-export.ts';
+import { LocalModels } from './local-models.ts';
+import { KnowledgeCollections } from './knowledge-collections.ts';
+import { NotesVault, notesDefinitions } from './notes-vault.ts';
+import { apply as applyProposal, propose } from './file-proposals.ts';
+import { ProfilePackages } from './profile-packages.ts';
+import { projectConventions } from './project-instructions.ts';
 import { validateAnswers, claudeQuestions } from './questions.ts';
 import { SendQueue } from './send-queue.ts';
 import { ordinarySettings, busy, remoteError } from './execution.ts';
@@ -41,7 +54,15 @@ import { Workflows } from './workflows.ts';
 import { Projects } from './projects.ts';
 import { providerIds, isApiProvider, providerLabels } from './provider-catalog.ts';
 import { ProviderCredentials } from './credentials.ts';
-import { ApiAdapter, apiModels, portableApiHistory } from './api-providers.ts';
+import { ApiAdapter, apiLabel, apiModels, portableApiHistory, type ApiAccess } from './api-providers.ts';
+import { declared, endpointOrigin, validEndpoint } from './compatible-endpoint.ts';
+import { Extensions, validServers } from './extensions.ts';
+import { CustomTools, validTemplates } from './custom-tools.ts';
+import { deviceId, listAudioDevices, selectAudio } from './audio-devices.ts';
+import { matchCommand, voiceCommands } from './voice-commands.ts';
+import { Spans } from './spans.ts';
+import { BackgroundJobs } from './jobs.ts';
+import { Schedules } from './schedules.ts';
 import { AntigravityAdapter } from './antigravity.ts';
 import { IndexTTS } from './indextts.ts';
 import { IndexError, indexPrefix, validateIndexConfig } from './indextts-config.ts';
@@ -91,6 +112,21 @@ export class Core extends EventEmitter {
   attachments: Attachments; organization: Organization; projects: Projects;
   power: PowerSessions;
   diagnostics: Diagnostics; utilities: Utilities; recovery: Recovery; memoryReview:MemoryReview; workflows:Workflows;
+  presets: BehaviorPresets;
+  localModels: LocalModels;
+  collections: KnowledgeCollections;
+  vault: NotesVault;
+  packages: ProfilePackages;
+  extensions: Extensions;
+  customTools: CustomTools;
+  /** M16: responsiveness spans, on only while the user measures. */
+  spans = new Spans();
+  /** A04: background work listed together, cancellable, and out of the way of replies. */
+  jobs = new BackgroundJobs(this);
+  /** M14: reviewed recipes at set times. */
+  schedules = new Schedules(this);
+  private turnTimers = new Map<string, { started: number; provider: string; first: boolean }>();
+  private stopRequests = new Map<string, number>();
   approvals = new Map<string, { value: Approval; resolve: (value: any) => void }>();
   tokens = new Map<string, string>(); partials = new Map<string, Message>();
   terminal = new Set<string>();
@@ -124,29 +160,58 @@ export class Core extends EventEmitter {
   unacknowledged = new Map<string, { turnId: string; messageId: string; text: string; attachmentIds: string[]; returned?: boolean }>();
   memoryCaptures = new Set<Promise<unknown>>();
   constructor(store = new Store(), factory?: (s: Session, h: Hooks) => Adapter, modelLoader = discoverProviderModels) {
-    super(); this.store = store; this.settings = store.settings(); this.credentials = new ProviderCredentials(join(store.directory, 'credentials')); this.modelLoader = modelLoader === discoverProviderModels ? (provider, host) => isApiProvider(provider) ? apiModels(provider, {key:()=>this.credentials.key(provider)}) : discoverProviderModels(provider,host) : modelLoader;
+    super(); this.store = store; this.settings = store.settings(); this.credentials = new ProviderCredentials(join(store.directory, 'credentials')); this.modelLoader = modelLoader === discoverProviderModels ? (provider, host) => isApiProvider(provider) ? apiModels(provider, this.apiAccess(provider)) : discoverProviderModels(provider,host) : modelLoader;
     this.telemetry=new TelemetryService(()=>{if(!this.closed)this.changed();},process.env.CERE_RUNTIME_DIR?paths().runtime:undefined);
     this.power=new PowerSessions({sessions:()=>this.store.sessions(),changed:()=>{if(!this.closed)this.changed();},stop:id=>this.stopAndClose(id)});
     this.attachments=new Attachments(store);this.organization=new Organization(store,()=>this.changed());
     this.projects=new Projects(this);
     this.diagnostics=new Diagnostics(this);this.utilities=new Utilities(this);this.recovery=new Recovery(this);this.memoryReview=new MemoryReview(this);this.workflows=new Workflows(this);
+    this.presets=new BehaviorPresets(store,()=>{if(!this.closed)this.changed();});
+    this.localModels=new LocalModels(this);
+    this.collections=new KnowledgeCollections(this);
+    this.vault=new NotesVault(()=>this.settings.notesVault.enabled?this.settings.notesVault.path:'');
+    this.packages=new ProfilePackages(this);
+    this.extensions=new Extensions(this);
+    this.customTools=new CustomTools(this);
+    selectAudio(this.settings.audio);
+    this.spans.configure(this.settings.responsiveness);
     this.transcription=new Transcription({settings:()=>this.settings.transcription,changed:()=>{if(!this.closed)this.changed();}});
     this.speech = new Speech(() => this.settings, () => { if (!this.closed) this.changed(); });
     this.indextts=new IndexTTS(store,()=>this.settings.indextts,()=>{if(!this.closed)this.changed();});
     this.speech.indextts=this.indextts;
     this.elevenlabs=new ElevenLabs(()=>this.settings.elevenlabs,()=>this.credentials.key('elevenlabs'),()=>{if(!this.closed)this.changed();});
     this.speech.elevenlabs=this.elevenlabs;
+    this.speech.timing = (ms, outcome, backend) => this.spans.record('synthesis', ms, outcome, backend);
     this.memory = new Memory(store, () => this.settings, () => { if (!this.closed) this.changed(); });
     this.factory = factory || ((s, h) => s.provider === 'codex' ? new CodexAdapter(s,h) : s.provider === 'claude' ? new ClaudeAdapter(s,h) : s.provider === 'antigravity' ? new AntigravityAdapter(s,h) : this.conversationAdapter(s,h,{
       load: () => this.store.get<OllamaMessage[]>((isApiProvider(s.provider) ? 'api:' : 'ollama:') + s.id, []),
       ...this.telemetryContext(s.id),
       save: messages => this.store.set((isApiProvider(s.provider) ? 'api:' : 'ollama:') + s.id, messages),
-      tools: () => this.toolsFor(s.id), call: (name, args, signal) => this.callTool(s.id, name, args, signal),
-      prepare: (text, signal, budget, route) => this.settingsFor(s.id).memory.enabled && this.memory.active() ? this.recalling(s.id, () => this.memory.context(s, text, signal, budget, route, this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, signal))) : Promise.resolve(''),
+      tools: () => this.toolsFor(s.id), call: (name, args, signal) => {
+        // The span names the tool's family only, such as web, memory or ext.
+        const end = this.spans.start('tool', String(name).split('_')[0]);
+        return this.callTool(s.id, name, args, signal).then(value => { end(); return value; }, error => { end(signal.aborted ? 'stopped' : 'failed'); throw error; });
+      },
+      prepare: (text, signal, budget, route) => {
+        if (this.settingsFor(s.id).memory.enabled && this.memory.active()) { const end = this.spans.start('memory'); return this.recalling(s.id, () => this.memory.context(s, text, signal, budget, route, this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, signal))).then(value => { end(); return value; }, error => { end(signal.aborted ? 'stopped' : 'failed'); throw error; }); }
+        this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: this.memoryOffReason(s.id), budgetTokens: budget || 0, route: route || 'unknown' });
+        return Promise.resolve('');
+      },
       memorySignal: () => this.memory.controller.signal,
       inference: active => this.memory.service.call('foreground',{active}),
       memoryActive: () => this.settingsFor(s.id).memory.enabled && this.memory.active(), completed: (text, answer, signal) => this.settingsFor(s.id).memory.enabled && this.memoryWritable(s.id) ? this.memory.capture(s, text, answer, signal, () => this.memoryAuthorized(s.id, true, signal)) : Promise.resolve(),
-      search: (query, signal) => { if (!this.settingsFor(s.id).webSearch.enabled) throw new Error('Web scope denied'); return this.webCall('web_search', { query }, signal); },
+      search: (query, signal, constraints) => { if (!this.settingsFor(s.id).webSearch.enabled) throw new Error('Web scope denied'); return this.webCall('web_search', { query, ...(constraints || {}) }, signal, s.id); },
+      plan: plan => this.recordPlan(s.id, plan),
+      conventions: async () => {
+        const row = this.store.db.prepare('SELECT data FROM projects WHERE cwd=?').get(this.store.session(s.id).cwd);
+        return row && JSON.parse(String(row.data)).conventions ? projectConventions(this.store.session(s.id).cwd) : { text: '', files: [] };
+      },
+      documents: async (text, signal, budget) => {
+        const session = this.store.session(s.id);
+        if (session.temporary || !this.collections.bound(session).length) return { text: '' };
+        const route = isApiProvider(session.provider) ? 'cloud' : (await modelRoute(session.ollama!.host, session.model, signal)).route;
+        return this.collections.context(session, text, budget, route, signal);
+      },
     }));
     this.sendQueue = new SendQueue(this);
     for (const s of store.sessions()) if (['starting','working','waiting','stopping'].includes(s.status)) {
@@ -160,10 +225,18 @@ export class Core extends EventEmitter {
     this.ticker = setInterval(() => void this.checkTimers(), 1000); this.ticker.unref();
     void this.telemetry.configure(this.settings.telemetry);
   }
+  /** How an API adapter reaches its provider. A compatible endpoint's key is used only for its own origin. */
+  apiAccess(provider: import('./provider-catalog.ts').ApiProvider): ApiAccess {
+    if (provider !== 'compatible') return { key: () => this.credentials.key(provider) };
+    return { key: () => this.credentials.key('compatible', endpointOrigin(this.settings.compatible.baseUrl)), endpoint: () => this.settings.compatible };
+  }
+  /** M13: whether a conversation's provider takes tool calls; a compatible endpoint only if declared. */
+  toolCalling(s: Session) { return s.provider !== 'compatible' || this.settings.compatible.tools; }
   conversationAdapter(s: Session, h: Hooks, context: import('./ollama.ts').OllamaContext): Adapter {
     if (isApiProvider(s.provider)) {
       const provider=s.provider,model:ModelOption|undefined=this.capabilities[provider]?.models?.find((m:ModelOption)=>m.id===s.model);
-      return new ApiAdapter(s,h,context,{key:()=>this.credentials.key(provider)},{contextLength:model?.contextLength,maxOutputTokens:model?.maxOutputTokens});
+      const limits=provider==='compatible'?{contextLength:this.settings.compatible.contextLength||undefined,maxOutputTokens:this.settings.compatible.maxOutputTokens||undefined}:{contextLength:model?.contextLength,maxOutputTokens:model?.maxOutputTokens};
+      return new ApiAdapter(s,h,context,this.apiAccess(provider),limits);
     }
     if (s.provider === 'ollama') return new OllamaAdapter(s,h,context);
     throw new Error('Unsupported conversation provider');
@@ -193,7 +266,7 @@ export class Core extends EventEmitter {
     if ((event==='notice'||event==='ui') && this.stateDirty && !this.closed) this.emitState();
     return super.emit(event, ...args);
   }
-  snapshot() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
+  snapshot() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), jobs:this.jobs.snapshot(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
   settingsFor(id: string): Settings {
     const session = this.store.session(id), execution = session.remote;
     if (execution && (!this.remoteAuthority?.(execution, session) || execution.expiresAt <= Date.now())) throw remoteError('AUTH_REVOKED', 'Remote authority expired or was revoked. Detach locally to continue.');
@@ -272,7 +345,12 @@ export class Core extends EventEmitter {
   async refreshProviderModels(provider: Provider) {
     const generation=(this.modelGenerations.get(provider)||0)+1;this.modelGenerations.set(provider,generation);
     const previous=this.capabilities[provider] || { available:!isApiProvider(provider) };
-    if(isApiProvider(provider))Object.assign(previous,{...this.credentials.status()[provider],label:providerLabels[provider],remoteRestricted:false});
+    if(isApiProvider(provider))Object.assign(previous,{...this.credentials.status(provider==='compatible'?endpointOrigin(this.settings.compatible.baseUrl):undefined)[provider],label:apiLabel(provider,this.apiAccess(provider)),remoteRestricted:false});
+    if(provider==='compatible'){
+      // An unset endpoint is simply not configured; there is nothing to load.
+      Object.assign(previous,{endpoint:this.settings.compatible.baseUrl,declared:declared(this.settings.compatible)});
+      if(!this.settings.compatible.baseUrl){this.capabilities.compatible={...previous,available:false,configured:false,models:[],modelsStatus:'unknown',modelsError:undefined,modelsWarning:undefined,error:undefined};this.changed();return [];}
+    }
     this.capabilities[provider]={...previous,modelsStatus:'loading',modelsError:undefined};this.changed();
     try {
       const models=await this.modelLoader(provider, provider === 'ollama' ? this.settings.ollama.host : undefined);
@@ -280,7 +358,8 @@ export class Core extends EventEmitter {
       if(this.modelGenerations.get(provider)!==generation)return this.capabilities[provider]?.models || models;
       // A partially readable catalog stays available; omitted entries are named, never guessed.
       const omitted=(models as {omitted?:{id:string;error:string}[]}).omitted;
-      this.capabilities[provider]={...this.capabilities[provider],available:true,models,modelsStatus:'ready',modelsError:undefined,modelsWarning:omitted?.length?`Some models could not be inspected: ${omitted.map(o=>o.id).join(', ')}`:undefined,error:undefined,managed:true,resume:true};this.changed();return models;
+      const unlisted=(models as {unlisted?:boolean}).unlisted;
+      this.capabilities[provider]={...this.capabilities[provider],available:true,models,modelsStatus:'ready',modelsError:undefined,modelsWarning:unlisted?'This endpoint does not list its models. Enter a model ID when you start a conversation.':omitted?.length?`Some models could not be inspected: ${omitted.map(o=>o.id).join(', ')}`:undefined,error:undefined,managed:true,resume:true};this.changed();return models;
     } catch(error:any) {
       if(this.closed || this.modelGenerations.get(provider)!==generation)return this.capabilities[provider]?.models || [];
       this.capabilities[provider]={...this.capabilities[provider],models:previous.models || [],modelsStatus:'error',modelsError:error.message,...(provider==='ollama'||isApiProvider(provider)?{available:false,error:error.message}:{})};this.changed();throw error;
@@ -345,7 +424,15 @@ export class Core extends EventEmitter {
       if (effort) throw new Error('Ollama uses the model’s default thinking settings');
       if (!ollamaCatalog) ollamaCatalog = await this.modelLoader('ollama', ollamaConfig.host);
     }
-    if(isApiProvider(p.provider)){if(!model)throw new Error('Choose an API model or enter its model ID');if(effort)throw new Error('API conversations use the model’s default reasoning settings');if(!this.credentials.key(p.provider))throw new Error('Add an API key in Settings → Connections');}
+    if(isApiProvider(p.provider)){
+      if(!model)throw new Error('Choose an API model or enter its model ID');if(effort)throw new Error('API conversations use the model’s default reasoning settings');
+      if(p.provider==='compatible'){
+        const endpoint=this.settings.compatible;
+        if(!endpoint.baseUrl)throw new Error('Set the compatible endpoint in Settings → Connections');
+        if(endpoint.requiresKey&&!this.apiAccess('compatible').key())throw new Error(`Add a key for ${apiLabel('compatible',this.apiAccess('compatible'))} in Settings → Connections`);
+        if(p.tools===true&&!endpoint.tools)throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
+      }else if(!this.credentials.key(p.provider))throw new Error('Add an API key in Settings → Connections');
+    }
     const catalog:ModelOption[]=p.provider === 'ollama' ? ollamaCatalog || [] : this.capabilities[p.provider]?.modelsStatus==='ready' ? this.capabilities[p.provider].models || [] : [];
     if (p.provider === 'ollama' && !catalog.some(m => m.id === model)) throw new Error('Choose an available Ollama chat model; refresh the model list');
     if(catalog.length && !isApiProvider(p.provider)){
@@ -477,7 +564,11 @@ export class Core extends EventEmitter {
       if (!notice && (e.type === 'tool' || e.data?.phase === 'commentary')) this.speechResponses.delete(id);
       else if (!notice) this.speechResponses.set(id, message.text.slice(0, 100000));
       this.partials.set(key, message);
-      if (message.role === 'assistant' && message.text.trim()) this.turnReplies.set(id,message);
+      if (message.role === 'assistant' && message.text.trim()) {
+        this.turnReplies.set(id,message);
+        const timer = this.turnTimers.get(id);
+        if (timer && !timer.first) { timer.first = true; this.spans.record('first-token', performance.now() - timer.started, 'ok', timer.provider); }
+      }
       if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(), 80);
       if (e.type === 'message') { this.flush(); this.finishReply(session,message); }
     } else if (e.type === 'status') {
@@ -497,6 +588,10 @@ export class Core extends EventEmitter {
       this.flush(); this.cancelApprovals(id);
       const interrupted = session.status === 'stopping' || ['interrupted','cancelled','stopped'].includes(e.type) || e.type === 'complete' && ['interrupted','cancelled','canceled','stopped'].includes((e.text || '').toLowerCase());
       const status = e.type === 'error' ? 'error' : interrupted ? 'interrupted' : 'idle';
+      const timer = this.turnTimers.get(id), stopAt = this.stopRequests.get(id);
+      this.turnTimers.delete(id); this.stopRequests.delete(id);
+      if (timer) this.spans.record('turn', performance.now() - timer.started, status === 'idle' ? 'ok' : status === 'error' ? 'failed' : 'stopped', timer.provider);
+      if (stopAt !== undefined) this.spans.record('cancel', performance.now() - stopAt, 'ok', timer?.provider || '');
       this.workflows.finish(id);
       this.workflows.observeResult(session,this.turnReplies.get(id),status==='idle'?'completed':status==='error'?'failed':'interrupted');
       const reply = this.turnReplies.get(id);
@@ -505,6 +600,12 @@ export class Core extends EventEmitter {
         this.queueCompletion(session,reply);
       } else this.speech.stopSession(id);
       this.finishNativeMemory(session, status === 'idle' ? this.turnReplies.get(id)?.text || '' : undefined);
+      // M02: a finished reply is checked against its turn's formatting constraints; a miss is a note on it.
+      const behavior = this.turnBehavior.get(id); this.turnBehavior.delete(id); this.turnPostures.delete(id);
+      if (status === 'idle' && reply && behavior?.constraints.length) {
+        const notes = checkReply(reply.text, behavior.constraints), stored = this.store.messageById(reply.id);
+        if (notes.length && stored) this.putMessage({ ...stored, styleNotes: notes });
+      }
       this.turnReplies.delete(id);
       if (status === 'idle') this.unacknowledged.delete(id); else this.returnUnacknowledged(id, e.type === 'error' ? e.text || 'The provider reported an error.' : 'Stopped before the provider accepted it.');
       this.updateSession(id, { status, unread:true,error: e.type === 'error' ? e.text : undefined });
@@ -584,6 +685,8 @@ export class Core extends EventEmitter {
     if (s.remote && s.provider !== 'ollama' && !s.remote.caps.includes('providers.execute')) throw remoteError('SCOPE_DENIED', 'Native provider execution is not granted.');
     if (s.remote && !p.turnId) { await this.disconnect(s.id); s = this.store.session(s.id); }
     if (p.webSearch !== undefined && typeof p.webSearch !== 'boolean') throw new Error('Invalid web search choice');
+    if (p.posture !== undefined) this.posture(p.posture);
+    if (p.webConstraints !== undefined && (!p.webSearch || !Object.keys(validConstraints(p.webConstraints)).length)) throw new Error('Search constraints apply only to a message that searches the web');
     if (p.webSearch && (s.provider !== 'ollama' && !isApiProvider(s.provider) || !effective.webSearch.enabled || effective.paused)) throw new Error('Enable web search in Settings for an API or Ollama conversation');
     if (p.webSearch && (typeof p.text !== 'string' || p.text.length > 500)) throw new Error('Use a question of at most 500 characters for Search web');
     if (s.mode !== 'managed') throw new Error('Hand this session to Cere before sending');
@@ -605,12 +708,17 @@ export class Core extends EventEmitter {
     if (!p.queuedMessageId && p.expectedDraftRevision !== undefined && p.expectedDraftRevision !== (this.store.session(s.id).draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed during send validation.');
     // Input the destination cannot take is refused before anything is recorded or sent.
     await this.preflight(s, images);
+    // A02: tool servers this turn may use start now; one that fails is reported in Settings, not fatal.
+    await this.extensions.ensure(s.id);
     this.settingsFor(s.id);
     if (!p.queuedMessageId && p.expectedDraftRevision !== undefined && p.expectedDraftRevision !== (this.store.session(s.id).draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed during send validation.');
     // A very fast provider can emit and flush its first reply before its start
     // acknowledgement returns. Reserve an earlier timestamp for the deferred
     // remote user row so transcript ordering still reflects the turn.
     this.workflows.beforeSend(s.id,userText,[...attached.assets,...images],{webSearch:p.webSearch});
+    // A turn-only posture applies to this turn's requests and ends with it.
+    if (p.posture !== undefined) this.turnPostures.set(s.id, p.posture); else this.turnPostures.delete(s.id);
+    this.turnBehavior.set(s.id, this.resolvedBehavior(s.id));
     const userTime=Date.now()-1;
     if (s.provider === 'ollama') this.delegations.delete(s.id);
     this.terminal.delete(s.id); this.pendingCompletions.delete(s.id); this.speechResponses.delete(s.id); this.turnReplies.delete(s.id);
@@ -618,6 +726,7 @@ export class Core extends EventEmitter {
     const remoteAcceptance=!!onAccepted;
     // A turn that recalls memory says so until its context is ready, then it is thinking.
     s = this.updateSession(s.id, { status: 'starting', activity: effective.memory.enabled && this.memory.active() ? 'recalling' : 'thinking', error: undefined, agents:[], turnId:p.turnId || randomUUID() });
+    if (this.spans.enabled) this.turnTimers.set(s.id, { started: performance.now(), provider: s.provider, first: false });
     const submittedDraftRevision=s.draftRevision;
     if(!remoteAcceptance)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
     const userMessageId=randomUUID();
@@ -629,7 +738,8 @@ export class Core extends EventEmitter {
     let accepted=!remoteAcceptance;
     const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;if(p.queuedMessageId)return;s=this.updateSession(s.id,{draft:'',view:undefined});this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
     try {
-      let memorySignal: AbortSignal | undefined;
+      let memorySignal: AbortSignal | undefined, memoryText = '', documents: { text: string; detail?: Record<string, any> } = { text: '' };
+      if (s.provider !== 'ollama' && !isApiProvider(s.provider) && !(effective.memory.enabled && this.memory.active())) this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: this.memoryOffReason(s.id), route: 'cloud' });
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && effective.memory.enabled && this.memory.active()) {
         const controller = new AbortController();
         const epoch = this.memory.controller.signal;
@@ -638,13 +748,32 @@ export class Core extends EventEmitter {
         controller.signal.throwIfAborted();
         if (context && !epoch.aborted) {
           memorySignal = AbortSignal.any([controller.signal, epoch]);
-          providerText = context + '\n\n' + providerText;
+          providerText = context + '\n\n' + providerText; memoryText = context;
         } else memorySignal = controller.signal;
       }
+      // M06: a CLI is a cloud consumer: only collections that allow cloud models contribute excerpts.
+      if (s.provider !== 'ollama' && !isApiProvider(s.provider) && !s.temporary && this.collections.bound(s).length) {
+        documents = await this.collections.context(s, userText, 3000, 'cloud', AbortSignal.timeout(15000)).catch(() => ({ text: '' }));
+        if (documents.text) providerText = documents.text + '\n\n' + providerText;
+      }
       this.ensureAdapter(s);
+      // A CLI keeps its own instructions, history and tools; Cere records only what it supplies itself.
+      if (s.provider !== 'ollama' && !isApiProvider(s.provider)) {
+        const outcome = this.memory.outcomes(s.id)[0];
+        this.recordPlan(s.id, { schema: 1, turnId: s.turnId || '', time: Date.now(), provider: s.provider, model: s.model, boundary: 'cli-owned', estimator: 'utf8-bytes/2', contextSize: null, rounds: 1,
+          layers: [
+            { id: 'personality', label: 'Personality block', trust: 'user', tokens: estimateTokens(personalityInstructions(this.settings.personality, this.settings.assistantName)), included: true,
+              detail: { channel: s.provider === 'codex' ? 'developer instructions' : s.provider === 'claude' ? 'appended system prompt' : 'prepended to the message' } },
+            { id: 'memory', label: 'Recalled memory', trust: 'untrusted', tokens: estimateTokens(memoryText), included: !!memoryText, ...(memoryText ? {} : { reason: outcome?.turnId === s.turnId ? outcome.outcome : 'none_supplied' }) },
+            ...(documents.detail ? [{ id: 'documents' as const, label: 'Document collections', trust: 'untrusted' as const, tokens: estimateTokens(documents.text), included: !!documents.text, ...(documents.text ? {} : { reason: documents.detail.collections?.length ? 'no_match' : 'none_supplied' }), detail: documents.detail }] : []),
+            { id: 'attachments', label: 'Attached text files', trust: 'user', tokens: estimateTokens(attached.text), included: !!attached.text, detail: { files: attached.assets.length, images: images.length } },
+            { id: 'current-turn', label: 'Current turn', trust: 'user', tokens: estimateTokens(userText), included: true },
+          ],
+          unknown: ['Native conversation history kept by the CLI', 'Project instruction files such as AGENTS.md or CLAUDE.md', 'The CLI’s own system prompt and tool definitions', 'Compaction the CLI performs itself'] });
+      }
       if(s.remote&&s.provider!=='ollama'&&this.settingsFor(s.id).paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
       authorizeDispatch();
-      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:tracked?acknowledged:undefined });
+      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, ...(p.webConstraints !== undefined ? { webConstraints: validConstraints(p.webConstraints) } : {}), messageId: !remoteAcceptance && !p.queuedMessageId ? userMessageId : undefined, beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:tracked?acknowledged:undefined });
       if(!accepted)throw new Error('Provider did not confirm that it accepted the turn.');
       if(!remoteAcceptance){
         const turn=this.unacknowledged.get(s.id),returned=!!turn&&turn.turnId===s.turnId&&turn.returned===true;
@@ -659,6 +788,7 @@ export class Core extends EventEmitter {
     } catch (e: any) {
       if(!remoteAcceptance)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'uncertain'});
       this.event(s.id, { type: 'error', text: e.message });
+      this.turnPostures.delete(s.id); this.turnBehavior.delete(s.id);
       for (const [token, owner] of this.tokens) if (owner === s.id) this.tokens.delete(token);
       const adapter = this.adapters.get(s.id); this.adapters.delete(s.id); await adapter?.close();
       throw e;
@@ -689,6 +819,7 @@ export class Core extends EventEmitter {
     const generation = (this.generations.get(s.id) || 0) + 1; this.generations.set(s.id, generation);
     const live = () => this.generations.get(s.id) === generation;
     const hooks: Hooks = { token, restrictive:!!s.remote, policy:verified => { if (live()) this.updateSession(s.id, {effectivePolicy:verified ? 'restricted' : 'unknown'}); }, personality: () => this.settings.personality, assistantName: () => this.settings.assistantName,
+      behavior: () => this.behaviorText(s.id),
       memoryGuidance: () => { try { return this.memoryToolsFor(s.id).length > 0; } catch { return false; } },
       bypassCliPermissions: () => this.settingsFor(s.id).bypassCliPermissions,
       automaticApprovalValid: kind => {try{return live()&&!this.terminal.has(s.id)&&this.automaticallyApprove(s.id,{kind,choices:['allow']});}catch{return false;}},
@@ -714,6 +845,7 @@ export class Core extends EventEmitter {
     if (message) this.putMessage({ ...message, kind: 'queue-cancelled', text: `Not sent — ${reason.trim()} ${restored ? 'The message is back in your draft.' : 'Recover it from the conversation menu.'}\n\n${message.text}` });
   }
   async stop(id: string): Promise<boolean> {
+    if (this.spans.enabled && this.turnTimers.has(id) && !this.stopRequests.has(id)) this.stopRequests.set(id, performance.now());
     this.sendQueue.cancel(id, 'Stopped before sending; copy this message to send it again');
     this.speech.stopSession(id);
     const existing = this.stopping.get(id); if (existing) return existing;
@@ -738,7 +870,7 @@ export class Core extends EventEmitter {
     finally{if(timer)clearTimeout(timer);if(wasActive)this.finishInterruptedTurn(id);}
   }
   private finishInterruptedTurn(id:string) {
-    this.pendingCompletions.delete(id);this.flush();this.cancelApprovals(id);
+    this.pendingCompletions.delete(id);this.flush();this.cancelApprovals(id);this.turnPostures.delete(id);this.turnBehavior.delete(id);
     this.returnUnacknowledged(id,'Stopped before the provider accepted it.');
     this.workflows.finish(id);
     const session=this.store.session(id);
@@ -863,7 +995,29 @@ export class Core extends EventEmitter {
       }
     }
     if ('conversationDefaults' in patch) next.conversationDefaults = conversationDefaults(patch.conversationDefaults);
-    for (const key of ['speechEnabled','speechBrief','topmost','roaming','quiet','reducedMotion','expressiveCues','showMemoryCitations','hidden','paused','onboarding','bypassCliPermissions','bypassComputerPermissions'] as const) if (key in patch) {
+    if ('notesVault' in patch) {
+      const value = patch.notesVault;
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !['path','enabled','allowCloud'].includes(k)) || Object.entries(value).some(([k, v]) => k === 'path' ? typeof v !== 'string' : typeof v !== 'boolean')) throw new Error('Invalid notes vault settings');
+      next.notesVault = { ...next.notesVault, ...value };
+      if (next.notesVault.path) next.notesVault.path = await NotesVault.folder(next.notesVault.path, this.store.directory);
+      if (next.notesVault.enabled && !next.notesVault.path) throw new Error('Choose the notes folder first');
+    }
+    if ('compatible' in patch) next.compatible = validEndpoint(patch.compatible, next.compatible);
+    if ('extensions' in patch) next.extensions = await validServers(patch.extensions);
+    if ('customTools' in patch) next.customTools = await validTemplates(patch.customTools);
+    if ('voiceCommands' in patch) {
+      const value = patch.voiceCommands;
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.entries(value).some(([key, flag]) => !['enabled', 'confirm', 'speakFeedback'].includes(key) || typeof flag !== 'boolean')) throw new Error('Invalid voice command settings');
+      next.voiceCommands = { ...next.voiceCommands, ...value };
+    }
+    if ('audio' in patch) {
+      const value = patch.audio;
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['input', 'output'].includes(key))) throw new Error('Invalid audio device settings');
+      next.audio = { input: 'input' in value ? deviceId(value.input) : next.audio.input, output: 'output' in value ? deviceId(value.output) : next.audio.output };
+    }
+    const previousExtensions = this.settings.extensions, previousAudio = this.settings.audio;
+    const endpointChanged = JSON.stringify(next.compatible) !== JSON.stringify(this.settings.compatible);
+    for (const key of ['speechEnabled','speechBrief','topmost','roaming','quiet','reducedMotion','expressiveCues','showMemoryCitations','hidden','paused','onboarding','bypassCliPermissions','bypassComputerPermissions','responsiveness'] as const) if (key in patch) {
       if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}`); next[key] = patch[key];
     }
     for (const [key,min,max,label] of [['speechRate',.5,2,'Speech rate'],['speechPitch',-6,6,'Speech pitch'],['speechVolume',0,1,'Speech volume']] as const) {
@@ -887,6 +1041,7 @@ export class Core extends EventEmitter {
     }
     if ('scale' in patch) { if (!Number.isFinite(patch.scale) || patch.scale < .5 || patch.scale > 3) throw new Error('Size must be between 50% and 300%'); next.scale = patch.scale; }
     if ('idleEnergy' in patch) { if (!['calm','lively'].includes(patch.idleEnergy)) throw new Error('Idle energy must be calm or lively'); next.idleEnergy = patch.idleEnergy; }
+    if ('sendKey' in patch) { if (!['enter','ctrlEnter','button'].includes(patch.sendKey)) throw new Error('Choose Enter, Ctrl+Enter or the Send button for sending'); next.sendKey = patch.sendKey; }
     if ('motionIntensity' in patch) { if (!Number.isFinite(patch.motionIntensity) || patch.motionIntensity < 0 || patch.motionIntensity > 1) throw new Error('Motion intensity must be between 0 and 1'); next.motionIntensity = patch.motionIntensity; }
     if ('profile' in patch) { if (!['manual','scoped','broad'].includes(patch.profile)) throw new Error('Invalid permission profile'); next.profile = patch.profile; }
     if ('categories' in patch) {
@@ -927,6 +1082,21 @@ export class Core extends EventEmitter {
     this.store.set('settingsRevision', String(BigInt(this.store.get('settingsRevision', '0')) + 1n));
     this.changed();
     if (hostChanged) { this.capabilities.ollama = {}; void this.refreshProviderModels('ollama').catch(() => {}); }
+    if ('extensions' in patch) this.extensions.reconfigure(previousExtensions);
+    if ('customTools' in patch) this.customTools.reconfigure();
+    if ('responsiveness' in patch) { this.spans.configure(next.responsiveness); if (!next.responsiveness) { this.turnTimers.clear(); this.stopRequests.clear(); } }
+    if ('audio' in patch) {
+      const outputChanged = next.audio.output !== previousAudio.output;
+      selectAudio(next.audio);
+      // Speech in progress stops on a new speaker; it is not replayed there.
+      if (outputChanged) this.speech.stop();
+    }
+    if (endpointChanged) {
+      // M13: a changed endpoint or declaration applies from a fresh connection. A reply in progress stops
+      // rather than continuing against a different server or declaration; nothing is resent.
+      for (const s of this.store.sessions()) if (s.provider === 'compatible') { if (busy(s)) await this.stop(s.id); await this.disconnect(s.id); }
+      this.capabilities.compatible = {}; void this.refreshProviderModels('compatible').catch(() => {});
+    }
     return next;
   }
   /**
@@ -1012,20 +1182,103 @@ export class Core extends EventEmitter {
   toolsFor(id: string): OllamaTool[] {
     const s = this.store.session(id);
     const settings = this.settingsFor(id);
-    if ((s.provider !== 'ollama' && !isApiProvider(s.provider)) || settings.paused) return [];
+    if ((s.provider !== 'ollama' && !isApiProvider(s.provider)) || settings.paused || !this.toolCalling(s)) return [];
     const definitions = [
       ...(s.ollama?.tools || s.api?.tools ? [...actionDefinitions, ...orchestrationDefinitions].filter(d => categoryEnabled(settings, d.category) && (!s.remote || d.category !== 'providers' || s.remote.caps.includes('providers.execute'))) : []),
       ...(settings.webSearch.enabled ? webDefinitions : []), ...(settings.memory.enabled && this.memory.active() && (!isApiProvider(s.provider)||settings.memory.allowCloudMemory) ? memoryDefinitions.filter(d=>!s.remote || d.readOnly || s.remote.caps.includes('memory.write')) : []),
+      ...this.notesToolsFor(id),
     ];
-    return definitions.map(d => ({
-      type: 'function', function: { name: d.name.replaceAll('.', '_'), description: d.description,
+    // A style's ceiling withholds whole tool families; it can never add one.
+    const ceiling = this.resolvedBehavior(id).ceiling;
+    // A02: extension tools, already limited to tool-enabled desktop conversations in each server's scope.
+    const extensions = ceiling.extensions === false ? [] : [...this.extensions.toolsFor(id), ...this.customTools.toolsFor(id)];
+    const kept = definitions.filter(d => !(ceiling.desktop === false && actionDefinitions.includes(d)) && !(ceiling.delegation === false && orchestrationDefinitions.includes(d))
+      && !(ceiling.web === false && webDefinitions.includes(d)) && !(ceiling.memory === false && (memoryDefinitions.includes(d) || notesDefinitions.includes(d))));
+    return [...kept.map(d => ({
+      type: 'function' as const, function: { name: d.name.replaceAll('.', '_'), description: d.description,
         parameters: { type: 'object', properties: d.schema, required: d.required || Object.keys(d.schema), additionalProperties: false } },
-    }));
+    })), ...extensions];
   }
   memoryToolsFor(id: string) {
     const s = this.store.session(id), settings = this.settingsFor(id);
-    if (!settings.memory.enabled || !this.memory.active() || (s.provider !== 'ollama' && !settings.memory.allowCloudMemory)) return [];
+    if (!settings.memory.enabled || !this.memory.active() || (s.provider !== 'ollama' && !settings.memory.allowCloudMemory) || this.withheld(id, 'memory') || !this.toolCalling(s)) return [];
     return memoryDefinitions.filter(d => !s.remote || d.readOnly || s.remote.caps.includes('memory.write'));
+  }
+  /** Turn-only postures for the turn in progress, and the behavior each running turn started with. */
+  turnPostures = new Map<string, string>();
+  turnBehavior = new Map<string, ResolvedBehavior>();
+  /** M01: this conversation's behavior for its next request, resolved session → project → global, plus any posture. */
+  resolvedBehavior(sessionId: string): ResolvedBehavior {
+    const s = this.store.session(sessionId), project = this.store.db.prepare('SELECT data FROM projects WHERE cwd=?').get(s.cwd);
+    const turn = this.turnPostures.get(sessionId);
+    return resolveBehavior({ personality: this.settings.personality, profiles: this.presets.profiles(), projectProfileId: project ? JSON.parse(String(project.data)).behaviorProfileId : undefined,
+      sessionProfileId: s.behavior?.profileId, instructions: s.behavior?.instructions, postureId: turn ?? s.behavior?.postureId, pinned: !turn && !!s.behavior?.postureId });
+  }
+  behaviorText(sessionId: string) { return behaviorInstructions(this.resolvedBehavior(sessionId), this.settings.assistantName); }
+  /** Whether a style withholds a family of Cere tools from this conversation; styles only ever narrow. */
+  withheld(sessionId: string, family: keyof ToolCeiling) { try { return this.resolvedBehavior(sessionId).ceiling[family] === false; } catch { return false; } }
+  /** A posture must exist and be offered as one: a built-in posture or a style marked usable as a posture. */
+  posture(id: unknown) {
+    if (typeof id !== 'string' || !id) throw new Error('Choose a posture');
+    const found = [...builtinPostures, ...this.presets.profiles().filter(profile => profile.posture)].find(profile => profile.id === id);
+    if (!found) throw new Error('This posture no longer exists');
+    return found;
+  }
+  /** Why memory is off for this conversation's turn, as a stable code for its recall outcome. */
+  /**
+   * Keeps the plan of a conversation's last request (A01): sizes, codes and source IDs, never text.
+   * Reading it never repeats recall or any other work.
+   */
+  recordPlan(sessionId: string, plan: TurnPlan) {
+    try {
+      // The behavior snapshot of the request: where the style came from, any posture, and what it withheld.
+      const behavior = this.turnBehavior.get(sessionId) || this.resolvedBehavior(sessionId);
+      const layers = plan.layers.map(layer => layer.id !== 'personality' ? layer : { ...layer, detail: { ...(layer.detail || {}), source: behavior.source,
+        ...(behavior.profile ? { style: behavior.profile.label } : {}), ...(behavior.posture ? { posture: behavior.posture.label + (behavior.posture.pinned ? ' (pinned)' : ' (this turn)') } : {}),
+        ...(Object.keys(behavior.ceiling).length ? { withheld: Object.keys(behavior.ceiling) } : {}) } });
+      this.store.set('turn-plan:' + sessionId, boundedPlan({ ...plan, layers, turnId: this.store.session(sessionId).turnId || '' }));
+    } catch { /* the conversation is gone */ }
+  }
+  memoryOffReason(id: string) {
+    const s = this.store.session(id);
+    if (s.temporary) return 'temporary_conversation';
+    if (!this.settings.memory.enabled) return 'setting_off';
+    if (this.settings.paused) return 'paused';
+    return s.remote ? 'remote_scope' : 'unavailable';
+  }
+  /**
+   * M07 notes tools: offered when a vault is enabled, never to temporary conversations, and to a
+   * cloud-hosted model (any CLI or API provider, or an Ollama model not known to be local) only when
+   * the vault allows cloud models. Writes are not offered to phone-started turns.
+   */
+  notesToolsFor(id: string) {
+    const s = this.store.session(id), vault = this.settings.notesVault;
+    if (!vault.enabled || !vault.path || s.temporary || this.settings.paused || this.withheld(id, 'memory') || !this.toolCalling(s)) return [];
+    const local = s.provider === 'ollama' && (this.capabilities.ollama?.models as ModelOption[] | undefined)?.find(m => m.id === s.model)?.cloud === false;
+    if (!local && !vault.allowCloud) return [];
+    return notesDefinitions.filter(d => d.readOnly || !s.remote);
+  }
+  /** Runs one notes tool; an edit is shown as an exact diff and applied only after the user allows it. */
+  async notesCall(id: string, name: string, p: Record<string, unknown>, signal: AbortSignal) {
+    if (name === 'notes_search') return this.vault.search(p.query);
+    if (name === 'notes_read') return this.vault.read(p.path);
+    const path = await this.vault.editable(p.path);
+    const proposal = await propose({ root: this.settings.notesVault.path, path, content: p.content, sessionId: id, reason: p.reason });
+    signal.throwIfAborted();
+    const answer = await this.approval(id, { kind: 'file', title: `${proposal.baseSha256 ? 'Edit' : 'Create'} note ${proposal.display}?`,
+      detail: (proposal.reason ? 'Reason: ' + proposal.reason + '\n\n' : '') + proposal.diff, choices: ['allow', 'deny'], fields: { path: proposal.display } });
+    if (answer.choice !== 'allow') { proposal.used = true; return { applied: false, message: 'The user declined this note edit.' }; }
+    signal.throwIfAborted();
+    // M22: the approval covers this folder and these permissions only; a change while it was open refuses.
+    if (!this.notesToolsFor(id).some(d => d.name === 'notes.propose_edit')) throw new Error('Notes editing was turned off before the edit was applied');
+    const folder = await realpath(this.settings.notesVault.path).catch(() => '');
+    if (folder !== proposal.root) throw new Error('The notes folder changed before the edit was applied. Nothing was written.');
+    const result = await applyProposal(proposal, join(this.store.directory, 'vault-backups'));
+    // Every applied edit is attributable: the conversation, the note and the new content's hash.
+    this.store.activity({ action: 'notes.edit', sessionId: id, path: proposal.display, sha256: result.sha256, created: result.created, status: 'completed' });
+    try { this.workflows.observeAction(id, 'notes.edit', { path: proposal.display, sha256: result.sha256 }, { paths: [result.path] }); } catch { /* A conversation without results still keeps its activity record. */ }
+    this.changed();
+    return { applied: true, path: proposal.display, sha256: result.sha256, created: result.created };
   }
   memoryWritable(id: string) { const execution=this.store.session(id).remote;return !execution||execution.caps.includes('memory.write'); }
   memoryAuthorized(id: string, write: boolean, signal?: AbortSignal) {
@@ -1034,13 +1287,21 @@ export class Core extends EventEmitter {
   }
   async callTool(id: string, name: string, args: unknown, signal: AbortSignal) {
     signal.throwIfAborted();
-    const nativeMemory = this.store.session(id).provider !== 'ollama' && this.memoryToolsFor(id).some(d => d.name.replaceAll('.', '_') === name);
+    const nativeMemory = this.store.session(id).provider !== 'ollama' && (this.memoryToolsFor(id).some(d => d.name.replaceAll('.', '_') === name) || this.notesToolsFor(id).some(d => d.name.replaceAll('.', '_') === name));
     if (!nativeMemory && !this.toolsFor(id).some(t => t.function.name === name)) throw new Error('This tool is disabled in Cere settings');
+    if (name.startsWith('ext_')) return this.extensions.call(id, name, args, signal);
+    if (name.startsWith('custom_')) return this.customTools.call(id, name, args, signal);
+    const notes = notesDefinitions.find(d => d.name.replaceAll('.', '_') === name);
+    if (notes) {
+      if (!this.notesToolsFor(id).includes(notes)) throw new Error('This tool is disabled in Cere settings');
+      if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(k => !(k in notes.schema))) throw new Error('Invalid tool arguments');
+      return this.notesCall(id, name, args as Record<string, unknown>, signal);
+    }
     const knowledge = [...webDefinitions, ...memoryDefinitions].find(d => d.name.replaceAll('.', '_') === name);
     if (knowledge) {
       if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(k => !(k in knowledge.schema)) || (knowledge.required || Object.keys(knowledge.schema)).some(k => !(k in args))) throw new Error('Invalid tool arguments');
       const p = args as Record<string, unknown>, s = this.store.session(id);
-      if (name.startsWith('web_')) return this.webCall(name, p, signal);
+      if (name.startsWith('web_')) return this.webCall(name, p, signal, id);
       const authorize=()=>{
         this.memoryAuthorized(id,!knowledge.readOnly,signal);
         if (s.provider !== 'ollama' && !this.memoryToolsFor(id).some(d => d.name.replaceAll('.', '_') === name)) throw new Error('This tool is disabled in Cere settings');
@@ -1059,11 +1320,21 @@ export class Core extends EventEmitter {
     if (!def) throw new Error('Unknown tool');
     return this.action(def.name, args, id, signal);
   }
-  async webCall(name: string, args: Record<string, unknown>, signal: AbortSignal) {
+  /** Recent web searches per conversation, newest first: in memory only, bounded, never exported. */
+  webTraces = new Map<string, SearchTrace[]>();
+  recordWebTrace(sessionId: string, trace: SearchTrace) {
+    const traces = [trace, ...(this.webTraces.get(sessionId) || [])].slice(0, 10);
+    this.webTraces.delete(sessionId); this.webTraces.set(sessionId, traces);
+    // Keep the most recently searched conversations only.
+    while (this.webTraces.size > 50) this.webTraces.delete(this.webTraces.keys().next().value!);
+  }
+  async webCall(name: string, args: Record<string, unknown>, signal: AbortSignal, sessionId?: string) {
     if (!this.settings.webSearch.enabled || this.settings.paused) throw new Error('Web search is disabled in Cere settings');
     const guard = AbortSignal.any([signal, this.webController.signal]);
     const settings = { ...this.settings.webSearch };
-    const result = name === 'web_search' ? await this.web.search(args.query, settings, guard) : await this.web.read(args.url, guard);
+    // M12: optional site and date constraints travel with the query; unknown fields are refused.
+    const { query, ...constraints } = args;
+    const result = name === 'web_search' ? await this.web.search(query, settings, guard, sessionId ? trace => this.recordWebTrace(sessionId, trace) : undefined, Object.keys(constraints).length ? constraints : undefined) : await this.web.read(args.url, guard);
     guard.throwIfAborted(); return result;
   }
   async configureSession(p: any, authorize?: () => void, remoteExecution?: RemoteExecution) {
@@ -1083,6 +1354,7 @@ export class Core extends EventEmitter {
       const tools=p.tools===undefined?oldTools:p.tools;
       if(typeof tools!=='boolean'||(!api&&!local&&tools))throw new Error('Choose a valid assistance mode');
       if(s.temporary&&tools)throw new Error('Cere tools are unavailable in temporary conversations');
+      if(tools&&!this.toolCalling(s))throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
       if(tools&&!oldTools&&!p.trusted&&!this.settings.bypassCliPermissions)throw new Error('Confirm that you trust this project before enabling delegation');
       if((local||api)&&!modelId)throw new Error('Choose a model or enter its API model ID');
       const effort=p.effort===undefined?(modelId===s.model?s.effort||'':''):p.effort;
@@ -1128,7 +1400,7 @@ export class Core extends EventEmitter {
     this.store.deleteSession(s.id);
     for (const map of [this.settledReplies, this.deliveredReplies, this.turnReplies, this.speechResponses, this.pendingCompletions, this.unacknowledged, this.delegations, this.generations]) map.delete(s.id);
     for (const children of this.delegations.values()) children.delete(s.id);
-    this.terminal.delete(s.id); this.memory.packets.delete(s.id);
+    this.terminal.delete(s.id); this.memory.packets.delete(s.id); this.webTraces.delete(s.id); this.collections.forgetSession(s.id);
     this.completions = this.completions.filter(c => c.sessionId !== s.id); this.persistCompletions(); this.clearCompanion(s.id);
     for (const row of this.store.db.prepare("SELECT key,value FROM meta WHERE key LIKE 'memory-review:%'").all()) {
       const proposals = JSON.parse(String(row.value)) as { sessionId: string }[];
@@ -1148,6 +1420,7 @@ export class Core extends EventEmitter {
   checkingTimers = false;
   async checkTimers() {
     if (this.checkingTimers||this.recovery.pending) return;
+    if (!this.closed) void this.schedules.tick().catch(() => {});
     this.checkingTimers = true;
     try {
       for (const t of this.store.timers()) if (!t.paused && t.due <= Date.now()) {
@@ -1193,7 +1466,7 @@ export class Core extends EventEmitter {
     return entries;
   }
   async rpc(method: string, p: any = {}) : Promise<any> {
-    const readOnly=['state','projects.list','session.messages','session.messageText','session.recovery','session.context','navigation.search','sessions.list','session.search','bookmarks.list','capsules.get','recipes.list','recipes.versions','results.list','memoryReview.list','memoryReview.recalled','recovery.status','diagnostics.preview','utility.list','utility.calculate','utility.convert','ui.panel','ui.attention','session.stop','approval.answer','power.end'].includes(method);
+    const readOnly=['state','projects.list','session.messages','session.messageText','session.recovery','session.context','navigation.search','sessions.list','session.search','bookmarks.list','capsules.get','recipes.list','recipes.versions','results.list','memoryReview.list','memoryReview.recalled','recovery.status','diagnostics.preview','utility.list','utility.calculate','utility.convert','ui.panel','ui.attention','session.stop','approval.answer','power.end','personality.preview','presets.list','behavior.postures','behavior.resolve','behavior.preview','session.export','models.local','memory.embeddingImpact','collections.list','notes.status','notes.search','notes.read','packages.export','packages.preview','extensions.status','audio.devices','diagnostics.spans','diagnostics.uiLag','schedules.list'].includes(method);
     if(readOnly||method==='recovery.activate'||method==='recovery.cancel')return this.rpcInner(method,p);
     return this.withMutation(()=>this.rpcInner(method,p));
   }
@@ -1216,6 +1489,7 @@ export class Core extends EventEmitter {
     if(method.startsWith('projects.'))return this.projects.dispatch(method,p);
     if(['capsules.','recipes.','results.'].some(prefix=>method.startsWith(prefix)))return this.workflows.dispatch(method,p);
     if(method.startsWith('memoryReview.'))return this.memoryReview.dispatch(method,p);
+    if(method.startsWith('presets.'))return this.presets.dispatch(method,p);
     if(method.startsWith('recovery.'))return this.recovery.dispatch(method,p);
     if(method.startsWith('utility.')||method.startsWith('routine.')||['timer.pause','timer.resume','timer.repeat'].includes(method))return this.utilities.dispatch(method,p);
     if(['sessions.list','session.search','session.organize','session.read','folders.save','folders.delete','bookmarks.list','message.bookmark','navigation.search','navigation.record','navigation.favorite'].includes(method))return this.organization.dispatch(method,p);
@@ -1226,7 +1500,7 @@ export class Core extends EventEmitter {
       case 'session.send': if(this.recovery.pending)throw new Error('Recovery restart is pending');return this.send(p);
       case 'session.stop': return this.stop(p.id);
       case 'session.disconnect': return this.disconnect(p.id);
-      case 'session.discardTemporary': {const s=this.store.session(p.id);if(!s.temporary)throw new Error('This is a saved conversation');await this.stopAndClose(s.id);this.completions=this.completions.filter(c=>c.sessionId!==s.id);this.clearCompanion(s.id);this.settledReplies.delete(s.id);this.deliveredReplies.delete(s.id);this.store.discardTemporary(s.id);this.changed();return true;}
+      case 'session.discardTemporary': {const s=this.store.session(p.id);if(!s.temporary)throw new Error('This is a saved conversation');await this.stopAndClose(s.id);this.webTraces.delete(s.id);this.completions=this.completions.filter(c=>c.sessionId!==s.id);this.clearCompanion(s.id);this.settledReplies.delete(s.id);this.deliveredReplies.delete(s.id);this.store.discardTemporary(s.id);this.changed();return true;}
       case 'session.delete': return this.deleteSession(p);
       case 'session.detachRemote': { await this.disconnect(p.id); return this.updateSession(p.id,{remote:undefined,effectivePolicy:undefined}); }
       // Byte-bounded pages, newest first by cursor; clients load older pages on request.
@@ -1251,6 +1525,10 @@ export class Core extends EventEmitter {
           estimatedTokens:Math.ceil((text.length+attachments.filter(a=>a.kind==='text').reduce((n,a)=>n+a.size,0))/3),
           estimateLabel:'Estimate for this text and attached text files; excludes images, instructions and provider history.',
           memories:packet?.evidence||[],memoryLabel:'Evidence supplied for the most recent turn. Recall for the next turn is selected at submission.',
+          recallOutcome:this.memory.outcomes(s.id)[0]||null,webSearches:this.webTraces.get(s.id)||[],
+          // The plan of the last request actually sent, distinct from the estimate above for the draft.
+          lastPlan:this.store.get('turn-plan:'+s.id,null),
+          behavior:this.resolvedBehavior(s.id),
           nativeContext:s.provider==='ollama'||isApiProvider(s.provider)?'Conversation context is managed by Cere.':'The native CLI may additionally read its session history, project instructions and files. Cere cannot measure all of that context.'};
       }
       case 'session.nativeFork': {const source=this.store.session(p.id);const nativeId=await forkCodex(source);return this.create({provider:'codex',nativeId,handoffConfirmed:true,cwd:source.cwd,model:source.model,title:'Fork · '+source.title,trusted:true});}
@@ -1291,9 +1569,11 @@ export class Core extends EventEmitter {
       }
       case 'provider.credentials': {
         if (!isApiProvider(p.provider)) throw new Error('Choose an API provider');
-        const status=this.credentials.update(p.provider,p.key);
+        // M13: a compatible endpoint's key is saved for the endpoint's current origin only.
+        const origin=p.provider==='compatible'?endpointOrigin(this.settings.compatible.baseUrl):undefined;
+        const status=this.credentials.update(p.provider,p.key,origin);
         this.modelGenerations.set(p.provider,(this.modelGenerations.get(p.provider)||0)+1);
-        this.capabilities[p.provider]={...status[p.provider],available:false,models:[],modelsStatus:'unknown',remoteRestricted:false,label:providerLabels[p.provider as Provider]};
+        this.capabilities[p.provider]={...status[p.provider],available:false,models:[],modelsStatus:'unknown',remoteRestricted:false,label:apiLabel(p.provider,this.apiAccess(p.provider)),...(p.provider==='compatible'?{endpoint:this.settings.compatible.baseUrl,declared:declared(this.settings.compatible)}:{})};
         // Revoking a key also stops an in-flight tool loop before another request can leave.
         for(const s of this.store.sessions())if(s.provider===p.provider){if(busy(s))await this.stop(s.id);await this.disconnect(s.id);}
         this.changed(); return status[p.provider];
@@ -1304,6 +1584,33 @@ export class Core extends EventEmitter {
         const status=this.credentials.update('elevenlabs',p.key);this.changed();return status.elevenlabs;
       }
       case 'settings.update': return this.updateSettings(p);
+      // Pure: renders with the runtime renderer, never writes, recalls or starts a provider.
+      case 'personality.preview': return personalityPreview(p,{personality:this.settings.personality,assistantName:this.settings.assistantName,revision:this.store.get('settingsRevision','0')});
+      // M15: the text of a reviewed export; the interface saves it through the system save dialog.
+      case 'session.export': this.flush(); return exportConversation(this.store, p.id, this.settings.assistantName, p);
+      case 'behavior.postures': return { postures: [...builtinPostures, ...this.presets.profiles().filter(profile => profile.posture)].map(({ id, label, instructions, ceiling, builtin }) => ({ id, label, instructions, ceiling, builtin: !!builtin })) };
+      // Pure: how a style would render, with the runtime renderer; it binds and saves nothing.
+      case 'behavior.preview': {
+        if (Object.keys(p).some(key => !['profileId','postureId','instructions'].includes(key))) throw new Error('A style preview takes a style, a posture and instructions');
+        if (p.postureId !== undefined) this.posture(p.postureId);
+        const resolved = resolveBehavior({ personality: this.settings.personality, profiles: this.presets.profiles(), sessionProfileId: p.profileId, instructions: typeof p.instructions === 'string' ? p.instructions.slice(0, 4000) : undefined, postureId: p.postureId });
+        const text = behaviorInstructions(resolved, this.settings.assistantName);
+        return { text, characters: text.length, warnings: resolved.warnings, scope: 'cere-behavior-block', note: 'Cere’s behavior block. Provider and project instructions may add other context.' };
+      }
+      case 'behavior.resolve': { const s = this.store.session(p.id), resolved = this.resolvedBehavior(s.id); return { ...resolved, characters: behaviorInstructions(resolved, this.settings.assistantName).length }; }
+      // A conversation's style, pinned posture and standing instructions. Each field left out stays as it is.
+      case 'session.behavior': {
+        const s = this.store.session(p.id), next = { ...(s.behavior || {}) };
+        if (Object.keys(p).some(key => !['id','profileId','postureId','instructions'].includes(key))) throw new Error('A conversation style takes only a style, a posture and instructions');
+        if ('profileId' in p) { if (p.profileId === null) delete next.profileId; else { if (!this.presets.profiles().some(profile => profile.id === p.profileId)) throw new Error('This style no longer exists'); next.profileId = p.profileId; } }
+        if ('postureId' in p) { if (p.postureId === null) delete next.postureId; else next.postureId = this.posture(p.postureId).id; }
+        if ('instructions' in p) {
+          if (typeof p.instructions !== 'string' || p.instructions.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(p.instructions)) throw new Error('Standing instructions are up to 4,000 characters without control characters');
+          if (p.instructions.trim()) next.instructions = p.instructions.trim(); else delete next.instructions;
+        }
+        const saved = this.updateSession(s.id, { behavior: Object.keys(next).length ? next : undefined });
+        return { session: saved, behavior: this.resolvedBehavior(s.id) };
+      }
       case 'health.inspect': return healthReport(this);
       case 'diagnostics.preview': return this.diagnostics.preview();
       case 'diagnostics.export': return this.diagnostics.export(p.id,p.digest);
@@ -1320,7 +1627,38 @@ export class Core extends EventEmitter {
       case 'permissions.revoke': return this.updateSettings({grants:this.settings.grants.filter(g=>g.category!==p.category||g.cwd!==p.cwd)});
       case 'transcription.status': return this.transcription.status();
       case 'transcription.start': {const session=this.store.session(p.sessionId);if(session.temporary)throw new Error('Voice drafts create temporary audio files. Use a saved conversation.');return this.transcription.start({sessionId:session.id});}
-      case 'transcription.finish': return this.transcription.finish();
+      case 'transcription.finish': {
+        // M21: a whole transcript that is an allowlisted phrase is offered as a command; it never runs here.
+        const result = await this.transcription.finish();
+        const command = this.settings.voiceCommands.enabled ? matchCommand(result?.text, this.settings.assistantName) : undefined;
+        return command ? { ...result, command: { id: command.id, label: command.label, confirm: this.settings.voiceCommands.confirm } } : result;
+      }
+      case 'voice.command': {
+        if (!this.settings.voiceCommands.enabled) throw new Error('Voice commands are off in Settings › Voice');
+        const command = voiceCommands.find(item => item.id === p.id);
+        if (!command) throw new Error('Unknown voice command');
+        this.store.activity({ action: 'voice.command', command: command.id, status: 'completed' });
+        if (command.run === 'speech.stop') this.speech.stop();
+        else if (command.run === 'turn.stop') { const s = p.sessionId ? this.store.session(p.sessionId) : undefined; if (s && busy(s)) await this.stop(s.id); }
+        else if (command.run === 'speech.last') {
+          const reply = p.sessionId ? [...this.store.messages(p.sessionId)].reverse().find(message => message.role === 'assistant' && message.text.trim()) : undefined;
+          if (!reply) throw new Error('There is no reply to read in this conversation');
+          this.speech.speak(this.speechText(reply.text), true);
+        }
+        // Spoken feedback names navigation only; stopping speech stays silent.
+        if (this.settings.voiceCommands.speakFeedback && command.run === 'ui') this.speech.speak(command.label, true);
+        return { id: command.id, label: command.label, ...(command.run === 'ui' ? { ui: command.target } : {}) };
+      }
+      case 'transcription.importFile': {
+        const session=this.store.session(p.sessionId);if(session.temporary)throw new Error('Transcribing a file creates temporary audio files. Use a saved conversation.');
+        const listed=this.jobs.add('transcription','Transcribing a recording',()=>void this.transcription.cancel());
+        try{return await this.transcription.importFile({sessionId:session.id,path:p.path});}finally{listed();}
+      }
+      case 'jobs.cancel': return this.jobs.cancel(p.id);
+      case 'schedules.list': return this.schedules.list();
+      case 'schedules.create': return this.schedules.create(p);
+      case 'schedules.setEnabled': return this.schedules.setEnabled(p);
+      case 'schedules.delete': return this.schedules.remove(p);
       case 'transcription.cancel': return this.transcription.cancel();
       case 'tts.test': return { queued: this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):voiceTestLine(this.settings.assistantName), true) };
       case 'tts.speak': { if(typeof p.text!=='string'||!p.text.trim()||p.text.length>20000)throw new Error('Select 1–20,000 characters to speak');return {queued:this.speech.speak(p.text,true)}; }
@@ -1347,6 +1685,42 @@ export class Core extends EventEmitter {
       case 'memory.check': return this.memory.check();
       case 'memory.graph': return this.memory.graph(p.sessionId ? this.store.session(p.sessionId) : undefined, p.method, p.params || {});
       case 'memory.models': return ollamaModels(this.settings.ollama.host, 'embedding');
+      case 'memory.embeddingImpact': return this.memory.embeddingImpact(p.model);
+      // M06: document collections.
+      case 'collections.list': return this.collections.list(p);
+      // A06: portable styles and recipes; importing is previewed first.
+      case 'packages.export': return this.packages.export(p);
+      case 'packages.preview': return this.packages.preview(p);
+      case 'packages.import': return this.packages.import(p);
+      // M07: the notes vault, for Settings and the utility shelf.
+      case 'notes.status': return this.vault.scan();
+      case 'extensions.status': return this.extensions.snapshot();
+      case 'audio.devices': return listAudioDevices();
+      case 'diagnostics.spans': return this.spans.summary();
+      case 'diagnostics.uiLag': return this.spans.uiLag(p);
+      case 'diagnostics.clearSpans': this.spans.clear(); this.turnTimers.clear(); this.stopRequests.clear(); return this.spans.summary();
+      case 'extensions.restart': return this.extensions.restart(p.id);
+      case 'extensions.secret': return this.extensions.setSecret(p);
+      case 'customTools.credential': return this.customTools.setCredential(p);
+      case 'notes.search': return this.vault.search(p.query);
+      case 'notes.read': return this.vault.read(p.path);
+      case 'notes.clearBackups': { const { rm } = await import('node:fs/promises'); await rm(join(this.store.directory, 'vault-backups'), { recursive: true, force: true }); return true; }
+      case 'collections.create': return this.collections.create(p);
+      case 'collections.update': return this.collections.update(p);
+      case 'collections.addSource': return this.collections.addSource(p);
+      case 'collections.removeSource': return this.collections.removeSource(p);
+      case 'collections.bind': return this.collections.bind(p);
+      case 'collections.index': return this.collections.index(p);
+      case 'collections.cancel': return this.collections.cancel();
+      case 'collections.delete': return this.collections.remove(p);
+      // M09: local model management on the configured Ollama server.
+      case 'models.local': return this.localModels.list();
+      case 'models.pull': return this.localModels.pull(p.model);
+      case 'models.cancelPull': return this.localModels.cancel();
+      case 'models.dismissPull': return this.localModels.dismiss();
+      case 'models.delete': return this.localModels.remove(p.model, p.confirmed);
+      case 'models.load': return this.localModels.keepAlive(p.model, true);
+      case 'models.unload': return this.localModels.keepAlive(p.model, false);
       case 'memory.list': return this.memory.list(this.store.session(p.sessionId), p.kind, p.offset, p.filter);
       case 'memory.save':
         // Management clients must prove which revision they edited; only the model's
@@ -1391,7 +1765,7 @@ export class Core extends EventEmitter {
       case 'ui.quit': this.emit('ui',{command:'quit',stopTasks:!!p.stopTasks}); return true;
       case 'mcp.tools': {
         const id = this.tokens.get(p.token); if (!id) throw new Error('Session capability expired');
-        return [...actionDefinitions.filter(d => categoryEnabled(this.settingsFor(id), d.category)), ...this.memoryToolsFor(id)];
+        return [...(this.withheld(id, 'desktop') ? [] : actionDefinitions.filter(d => categoryEnabled(this.settingsFor(id), d.category))), ...this.memoryToolsFor(id), ...this.notesToolsFor(id)];
       }
       case 'mcp.call': {
         const id = this.tokens.get(p.token); if (!id) throw new Error('Session capability expired');
@@ -1411,12 +1785,13 @@ export class Core extends EventEmitter {
           const answer = await this.approval(id, { kind, title:`Allow Claude to use ${String(p.args.tool_name || 'a tool')}?`, detail:JSON.stringify(p.args.input || {},null,2), choices:['allow','deny'] });
           return answer.choice === 'allow' && (!answer.automatic || this.tokens.get(p.token) === id && this.automaticallyApprove(id,{kind,choices:['allow']})) ? { behavior:'allow', updatedInput:p.args.input || {} } : { behavior:'deny', message:'Declined in Cere or automatic permission was revoked' };
         }
-        if (memoryDefinitions.some(d => d.name === p.name)) {
+        if (memoryDefinitions.some(d => d.name === p.name) || notesDefinitions.some(d => d.name === p.name)) {
           const controller = new AbortController(), active = this.actionControllers.get(id) || new Set<AbortController>();
           active.add(controller); this.actionControllers.set(id, active);
           try { return await this.callTool(id, p.name.replaceAll('.', '_'), p.args, AbortSignal.any([controller.signal, this.memory.controller.signal])); }
           finally { active.delete(controller); if (!active.size && this.actionControllers.get(id) === active) this.actionControllers.delete(id); }
         }
+        if (this.withheld(id, 'desktop')) throw new Error('This conversation’s style withholds desktop tools');
         return this.action(p.name,p.args,id);
       }
       default: throw new Error('Unknown Cere method: '+method);
@@ -1430,7 +1805,7 @@ export class Core extends EventEmitter {
     if (this.stateTimer) { clearTimeout(this.stateTimer); this.stateTimer=undefined; }
     for (const session of this.store.sessions()) this.sendQueue.cancel(session.id, 'Cere closed before sending');
     await this.telemetry.close();
-    this.workflows.close();this.utilities.close();await this.transcription.close();await this.power.close();
+    this.jobs.cancelAll();this.workflows.close();this.utilities.close();this.localModels.cancel();this.collections.cancel();this.extensions.close();await this.transcription.close();await this.power.close();
     const speechClosed = this.speech.close(); this.speechResponses.clear();
     this.memory.invalidate(); this.webController.abort(new Error('Cere is closing'));
     clearInterval(this.ticker); this.flush();

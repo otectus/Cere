@@ -18,6 +18,11 @@ CButton {
     readonly property bool transcribing:transcription.state==="transcribing"&&ownsRecording
     readonly property string statusText:error||(recording?"Listening… Click the microphone to finish.":transcribing?"Transcribing… Click to cancel.":transcription.state==="error"&&ownsRecording?transcription.error:"")
     signal transcriptionAccepted(string text)
+    // M21: a recognized command, shown before it runs unless the user chose otherwise.
+    signal navigationRequested(string target)
+    property var command:null
+    property int commandRequest:-1
+    function runCommand(){if(!command)return;commandRequest=App.rpc("voice.command",{id:command.id,sessionId:voiceInput.sessionId});review.close()}
     implicitWidth:40;implicitHeight:40;Layout.preferredWidth:40;Layout.preferredHeight:40
     leftPadding:10;rightPadding:10;quiet:true;primary:recording;danger:transcribing
     Accessible.name:recording?"Finish voice input":transcribing?"Cancel transcription":"Voice input"
@@ -37,7 +42,9 @@ CButton {
 
     CDialog {
         id:review;objectName:"transcriptionReview"
-        CText { text:"Review voice input";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { text:voiceInput.command?"Voice command":"Review voice input";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
+        CText { objectName:"voiceCommandRecognized";visible:!!voiceInput.command;text:"Recognized: "+(voiceInput.command?.label||"");color:Theme.accentText;font.weight:Font.DemiBold }
+        CButton { objectName:"voiceCommandRun";visible:!!voiceInput.command;text:"Run command";primary:true;Layout.fillWidth:true;onClicked:voiceInput.runCommand() }
         CText { text:"Edit the local transcript before inserting it. Nothing is sent automatically.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
         CText { visible:voiceInput.resultSessionId!==voiceInput.sessionId;text:"This transcript belongs to another session. Return to that session before inserting it.";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
         CTextArea {
@@ -49,7 +56,7 @@ CButton {
             Layout.fillWidth:true
             CButton { text:"Discard";Layout.fillWidth:true;onClicked:{transcript.clear();review.close()} }
             CButton {
-                objectName:"acceptTranscription";text:"Insert into draft";primary:true;Layout.fillWidth:true
+                objectName:"acceptTranscription";text:voiceInput.command?"Insert as text instead":"Insert into draft";primary:!voiceInput.command;Layout.fillWidth:true
                 enabled:voiceInput.resultSessionId===voiceInput.sessionId&&transcript.text.trim().length>0
                 onClicked:{voiceInput.transcriptionAccepted(transcript.text);transcript.clear();review.close()}
             }
@@ -58,13 +65,23 @@ CButton {
     Connections {
         target:App
         function onResult(id,value){
+            if(id===voiceInput.commandRequest){
+                voiceInput.commandRequest=-1
+                if(value?.error){voiceInput.error=String(value.error.message||value.error);return}
+                App.notify("Voice command: "+value.label)
+                voiceInput.command=null
+                if(value.ui)voiceInput.navigationRequested(value.ui)
+                return
+            }
             if(id!==voiceInput.requestId)return
             voiceInput.requestId=-1
             if(value?.error){voiceInput.error=voiceInput.transcription.state==="unavailable"?"Set up local voice input in Settings → Voice.":String(value.error.message||value.error);return}
             if(voiceInput.request==="transcription.finish"){
                 voiceInput.resultSessionId=value.sessionId||""
                 transcript.text=value.text||""
-                review.open()
+                voiceInput.command=value.command||null
+                if(voiceInput.command&&voiceInput.command.confirm===false&&voiceInput.resultSessionId===voiceInput.sessionId)voiceInput.runCommand()
+                else review.open()
             }
         }
     }

@@ -20,13 +20,47 @@ CDialog {
     property string erasureJob:""
     property string previewTarget:""
     readonly property bool previewCurrent:!!preview.id&&preview.sessionId===sessionId&&preview.id===record.text
+    // M05 curation: the inspected record's retention pin, its timeline, related facts, and a typed
+    // correction form that fills the same structured correction the JSON editor holds.
+    property var timeline:({entries:[]})
+    property var neighborhood:({edges:[]})
+    property var ontology:({predicates:[],entity_types:[],modalities:[],valid_modes:[]})
+    property int ontologyRequest:-1
+    readonly property var inspectedRecord:inspected.record||({})
+    readonly property bool isAssertion:!!inspectedRecord.version_id
+    readonly property var pin:inspected.retention_pin||null
+    function isoDate(us){return us===null||us===undefined?"":new Date(Math.floor(us/1000)).toISOString()}
+    function microseconds(text){if(!text.trim())return null;const time=Date.parse(text.trim());return isNaN(time)?NaN:time*1000}
+    function loadForm(claim){
+        formPredicate.currentIndex=Math.max(0,ontology.predicates.indexOf(claim.predicate))
+        formObjectType.currentIndex=Math.max(0,ontology.entity_types.indexOf(claim.object?.type||"Tool"))
+        formObjectName.text=claim.object?.name||"";formValue.text=claim.value===undefined||claim.value===null?"":String(claim.value)
+        formNegative.checked=claim.polarity==="negative"
+        formModality.currentIndex=Math.max(0,ontology.modalities.indexOf(claim.modality||"actual"))
+        formValidMode.currentIndex=Math.max(0,ontology.valid_modes.indexOf(claim.valid_mode||"known_current"))
+        formFrom.text=isoDate(claim.valid_from_us);formTo.text=isoDate(claim.valid_to_us)
+    }
+    // Writes the form into the structured correction; the JSON stays the single thing that is sent.
+    function applyForm(){
+        let body;try{body=JSON.parse(mutation.text)}catch(e){error="Inspect an assertion first.";return false}
+        const claim=Object.assign({},body.claim||{}),from=microseconds(formFrom.text),to=microseconds(formTo.text)
+        if(Number.isNaN(from)||Number.isNaN(to)){error="Enter dates as ISO times with a timezone, or leave them empty.";return false}
+        claim.predicate=ontology.predicates[formPredicate.currentIndex]
+        if(formObjectName.text.trim()){claim.object={type:ontology.entity_types[formObjectType.currentIndex],name:formObjectName.text.trim()};delete claim.value}
+        else if(formValue.text.trim()){claim.value=formValue.text.trim();delete claim.object}
+        claim.polarity=formNegative.checked?"negative":"positive"
+        claim.modality=ontology.modalities[formModality.currentIndex];claim.valid_mode=ontology.valid_modes[formValidMode.currentIndex]
+        claim.valid_from_us=from;claim.valid_to_us=to
+        body.claim=claim;body.witness={observation_id:formWitness.text.trim(),quote:formQuote.text}
+        mutation.text=JSON.stringify(body,null,2);error="";return true
+    }
     function call(method,params){error="";action=method;pending=App.rpc("memory.graph",{sessionId:sessionId,method:method,params:params||{}})}
     function mutate(method){try{let body=JSON.parse(mutation.text);preview={};call(method,body)}catch(e){error="Enter valid structured JSON: "+e.message}}
     function openRecord(id){record.text=id;preview={};call("inspect",{id:id})}
     function loadPolicy(){policyLoaded=false;policyRequest=App.rpc("memory.graph",{sessionId:sessionId,method:"policy_get",params:{}})}
     function updatePolicy(patch){if(!policyLoaded)return;policyLoaded=false;preview={};policyRequest=App.rpc("memory.graph",{sessionId:sessionId,method:"policy_update",params:{policy:patch}})}
     // Reset before the popup becomes visible, so a reopened inspector never shows stale enabled controls.
-    onAboutToShow:{result={};inspected={};preview={};erasureJob="";policy={};loadPolicy();call("health",{})}
+    onAboutToShow:{result={};inspected={};timeline=({entries:[]});neighborhood=({edges:[]});preview={};erasureJob="";policy={};loadPolicy();call("health",{});if(!ontology.predicates.length)ontologyRequest=App.rpc("memory.graph",{method:"ontology",params:{}})}
     onSessionIdChanged:preview={}
     CText { text:"Graph memory inspector";font.pixelSize:Theme.title;font.weight:Font.DemiBold }
     CText { text:"Review sources, temporal history, task episodes and current workspace. Changes use the selected conversation’s project scope.";color:Theme.muted;font.pixelSize:Theme.secondary }
@@ -59,14 +93,74 @@ CDialog {
         CButton { objectName:"graphMemoryInspect";text:"Inspect";enabled:inspector.pending<0&&record.text.length>0;onClicked:{inspector.preview={};inspector.call("inspect",{id:record.text})} }
         CButton { objectName:"graphMemoryPreviewForget";text:"Preview forgetting";enabled:inspector.pending<0&&record.text.length>0;onClicked:{inspector.preview={};inspector.previewTarget=record.text;inspector.call("forget_preview",{id:record.text})} }
     }
+    // Retention: a pin keeps this record from expiring. It is not a statement that the record is true.
+    ColumnLayout {
+        visible:!!inspector.inspectedRecord.version_id||!!inspector.inspectedRecord.id
+        Layout.fillWidth:true;spacing:6
+        CText { objectName:"graphMemoryPinState";text:inspector.pin?"Pinned against retention expiry"+(inspector.pin.note?" · "+inspector.pin.note:""):"Not pinned. Retention rules may expire it.";color:inspector.pin?Theme.accentText:Theme.muted;font.pixelSize:Theme.secondary }
+        RowLayout {
+            Layout.fillWidth:true
+            CField { id:pinNote;objectName:"graphMemoryPinNote";Layout.fillWidth:true;visible:!inspector.pin;placeholderText:"Why keep it? (optional)";maximumLength:500;Accessible.name:"Pin note" }
+            CButton { objectName:"graphMemoryPin";visible:!inspector.pin;text:"Pin to keep";enabled:inspector.pending<0&&record.text.length>0;onClicked:inspector.call("pin",{id:record.text,note:pinNote.text}) }
+            CButton { objectName:"graphMemoryUnpin";visible:!!inspector.pin;text:"Unpin";enabled:inspector.pending<0;onClicked:inspector.call("unpin",{pin_id:inspector.pin.id}) }
+            CButton { objectName:"graphMemoryTimeline";visible:inspector.isAssertion;text:"Timeline";enabled:inspector.pending<0;onClicked:inspector.call("timeline",{id:record.text}) }
+            CButton { objectName:"graphMemoryNeighborhood";visible:inspector.isAssertion;text:"Related facts";enabled:inspector.pending<0;onClicked:inspector.call("neighborhood",{id:record.text,limit:12}) }
+        }
+        CText { text:"Pinning changes no status or ranking. Pinned records can still be corrected and forgotten; forgetting removes the pin too.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
+    }
+    Repeater {
+        model:inspector.timeline.entries||[]
+        ColumnLayout {
+            required property var modelData
+            required property int index
+            objectName:"timelineEntry_"+index
+            Layout.fillWidth:true;spacing:2
+            CText { Layout.fillWidth:true;text:(modelData.current?"Current · ":"Earlier · ")+modelData.claim;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;color:modelData.current?Theme.text:Theme.muted }
+            CText { Layout.fillWidth:true;text:"Status "+modelData.status+" · valid "+(modelData.valid.mode==="bounded"?(modelData.valid.from||"…")+" – "+(modelData.valid.to||"open"):modelData.valid.mode.replace("_"," ")) +" · known from revision "+modelData.known.from_revision+(modelData.known.to_revision!==null?" to "+modelData.known.to_revision:" (current knowledge)");font.pixelSize:Theme.caption;color:Theme.muted;wrapMode:Text.Wrap }
+            CText { visible:modelData.changed.length>0;Layout.fillWidth:true;text:"Changed: "+modelData.changed.join(", ");font.pixelSize:Theme.caption;color:Theme.amber }
+            Repeater { model:modelData.evidence||[];CText { required property var modelData;Layout.fillWidth:true;text:"Source · “"+modelData.witness+"” ("+modelData.trust+")";font.pixelSize:Theme.caption;color:Theme.muted;wrapMode:Text.Wrap;maximumLineCount:3;elide:Text.ElideRight } }
+        }
+    }
+    CText { visible:(inspector.neighborhood.edges||[]).length>0;text:"Related facts around "+(inspector.neighborhood.entity?.name||"")+(inspector.neighborhood.truncated?" (first "+inspector.neighborhood.edges.length+")":"");font.weight:Font.DemiBold }
+    Repeater {
+        model:inspector.neighborhood.edges||[]
+        CButton {
+            required property var modelData
+            required property int index
+            objectName:"neighborEdge_"+index
+            Layout.fillWidth:true;quiet:true;alignLeft:true
+            text:(modelData.direction==="out"?"→ ":"← ")+(modelData.polarity==="negative"?"not ":"")+modelData.predicate+" "+(modelData.other?modelData.other.name+" ("+modelData.other.type+")":JSON.stringify(modelData.value))
+            help:"Inspect this relationship";onClicked:inspector.openRecord(modelData.assertion_id)
+        }
+    }
     CText { objectName:"graphMemoryForgetImpact";visible:inspector.previewCurrent;text:"Forgetting "+(inspector.preview.selector?.kind||"record").replace("_"," ")+" "+inspector.preview.id+" suppresses "+inspector.preview.count+" records and dependent copies immediately. Physical purge waits for database acknowledgements.";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CButton { objectName:"graphMemoryForget";visible:inspector.previewCurrent;text:"Forget "+inspector.preview.id;danger:true;enabled:inspector.pending<0&&inspector.previewCurrent;onClicked:inspector.call("forget",{id:inspector.preview.id,expected_revision:inspector.preview.revision,selection:inspector.preview.selection}) }
     CButton { visible:!!inspector.erasureJob;text:"Check purge progress";onClicked:inspector.call("erasure_status",{job_id:inspector.erasureJob}) }
     CText { text:"Details";font.weight:Font.DemiBold }
-    CText { visible:inspector.result?.recorded_only===true;text:"Identity decision recorded. It does not change entity resolution yet.";color:Theme.amber;font.pixelSize:Theme.secondary }
+    CText { visible:inspector.result?.recorded_only===true;text:"Recorded as possibly the same. Recall keeps these entities apart until you decide.";color:Theme.amber;font.pixelSize:Theme.secondary }
+    CText { visible:inspector.result?.applied===true&&inspector.result?.decision!==undefined;text:inspector.result?.decision==="same"?"Recall now treats these entities as one. Revert the decision to separate them again.":"Recall keeps these entities apart, even through other same decisions.";color:Theme.accentText;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CTextArea { objectName:"graphMemoryDetails";Layout.fillWidth:true;Layout.preferredHeight:240;readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap;text:JSON.stringify(inspector.result,null,2);textFormat:TextEdit.PlainText;color:Theme.text;font.pixelSize:Theme.caption }
     CText { text:"Correction / resolution";font.weight:Font.DemiBold }
     CText { text:"Inspect an assertion to load its complete claim and revision. Change only what you intend to correct, and supply a source observation with an exact quotation. Dates are half-open UTC microsecond bounds. Ambiguous changes remain reviewable candidates.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+    // The typed form edits the loaded claim; Apply writes it into the structured correction below.
+    GridLayout {
+        visible:inspector.isAssertion&&inspector.ontology.predicates.length>0
+        Layout.fillWidth:true;columns:width>=480?2:1;columnSpacing:8;rowSpacing:6
+        CText { text:"Relationship";font.pixelSize:Theme.caption;color:Theme.muted }
+        CComboBox { id:formPredicate;objectName:"correctionPredicate";Layout.fillWidth:true;model:inspector.ontology.predicates;Accessible.name:"Relationship" }
+        CText { text:"Object type and name";font.pixelSize:Theme.caption;color:Theme.muted }
+        RowLayout { Layout.fillWidth:true;CComboBox { id:formObjectType;Layout.preferredWidth:140;model:inspector.ontology.entity_types;Accessible.name:"Object type" } CField { id:formObjectName;objectName:"correctionObject";Layout.fillWidth:true;placeholderText:"Object name";Accessible.name:"Object name" } }
+        CText { text:"Or a plain value";font.pixelSize:Theme.caption;color:Theme.muted }
+        CField { id:formValue;Layout.fillWidth:true;placeholderText:"Used when the object name is empty";Accessible.name:"Value" }
+        CText { text:"Modality and validity";font.pixelSize:Theme.caption;color:Theme.muted }
+        RowLayout { Layout.fillWidth:true;CComboBox { id:formModality;Layout.fillWidth:true;model:inspector.ontology.modalities;Accessible.name:"Modality" } CComboBox { id:formValidMode;Layout.fillWidth:true;model:inspector.ontology.valid_modes;Accessible.name:"Validity" } CCheckBox { id:formNegative;text:"Negative" } }
+        CText { text:"Valid from / until (ISO, optional)";font.pixelSize:Theme.caption;color:Theme.muted }
+        RowLayout { Layout.fillWidth:true;CField { id:formFrom;Layout.fillWidth:true;placeholderText:"2026-06-01T00:00:00Z";Accessible.name:"Valid from" } CField { id:formTo;Layout.fillWidth:true;placeholderText:"open";Accessible.name:"Valid until" } }
+        CText { text:"Source observation and exact quotation";font.pixelSize:Theme.caption;color:Theme.muted }
+        RowLayout { Layout.fillWidth:true;CField { id:formWitness;objectName:"correctionWitness";Layout.preferredWidth:180;placeholderText:"Observation ID";Accessible.name:"Source observation ID" } CField { id:formQuote;objectName:"correctionQuote";Layout.fillWidth:true;placeholderText:"Exact words from that source";Accessible.name:"Exact quotation" } }
+        Item { width:1;height:1 }
+        CButton { objectName:"correctionApplyForm";text:"Apply to correction";onClicked:inspector.applyForm() }
+    }
     CTextArea { id:mutation;objectName:"graphMemoryMutation";Layout.fillWidth:true;Layout.preferredHeight:160;wrapMode:TextEdit.Wrap;selectByMouse:true;textFormat:TextEdit.PlainText;color:Theme.text;font.pixelSize:Theme.caption;placeholderText:'{"id":"…","expected_revision":1,"claim":{},"witness":{"observation_id":"…","quote":"…"}}' }
     RowLayout {
         Layout.fillWidth:true
@@ -94,6 +188,7 @@ CDialog {
     CText { visible:!!inspector.error;text:inspector.error;color:Theme.danger;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     CButton { text:"Done";onClicked:inspector.close() }
     Connections { target:App;function onResult(id,value){
+        if(id===inspector.ontologyRequest){inspector.ontologyRequest=-1;if(!value?.error)inspector.ontology=value;return}
         if(id===inspector.policyRequest){
             inspector.policyRequest=-1
             if(value?.error){inspector.error=value.error;inspector.policyLoaded=false;return}
@@ -107,8 +202,13 @@ CDialog {
             inspector.inspected=value
             const r=value.record
             // The complete typed claim round-trips; nothing falls back to schema defaults.
-            if(r?.version_id&&r.claim_data)mutation.text=JSON.stringify({id:r.version_id,expected_revision:r.aggregate_revision,claim:r.claim_data,witness:{observation_id:"",quote:""}},null,2)
+            if(r?.version_id&&r.claim_data){mutation.text=JSON.stringify({id:r.version_id,expected_revision:r.aggregate_revision,claim:r.claim_data,witness:{observation_id:"",quote:""}},null,2);inspector.loadForm(r.claim_data)}
+            inspector.timeline=({entries:[]});inspector.neighborhood=({edges:[]})
         }
+        if(inspector.action==="timeline")inspector.timeline=value
+        if(inspector.action==="neighborhood")inspector.neighborhood=value
+        // A pin change is reflected by inspecting the record again.
+        if((inspector.action==="pin"||inspector.action==="unpin")&&record.text)Qt.callLater(()=>inspector.call("inspect",{id:record.text}))
         // The selection binds to the ID the preview was requested for, never a later edit.
         if(inspector.action==="forget_preview"&&value.selection&&inspector.previewTarget===record.text)inspector.preview={sessionId:inspector.sessionId,id:inspector.previewTarget,revision:value.revision,selection:value.selection,selector:value.selector,target_ids:value.target_ids,count:value.count}
         if(inspector.action==="forget"){inspector.erasureJob=value.job_id;inspector.preview={}}

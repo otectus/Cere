@@ -10,6 +10,7 @@ import { paths } from './paths.ts';
 import { stripMemoryCitations } from './citations.ts';
 import type { IndexTTS } from './indextts.ts';
 import type { Emotion } from './indextts-config.ts';
+import { audioSelection, chosenDevice, playbackArgs } from './audio-devices.ts';
 
 export const defaultVoice = 'en_US-amy-medium';
 export const ttsTestLine = "Hello, I'm Cere. Local voice is ready. Let's make a little trouble.";
@@ -180,7 +181,7 @@ async function playLocal(command: string, args: string[], input: string, name: s
     const effects = [...(tuning.pitch ? ['pitch',String(tuning.pitch * 100)] : []),
       ...(tuning.volume !== 1 ? ['vol',String(tuning.volume)] : [])];
     const filter = adjusted ? spawn(env.CERE_SOX_BIN || 'sox', ['-q','-D',...format,'-',...format,'-',...effects], {env,stdio:['pipe','pipe','pipe']}) : undefined;
-    const player = spawn(env.CERE_APLAY_BIN || 'aplay', ['-q','-t','raw','-r',String(voice.sampleRate),'-f','S16_LE','-c','1'], {env,stdio:['pipe','ignore','ignore']});
+    const player = spawn(env.CERE_APLAY_BIN || 'aplay', [...playbackArgs(audioSelection().output),'-q','-t','raw','-r',String(voice.sampleRate),'-f','S16_LE','-c','1'], {env,stdio:['pipe','ignore','ignore']});
     const children = [{proc:synth,label:name}, ...(filter ? [{proc:filter,label:'Voice tuning (SoX)'}] : []), {proc:player,label:'aplay'}];
     let remaining=children.length, failure:Error|undefined, bytes=0, killTimer:NodeJS.Timeout|undefined;
     const terminate = () => {
@@ -247,7 +248,15 @@ export class Speech {
     this.settings = settings; this.changed = changed; this.env = env;
   }
   snapshot() { return { ...this.state, queued: this.queue.length }; }
+  /** M16: time from an utterance starting to its first audio, reported when measurements are on. */
+  timing?: (ms: number, outcome: 'ok' | 'failed' | 'stopped', backend: string) => void;
+  private utteranceStarted = 0;
   private update(patch: Partial<SpeechState>) {
+    if (patch.state === 'preparing') this.utteranceStarted = performance.now();
+    else if (this.utteranceStarted && (patch.state === 'speaking' || patch.state === 'error' || patch.state === 'idle')) {
+      this.timing?.(performance.now() - this.utteranceStarted, patch.state === 'speaking' ? 'ok' : patch.state === 'error' ? 'failed' : 'stopped', patch.backend || this.state.backend || '');
+      this.utteranceStarted = 0;
+    }
     this.state = { ...this.state, ...patch };
     if (patch.state === 'idle' || patch.state === 'error') delete this.state.replyId;
     this.changed();
@@ -284,6 +293,9 @@ export class Speech {
     this.activeSession = item.sessionId;this.activeProvider=item.sourceProvider;
     this.update({ state: 'preparing', voice: item.voice, backend: '', error: '', fallback: '', replyId: item.replyId });
     try {
+      // M10: a chosen speaker must be connected; otherwise PipeWire would quietly use another one.
+      await chosenDevice('output');
+      controller.signal.throwIfAborted();
       if(item.provider==='elevenlabs'){
         if(!this.elevenlabs)throw new Error('ElevenLabs is unavailable');
         this.update({backend:'elevenlabs'});
@@ -304,7 +316,8 @@ export class Speech {
         this.update({state:'idle'});return;
       }
       let accepted = false, fallback = '';
-      const tuned = item.rate !== 1 || item.pitch !== 0 || item.volume !== 1;
+      // Speech Dispatcher cannot be pointed at a device, so a chosen speaker uses Cere's own player.
+      const tuned = item.rate !== 1 || item.pitch !== 0 || item.volume !== 1 || !!audioSelection().output;
       if (!tuned) {
         const connect = new AbortController();
         const timeout = setTimeout(() => connect.abort(new Error('Speech Dispatcher did not connect')), 3000); timeout.unref();

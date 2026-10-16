@@ -97,4 +97,15 @@ ALTER TABLE embedding_records ADD COLUMN blob BLOB;
 CREATE INDEX embedding_records_space ON embedding_records(fingerprint,artifact_id);
 `,
   },
+  {
+    // A retention pin keeps a passage or an assertion (by logical ID, so it follows corrections) from
+    // retention expiry. It records the user's decision and an optional note; it never changes status,
+    // confidence or ranking, and erasure removes it with its target.
+    id: 5,
+    sql: `
+CREATE TABLE retention_pins(id TEXT PRIMARY KEY,scope_id TEXT NOT NULL REFERENCES scopes(id),target_kind TEXT NOT NULL CHECK(target_kind IN ('observation','assertion')),target_id TEXT NOT NULL,note TEXT NOT NULL,created_revision INTEGER NOT NULL,created_us INTEGER NOT NULL,released_revision INTEGER) STRICT;
+CREATE INDEX retention_pins_target ON retention_pins(target_id,released_revision);
+CREATE INDEX retention_pins_scope ON retention_pins(scope_id,released_revision);
+`,
+  },
 ];

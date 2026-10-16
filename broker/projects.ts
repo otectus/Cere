@@ -64,9 +64,32 @@ export class Projects {
       if(isApiProvider(d.provider)&&!d.model.trim())throw new Error('Choose an API model or enter its model ID');
       if(d.temporary&&d.tools)throw new Error('Temporary conversations cannot use desktop tools');
       const defaults:ProjectDefaults={provider:d.provider,model:d.model.trim(),effort:d.effort.trim(),tools:d.tools,trusted:d.trusted,temporary:d.temporary};
-      const project:Project={cwd,name:p.name.trim(),revision:String(BigInt(p.expectedRevision)+1n),updated:Date.now(),favorite:p.favorite,defaults};
+      // The project's style binding is changed by projects.setProfile and survives other edits.
+      const previous=this.saved(cwd);
+      const project:Project={cwd,name:p.name.trim(),revision:String(BigInt(p.expectedRevision)+1n),updated:Date.now(),favorite:p.favorite,defaults,...(previous?.behaviorProfileId?{behaviorProfileId:previous.behaviorProfileId}:{}),...(previous?.conventions?{conventions:true}:{})};
       this.core.store.db.prepare('INSERT INTO projects VALUES (?,?) ON CONFLICT(cwd) DO UPDATE SET data=excluded.data').run(cwd,JSON.stringify(project));
       this.core.store.catalogRevision++;this.core.changed();return project;
+    }
+    // M01: the style a project's conversations use unless a conversation picks its own.
+    if(method==='projects.setProfile') {
+      if(typeof p.cwd!=='string'||!isAbsolute(p.cwd))throw new Error('Choose a project');
+      const cwd=await realpath(p.cwd),project=this.expected(cwd,p.expectedRevision);
+      if(!project)throw new Error('Save the project settings before choosing its style');
+      if(p.profileId!==null&&!this.core.presets.profiles().some(profile=>profile.id===p.profileId))throw new Error('This style no longer exists');
+      const {behaviorProfileId:_previous,...rest}=project;
+      const next:Project={...rest,revision:String(BigInt(project.revision)+1n),updated:Date.now(),...(p.profileId?{behaviorProfileId:p.profileId}:{})};
+      this.core.store.db.prepare('INSERT INTO projects VALUES (?,?) ON CONFLICT(cwd) DO UPDATE SET data=excluded.data').run(cwd,JSON.stringify(next));
+      this.core.store.catalogRevision++;this.core.changed();return next;
+    }
+    // A06: whether Cere-managed API and Ollama turns read this project's convention files.
+    if(method==='projects.setConventions') {
+      if(typeof p.cwd!=='string'||!isAbsolute(p.cwd)||typeof p.enabled!=='boolean')throw new Error('Choose a project and whether to read its conventions');
+      const cwd=await realpath(p.cwd),project=this.expected(cwd,p.expectedRevision);
+      if(!project)throw new Error('Save the project settings before choosing its conventions');
+      const {conventions:_previous,...rest}=project;
+      const next:Project={...rest,revision:String(BigInt(project.revision)+1n),updated:Date.now(),...(p.enabled?{conventions:true}:{})};
+      this.core.store.db.prepare('INSERT INTO projects VALUES (?,?) ON CONFLICT(cwd) DO UPDATE SET data=excluded.data').run(cwd,JSON.stringify(next));
+      this.core.store.catalogRevision++;this.core.changed();return next;
     }
     if(method==='projects.createSession') {
       if(typeof p.cwd!=='string')throw new Error('Choose a project');

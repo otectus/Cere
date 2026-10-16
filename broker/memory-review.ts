@@ -19,7 +19,9 @@ export class MemoryReview {
       const rows=proposals.flatMap(proposal=>{const message=this.core.store.messageById(proposal.messageId);return message?[{...proposal,text:message.text.slice(0,2000),sourceText:message.text,sourceLabel:proposal.role==='assistant'?'Model suggestion':proposal.role==='user'?'Observed user statement':'Observed tool or document statement',currentRevision:hash([message.id,message.revision,message.text])}]:[]});
       const assertions=await this.core.memory.list(session,'assertions',p.offset||0);
       const notes=await this.core.memory.list(session,'saved',p.offset||0);
-      return{rows,assertions:assertions.rows.filter((r:any)=>r.status!=='accepted'),totalAssertions:assertions.total,olderNotes:notes.rows.filter((r:any)=>r.updated&&r.updated<Date.now()-90*86400000),totalNotes:notes.total,scope:session.cwd};
+      // Retention pins: what the user chose to keep, listed so each one can be released.
+      const pins=await this.core.memory.graph(session,'pins',{});
+      return{rows,assertions:assertions.rows.filter((r:any)=>r.status!=='accepted'),totalAssertions:assertions.total,olderNotes:notes.rows.filter((r:any)=>r.updated&&r.updated<Date.now()-90*86400000),totalNotes:notes.total,pins:pins.rows,totalPins:pins.total,scope:session.cwd};
     }
     if(method==='memoryReview.resolve'){
       const proposal=proposals.find(row=>row.id===p.id);if(!proposal)throw new Error('Proposal no longer exists');
@@ -38,7 +40,8 @@ export class MemoryReview {
     if(method==='memoryReview.recalled'){
       const record=this.core.store.get<any>('recalled:'+session.id,{ids:[],time:0}),rows=[];
       for(const id of record.ids.slice(0,12)){try{const evidence=await this.core.memory.graph(session,'inspect',{id});rows.push({id,evidence});}catch{/* Erased and unavailable evidence must not be resurrected from cached text. */}}
-      return{time:record.time,rows,reason:'These records were selected by project scope, retrieval relevance, policy and the token budget for the most recent prepared turn. Selection does not prove the provider used each record.'};
+      // The stored outcome is read as recorded; explaining a turn never runs recall again.
+      return{time:record.time,rows,outcome:this.core.memory.outcomes(session.id)[0]||null,reason:'These records were selected by project scope, retrieval relevance, policy and the token budget for the most recent prepared turn. Selection does not prove the provider used each record.'};
     }
     throw new Error('Unknown memory review operation');
   }

@@ -117,3 +117,44 @@ test('non-default speech rate uses Piper length_scale without changing default p
   const args = (await f.calls()).find(call => call.tool === 'rate-piper').args;
   assert.equal(args[args.indexOf('--length_scale') + 1], '0.5'); assert.equal(speech.state.backend, 'piper');
 });
+
+test('M20 an imported recording is converted, transcribed for review with its source, and leaves no audio behind', async t => {
+  const f = await fixture(t);
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  const source = join(f.directory, 'standup.mp3');
+  execFileSync('/usr/bin/ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-ar', '44100', source]);
+  f.env.TRANSCRIPTION_TEXT = 'We agreed to ship on Tuesday.';
+  const result = await f.transcription.importFile({ sessionId: 'session-a', path: source });
+  assert.equal(result.text, 'We agreed to ship on Tuesday.');
+  assert.deepEqual([result.source!.name, result.source!.durationSeconds, result.source!.truncated], ['standup.mp3', 2, false]);
+  assert.equal(result.source!.sha256, createHash('sha256').update(await readFile(source)).digest('hex'));
+  const whisper = (await f.calls()).filter(call => call.tool === 'whisper').at(-1);
+  assert.match(whisper.args[whisper.args.indexOf('-f') + 1], /\/audio\.wav$/, 'whisper reads the converted 16 kHz WAV');
+  assert.deepEqual(await f.temporary(), [], 'no converted audio remains');
+  assert.equal(f.transcription.status().state, 'idle');
+  await assert.rejects(f.transcription.importFile({ sessionId: 'session-a', path: join(f.directory, 'model.bin') }), /Choose WAV, MP3/);
+  await assert.rejects(f.transcription.importFile({ sessionId: 'session-a', path: 'relative.mp3' }), /Choose an audio or video file/);
+});
+
+test('M20 imports share the one voice job, cancel cleanly, and without ffmpeg accept only 16 kHz WAV', async t => {
+  const f = await fixture(t);
+  const { execFileSync } = await import('node:child_process');
+  const wav = join(f.directory, 'note.wav'), loud = join(f.directory, 'loud.wav');
+  execFileSync('/usr/bin/ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=1', '-ar', '16000', '-ac', '1', wav]);
+  execFileSync('/usr/bin/ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=1', '-ar', '44100', loud]);
+  f.env.TRANSCRIPTION_HOLD = '1';
+  const pending = f.transcription.importFile({ sessionId: 'session-a', path: wav });
+  for (let index = 0; index < 200 && !(await f.calls()).some(call => call.tool === 'whisper'); index++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(f.transcription.status().state, 'transcribing'); assert.equal(f.transcription.status().file, 'note.wav');
+  await assert.rejects(f.transcription.start({ sessionId: 'session-b' }), /already recording|busy/);
+  await f.transcription.cancel();
+  await assert.rejects(pending, /cancelled/);
+  assert.deepEqual(await f.temporary(), []);
+  delete f.env.TRANSCRIPTION_HOLD;
+  const plain = new Transcription({ changed() {}, settings: () => f.settings, runtimeDirectory: f.runtime, env: f.env, ffmpeg: null });
+  t.after(() => plain.close());
+  assert.equal((await plain.importFile({ sessionId: 'session-a', path: wav })).source!.durationSeconds, null);
+  await assert.rejects(plain.importFile({ sessionId: 'session-a', path: loud }), /only 16 kHz WAV/);
+  await assert.rejects(plain.importFile({ sessionId: 'session-a', path: join(f.directory, 'standup.ogg') }), /no such file|ENOENT/);
+});

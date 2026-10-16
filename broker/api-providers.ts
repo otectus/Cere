@@ -2,51 +2,69 @@ import { randomUUID } from 'node:crypto';
 import { OllamaAdapter, type OllamaMessage, type OllamaTool, type OllamaContext } from './ollama.ts';
 import { providerLabels, type ApiProvider } from './provider-catalog.ts';
 import type { Hooks } from './providers.ts';
-import type { Session, ModelOption, SendOptions, Source } from './types.ts';
+import type { CompatibleEndpoint, Session, ModelOption, SendOptions, Source } from './types.ts';
 import { HttpStatusError, withHttpRetry, type RetryOptions } from './http-retry.ts';
 
-const origins: Record<ApiProvider, string> = {
+const origins: Record<Exclude<ApiProvider, 'compatible'>, string> = {
   openai: 'https://api.openai.com/v1/', anthropic: 'https://api.anthropic.com/v1/', google: 'https://generativelanguage.googleapis.com/v1beta/',
 };
-export type ApiAccess = { key(): string; fetch?: typeof fetch; retry?: RetryOptions };
+/** endpoint: M13's configured compatible endpoint, read at request time. */
+export type ApiAccess = { key(): string; fetch?: typeof fetch; retry?: RetryOptions; endpoint?: () => CompatibleEndpoint };
+/** A compatible endpoint is named by the label the user gave it. */
+export const apiLabel = (provider: ApiProvider, access?: ApiAccess) => provider === 'compatible' ? access?.endpoint?.().label?.trim() || providerLabels.compatible : providerLabels[provider];
+/** Fixed origins for the vendor APIs; the configured base URL for a compatible endpoint. */
+function target(provider: ApiProvider, access: ApiAccess, path: string) {
+  if (provider !== 'compatible') return origins[provider] + path;
+  const base = access.endpoint?.().baseUrl;
+  if (!base) throw new Error('Set the compatible endpoint in Settings → Connections');
+  return base.replace(/\/+$/, '') + '/' + path;
+}
 async function request(provider: ApiProvider, access: ApiAccess, path: string, signal: AbortSignal, body?: unknown, acceptance: SendOptions = {}) {
-  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const payload = body === undefined ? undefined : JSON.stringify(body), label = apiLabel(provider, access);
   if (payload && payload.length > 96 * 1024 * 1024) throw new Error('This conversation is too large to send');
   try { return await withHttpRetry(async()=>{
-    const key = access.key();
-    if (!key) throw new Error(`Add a ${providerLabels[provider]} key in Settings → Connections`);
+    const key = access.key(), url = target(provider, access, path);
+    // A compatible endpoint may run without a key; its key is never sent to another origin (credentials.ts).
+    if (!key && (provider !== 'compatible' || access.endpoint?.().requiresKey !== false)) throw new Error(provider === 'compatible' ? `Add a key for ${label} in Settings → Connections` : `Add a ${label} key in Settings → Connections`);
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (provider === 'openai') headers.Authorization = `Bearer ${key}`;
+    if (provider === 'openai' || provider === 'compatible') { if (key) headers.Authorization = `Bearer ${key}`; }
     else if (provider === 'anthropic') { headers['x-api-key'] = key; headers['anthropic-version'] = '2023-06-01'; }
     else headers['x-goog-api-key'] = key;
     signal.throwIfAborted(); acceptance.beforeAccept?.(); acceptance.onDispatched?.();
     let response: Response;
-    try { response = await (access.fetch || fetch)(origins[provider] + path, { method: body === undefined ? 'GET' : 'POST', headers, body: payload, signal, redirect: 'error' }); }
-    catch { signal.throwIfAborted(); throw new Error(`${providerLabels[provider]} could not be reached. Check your connection; an uncertain request is not retried.`); }
+    try { response = await (access.fetch || fetch)(url, { method: body === undefined ? 'GET' : 'POST', headers, body: payload, signal, redirect: 'error' }); }
+    catch { signal.throwIfAborted(); throw new Error(`${label} could not be reached. Check your connection; an uncertain request is not retried.`); }
   if (!response.ok) {
     await response.body?.cancel().catch(()=>{});
     // Never echo provider error bodies: some gateways echo headers or user input.
     const detail = response.status === 401 || response.status === 403 ? 'Check the API key and account access.' : response.status === 429 ? 'Rate or quota limit reached. Check account billing or try later.' : response.status === 404 ? 'Model or endpoint unavailable. Refresh models or check the model ID.' : response.status === 400 ? 'The selected model rejected this request or its tools/images.' : 'The provider rejected the request. Try again later.';
-    throw new HttpStatusError(response.status, `${providerLabels[provider]} (HTTP ${response.status}). ${detail}`, response.headers.get('retry-after'));
+    throw new HttpStatusError(response.status, `${label} (HTTP ${response.status}). ${detail}`, response.headers.get('retry-after'));
   }
     return response;
-  }, {...access.retry, signal, label:providerLabels[provider]}); }
+  }, {...access.retry, signal, label}); }
   catch(error) { if(error instanceof HttpStatusError)acceptance.onRejected?.();throw error; }
 }
 
-async function json(response: Response): Promise<any> {
+async function json(response: Response, limit = 4*1024*1024, what = 'model catalog'): Promise<any> {
   let text = ''; const decoder = new TextDecoder();
-  if (!response.body) throw new Error('Empty model catalog');
-  for await (const chunk of response.body) { text += decoder.decode(chunk, {stream:true}); if (text.length > 4*1024*1024) throw new Error('Model catalog exceeded the size limit'); }
+  if (!response.body) throw new Error(`Empty ${what}`);
+  for await (const chunk of response.body) { text += decoder.decode(chunk, {stream:true}); if (text.length > limit) throw new Error(`The ${what} exceeded the size limit`); }
   try { return JSON.parse(text + decoder.decode()); }
-  catch { throw new Error('The provider returned an invalid model catalog'); }
+  catch { throw new Error(`The provider returned an invalid ${what}`); }
 }
 export async function apiModels(provider: ApiProvider, access: ApiAccess): Promise<ModelOption[]> {
   const models: ModelOption[] = [], seen = new Set<string>(); let cursor = '';
   for (let page = 0; page < 30; page++) {
     const path = provider === 'google' ? 'models?pageSize=1000' + (cursor ? '&pageToken=' + encodeURIComponent(cursor) : '')
       : provider === 'anthropic' ? 'models?limit=100' + (cursor ? '&after_id=' + encodeURIComponent(cursor) : '') : 'models';
-    const value = await json(await request(provider, access, path, AbortSignal.timeout(20000)));
+    let response: Response;
+    try { response = await request(provider, access, path, AbortSignal.timeout(20000)); }
+    catch (error) {
+      // M13: an endpoint without a model list can still be used by entering a model ID.
+      if (provider === 'compatible' && error instanceof HttpStatusError && error.status === 404) return Object.assign([] as ModelOption[], { unlisted: true });
+      throw error;
+    }
+    const value = await json(response);
     const entries = provider === 'google' ? value.models : value.data;
     if (!Array.isArray(entries)) throw new Error('Invalid API model catalog');
     for (const entry of entries) {
@@ -57,8 +75,11 @@ export async function apiModels(provider: ApiProvider, access: ApiAccess): Promi
       // Google states inputTokenLimit/outputTokenLimit; Anthropic states max_input_tokens/max_tokens.
       const input = provider === 'google' ? entry.inputTokenLimit : provider === 'anthropic' ? entry.max_input_tokens : undefined;
       const output = provider === 'google' ? entry.outputTokenLimit : provider === 'anthropic' ? entry.max_tokens : undefined;
-      models.push({ id, displayName: entry.display_name || entry.displayName || id, description: entry.description || providerLabels[provider], efforts: [], defaultEffort:'', isDefault:false, cloud:true,
-        ...(Number.isSafeInteger(input) && input > 0 ? {contextLength:input} : {}), ...(Number.isSafeInteger(output) && output > 0 ? {maxOutputTokens:output} : {}) });
+      // A compatible endpoint's limits are the ones the user declared; its catalog states none Cere relies on.
+      const declared = provider === 'compatible' ? access.endpoint?.() : undefined;
+      const context = declared ? declared.contextLength : input, ceiling = declared ? declared.maxOutputTokens : output;
+      models.push({ id, displayName: entry.display_name || entry.displayName || id, description: entry.description || apiLabel(provider, access), efforts: [], defaultEffort:'', isDefault:false, cloud:true,
+        ...(Number.isSafeInteger(context) && context > 0 ? {contextLength:context} : {}), ...(Number.isSafeInteger(ceiling) && ceiling > 0 ? {maxOutputTokens:ceiling} : {}) });
     }
     cursor = provider === 'google' ? value.nextPageToken || '' : provider === 'anthropic' && value.has_more ? value.last_id || '' : '';
     if (!cursor) return models.sort((a,b) => a.id.localeCompare(b.id));
@@ -94,7 +115,13 @@ function argumentsObject(value: unknown): Record<string, unknown> {
 }
 function input(provider: ApiProvider, messages: OllamaMessage[]): any[] {
   return messages.filter(m=>m.role!=='system').flatMap((m): any[] => {
-    if (m.role === 'assistant' && m.providerData) return provider === 'openai' ? m.providerData : [{role:provider==='google'?'model':'assistant', [provider==='google'?'parts':'content']:m.providerData}];
+    if (m.role === 'assistant' && m.providerData) return provider === 'openai' || provider === 'compatible' ? m.providerData : [{role:provider==='google'?'model':'assistant', [provider==='google'?'parts':'content']:m.providerData}];
+    // M13: the chat-completions dialect most compatible servers speak.
+    if (provider === 'compatible') {
+      if (m.role==='tool') return [{role:'tool',tool_call_id:m.tool_call_id,content:m.content}];
+      if (m.role==='user' && m.images?.length) return [{role:'user',content:[{type:'text',text:m.content},...m.images.map(i=>({type:'image_url',image_url:{url:imageUrl(i)}}))]}];
+      return [{role:m.role,content:m.content}];
+    }
     if (provider === 'openai') {
       if (m.role==='tool') return [{type:'function_call_output',call_id:m.tool_call_id,output:m.content}];
       return [{role:m.role,content:[{type:m.role==='assistant'?'output_text':'input_text',text:m.content},...(m.images||[]).map(i=>({type:'input_image',image_url:imageUrl(i),detail:'auto'}))]}];
@@ -128,15 +155,31 @@ export const fallbackOutputTokens = 4096;
 /** A reply cut at the output ceiling is kept, minus any unfinished tool request or unsigned reasoning. */
 function truncatedProviderData(provider: ApiProvider, data: any[]): any[] {
   if (provider === 'openai') return data.filter(item => item?.type !== 'function_call');
+  if (provider === 'compatible') return data.map(({ tool_calls: _calls, ...message }) => message);
   if (provider === 'anthropic') return data.filter(block => block && block.type !== 'tool_use' && (block.type !== 'thinking' || typeof block.signature === 'string' && block.signature));
   return data.filter(part => part && !part.functionCall);
 }
+/** A compatible endpoint whose context window was not declared is assumed to hold this many tokens. */
+export const compatibleContextFallback = 8192;
 export class ApiAdapter extends OllamaAdapter {
   provider: ApiProvider; access: ApiAccess; maxOutputTokens = fallbackOutputTokens;
   constructor(session: Session, hooks: Hooks, context: OllamaContext, access: ApiAccess, limits: ApiLimits = {}) {
-    super(session,hooks,context); this.provider=session.provider as ApiProvider; this.access=access; this.cloud=true; this.label=providerLabels[this.provider];
+    super(session,hooks,context); this.provider=session.provider as ApiProvider; this.access=access; this.cloud=true; this.label=apiLabel(this.provider,access);
     if (limits.contextLength && limits.contextLength>2048) this.contextLength=limits.contextLength;
+    else if (this.provider==='compatible') this.contextLength=compatibleContextFallback;
     if (limits.maxOutputTokens && limits.maxOutputTokens>=1024) this.maxOutputTokens=limits.maxOutputTokens;
+  }
+  /** M13: the endpoint's declared capabilities; vendor APIs have none to declare. */
+  endpoint() { return this.provider==='compatible' ? this.access.endpoint?.() : undefined; }
+  override hiddenContext(): string[] {
+    const endpoint=this.endpoint();
+    if (this.provider!=='compatible') return ['The API provider may add its own system and safety instructions'];
+    return ['The endpoint, and any proxy behind it, may add its own instructions or route to another model',
+      endpoint?.contextLength ? `Context window of ${endpoint.contextLength.toLocaleString('en-US')} tokens as you declared it; not verified` : `Context window not declared; Cere assumes ${compatibleContextFallback.toLocaleString('en-US')} tokens`,
+      'Tool, image, streaming and usage support are as you declared them; not verified'];
+  }
+  override async preflight(images: string[], _signal: AbortSignal) {
+    if (this.provider==='compatible' && images.length && !this.endpoint()?.images) throw new Error(`${this.label} is not declared to accept images. Turn on image input for it in Settings → Connections if it supports them.`);
   }
   override async stream(_host: string, messages: OllamaMessage[], tools: OllamaTool[], signal: AbortSignal, _contextSize: number, sources: Source[], acceptance: SendOptions = {}) {
     const provider=this.provider, instructions=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n');
@@ -144,12 +187,39 @@ export class ApiAdapter extends OllamaAdapter {
     let path: string, body: any;
     if (provider==='openai') { path='responses'; body={model:this.session.model,instructions,input:history,stream:true,store:false,include:['reasoning.encrypted_content'],...(tools.length?{tools:functions.map(f=>({type:'function',...f,strict:false}))}:{})}; }
     else if (provider==='anthropic') { path='messages'; body={model:this.session.model,system:instructions,messages:mergeRoles(history,'content'),stream:true,max_tokens:this.maxOutputTokens,...(tools.length?{tools:functions.map(f=>({name:f.name,description:f.description,input_schema:f.parameters}))}:{})}; }
+    else if (provider==='compatible') {
+      // Only what the endpoint is declared to support is sent: no tools, usage request or output ceiling otherwise.
+      const endpoint=this.endpoint();
+      path='chat/completions'; body={model:this.session.model,messages:[...(instructions?[{role:'system',content:instructions}]:[]),...history],stream:endpoint?.streaming!==false,
+        ...(endpoint?.streaming!==false&&endpoint?.usage?{stream_options:{include_usage:true}}:{}),
+        ...(tools.length&&endpoint?.tools?{tools:functions.map(f=>({type:'function',function:{name:f.name,description:f.description,parameters:f.parameters}}))}:{}),
+        ...(endpoint?.maxOutputTokens?{max_tokens:endpoint.maxOutputTokens}:{})};
+    }
     else { path=`models/${encodeURIComponent(this.session.model.replace(/^models\//,''))}:streamGenerateContent?alt=sse`; body={systemInstruction:{parts:[{text:instructions}]},contents:mergeRoles(history,'parts'),...(tools.length?{tools:[{functionDeclarations:functions.map(f=>({name:f.name,description:f.description,parametersJsonSchema:f.parameters}))}]}:{})}; }
     const timeout=new AbortController(); let timer: NodeJS.Timeout;
     const reset=()=>{clearTimeout(timer); timer=setTimeout(()=>timeout.abort(new Error(`${this.label} stopped responding for three minutes`)),180000);timer.unref();}; reset();
     const combined=AbortSignal.any([signal,timeout.signal]);
     const reply: OllamaMessage={role:'assistant',content:'',providerData:[]}, id=randomUUID();
     let done=false, truncated=false; const blocks: any[]=[]; const fragments=new Map<number,string>();
+    // Chat-completions state: tool calls arrive in indexed fragments; the finish reason ends the reply.
+    const chat={calls:[] as {id:string;name:string;args:string}[],finish:'',usage:undefined as any};
+    const chatChoice=(value:any)=>{
+      if(value?.usage&&typeof value.usage==='object')chat.usage=value.usage;
+      const choice=value?.choices?.[0];if(!choice)return;
+      const part=choice.delta||choice.message||{};
+      if(typeof part.content==='string')delta(part.content);
+      if(typeof part.refusal==='string')delta(part.refusal);
+      for(const call of Array.isArray(part.tool_calls)?part.tool_calls:[]){
+        const index=Number.isInteger(call?.index)?call.index:chat.calls.length;
+        if(index<0||index>15)throw new Error('The API requested too many tools in one reply');
+        const slot=chat.calls[index]||={id:'',name:'',args:''};
+        if(typeof call.id==='string'&&call.id)slot.id=call.id;
+        if(typeof call.function?.name==='string'&&!slot.name)slot.name=call.function.name;
+        if(typeof call.function?.arguments==='string')slot.args+=call.function.arguments;
+        else if(call.function?.arguments&&typeof call.function.arguments==='object')slot.args=JSON.stringify(call.function.arguments);
+      }
+      if(typeof choice.finish_reason==='string'&&choice.finish_reason)chat.finish=choice.finish_reason;
+    };
     const delta=(text: unknown)=>{if(typeof text==='string'&&text){reply.content+=text;this.hooks.event({type:'delta',id,text,data:{sources:[...sources]}});}};
     try {
       const retryId=randomUUID();
@@ -159,10 +229,12 @@ export class ApiAdapter extends OllamaAdapter {
       }}};
       const response=await request(provider,access,path,combined,body,acceptance);
       acceptance.onAccepted?.();
-      await consumeSse(response,value=>{
+      if(provider==='compatible'&&body.stream===false){reset();chatChoice(await json(response,8*1024*1024,'reply'));}
+      else await consumeSse(response,value=>{
         combined.throwIfAborted();
         if(value.error || value.type==='error') throw new Error(`${this.label} reported a stream error. The request was not retried.`);
-        if(provider==='openai') {
+        if(provider==='compatible') chatChoice(value);
+        else if(provider==='openai') {
           if(value.type==='response.output_text.delta') delta(value.delta);
           if(value.type==='response.refusal.delta') delta(value.delta);
           if(value.type==='response.incomplete'&&value.response?.incomplete_details?.reason==='max_output_tokens'){reply.providerData=value.response?.output||[];truncated=true;done=true;}
@@ -189,20 +261,33 @@ export class ApiAdapter extends OllamaAdapter {
           if(candidate?.finishReason){if(candidate.finishReason==='MAX_TOKENS')truncated=true;else if(candidate.finishReason!=='STOP')throw new Error(`${this.label} stopped before finishing (${candidate.finishReason})`);done=true;}
         }
       },reset);
+      if(provider==='compatible'&&chat.finish){
+        if(chat.finish==='content_filter')throw new Error(`${this.label} blocked this reply (content filter).`);
+        if(chat.finish==='length')truncated=true;
+        // Calls keep the endpoint's IDs; a call without one gets an ID so its result can be matched.
+        const calls=chat.calls.filter(call=>call&&call.name).map(call=>({...call,id:call.id||'call_'+randomUUID().replaceAll('-','').slice(0,24)}));
+        reply.providerData=[{role:'assistant',content:reply.content||null,...(calls.length?{tool_calls:calls.map(call=>({id:call.id,type:'function',function:{name:call.name,arguments:call.args}}))}:{})}];
+        // Usage is recorded only when declared and actually reported; Cere never estimates cost.
+        const usage=this.endpoint()?.usage?chat.usage:undefined;
+        if(usage&&(Number.isSafeInteger(usage.prompt_tokens)||Number.isSafeInteger(usage.completion_tokens)))this.reportedUsage={...(Number.isSafeInteger(usage.prompt_tokens)?{inputTokens:usage.prompt_tokens}:{}),...(Number.isSafeInteger(usage.completion_tokens)?{outputTokens:usage.completion_tokens}:{}),source:this.label};
+        done=true;
+      }
       combined.throwIfAborted(); if(!done)throw new Error(`${this.label} disconnected before completing its response`);
       if(truncated){
         // The visible answer and the model's history agree: both keep the text it wrote.
         if(!reply.content)throw new Error(`${this.label} reached this model’s output limit before writing an answer. Ask a narrower question or choose a model with a larger output limit.`);
         reply.providerData=truncatedProviderData(provider,reply.providerData||[]);
         this.hooks.event({type:'message',id,text:reply.content+'\n\n*[Stopped at this model’s output limit. Ask Cere to continue.]*',data:{sources:[...sources]}});
+        reply.sourceId=`${this.session.id}:${id}`;
         return reply;
       }
-      const calls=provider==='openai'?reply.providerData!.filter(p=>p.type==='function_call').map(p=>({id:p.call_id,name:p.name,args:p.arguments}))
+      const calls:{id?:unknown;name?:unknown;args?:unknown}[]=provider==='compatible'?(reply.providerData![0]?.tool_calls||[]).map((p:any)=>({id:p.id,name:p.function?.name,args:p.function?.arguments}))
+        :provider==='openai'?reply.providerData!.filter(p=>p.type==='function_call').map(p=>({id:p.call_id,name:p.name,args:p.arguments}))
         :provider==='anthropic'?reply.providerData!.filter(p=>p.type==='tool_use').map(p=>({id:p.id,name:p.name,args:p.input}))
         :reply.providerData!.filter(p=>p.functionCall).map(p=>({id:p.functionCall.id,name:p.functionCall.name,args:p.functionCall.args}));
       if(calls.length>16)throw new Error('The API requested too many tools in one reply');
-      if(calls.length)reply.tool_calls=calls.map(c=>{if(typeof c.name!=='string'||provider!=='google'&&typeof c.id!=='string')throw new Error('Invalid API tool call');return{...(c.id?{id:c.id}:{}),function:{name:c.name,arguments:argumentsObject(c.args)}};});
-      if(reply.content)this.hooks.event({type:'message',id,text:reply.content,data:{sources:[...sources]}});
+      if(calls.length)reply.tool_calls=calls.map(c=>{if(typeof c.name!=='string'||provider!=='google'&&typeof c.id!=='string')throw new Error('Invalid API tool call');return{...(typeof c.id==='string'&&c.id?{id:c.id}:{}),function:{name:c.name,arguments:argumentsObject(c.args)}};});
+      if(reply.content){this.hooks.event({type:'message',id,text:reply.content,data:{sources:[...sources]}});reply.sourceId=`${this.session.id}:${id}`;}
       return reply;
     } finally {clearTimeout(timer!);}
   }

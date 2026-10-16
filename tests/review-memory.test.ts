@@ -446,16 +446,18 @@ test("F-027 inspector pages materialize and format only the requested rows", (t)
   assert.ok(rows <= 3 * (25 + 2 + 1), `materialized ${rows} rows`);
 });
 
-test("F-029 identity decisions report that resolution is unchanged", (t) => {
+// A05 made "same" and "not same" effective in recall; "possible" stays a note for review.
+test("F-029 identity decisions report whether they change recall, and so do their reversions", (t) => {
   const { c, scope } = fixture(t);
   let left: any, right: any;
   c.tx(() => { left = c.entity(scope, { type: "Document", name: "config.json" }); right = c.entity(scope, { type: "Document", name: "config.json" }); });
   const witness = observe(c, scope, "Both config.json files are the same document.");
   for (const decision of ["possible", "same", "not_same"]) {
+    const effective = decision !== "possible";
     const result = c.identity({ scope_id: scope, left_id: left.id, right_id: right.id, decision, witness: { observation_id: witness.id, quote: "Both config.json files are the same document." } });
-    assert.equal(result.applied, false); assert.equal(result.recorded_only, true);
+    assert.equal(result.applied, effective); assert.equal(result.recorded_only, !effective);
     const reverted = c.identity({ scope_id: scope, revert_id: result.id, expected_revision: result.revision });
-    assert.equal(reverted.applied, false); assert.equal(reverted.recorded_only, true);
+    assert.equal(reverted.applied, effective); assert.equal(reverted.recorded_only, !effective);
   }
 });
 

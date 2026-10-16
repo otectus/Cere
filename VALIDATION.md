@@ -2,6 +2,26 @@
 
 Publication check — October 15, 2026: `npm test` passed **577 tests**, with **1 optional skip** and no failures; `npm run typecheck` and `git diff --check` passed. Editor recovery files and machine-specific validation JSON/service/geometry snapshots remain local and are excluded from Git, as are runtime logs. References to those local records below document the verification performed; artwork and visual acceptance captures are included in the repository.
 
+## PyPersona enhancement plan, slices 0–5 — October 15–16, 2026
+
+Implemented from `prompts/Cere-PyPersona-Enhancement-Plan.md` on `ui-overhaul` at `0837f91`, uncommitted. The in-flight screenshot and documentation edits and the removal of `artwork/` are preserved. Slices 0–4 are complete. Slice 5 adds M22 and M14; A03, M11 and slice 6 are deferred. The per-proposal record and every log are local, under `~/.cache/cere-pypersona/` (`PROGRESS.md`, `baseline/` and `final/`).
+
+Baseline before any change (clean `git archive HEAD` tree): `npm test` 578 tests, 576 passed, 1 skipped, 1 failed (`tests/avatar-surface-motion.test.ts`, which cannot read `artwork/avatars/cere/registration.json` since `artwork/` moved). `ctest` passed 4/4. The offscreen `cere-ui-check` had 65 passed, 1 failed (`reviewTransitions`) and 9 skipped.
+
+Checks actually run after the last change:
+
+- `npm run typecheck` and `git diff --check` passed.
+- `CERE_TTS_DISABLED=1 npm test`: **671 tests, 669 passed, 1 skipped, 1 failed**. The failure is the same artwork test as at baseline.
+- `cmake --build build --parallel 8` passed for every target.
+- `ctest --test-dir build --output-on-failure`: motion, avatar-software and qml passed. The GPU `avatar` check failed its "wider cards must preserve silhouette and ground" geometry for all five avatars. The untouched baseline tree fails identically on the same run date after passing at the start of the session, so the cause is the state of the GPU render path rather than these changes.
+- `QT_QPA_PLATFORM=offscreen:configfile=$PWD/tests/fixtures/offscreen-scales.json QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic ./build/cere-ui-check`: **82 passed, 1 failed, 9 skipped**. The failure is `reviewTransitions`, as at baseline; the 9 skips need a live compositor or Spotify. Seventeen slots are new: behaviorPresetsAndPreview, sendKeysRecipesAndContext, projectTaskLifecycle, memoryCurationPinsAndTimeline, behaviorStylePostureAndChecks, collectionsExportAndPackages, localModelsTranscriptionAndNotes, requiredChecksAndOutputSections, searchSourcesForOneMessage, compatibleEndpointConversation, toolServerSettings, customToolEditor, audioDeviceChoosers, voiceCommandReview, responsivenessMeasurements, backgroundWorkIndicator and scheduleReviewedRecipe. Each new screen was captured and inspected.
+- Request equivalence (A01): for a fixed Ollama turn with personality, memory, telemetry, web search and a tool round, the request payloads are byte-identical to those of the untouched `HEAD` tree captured on the same date, so turns that choose none of the new features send exactly what they sent before.
+- Retrieval baselines: `node benchmarks/memory/nl-baseline.ts` and `node benchmarks/memory/document-baseline.ts`. Their figures, and the floors their tests pin, are in `docs/memory/evaluation.md`.
+
+Existing tests changed deliberately: the provider counts in `apiProviderSetup` and `ollamaConversation` include the compatible endpoint, with 8 providers and 7 handoff targets. The shared API adapter tests now also run against the compatible endpoint. The Review posture's expected ceiling now includes extension tools. `markdownMessages` injected its fixture row before the reload that follows selecting a conversation had finished, so the reload could replace the row mid-test. One full run crashed at `tests/ui.cpp:1078` because of this; the slot now waits for both resets, as `avatarThemeSwitching` already did. On this host `ananicy-cpp` renices every `node` process to 16, so the background-priority test compares against the test process's own priority.
+
+Not established: native file dialogs cannot be driven offscreen (Save as…, Import a package…, Add folder…). Their broker side is covered by tests and the dialogs' callers by RPC-level UI checks. The microphone was not recorded, since a test would capture the host's microphone; dictation is covered with a recorder stand-in in the broker tests. Nothing was installed, and the running broker and interface were not restarted.
+
 ## Documentation screenshots — October 15, 2026
 
 `screenshots/` holds 41 PNG images (5.7 MiB) of the real interface: desktop scenes, the compact panel, the workspace, dialogs, every Settings category, the five avatars, their themes and the six gestures. `screenshots/README.md` is the gallery. The README, `docs/tts.md`, `docs/workspace-telemetry.md`, `docs/mobile/SETUP.md` and `docs/memory/operations.md` embed the relevant ones.

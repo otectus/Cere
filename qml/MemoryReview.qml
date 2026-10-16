@@ -44,6 +44,19 @@ CDialog {
         }
     }
     Repeater { model:review.listing.olderNotes||[];CButton { required property var modelData;text:"Review older note · "+modelData.text.slice(0,80);onClicked:{allMemory.sessionId=review.sessionId;allMemory.open()} } }
+    CText { text:"Kept memories · "+(review.listing.totalPins||0);font.bold:true;visible:(review.listing.pins||[]).length>0 }
+    CText { visible:(review.listing.pins||[]).length>0;text:"Pinned records are kept from retention expiry. A pin is not a confirmation that the record is true.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+    Repeater {
+        model:review.listing.pins||[]
+        RowLayout {
+            required property var modelData
+            required property int index
+            Layout.fillWidth:true
+            CText { Layout.fillWidth:true;text:modelData.text+(modelData.note?" · "+modelData.note:"");wrapMode:Text.Wrap;font.pixelSize:Theme.secondary }
+            CButton { text:"Inspect";quiet:true;onClicked:{inspector.sessionId=review.sessionId;inspector.open();inspector.openRecord(modelData.target_id)} }
+            CButton { objectName:"reviewUnpin_"+index;text:"Unpin";enabled:review.request<0;onClicked:review.call("memory.graph",{method:"unpin",params:{pin_id:modelData.id}}) }
+        }
+    }
     RowLayout {
         CButton { text:"Previous";enabled:review.offset>0;onClicked:{review.offset=Math.max(0,review.offset-25);review.reload()} }
         CText { text:"Memory records "+(review.offset+1)+"–"+(review.offset+25);color:Theme.muted }

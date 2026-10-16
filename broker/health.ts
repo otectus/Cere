@@ -18,6 +18,8 @@ export function healthReport(core:Core) {
     speech:{enabled:core.settings.speechEnabled,state:speech.state,backend:speech.backend,problem:speech.error?'speech':null},
     sessions:{count:core.store.sessionCount(),active:core.store.sessions().filter(s=>['starting','working','waiting','stopping'].includes(s.status)).length},
     permissions:{paused:core.settings.paused,activePowerSessions:core.power.snapshot().filter(p=>p.state==='active').length},
+    // M16: aggregate durations only, and only while the user measures them.
+    responsiveness:core.spans.summary(),
     privacy:'Excludes conversation text, drafts, project paths, saved commands, credentials, device identities and raw provider errors.'};
 }
 export class Diagnostics {

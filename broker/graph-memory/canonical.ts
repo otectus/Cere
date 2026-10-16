@@ -22,9 +22,13 @@ import {
   safeText,
   fail,
   strict,
+  entityTypes,
+  predicates,
+  ONTOLOGY_VERSION,
   type Claim,
   type Policy,
 } from "./contracts.ts";
+import { factTimeline } from "./timeline.ts";
 import { validateClaim, normalized, stableJSON, span } from "./ontology.ts";
 import { overlaps, remainder, eligibleTime } from "./temporal.ts";
 import { rrf, relationalRank, ftsQuery, lexicalFloor, informativeTerms, hasInformativeTerm } from "./ranking.ts";
@@ -540,12 +544,13 @@ export class Canonical {
   ) {
     const source = this.source(p.scope_id, role, external),
       id = uuid(),
+      // A document chunk (M06) lives as long as its collection keeps the file: no time-based expiry.
       payload = this.payload(
         p.scope_id,
         text,
-        p.kind === "saved" ? "evidence" : "raw_turn",
+        p.kind === "saved" ? "evidence" : p.kind === "document" ? "document" : "raw_turn",
         p.sensitivity || "cloud_allowed",
-        p.kind === "saved" ? null : time + this.policy.raw_turn_days * 864e8,
+        p.kind === "saved" || p.kind === "document" ? null : time + this.policy.raw_turn_days * 864e8,
       ),
       seq =
         p.source_sequence ??
@@ -565,7 +570,8 @@ export class Canonical {
       payload_id: payload,
       role,
       storage_mode: "durable",
-      extraction_state: role === "assistant" ? "derived" : "pending",
+      // Document chunks are reference text for retrieval; no model extracts claims from them.
+      extraction_state: role === "assistant" ? "derived" : p.kind === "document" ? "skipped" : "pending",
       revision: r,
     });
     this.lineage(payload, id, "content");
@@ -604,7 +610,7 @@ export class Canonical {
       prompt_version: "cere-extract-1",
       parser_version: "1",
       schema_version: 1,
-      status: role === "assistant" ? "derived" : "pending",
+      status: role === "assistant" ? "derived" : p.kind === "document" ? "skipped" : "pending",
       policy_epoch: this.epoch("policy"),
       erasure_epoch: this.epoch("erasure"),
       revision: r,
@@ -1134,6 +1140,13 @@ export class Canonical {
       for (const old of current)
         if (old.known_to_revision === null && operation !== "assert")
           this.lineage(version, old.version_id, "supersedes");
+      // A retention pin follows its fact to the corrected version: only the members this change
+      // actually corrected, so other values of a multivalued slot keep their own pins.
+      if (operation !== "assert" && corrected.length) {
+        const logical = this.one("SELECT logical_id FROM assertion_versions WHERE version_id=?", version).logical_id;
+        for (const old of corrected) if (old.logical_id !== logical)
+          this.run("UPDATE retention_pins SET target_id=? WHERE target_kind='assertion' AND target_id=? AND released_revision IS NULL AND NOT EXISTS (SELECT 1 FROM retention_pins r WHERE r.target_id=? AND r.released_revision IS NULL)", logical, old.logical_id, logical);
+      }
       this.run(
         "UPDATE fact_slots SET aggregate_revision=? WHERE id=?",
         r,
@@ -1513,12 +1526,14 @@ export class Canonical {
       normalized(text),
       text,
     );
+    // Entities the user decided are the same are recalled together (A05 identity decisions).
+    const identity = this.identityClasses();
     const anchors = [
       ...new Set([
         ...aliases.map((a) => a.id),
         ...(Array.isArray(p.entity_ids) ? p.entity_ids : []),
         ...(p.task_id ? [p.task_id] : []),
-      ]),
+      ].flatMap((id: string) => identity.members(id))),
     ].slice(0, 40);
     for (const anchor of anchors) {
       // Anchors use the same authorized closure as lexical and semantic recall.
@@ -1546,7 +1561,7 @@ export class Canonical {
         : -Infinity;
     if (fts)
       for (const a of this.all(
-        "SELECT a.id,bm25(memory_fts) AS rank FROM memory_fts f JOIN retrieval_documents d ON d.rowid=f.rowid JOIN artifacts a ON a.id=d.artifact_id WHERE memory_fts MATCH ? AND a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND a.known_from_revision<=? AND (a.known_to_revision IS NULL OR ?<a.known_to_revision) AND (?!='cloud' OR a.sensitivity!='local_only') ORDER BY rank,a.id LIMIT 240",
+        "SELECT a.id,bm25(memory_fts) AS rank FROM memory_fts f JOIN retrieval_documents d ON d.rowid=f.rowid JOIN artifacts a ON a.id=d.artifact_id WHERE memory_fts MATCH ? AND a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND a.known_from_revision<=? AND (a.known_to_revision IS NULL OR ?<a.known_to_revision) AND (?!='cloud' OR a.sensitivity!='local_only') ORDER BY rank,a.known_from_revision DESC,a.id LIMIT 240",
         fts,
         lookupScopes,
         k,
@@ -1601,7 +1616,8 @@ export class Canonical {
       depth++
     ) {
       const next: string[] = [];
-      for (const entity of [...new Set(frontier)]) {
+      // A merged entity's relationships are explored through every one of its members.
+      for (const entity of [...new Set([...new Set(frontier)].flatMap((id) => identity.members(id)))]) {
         if (
           nodes.size >= this.policy.max_nodes ||
           edges.length >= this.policy.max_edges
@@ -1625,7 +1641,8 @@ export class Canonical {
             v.subject_id === entity ? v.object_entity_id : v.subject_id;
           if (!nodes.has(other)) {
             if (nodes.size >= this.policy.max_nodes) break;
-            nodes.add(other);
+            // A merged entity is one node: its other members are not expanded again separately.
+            for (const member of identity.members(other)) nodes.add(member);
             next.push(other);
           }
           graph.push(a.id);
@@ -1669,7 +1686,9 @@ export class Canonical {
     }
     const ranks = rrf([exact, lexical, semantic, graphRank,projected]);
     if(world===undefined)for(const rank of ranks){const artifact=cache.get(rank[0])!;if(['conversation','episode','topic'].includes(artifact.kind)){const created=this.one('SELECT transaction_us FROM commits WHERE revision=?',artifact.content_revision).transaction_us;rank[1]*=2**(-Math.max(0,now()-created)/(864e8*this.policy.half_life_days));}}
-    ranks.sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
+    // Equal scores go to the more recently learned record (a correction outranks what it corrects),
+    // then to the ID, so the order never depends on how random IDs happen to sort.
+    ranks.sort((a,b)=>b[1]-a[1]||(cache.get(b[0])!.content_revision-cache.get(a[0])!.content_revision)||a[0].localeCompare(b[0]));
     const ordered = [...new Set([...pinned, ...ranks.map((r) => r[0])])].slice(
       0,
       80,
@@ -2004,6 +2023,96 @@ export class Canonical {
         : [],
       dependent_count: ids.length,
       projections: this.snapshot().projections,
+      retention_pin: this.activePin(record.version_id ? record.logical_id : p.id),
+    };
+  }
+  /** The active retention pin on a passage or a logical assertion, if any. */
+  activePin(target: string) {
+    const pin = this.one("SELECT id,target_kind,target_id,note,created_revision,created_us FROM retention_pins WHERE target_id=? AND released_revision IS NULL", target);
+    return pin.id ? pin : null;
+  }
+  /**
+   * Pins a live passage or assertion against retention expiry. The pin records the user's decision; it
+   * needs live supporting evidence, and it changes no status, confidence or ranking. Pinned records stay
+   * correctable and forgettable; forgetting removes the pin with them.
+   */
+  pin(p: Row) {
+    strict(p, ["scope_id", "id", "note"]);
+    this.scope(p.scope_id);
+    const note = p.note === undefined ? "" : safeText(p.note, 500);
+    return this.tx((r, time) => {
+      let kind: "observation" | "assertion", target: string, evidence: number;
+      const version = this.one("SELECT * FROM assertion_versions WHERE (version_id=? OR logical_id=?) AND scope_id=? AND erased=0 ORDER BY known_from_revision DESC LIMIT 1", p.id, p.id, p.scope_id);
+      if (version.version_id) {
+        kind = "assertion"; target = version.logical_id;
+        evidence = this.one("SELECT COUNT(*) AS n FROM assertion_evidence ae JOIN evidence e ON e.id=ae.evidence_id WHERE ae.version_id=? AND ae.relation='support' AND e.erased=0", version.version_id).n;
+      } else {
+        const observation = this.one("SELECT o.id FROM observations o JOIN payloads q ON q.id=o.payload_id WHERE o.id=? AND o.scope_id=? AND o.erased=0 AND q.erased=0", p.id, p.scope_id);
+        if (!observation.id) fail("NOT_FOUND", "Only a live passage or assertion in this project can be pinned");
+        kind = "observation"; target = observation.id; evidence = 1;
+      }
+      if (!evidence) fail("INVALID_ARGUMENT", "A pin needs live supporting evidence");
+      const existing = this.activePin(target);
+      if (existing) return { ...existing, existing: true };
+      const id = uuid();
+      this.insert("retention_pins", { id, scope_id: p.scope_id, target_kind: kind, target_id: target, note, created_revision: r, created_us: time, released_revision: null });
+      return { id, target_kind: kind, target_id: target, note, created_revision: r, created_us: time };
+    });
+  }
+  unpin(p: Row) {
+    strict(p, ["scope_id", "pin_id"]);
+    this.scope(p.scope_id);
+    return this.tx((r) => {
+      const pin = this.one("SELECT id FROM retention_pins WHERE id=? AND scope_id=? AND released_revision IS NULL", p.pin_id, p.scope_id);
+      if (!pin.id) fail("NOT_FOUND", "This pin is no longer active");
+      this.run("UPDATE retention_pins SET released_revision=? WHERE id=?", r, pin.id);
+      return { id: pin.id, released_revision: r };
+    });
+  }
+  /** Active pins in this project, newest first, with a short excerpt of what each one keeps. */
+  pins(p: Row) {
+    strict(p, ["scope_id", "offset"]);
+    this.scope(p.scope_id);
+    const offset = Number.isSafeInteger(p.offset) && p.offset > 0 ? p.offset : 0;
+    const rows = this.all("SELECT id,target_kind,target_id,note,created_revision,created_us FROM retention_pins WHERE scope_id=? AND released_revision IS NULL ORDER BY created_revision DESC,id LIMIT 50 OFFSET ?", p.scope_id, offset);
+    return {
+      total: this.one("SELECT COUNT(*) AS n FROM retention_pins WHERE scope_id=? AND released_revision IS NULL", p.scope_id).n,
+      rows: rows.map(pin => {
+        const text = pin.target_kind === "assertion"
+          ? this.assertionText(this.one("SELECT * FROM assertion_versions WHERE logical_id=? AND erased=0 ORDER BY known_from_revision DESC LIMIT 1", pin.target_id))
+          : this.one("SELECT q.body FROM observations o JOIN payloads q ON q.id=o.payload_id WHERE o.id=? AND q.erased=0", pin.target_id).body || "";
+        return { ...pin, text: String(text).slice(0, 300) };
+      }),
+    };
+  }
+  /** A fact's versions as a source-linked timeline with per-version changes (M05). */
+  timeline(p: Row) {
+    strict(p, ["scope_id", "id"]);
+    const inspected = this.inspect({ scope_id: p.scope_id, id: p.id });
+    if (!inspected.record.version_id) fail("INVALID_ARGUMENT", "Timelines describe assertions; inspect a passage instead");
+    return { record_id: inspected.record.version_id, ...factTimeline(inspected.history, !!inspected.retention_pin) };
+  }
+  /**
+   * The accepted, current relationships around one entity, at most `limit` edges and one hop: a
+   * bounded text view of where a fact sits, never a whole-graph export.
+   */
+  neighborhood(p: Row) {
+    strict(p, ["scope_id", "id", "limit"]);
+    const scopes = this.effectiveScopes(p.scope_id), limit = Math.max(1, Math.min(24, Number.isSafeInteger(p.limit) ? p.limit : 12));
+    const version = this.one("SELECT subject_id FROM assertion_versions WHERE (version_id=? OR logical_id=?) AND scope_id IN (SELECT value FROM json_each(?)) AND erased=0 LIMIT 1", p.id, p.id, JSON.stringify(scopes));
+    const entity = this.one("SELECT id,type,name FROM entities WHERE id=? AND scope_id IN (SELECT value FROM json_each(?)) AND erased=0", version.subject_id || p.id, JSON.stringify(scopes));
+    if (!entity.id) fail("NOT_FOUND", "No entity for this record in this project");
+    const k = this.knowledge({});
+    const edges = this.all("SELECT v.version_id,v.logical_id,v.subject_id,v.predicate,v.object_entity_id,v.value_json,v.polarity,v.status FROM assertion_versions v WHERE v.scope_id IN (SELECT value FROM json_each(?)) AND (v.subject_id=? OR v.object_entity_id=?) AND v.erased=0 AND v.status='accepted' AND v.modality='actual' AND v.known_from_revision<=? AND (v.known_to_revision IS NULL OR ?<v.known_to_revision) ORDER BY v.predicate,v.version_id LIMIT ?",
+      JSON.stringify(scopes), entity.id, entity.id, k, k, limit + 1);
+    const name = (id: string | null) => id ? this.one("SELECT id,type,name FROM entities WHERE id=? AND erased=0", id) : null;
+    return {
+      entity, truncated: edges.length > limit,
+      edges: edges.slice(0, limit).map(v => {
+        const outgoing = v.subject_id === entity.id;
+        return { assertion_id: v.version_id, logical_id: v.logical_id, predicate: v.predicate, direction: outgoing ? "out" : "in", polarity: v.polarity,
+          other: outgoing ? (v.object_entity_id ? name(v.object_entity_id) : null) : name(v.subject_id), value: v.value_json === null ? null : JSON.parse(v.value_json) };
+      }),
     };
   }
   /**
@@ -2068,6 +2177,11 @@ export class Canonical {
    * scrubbing, suppression and registry replay.
    */
   resolveForget(scope: string, p: Row): { selector: Row; roots: string[] } {
+    // Every chunk of one document source (M06), as one erasure intent.
+    if (p.document_source !== undefined) {
+      const source = safeText(p.document_source, 4096);
+      return { selector: { kind: "document_source", id: source }, roots: this.documentSourceRoots(scope, source) };
+    }
     if (!p.id) {
       const from = p.from_us ?? 0,
         to = p.to_us ?? Number.MAX_SAFE_INTEGER;
@@ -2137,6 +2251,9 @@ export class Canonical {
     roots.push(id);
     return { selector: { kind, id }, roots };
   }
+  documentSourceRoots(scope: string, source: string) {
+    return this.all("SELECT o.id FROM observations o JOIN sources s ON s.id=o.source_id WHERE s.scope_id=? AND s.kind='document' AND s.external_identity=? AND o.erased=0", scope, source).map((r) => r.id);
+  }
   /** Every source occurrence and artifact of a saved note, including all edits. */
   noteSources(scope: string, note: string) {
     const roots = new Set<string>([note]);
@@ -2171,14 +2288,14 @@ export class Canonical {
     );
   }
   forgetPreview(p: Row) {
-    strict(p, ["scope_id", "id", "from_us", "to_us"]);
+    strict(p, ["scope_id", "id", "from_us", "to_us", "document_source"]);
     this.scope(p.scope_id);
     // Erasing right after previewing (the usual order) reuses the preview while nothing has committed.
-    const key = JSON.stringify([p.scope_id, p.id ?? null, p.from_us ?? null, p.to_us ?? null]),
+    const key = JSON.stringify([p.scope_id, p.id ?? null, p.from_us ?? null, p.to_us ?? null, p.document_source ?? null]),
       cached = this.previews.get(key);
     if (cached && cached.revision === this.revision) return cached.preview;
     const { selector, roots } = this.resolveForget(p.scope_id, p);
-    const ids = this.closure(roots, !!p.id);
+    const ids = this.closure(roots, !!p.id || p.document_source !== undefined);
     const preview = {
       scope_id: p.scope_id,
       selector,
@@ -2401,6 +2518,9 @@ export class Canonical {
         this.run('UPDATE fact_slots SET predicate=?,qualifiers=?,aggregate_revision=? WHERE id=?',version.predicate,version.qualifiers,r,version.slot_id);
         this.newVersion(version,evidence,time,version.logical_id);
       }
+      // A pin goes with its target, note included: erased passages, and assertions with no live version left.
+      this.run("DELETE FROM retention_pins WHERE target_kind='observation' AND target_id IN (SELECT value FROM json_each(?))", JSON.stringify(intent.targets));
+      this.run("DELETE FROM retention_pins WHERE target_kind='assertion' AND target_id IN (SELECT logical_id FROM assertion_versions WHERE version_id IN (SELECT value FROM json_each(?))) AND NOT EXISTS (SELECT 1 FROM assertion_versions v WHERE v.logical_id=retention_pins.target_id AND v.erased=0)", JSON.stringify(intent.targets));
       this.run("DELETE FROM read_tokens WHERE scope_id=?", intent.scope_id);
       // The epoch advance and the rescheduling of unrelated queued extraction commit together.
       this.reconcileExtraction();
@@ -2470,6 +2590,7 @@ export class Canonical {
     const selector = intent.selector;
     if (!selector?.id || !this.one("SELECT id FROM scopes WHERE id=?", intent.scope_id).id) return [];
     if (selector.kind === "note") return this.noteSources(intent.scope_id, selector.id);
+    if (selector.kind === "document_source") return this.documentSourceRoots(intent.scope_id, selector.id);
     if (selector.kind === "logical_assertion") {
       const roots: string[] = [];
       for (const v of this.all("SELECT version_id FROM assertion_versions WHERE logical_id=? AND scope_id=?", selector.id, intent.scope_id)) {
@@ -3327,7 +3448,7 @@ export class Canonical {
     // its payload is erased, and must not be selected again. Deterministic expiry order
     // lets a bounded batch drain without starving later sources.
     const expired = this.all(
-      "SELECT o.scope_id,o.id FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL AND p.expires_us<? ORDER BY p.expires_us,o.id LIMIT 50",
+      "SELECT o.scope_id,o.id FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.erased=0 AND p.erased=0 AND p.expires_us IS NOT NULL AND p.expires_us<? AND NOT EXISTS (SELECT 1 FROM retention_pins r WHERE r.target_id=o.id AND r.released_revision IS NULL) ORDER BY p.expires_us,o.id LIMIT 50",
       now(),
     );
     let count = 0;
@@ -3346,7 +3467,7 @@ export class Canonical {
       this.forget({ scope_id: row.scope_id, id: row.id }, "expiration");
       count++;
     }
-    for(const candidate of this.all("SELECT version_id,scope_id FROM assertion_versions WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<? ORDER BY expires_at_us,version_id LIMIT 50",now())){
+    for(const candidate of this.all("SELECT version_id,scope_id FROM assertion_versions v WHERE erased=0 AND expires_at_us IS NOT NULL AND expires_at_us<? AND NOT EXISTS (SELECT 1 FROM retention_pins r WHERE r.target_id=v.logical_id AND r.released_revision IS NULL) ORDER BY expires_at_us,version_id LIMIT 50",now())){
       this.checkpoint();
       const intent={id:uuid(),scope_id:candidate.scope_id,epoch:this.epoch('erasure')+1,selector:{kind:'candidate_expiration',id:candidate.version_id},targets:this.descendants([candidate.version_id])};
       this.appendRegistry(intent);this.suppress(intent,'expiration');count++;
@@ -3507,8 +3628,8 @@ export class Canonical {
           r,
           link.id,
         );
-        // Decisions are history only: entity, anchor and slot resolution do not consume them yet.
-        return { id: link.id, reverted_revision: r, applied: false, recorded_only: true };
+        // Reverting a "same" decision splits the entities again in recall; reverting "not same" lifts its block.
+        return { id: link.id, reverted_revision: r, applied: link.decision !== "possible", recorded_only: link.decision === "possible" };
       }
       const left = this.one(
           "SELECT * FROM entities WHERE id=? AND scope_id=? AND erased=0",
@@ -3544,8 +3665,31 @@ export class Canonical {
       });
       this.effect(left.id);
       this.effect(right.id);
-      return { id, revision: r, decision: p.decision, applied: false, recorded_only: true };
+      // "same" and "not same" change recall at once; "possible" is a note for review and changes nothing.
+      return { id, revision: r, decision: p.decision, applied: p.decision !== "possible", recorded_only: p.decision === "possible",
+        members: this.identityClasses().members(left.id) };
     });
+  }
+  /**
+   * The entities recall treats as one: those joined by live "same" decisions, in the order they were
+   * made. A live "not same" decision is a hard constraint: no chain of "same" links may join that pair,
+   * so the rule prefers keeping entities apart over a false merge. Reverting a link undoes its effect.
+   * Nothing is rewritten: assertions keep their own subjects, evidence and lineage.
+   */
+  identityClasses() {
+    const links = this.all("SELECT i.left_id,i.right_id,i.decision FROM identity_links i JOIN entities l ON l.id=i.left_id JOIN entities r ON r.id=i.right_id WHERE i.reverted_revision IS NULL AND i.decision IN ('same','not_same') AND l.erased=0 AND r.erased=0 ORDER BY i.revision,i.id");
+    const parent = new Map<string, string>();
+    const find = (id: string): string => { let root = id; while (parent.has(root)) root = parent.get(root)!; return root; };
+    const apart = links.filter((link) => link.decision === "not_same");
+    for (const link of links) {
+      if (link.decision !== "same") continue;
+      const a = find(link.left_id), b = find(link.right_id);
+      if (a === b) continue;
+      if (apart.some((pair) => { const x = find(pair.left_id), y = find(pair.right_id); return (x === a && y === b) || (x === b && y === a); })) continue;
+      parent.set(a, b);
+    }
+    const ids = [...new Set(links.flatMap((link) => [link.left_id, link.right_id]))];
+    return { members: (id: string) => { if (!parent.size) return [id]; const root = find(id); const members = ids.filter((other) => find(other) === root); return members.length ? [id, ...members.filter((other) => other !== id)].slice(0, 16) : [id]; } };
   }
   async call(method: string, p: Row = {}): Promise<any> {
     // Remote inspection/erasure shares the canonical semantics, with a bounded
@@ -3579,6 +3723,18 @@ export class Canonical {
         return this.remember(p, "resolve");
       case "identity":
         return this.identity(p);
+      case "pin":
+        return this.pin(p);
+      case "unpin":
+        return this.unpin(p);
+      case "pins":
+        return this.pins(p);
+      case "timeline":
+        return this.timeline(p);
+      case "neighborhood":
+        return this.neighborhood(p);
+      case "ontology":
+        return { version: ONTOLOGY_VERSION, entity_types: entityTypes, predicates, polarities: ["positive", "negative"], modalities: ["actual", "planned", "hypothetical", "reported", "inferred"], valid_modes: ["bounded", "known_current", "atemporal", "unknown"] };
       case "retrieve":
         return this.retrieve(p);
       case "graph_pointers":
@@ -3631,6 +3787,11 @@ export class Canonical {
         return this.pendingArtifacts(p);
       case "embedding_spaces":
         return this.meta("embedding_spaces", []);
+      case "embedding_impact":
+        return {
+          artifacts: this.one("SELECT COUNT(*) AS n FROM artifacts a JOIN retrieval_documents d ON d.artifact_id=a.id WHERE a.invalidated=0").n,
+          spaces: this.all("SELECT fingerprint,COUNT(*) AS records FROM embedding_records GROUP BY fingerprint"),
+        };
       case "embedding_space": {
         const spaces = this.meta<Row[]>("embedding_spaces", []);
         if (!spaces.some((s) => s.fingerprint === p.fingerprint)) {

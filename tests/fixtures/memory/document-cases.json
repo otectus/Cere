@@ -1,0 +1,54 @@
+{
+  "documents": [
+    {
+      "path": "guide/install.md",
+      "text": "# Installing the heron service\n\nRun `make bootstrap` once on a new machine. It installs the pinned toolchain and creates the local configuration in `config/local.toml`.\n\n## Requirements\n\nThe service needs PostgreSQL 16 and Redis 7. Older PostgreSQL releases are not supported because the migrations use generated columns.\n\n## First start\n\nStart the stack with `make up`. The web console listens on port 8420 and the API on port 8421."
+    },
+    {
+      "path": "guide/release.md",
+      "text": "# Release checklist\n\nReleases are cut from the `main` branch every second Thursday.\n\n## Before tagging\n\nUpdate the changelog, run the full integration suite and ask the on-call engineer to approve the release ticket.\n\n## Rollback\n\nIf error rates double within an hour of a deploy, roll back with `make rollback VERSION=<previous>` and open an incident."
+    },
+    {
+      "path": "decisions/storage.md",
+      "text": "# Decision: object storage\n\nWe store uploaded attachments in an S3-compatible bucket rather than on the database server. The bucket is called `heron-uploads` and objects expire after 400 days.\n\nLarge files over 2 GB are rejected at the upload endpoint because the proxy times out on longer transfers."
+    },
+    {
+      "path": "decisions/auth.md",
+      "text": "# Decision: sign-in\n\nStaff sign in through the company single sign-on provider. Local passwords were removed in version 3.2.\n\nService accounts use short-lived tokens that are rotated every twelve hours by the token broker."
+    },
+    {
+      "path": "team/oncall.txt",
+      "text": "On-call rotation\n\nThe on-call engineer changes every Monday at 10:00. Pages go to the #heron-oncall channel first and escalate to the team lead after fifteen minutes without acknowledgement.\n\nThe current escalation contact for database incidents is the platform team."
+    },
+    {
+      "path": "notes/old-plan.md",
+      "text": "# Retired plan: mobile client\n\nWe once planned a native tablet client called Kestrel with offline sync. The project was cancelled after the prototype review."
+    }
+  ],
+  "questions": [
+    { "id": "bootstrap", "query": "What command sets up a new machine for heron?", "source": "guide/install.md" },
+    { "id": "postgres", "query": "Which PostgreSQL version does the service need?", "source": "guide/install.md" },
+    { "id": "ports", "query": "What port does the web console listen on?", "source": "guide/install.md" },
+    { "id": "cadence", "query": "How often are releases cut from main?", "source": "guide/release.md" },
+    { "id": "rollback", "query": "How do I roll back a bad deploy?", "source": "guide/release.md" },
+    { "id": "approval", "query": "Who approves the release ticket?", "source": "guide/release.md" },
+    { "id": "bucket", "query": "Where are uploaded attachments stored?", "source": "decisions/storage.md" },
+    { "id": "expiry", "query": "After how many days do uploaded objects expire?", "source": "decisions/storage.md" },
+    { "id": "size", "query": "Why are uploads over 2 GB rejected?", "source": "decisions/storage.md" },
+    { "id": "sso", "query": "How do staff sign in now?", "source": "decisions/auth.md" },
+    { "id": "rotation", "query": "How often are service account tokens rotated?", "source": "decisions/auth.md" },
+    { "id": "oncall", "query": "When does the on-call engineer change?", "source": "team/oncall.txt" },
+    { "id": "escalate", "query": "When are pages escalated to the team lead?", "source": "team/oncall.txt" }
+  ],
+  "abstain": [
+    "What is the office wifi password?",
+    "Which font does the marketing website use?",
+    "Who catered the summer party?"
+  ],
+  "erase": { "path": "notes/old-plan.md", "queries": ["What was the Kestrel tablet client?", "Was there a mobile client with offline sync?"] },
+  "projectMemory": [
+    "The heron launch party is on Friday at the river pavilion.",
+    "Use the staging bucket heron-uploads-staging for experiments."
+  ],
+  "leakQueries": ["When is the heron launch party?", "Which bucket is used for experiments?"]
+}

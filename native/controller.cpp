@@ -1033,6 +1033,15 @@ QVariantMap Controller::clipboardContent(){
 QString Controller::chooseFolder(){return QFileDialog::getExistingDirectory(nullptr,"Choose a trusted project folder",QDir::homePath());}
 QString Controller::chooseImage(){return QFileDialog::getOpenFileName(nullptr,"Attach an image",QDir::homePath(),"Images (*.png *.jpg *.jpeg *.webp)");}
 QString Controller::chooseFile(){return QFileDialog::getOpenFileName(nullptr,"Open a local file",QDir::homePath());}
+QString Controller::saveTextAs(const QString &suggestedName,const QString &text){
+    // The dialog confirms overwriting; QSaveFile replaces the file only once the whole text is written.
+    const auto filter=suggestedName.endsWith(".json")?QStringLiteral("Cere package (*.json)"):suggestedName.endsWith(".md")?QStringLiteral("Markdown (*.md);;Text (*.txt)"):QStringLiteral("Text (*.txt);;Markdown (*.md)");
+    const auto path=QFileDialog::getSaveFileName(nullptr,"Save a copy",QDir::home().filePath(suggestedName),filter);
+    if(path.isEmpty())return {};
+    QSaveFile file(path);
+    if(!file.open(QIODevice::WriteOnly)||file.write(text.toUtf8())<0||!file.commit()){notify("Could not save "+QFileInfo(path).fileName()+": "+file.errorString());return {};}
+    return path;
+}
 void Controller::notify(const QString &text){m_toast=text;emit toastChanged();m_toastTimer.start(8000);}
 void Controller::quit(bool stopTasks){emit flushDrafts();if(m_overlay){rpc("ui.quit",{{"stopTasks",stopTasks}});return;}if(stopTasks)for(auto s:m_state.value("sessions").toList())rpc("session.stop",{{"id",s.toMap().value("id")}});m_socket.flush();QTimer::singleShot(150,qApp,&QCoreApplication::quit);}
 void Controller::refreshMotion(){

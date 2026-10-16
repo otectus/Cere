@@ -24,6 +24,7 @@ test('restore keeps this machine’s keys, phones, voices and preferences while 
   remote.configure({enabled:true,addresses:['127.0.0.1'],port:8443,name:'Cere'});
   core.store.set('indextts.voices',[{id:'voice-1',name:'Kept voice',version:'2.5'}]);
   core.store.set('transcriptEpoch','old-epoch');
+  const style=await core.rpc('presets.save',{label:'Calm',text:'Be calm.',expectedRevision:'0'});
   const session=await core.create({provider:'codex',cwd:dir,trusted:true,title:'Restored conversation'});core.draft(session.id,'Draft from the backup');
   core.store.set('settings',{...core.store.get('settings',{}),personality:'Keep this personality',ollama:{host:'http://127.0.0.1:9',model:''},speechEnabled:true,scale:1,
     grants:[{category:'files',cwd:dir,expires:Date.now()+100000}]});
@@ -32,6 +33,7 @@ test('restore keeps this machine’s keys, phones, voices and preferences while 
   for(const name of ['profile.json','manifest.json'])assert.doesNotMatch(await readFile(join(backup.directory,name),'utf8'),/sk-test-machine-key|Keep this personality|Kept phone/);
   // Changes made after the backup are this machine's current setup and must survive.
   core.store.set('settings',{...core.store.get('settings',{}),personality:'Keep this personality',scale:1.5});
+  await core.rpc('presets.save',{label:'Added later',text:'Be brief.',expectedRevision:core.presets.catalog().revision});
   const review=await core.rpc('recovery.preview',{directory:backup.directory,includeContent:true});
   assert.match(review.kept,/API keys, paired phones, voice profiles, personality/);assert.match(review.replaced,/Conversations, drafts, notes/);
   const activation=await core.rpc('recovery.activate',{id:review.id,digest:review.digest});previous=activation.previous;await core.close();
@@ -44,6 +46,8 @@ test('restore keeps this machine’s keys, phones, voices and preferences while 
     assert.equal(settings.scale,1,'display preferences come from the backup');
     assert.equal(settings.paused,true);assert.deepEqual(settings.grants,[]);
     assert.deepEqual(restored.get('indextts.voices',[]),[{id:'voice-1',name:'Kept voice',version:'2.5'}]);
+    // Saved styles are this machine's preferences: the current catalog survives, including later additions.
+    assert.deepEqual(restored.get<any>('behaviorPresets',{items:[]}).items.map((item:any)=>[item.id===style.id?'kept':item.label,item.text]),[['kept','Be calm.'],['Added later','Be brief.']]);
     assert.equal(restored.get('remoteCursorKey',''),cursorKey);assert.equal(restored.get<any>('remoteConfig',{}).enabled,true);
     assert.notEqual(restored.get('transcriptEpoch','old-epoch'),'old-epoch');
     assert.equal(new RemoteStore(restored).device('00000000-0000-4000-8000-000000000001')?.name,'Kept phone');

@@ -32,12 +32,18 @@ var categories = [
         settings: [
             {label: "Assistant name", target: "assistantName", keywords: "rename identity call nickname"},
             {label: "Personality text", target: "personalityText", keywords: "prompt instructions tone style edit"},
-            {label: "Restore default personality", target: "personalityReset", keywords: "reset original"}
+            {label: "Restore default personality", target: "personalityReset", keywords: "reset original"},
+            {label: "Saved styles", target: "behaviorPresetPicker", keywords: "presets profiles named personality load save library"},
+            {label: "Preview personality instructions", target: "personalityPreviewToggle", keywords: "prompt preview exact instructions block"},
+            {label: "Style details and checkpoints", target: "behaviorPresetDetails", keywords: "traits tone formality warmth humor directness posture tool limits formatting checks emoji checkpoint restore"},
+            {label: "Export or import styles", target: "packageExport", keywords: "package share portable json import export"}
         ]},
     {id: "voice", group: "cere", label: "Voice", icon: "microphone",
         blurb: "How replies sound when read aloud, and how voice input hears you.",
         keywords: "speech tts speak read aloud audio sound piper kokoro elevenlabs indextts whisper",
         settings: [
+            {label: "Microphone and speaker", target: "audioInputDevice", keywords: "audio device input output headset headphones speakers microphone mic pipewire alsa sink source"},
+            {label: "Voice commands", target: "voiceCommandsEnabled", keywords: "spoken command navigation hands free accessibility stop speaking read again"},
             {label: "Read replies aloud", target: "speechEnabled", keywords: "speech tts automatic"},
             {label: "Speak replies from", target: "speechProvider_codex", keywords: "providers codex claude ollama antigravity api automatic speech"},
             {label: "Speech provider", target: "ttsProvider", keywords: "local piper kokoro indextts elevenlabs engine"},
@@ -67,14 +73,16 @@ var categories = [
         settings: [
             {label: "Ollama server", target: "ollamaHost", keywords: "url host connect local"},
             {label: "Default Ollama model", target: "ollamaDefaultModel", keywords: "chat refresh"},
+            {label: "Manage local models", target: "manageLocalModels", keywords: "download pull delete load unload vram gpu ollama models disk"},
             {label: "Command-line providers", target: "cliProviders", keywords: "codex claude code antigravity agy installed version status"},
             {label: "OpenAI API key", target: "apiKey_openai", keywords: "gpt"},
             {label: "Claude API key", target: "apiKey_anthropic", keywords: "anthropic"},
-            {label: "Google AI API key", target: "apiKey_google", keywords: "gemini"}
+            {label: "Google AI API key", target: "apiKey_google", keywords: "gemini"},
+            {label: "Compatible endpoint", target: "compatibleBaseUrl", keywords: "openai compatible lm studio llama.cpp vllm localai gateway base url custom server chat completions"}
         ]},
     {id: "knowledge", group: "assistant", label: "Knowledge", icon: "memory",
         blurb: "What your companion can look up and remember across your projects.",
-        keywords: "web search memory recall remember embeddings extraction graph searxng duckduckgo brave mojeek",
+        keywords: "web search memory recall remember embeddings extraction graph searxng duckduckgo brave mojeek documents collections notes vault",
         settings: [
             {label: "Web search", target: "webSearchEnabled", keywords: "internet online lookup sources"},
             {label: "Search provider", target: "webSearchProvider", keywords: "duckduckgo brave mojeek searxng"},
@@ -83,7 +91,9 @@ var categories = [
             {label: "Graph extraction model", target: "extractionModel", keywords: "nemotron cloud extraction"},
             {label: "Share recalled memory with cloud models", target: "cloudMemoryEnabled", keywords: "codex claude cloud privacy"},
             {label: "Show memory citations in replies", target: "showMemoryCitations", keywords: "evidence markers references"},
-            {label: "Manage project memory", target: "manageMemories", keywords: "facts notes forget correct inspector graph"}
+            {label: "Manage project memory", target: "manageMemories", keywords: "facts notes forget correct inspector graph"},
+            {label: "Document collections", target: "manageCollections", keywords: "documents files folders markdown index grounding sources rag library"},
+            {label: "Markdown notes folder", target: "notesVaultEnabled", keywords: "notes vault obsidian markdown backlinks wiki private"}
         ]},
     {id: "assistance", group: "assistant", label: "AI assistance", icon: "shield",
         blurb: "What your companion may do on your desktop, and when permission is required.",
@@ -95,7 +105,9 @@ var categories = [
             {label: "Desktop assistance profile", target: "assistanceProfile", keywords: "manual scoped broad control"},
             {label: "Desktop categories", target: "assistanceCategories", keywords: "apps files windows audio media capture timers scripts providers"},
             {label: "Pause AI actions", target: "pauseActions", keywords: "stop resume tools"},
-            {label: "Standing grants", target: "grantHour", keywords: "one hour project grant revoke broad"}
+            {label: "Standing grants", target: "grantHour", keywords: "one hour project grant revoke broad"},
+            {label: "Tool servers (MCP)", target: "addToolServer", keywords: "mcp model context protocol extensions integrations plugins github tools servers"},
+            {label: "Custom tools", target: "addCustomTool", keywords: "http rest api request webhook command program template custom tool"}
         ]},
     {id: "scripts", group: "assistant", label: "Saved scripts", chip: "Scripts", icon: "terminal",
         blurb: "Commands you trust Cere to run. Each one is reviewed in Desktop before it runs.",
@@ -121,12 +133,13 @@ var categories = [
             {label: "Include stderr from cere-run", target: "telemetryOutput", keywords: "errors output"}
         ]},
     {id: "application", group: "system", label: "Application", icon: "settings",
-        blurb: "Cere’s shortcut, your backups, a health check and the way out.",
-        keywords: "hyprland shortcut keybinding backup restore recovery health diagnostics quit exit",
+        blurb: "Cere’s shortcut, how you send messages, your backups, a health check and the way out.",
+        keywords: "hyprland shortcut keybinding send key enter composer backup restore recovery health diagnostics quit exit",
         settings: [
             {label: "Copy Hyprland shortcut", target: "copyShortcut", keywords: "keybinding super toggle"},
+            {label: "Send messages with", target: "sendKey", keywords: "enter ctrl control keyboard composer newline new line send button submit"},
             {label: "Backup and restore", target: "openBackup", keywords: "recovery export import profile"},
-            {label: "Health and recovery", target: "openHealth", keywords: "diagnostics inspect logs report repair"},
+            {label: "Health and recovery", target: "openHealth", keywords: "diagnostics inspect logs report repair responsiveness slow latency measure timing"},
             {label: "Quit and keep sessions running", target: "quitKeepSessions", keywords: "exit close"},
             {label: "Stop sessions and quit", target: "stopAndQuit", keywords: "exit"}
         ]}

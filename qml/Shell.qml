@@ -224,7 +224,8 @@ Rectangle {
                 StackLayout {
                     anchors.fill:parent;currentIndex:shell.page
                     transform:Translate { x:shell.pageOffset }
-                    Chat { id:conversation;showBackButton:!shell.wide;onBackRequested:shell.showSessions();onCreateRequested:newSession.open() }
+                    Chat { id:conversation;showBackButton:!shell.wide;onBackRequested:shell.showSessions();onCreateRequested:newSession.open()
+                        onNavigateRequested:target=>{if(target==="settings")shell.navigate(3);else if(target==="sessions")shell.showSessions();else if(target==="desktop")shell.navigate(2);else if(target==="new")newSession.open();else shell.navigate(0)} }
                     SessionList { id:sessionsPage;rowActions:shell.wide;onSessionActivated:shell.openConversation();onCreateRequested:newSession.open() }
                     Desktop { id:desktop;onSettingsRequested:category=>{shell.navigate(3);settingsPage.open(category,"")} }
                     Settings { id:settingsPage }
@@ -250,12 +251,49 @@ Rectangle {
                     color:shell.bypassActive?Theme.amber:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
                     Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight
                 }
+                // A04: downloads, indexing and file transcription, listed together while any is running.
+                CButton {
+                    id:backgroundWork;objectName:"backgroundWork";visible:(App.state.jobs||[]).length>0;quiet:true;implicitHeight:30;font.pixelSize:Theme.caption
+                    text:(App.state.jobs||[]).length===1?"1 background task":(App.state.jobs||[]).length+" background tasks"
+                    onClicked:jobsPopup.open()
+                    Popup {
+                        id:jobsPopup;objectName:"backgroundWorkList";y:-height-6;x:Math.min(0,parent.width-width);width:340;padding:12
+                        background:Rectangle { color:Theme.surface;radius:Theme.radiusControl;border.color:Theme.borderStrong }
+                        contentItem:ColumnLayout {
+                            spacing:8
+                            Repeater {
+                                model:App.state.jobs||[]
+                                RowLayout {
+                                    required property var modelData
+                                    required property int index
+                                    Layout.fillWidth:true
+                                    CText { objectName:"backgroundJob_"+index;Layout.fillWidth:true;elide:Text.ElideRight;font.pixelSize:Theme.secondary
+                                        text:modelData.label+(modelData.progress?" · "+Math.round(100*modelData.progress.done/Math.max(1,modelData.progress.total))+"%":"") }
+                                    CButton { objectName:"backgroundJobCancel_"+index;text:"Cancel";danger:true;implicitHeight:28;onClicked:App.rpc("jobs.cancel",{id:modelData.id}) }
+                                }
+                            }
+                            CText { visible:!(App.state.jobs||[]).length;text:"Nothing is running in the background.";color:Theme.muted;font.pixelSize:Theme.secondary }
+                        }
+                    }
+                }
                 Text { text:App.connected?"Connected":"Offline";color:App.connected?Theme.success:Theme.amber;font.family:Theme.font;font.pixelSize:Theme.caption }
                 CButton { objectName:"shellPermissionCenter";visible:shell.wide;text:"Permissions";quiet:true;implicitHeight:30;onClicked:permissionCenter.open() }
             }
         }
     }
     Connections { target:App;function onAttachmentRequested(path){shell.page=0} }
+    // M16: while responsiveness is measured, the window samples how late its own timer fires and sends an
+    // aggregate every thirty seconds. When off, the timer is stopped.
+    property var lagSamples:[]
+    property real lagExpected:0
+    Timer {
+        id:lagTimer;interval:250;repeat:true;running:App.connected&&App.state.settings?.responsiveness===true
+        onRunningChanged:{shell.lagSamples=[];shell.lagExpected=0}
+        onTriggered:{
+            const now=Date.now();if(shell.lagExpected)shell.lagSamples.push(Math.max(0,now-shell.lagExpected));shell.lagExpected=now+interval
+            if(shell.lagSamples.length>=120){const sorted=shell.lagSamples.slice().sort((a,b)=>a-b);App.rpc("diagnostics.uiLag",{p50:sorted[Math.floor(sorted.length*.5)],p90:sorted[Math.floor(sorted.length*.9)],max:sorted[sorted.length-1],samples:sorted.length});shell.lagSamples=[]}
+        }
+    }
     // The compact panel is for a quick ask: opening it puts the keyboard in the composer.
     Connections {
         target:shell.Window.window
@@ -271,6 +309,7 @@ Rectangle {
         onSettingsRequested:(category,target)=>{shell.page=3;Qt.callLater(()=>settingsPage.open(category,target))}
         onPageRequested:target=>shell.navigate(target)
         onDesktopRequested:query=>{shell.page=2;Qt.callLater(()=>desktop.focusSearch())}
+        onWorkflowsRequested:workflows.openRecipes()
     }
     CDialog {
         id: welcome; closePolicy: Popup.NoAutoClose

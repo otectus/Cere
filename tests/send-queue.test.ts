@@ -37,6 +37,19 @@ test('busy Ollama accepts FIFO follow-ups durably and preserves newer drafts wit
   hooks.get(session.id)!.event({type:'complete'});await tick();assert.equal(core.store.session(session.id).queuedCount,0);
   assert.equal(core.store.messages(session.id).filter(m=>m.role==='user'&&m.kind!=='answer').length,3);
 });
+test('a queued follow-up keeps its one-message posture, and an unknown posture is refused before queueing',async t=>{
+  const {core,session,hooks}=await fixture(t);
+  const behaviors:string[]=[];
+  const original=core.resolvedBehavior.bind(core);
+  (core as any).resolvedBehavior=(id:string)=>{const resolved=original(id);behaviors.push(resolved.posture?.id||'none');return resolved;};
+  await core.send({id:session.id,text:'first'});
+  await assert.rejects(core.send({id:session.id,text:'bad',posture:'posture:unknown'}),/posture no longer exists/);
+  await core.send({id:session.id,text:'second',posture:'posture:review'});
+  await core.send({id:session.id,text:'third'});
+  hooks.get(session.id)!.event({type:'complete'});await tick();
+  hooks.get(session.id)!.event({type:'complete'});await tick();
+  assert.deepEqual(behaviors,['none','posture:review','none'],'the posture applies to its own queued message only');
+});
 test('Stop cancels queued sends visibly, retains their text, and never starts another turn',async t=>{
   const {core,session,sent}=await fixture(t);await core.send({id:session.id,text:'first'});await core.send({id:session.id,text:'keep me'});
   await core.stop(session.id);await tick();assert.deepEqual(sent,['first']);assert.equal(core.store.session(session.id).queuedCount,0);

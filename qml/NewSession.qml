@@ -19,6 +19,17 @@ CDialog {
     // a phone) reads them. Trust is never saved: it is confirmed for each conversation's folder.
     readonly property bool general:!projectSettings&&!imported.nativeId
     property bool prefilled:false
+    // M01/A06: a project's style and its convention files are saved after its defaults, each with the
+    // revision the previous step returned.
+    property var styleChoices:[{id:"",label:"The personality in Settings"}]
+    property int stylesRequest:-1
+    property string projectStage:""
+    function nextProjectStep(saved){
+        const profileId=projectStyle.currentIndex>0?styleChoices[projectStyle.currentIndex].id:null
+        if((saved.behaviorProfileId||null)!==profileId){projectStage="style";requestId=App.rpc("projects.setProfile",{cwd:saved.cwd,expectedRevision:saved.revision,profileId:profileId});return true}
+        if(!!saved.conventions!==conventions.checked){projectStage="conventions";requestId=App.rpc("projects.setConventions",{cwd:saved.cwd,expectedRevision:saved.revision,enabled:conventions.checked});return true}
+        return false
+    }
     property var pendingDefaults:null
     closePolicy:requestId>=0?Popup.NoAutoClose:Popup.CloseOnEscape|Popup.CloseOnPressOutside
     function editProject(value) {
@@ -27,9 +38,11 @@ CDialog {
         open()
     }
     property var modelRequests: ({})
-    property string providerName:["codex","claude","ollama","antigravity","openai","anthropic","google"][provider.currentIndex]||"codex"
+    property string providerName:["codex","claude","ollama","antigravity","openai","anthropic","google","compatible"][provider.currentIndex]||"codex"
     property bool isOllama:providerName==="ollama"
-    property bool isApi:["openai","anthropic","google"].includes(providerName)
+    property bool isApi:["openai","anthropic","google","compatible"].includes(providerName)
+    // M13: a compatible endpoint takes tools only when they are declared in Settings › Connections.
+    readonly property bool apiTools:providerName!=="compatible"||App.state.settings?.compatible?.tools===true
     property bool isConversation:isOllama||isApi
     property string savedDefault:App.state.settings?.ollama?.model||""
     property var capability:(App.state.capabilities||{})[providerName]||({})
@@ -67,10 +80,10 @@ CDialog {
         const start=saved||imported
         sessionTitle.text=imported.title||""
         folder.text=imported.cwd||""
-        provider.currentIndex=Math.max(0,["codex","claude","ollama","antigravity","openai","anthropic","google"].indexOf(start.provider||"codex"))
+        provider.currentIndex=Math.max(0,["codex","claude","ollama","antigravity","openai","anthropic","google","compatible"].indexOf(start.provider||"codex"))
         desiredModel=start.model||"";desiredEffort=start.effort||""
         chooseModel(desiredModel);refreshModels()
-        customModel.text="";temporary.checked=(projectSettings||prefilled)&&!!start.temporary;tools.checked=(projectSettings||prefilled)&&!!start.tools;trust.checked=projectSettings&&!!imported.trusted;favorite.checked=!!project.favorite;handoff.checked=false;saveDefaults.checked=false;error="";modelError=""
+        customModel.text="";temporary.checked=(projectSettings||prefilled)&&!!start.temporary;tools.checked=(projectSettings||prefilled)&&!!start.tools;trust.checked=projectSettings&&!!imported.trusted;favorite.checked=!!project.favorite;conventions.checked=projectSettings&&!!project.conventions;projectStage="";if(projectSettings)stylesRequest=App.rpc("presets.list",{});handoff.checked=false;saveDefaults.checked=false;error="";modelError=""
         Qt.callLater(()=>sessionTitle.forceActiveFocus())
     }
     CText { text:popup.projectSettings?"Project settings":popup.imported.nativeId?"Continue a CLI session":"Start a conversation";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
@@ -84,7 +97,7 @@ CDialog {
     CCheckBox { id:favorite;objectName:"projectFavorite";visible:popup.projectSettings;text:"Keep this project at the top" }
     CText { text:"Provider";color:Theme.muted;font.pixelSize:Theme.secondary }
     CComboBox {
-        id:provider;objectName:"sessionProvider";Layout.fillWidth:true;model:["Codex","Claude Code","Ollama","AntiGravity","OpenAI API","Claude API","Google AI API"];enabled:!popup.imported.nativeId;Accessible.name:"Session provider"
+        id:provider;objectName:"sessionProvider";Layout.fillWidth:true;model:["Codex","Claude Code","Ollama","AntiGravity","OpenAI API","Claude API","Google AI API",App.state.settings?.compatible?.label||"Compatible endpoint"];enabled:!popup.imported.nativeId;Accessible.name:"Session provider"
         onActivated:{customModel.text="";tools.checked=false;if(popup.projectSettings)trust.checked=false;popup.desiredModel="";popup.desiredEffort="";popup.chooseModel("");popup.refreshModels()}
     }
     CText { text:!popup.projectSettings&&popup.isConversation&&!tools.checked?"Project folder (optional)":"Project folder";color:Theme.muted;font.pixelSize:Theme.secondary }
@@ -103,7 +116,8 @@ CDialog {
         onActivated:{if(!popup.isApi&&!popup.effectiveModel?.capabilities?.includes("tools"))tools.checked=false;popup.desiredModel=currentValue||"";popup.desiredEffort="";popup.chooseEffort("")}
     }
     CField { id:customModel;objectName:"sessionCustomModel";visible:popup.isApi;Layout.fillWidth:true;maximumLength:512;placeholderText:"Or enter an API model ID";Accessible.name:"Custom API model ID" }
-    CText { visible:popup.isApi;text:"Uses your API key from Settings → Connections. API usage may incur charges. Desktop only.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { visible:popup.isApi&&popup.providerName!=="compatible";text:"Uses your API key from Settings → Connections. API usage may incur charges. Desktop only.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CText { visible:popup.providerName==="compatible";text:App.state.settings?.compatible?.baseUrl?"Uses "+App.state.settings.compatible.baseUrl+" from Settings → Connections, with the capabilities you declared there. Desktop only.":"Set the compatible endpoint in Settings → Connections first.";color:App.state.settings?.compatible?.baseUrl?Theme.muted:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CText { visible:popup.providerName==="antigravity";text:"Uses your agy sign-in. Actions needing approval may be skipped by headless mode. Images are not supported.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CText { visible:!popup.isOllama&&popup.selectedModel&&!!popup.selectedModel.description;text:popup.selectedModel?popup.selectedModel.description:"";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap }
     CText { visible:!popup.isConversation;text:"Effort";color:Theme.muted;font.pixelSize:Theme.secondary }
@@ -115,10 +129,15 @@ CDialog {
     CText { visible:popup.isOllama;text:popup.effectiveModel?.description||(popup.capability.modelsStatus==="ready"?"No chat model selected. Choose a model above or pull one with Ollama and Refresh.":"Connect to Ollama in Settings → Connections.");color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { id:temporary;objectName:"temporarySession";visible:!popup.imported.nativeId;text:"Temporary conversation";onClicked:if(checked)tools.checked=false }
     CText { visible:temporary.checked;text:"Cere keeps this text conversation in broker memory until you close it or the broker exits. Files, memory and Cere tools are unavailable. Native CLIs and external providers may retain their own histories.";color:Theme.amber;font.pixelSize:Theme.secondary }
-    CCheckBox { id:tools;objectName:"sessionTools";visible:popup.isConversation;text:"Enable desktop tools and delegation";enabled:!temporary.checked&&(popup.isApi||!!popup.effectiveModel?.capabilities?.includes("tools")) }
+    CCheckBox { id:tools;objectName:"sessionTools";visible:popup.isConversation;text:"Enable desktop tools and delegation";enabled:!temporary.checked&&(popup.isApi&&popup.apiTools||!!popup.effectiveModel?.capabilities?.includes("tools")) }
     CText { visible:popup.isConversation;text:tools.checked?"Uses categories enabled in Settings → AI assistance. Delegated tasks ask for review unless CLI permission bypass is enabled.":"Web search and memory follow Settings. Desktop access stays off.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { id:trust;objectName:"sessionTrust";visible:(popup.projectSettings||!App.state.settings?.bypassCliPermissions)&&(!popup.isConversation||tools.checked);text:popup.projectSettings?(popup.isConversation?"Allow desktop tools for new sessions in this project":"Trust this project’s CLI configuration for new sessions"):popup.isApi?"Allow this conversation to use the enabled desktop tool categories":"I trust this project’s CLI configuration and hooks" }
     CText { visible:popup.projectSettings&&trust.visible;text:"Saved trust applies to this project’s new sessions. Tool approval settings still apply.";color:Theme.muted;font.pixelSize:Theme.caption }
+    CText { visible:popup.projectSettings;text:"Conversation style";color:Theme.muted;font.pixelSize:Theme.secondary }
+    CComboBox { id:projectStyle;objectName:"projectStyle";visible:popup.projectSettings;Layout.fillWidth:true;model:popup.styleChoices;textRole:"label";Accessible.name:"Conversation style for this project" }
+    CText { visible:popup.projectSettings;text:"This project’s conversations use this style unless a conversation picks its own. Save styles in Settings › Personality.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CCheckBox { id:conventions;objectName:"projectConventions";visible:popup.projectSettings;text:"Read AGENTS.md, CLAUDE.md and CONVENTIONS.md for Ollama and API conversations" }
+    CText { visible:popup.projectSettings&&conventions.checked;text:"Read fresh for every message, up to 8,000 characters, never through links. Codex and Claude Code read their own instruction files, so Cere does not add them there.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CCheckBox { id:handoff;visible:!!popup.imported.nativeId;text:"I stopped the external session before handing it over" }
     CText { visible:!!popup.imported.nativeId;text:"Cere continues the provider’s history. Close its terminal session before handing it over.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox {
@@ -145,6 +164,15 @@ CDialog {
         const requestedProvider=popup.modelRequests[id]
         if(requestedProvider){const requests=Object.assign({},popup.modelRequests);delete requests[id];popup.modelRequests=requests;if(requestedProvider===popup.providerName&&value?.error)popup.modelError=value.error;return}
         // Defaults are saved once the conversation they describe has opened.
-        if(id===popup.requestId){popup.requestId=-1;if(value?.error)popup.error=value.error;else{if(popup.pendingDefaults)App.rpc("settings.update",{conversationDefaults:popup.pendingDefaults});popup.pendingDefaults=null;popup.imported={};popup.close();if(popup.projectSettings)popup.projectSaved(value);else popup.sessionOpened()}}
+        if(id===popup.stylesRequest){
+            popup.stylesRequest=-1
+            popup.styleChoices=[{id:"",label:"The personality in Settings"}].concat((value?.items||[]).map(item=>({id:item.id,label:item.label})))
+            if(popup.project.behaviorProfileId&&!popup.styleChoices.some(item=>item.id===popup.project.behaviorProfileId))popup.styleChoices=popup.styleChoices.concat([{id:popup.project.behaviorProfileId,label:"A deleted style · falls back to Settings"}])
+            projectStyle.currentIndex=Math.max(0,popup.styleChoices.findIndex(item=>item.id===(popup.project.behaviorProfileId||"")))
+            return
+        }
+        if(id===popup.requestId&&popup.projectSettings&&!value?.error&&popup.nextProjectStep(value))return
+        if(id===popup.requestId&&popup.projectStage&&value?.error){popup.requestId=-1;popup.error="The defaults were saved, but not the "+popup.projectStage+": "+value.error;popup.projectStage="";return}
+        if(id===popup.requestId){popup.requestId=-1;popup.projectStage="";if(value?.error)popup.error=value.error;else{if(popup.pendingDefaults)App.rpc("settings.update",{conversationDefaults:popup.pendingDefaults});popup.pendingDefaults=null;popup.imported={};popup.close();if(popup.projectSettings)popup.projectSaved(value);else popup.sessionOpened()}}
     } }
 }

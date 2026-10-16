@@ -27,7 +27,7 @@ ColumnLayout {
     function edit(project,thenStart,sessionName){startAfterSave=!!thenStart;draftSessionName=sessionName||"";editor.editProject(projects.find(p=>p.cwd===project.cwd)||project)}
     function start(project){
         const d=project.defaults
-        if(!project.configured||(!d.trusted&&!App.state.settings?.bypassCliPermissions&&(!["ollama","openai","anthropic","google"].includes(d.provider)||d.tools)))edit(project,true)
+        if(!project.configured||(!d.trusted&&!App.state.settings?.bypassCliPermissions&&(!["ollama","openai","anthropic","google","compatible"].includes(d.provider)||d.tools)))edit(project,true)
         else quick.start(project)
     }
     function newProjectSession(){if(filtered.length)start(filtered[Math.max(0,rows.currentIndex)]||filtered[0]);else edit({},false)}

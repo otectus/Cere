@@ -35,4 +35,9 @@ ColumnLayout {
         ApiConnection { provider:"anthropic";label:"Claude API" }
         ApiConnection { provider:"google";label:"Google AI API" }
     }
+    CSection {
+        title:"Compatible endpoint"
+        description:"One OpenAI-compatible chat server of your choice, local or hosted."
+        CompatibleConnection {}
+    }
 }

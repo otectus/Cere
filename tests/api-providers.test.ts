@@ -12,10 +12,17 @@ import { eraseWorkingCopies } from '../broker/working-erasure.ts';
 import type { OllamaMessage, OllamaTool } from '../broker/ollama.ts';
 import type { Session } from '../broker/types.ts';
 
+// M13: the compatible endpoint as a fully declared test server; it must meet the same contracts as the vendor APIs.
+const compatibleEndpoint={baseUrl:'https://llm.example/v1',label:'Test endpoint',requiresKey:true,tools:true,images:true,streaming:true,usage:false,contextLength:0,maxOutputTokens:0};
+const chat=(delta:any,finish:string|null=null)=>({choices:[{index:0,delta,finish_reason:finish}]});
 const session=(provider:ApiProvider):Session=>({id:'api-test',provider,nativeId:null,title:'Test',cwd:tmpdir(),mode:'managed',status:'idle',created:0,updated:0,draft:'',scroll:0,model:'test-model',api:{tools:true}});
 const tool:OllamaTool={type:'function',function:{name:'check',description:'Check a value',parameters:{type:'object',properties:{value:{type:'string'}}}}};
 function sse(events: any[]) { return new Response(events.map(e=>'data: '+JSON.stringify(e)+'\r\n\r\n').join(''),{headers:{'Content-Type':'text/event-stream'}}); }
 function events(provider:ApiProvider, tools=false):any[] {
+  if(provider==='compatible')return tools?[
+    chat({role:'assistant',tool_calls:[{index:0,id:'call-1',type:'function',function:{name:'check',arguments:'{"value":'}}]}),
+    chat({tool_calls:[{index:0,function:{arguments:'"yes"}'}}]}),chat({},'tool_calls'),
+  ]:[chat({role:'assistant',content:'Hello '}),chat({content:'🌙'}),chat({},'stop')];
   if(provider==='openai')return tools?[
     {type:'response.completed',response:{status:'completed',output:[{type:'reasoning',id:'reason',encrypted_content:'opaque-reasoning'},{type:'function_call',call_id:'call-1',name:'check',arguments:'{"value":"yes"}'}]}},
   ]:[{type:'response.output_text.delta',delta:'Hello 🌙'}, {type:'response.completed',response:{status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Hello 🌙'}]}]}}];
@@ -32,14 +39,14 @@ async function fixture(t:any,provider:ApiProvider,fetcher?:typeof fetch){
   const output:any[]=[],requests:{url:string;init:any;body:any}[]=[],calls:any[]=[];let history:OllamaMessage[]=[];
   const adapter=new ApiAdapter(session(provider),{token:'test',native(){},event:e=>output.push(e),approve:async()=>({choice:'deny'}),personality:()=> 'Helpful'}, {
     load:()=>structuredClone(history),save:messages=>{history=structuredClone(messages);},tools:()=>[tool],call:async(name,args)=>{calls.push({name,args});return {ok:true};},
-  },{key:()=> 'test-secret',fetch:fetcher|| (async(url,init)=>{requests.push({url:String(url),init,body:JSON.parse(String(init?.body))});return sse(events(provider,requests.length===1));})});
+  },{key:()=> 'test-secret',...(provider==='compatible'?{endpoint:()=>compatibleEndpoint}:{}),fetch:fetcher|| (async(url,init)=>{requests.push({url:String(url),init,body:JSON.parse(String(init?.body))});return sse(events(provider,requests.length===1));})});
   t.after(()=>adapter.close());return{adapter,output,requests,calls,directory,history:()=>history};
 }
 for(const provider of apiProviders)test(`${provider}: assistant name refreshes between turns without persisting system instructions`, async t => {
   const f = await fixture(t, provider); let name = 'Daemona';
   f.adapter.hooks.assistantName = () => name;
   await f.adapter.send('Hello'); await f.adapter.task;
-  const system = (body: any): string => body.instructions || body.system || body.systemInstruction.parts[0].text;
+  const system = (body: any): string => body.instructions || body.system || body.systemInstruction?.parts[0].text || body.messages.find((m: any) => m.role === 'system').content;
   for (const request of f.requests) assert.match(system(request.body), /"Daemona"/);
   assert.ok(f.history().every(message => message.role !== 'system'));
   name = 'Cere'; await f.adapter.send('Hello again'); await f.adapter.task;
@@ -59,6 +66,7 @@ for(const provider of apiProviders)test(`${provider}: stream, tool result, image
   if(provider==='openai'){assert.equal(first.body.store,false);assert.equal(first.init.headers.Authorization,'Bearer test-secret');assert.ok(second.includes('opaque-reasoning'));}
   if(provider==='anthropic')assert.equal(first.init.headers['anthropic-version'],'2023-06-01');
   if(provider==='google'){assert.equal(first.init.headers['x-goog-api-key'],'test-secret');assert.ok(second.includes('keep-this-signature'));}
+  if(provider==='compatible'){assert.equal(first.url,'https://llm.example/v1/chat/completions');assert.equal(first.init.headers.Authorization,'Bearer test-secret');assert.equal(first.body.messages[0].role,'system');assert.equal(first.body.tools[0].function.name,'check');assert.equal(f.requests[1].body.messages.at(-1).tool_call_id,'call-1');}
   await f.adapter.send('What did you say?');await f.adapter.task;
   assert.ok(JSON.stringify(f.requests.at(-1)?.body).includes('Hello 🌙'));
 });
@@ -72,7 +80,9 @@ for(const provider of apiProviders)test(`${provider}: truncated stream never com
   await f.adapter.send('Hi');await f.adapter.task;
   assert.equal(f.output.at(-1).type,'error');assert.match(f.output.at(-1).text,/disconnected/);assert.equal(f.calls.length,0);assert.equal(requests,1);
 });
-const outputLimitEvents=(provider:ApiProvider):any[]=>provider==='openai'?[
+const outputLimitEvents=(provider:ApiProvider):any[]=>provider==='compatible'?[
+  chat({content:'Partial answer'}),chat({tool_calls:[{index:0,id:'cut',type:'function',function:{name:'check',arguments:'{"val'}}]}),chat({},'length'),
+]:provider==='openai'?[
   {type:'response.output_text.delta',delta:'Partial answer'},
   {type:'response.incomplete',response:{status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Partial answer'}]},{type:'function_call',call_id:'cut',name:'check',arguments:'{"val'}]}},
 ]:provider==='anthropic'?[
@@ -94,7 +104,9 @@ for(const provider of apiProviders)test(`${provider}: a reply cut at the output 
   assert.doesNotMatch(JSON.stringify(reply.providerData),/"cut"/);
   if(provider==='anthropic'){assert.equal(bodies[0].max_tokens,4096);assert.match(JSON.stringify(reply.providerData),/sig-kept/);}
 });
-const noArgumentEvents=(provider:ApiProvider):any[]=>provider==='openai'?[
+const noArgumentEvents=(provider:ApiProvider):any[]=>provider==='compatible'?[
+  chat({tool_calls:[{index:0,id:'call-1',type:'function',function:{name:'check',arguments:''}}]}),chat({},'tool_calls'),
+]:provider==='openai'?[
   {type:'response.completed',response:{status:'completed',output:[{type:'function_call',call_id:'call-1',name:'check',arguments:''}]}},
 ]:provider==='anthropic'?[
   {type:'content_block_start',index:0,content_block:{type:'tool_use',id:'call-1',name:'check',input:{}}},
@@ -201,10 +213,11 @@ test('Core dispatches all API providers and resumes saved history after disconne
   const directory=await mkdtemp(join(tmpdir(),'cere-api-dispatch-')), core=new Core(new Store(directory));
   const original=globalThis.fetch,requests:any[]=[];
   globalThis.fetch=async(url,init)=>{
-    const target=String(url),provider=target.includes('api.openai.com')?'openai':target.includes('api.anthropic.com')?'anthropic':'google';
+    const target=String(url),provider=target.includes('api.openai.com')?'openai':target.includes('api.anthropic.com')?'anthropic':target.startsWith('https://llm.example/')?'compatible':'google';
     requests.push({provider,body:JSON.parse(String(init?.body))});return sse(events(provider));
   };
   t.after(async()=>{await core.close();globalThis.fetch=original;await rm(directory,{recursive:true,force:true});});
+  await core.updateSettings({compatible:compatibleEndpoint});
   for(const provider of apiProviders){
     await core.rpc('provider.credentials',{provider,key:'fixture-key'});
     const s=await core.create({provider,model:'fixture-model'});
@@ -214,17 +227,18 @@ test('Core dispatches all API providers and resumes saved history after disconne
     await core.send({id:s.id,text:'Continue'});await (core.adapters.get(s.id) as ApiAdapter).task;
     assert.ok(JSON.stringify(requests.at(-1).body).includes('Remember this turn'));assert.equal(core.store.session(s.id).status,'idle');
   }
-  assert.equal(requests.length,6);
+  assert.equal(requests.length,2*apiProviders.length);
 });
 test('switching API models continues the same conversation with portable history and no tool replay',async t=>{
   const directory=await mkdtemp(join(tmpdir(),'cere-api-switch-')),core=new Core(new Store(directory));
   const original=globalThis.fetch,requests:any[]=[];let attempt=0,calls=0;
   globalThis.fetch=async(url,init)=>{
-    const target=String(url),provider=target.includes('api.openai.com')?'openai':target.includes('api.anthropic.com')?'anthropic':'google';
+    const target=String(url),provider=target.includes('api.openai.com')?'openai':target.includes('api.anthropic.com')?'anthropic':target.startsWith('https://llm.example/')?'compatible':'google';
     requests.push({url:target,body:JSON.parse(String(init?.body))});return sse(events(provider,++attempt===1));
   };
   core.toolsFor=()=>[tool];core.callTool=async()=>{calls++;return {evidence:'tool-result-evidence'};};
   t.after(async()=>{await core.close();globalThis.fetch=original;await rm(directory,{recursive:true,force:true});});
+  await core.updateSettings({compatible:compatibleEndpoint});
   for(const provider of apiProviders){
     attempt=0;calls=0;await core.rpc('provider.credentials',{provider,key:'fixture-key'});
     const s=await core.create({provider,model:'first-model',cwd:directory,tools:true,trusted:true});

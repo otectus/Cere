@@ -8,9 +8,9 @@ CDialog {
     property var original:({})
     property var models:[]
     property bool isOllama:original.provider==="ollama"
-    property bool isApi:["openai","anthropic","google"].includes(original.provider)
+    property bool isApi:["openai","anthropic","google","compatible"].includes(original.provider)
     property bool isNative:!isOllama&&!isApi
-    property var labels:({codex:"Codex",claude:"Claude Code",ollama:"Ollama",antigravity:"AntiGravity",openai:"OpenAI API",anthropic:"Claude API",google:"Google AI API"})
+    property var labels:({codex:"Codex",claude:"Claude Code",ollama:"Ollama",antigravity:"AntiGravity",openai:"OpenAI API",anthropic:"Claude API",google:"Google AI API",compatible:App.state.settings?.compatible?.label||"Compatible endpoint"})
     property var defaultEfforts:(models.find(m=>m.isDefault)||{}).efforts||(!original.model&&original.effort?[{id:original.effort,displayName:original.effort}]:[])
     property var options:(isNative?[{id:"",displayName:"Provider default",efforts:defaultEfforts}]:[]).concat(models)
     property var selected:options[picker.currentIndex]||({})
@@ -49,7 +49,7 @@ CDialog {
     CText { visible:dialog.isNative;text:"Reasoning effort";color:Theme.muted;font.pixelSize:Theme.secondary }
     CComboBox { id:reasoning;objectName:"conversationEffort";visible:dialog.isNative;Layout.fillWidth:true;model:dialog.efforts;textRole:"displayName";valueRole:"id";Accessible.name:"Conversation reasoning effort";enabled:dialog.saveRequest<0 }
     CText { visible:dialog.isApi&&dialog.modelId!==dialog.original.model;text:"Messages, attachments and recorded tool results stay available. Model-specific reasoning is reset. Image and tool support depend on the model you choose.";color:Theme.muted;font.pixelSize:Theme.secondary }
-    CCheckBox { id:assistance;objectName:"ollamaSessionTools";visible:!dialog.isNative;text:"Enable desktop tools and delegation";enabled:!dialog.original.temporary&&dialog.saveRequest<0&&(dialog.isApi||(dialog.selected.capabilities||[]).includes("tools")) }
+    CCheckBox { id:assistance;objectName:"ollamaSessionTools";visible:!dialog.isNative;text:"Enable desktop tools and delegation";enabled:!dialog.original.temporary&&dialog.saveRequest<0&&(dialog.isApi&&(dialog.original.provider!=="compatible"||App.state.settings?.compatible?.tools===true)||(dialog.selected.capabilities||[]).includes("tools")) }
     CText { visible:!dialog.isNative;text:"Uses categories enabled in Settings → AI assistance. Web search and memory follow Settings.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { id:trust;visible:!dialog.isNative&&!App.state.settings?.bypassCliPermissions&&assistance.checked&&!(dialog.original.ollama?.tools||dialog.original.api?.tools);text:"I trust this project and its enabled tool access" }
     CText { visible:trust.visible;text:dialog.original.cwd||"";color:Theme.accentText;font.pixelSize:Theme.secondary }
