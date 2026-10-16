@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import sharp from 'sharp';
@@ -82,7 +82,7 @@ test('carried poses continuously reverse their flail cycle and retrace on releas
   assert.equal(director.sample(state,.02,false),0);
 });
 
-test('all five surface atlases preserve neutral art, planted gestures and free carried limbs', async () => {
+test('all five surface atlases preserve neutral art, planted gestures and free carried limbs', { skip: !existsSync('artwork/avatars') && 'avatar source art is kept outside the repository; place a copy at artwork/avatars/' }, async () => {
   const avatars = JSON.parse(readFileSync('assets/avatars.json', 'utf8'));
   assert.equal(avatars.length, 5);
   for (const avatar of avatars) {

@@ -1,2 +1,0 @@
-cere-shy-transition frames=70 elapsed_ms=4771
-cere-ponder-interrupted-by-shy frames=70 elapsed_ms=4815

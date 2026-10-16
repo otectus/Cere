@@ -21,7 +21,6 @@ snapshots/
 *.key
 *.kate-swp
 *.swp
-# Local desktop validation state; keep artwork and visual acceptance captures.
-/artwork/avatars/validation/**/*.json
-/artwork/avatars/validation/**/*-geometry.txt
-/artwork/avatars/validation/**/user-service-*.txt
+# Avatar source art and its validation captures are kept outside the repository;
+# ignore a local copy placed here for authoring.
+/artwork/
