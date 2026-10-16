@@ -134,3 +134,29 @@ Findings:
 The live store agrees. A `VACUUM INTO` copy taken on 2026-10-16 (counts only, deleted afterwards) had 96 accepted assertions, none from extraction, and 35 candidates, all from `glm-5.3-flash:cloud` runs: 34 instrumented `HAS_STATE` claims from tool output and one inferred `WORKS_ON` claim. Every one had an approximate time; every one was also ungrounded in the quoted span (28 without the subject, 6 with quotation marks in the sentence, 1 without the value).
 
 Recommendation for the default model: do not keep `nemotron-3-super` as the code default, since about one call in six would time out. The choice between the other two depends on an owner decision about undated statements. Under the current rule, only `gpt-oss:20b-cloud` produces accepted memory (8 of 8 correct), at the lowest predicate precision. If a grounded, undated statement may be accepted, `glm-5.3-flash:cloud`, the configured model, is faster at the median and more precise, and its 33 correct, time-held proposals would become eligible. Either way, rerun this evaluation after a change to the prompt or the time rule. The samples are small, the statements synthetic, and cloud aliases can change behind the same name, so the recorded digests identify what was measured.
+
+## Undated statements and the new default (EV-01 follow-up)
+
+On 2026-10-16 the owner decided the two questions above: a grounded statement that names no time may be accepted, and the code default moves to `glm-5.3-flash:cloud`. When the model marks a time uncertain without stating one, as the prompt asks for an unknown date, extraction now records unknown validity and unknown precision, with no bounds, instead of an approximate time. Only a time that was stated but not resolved is approximate, and that still holds a proposal for review (F-034). The grounding, source, modality and epistemic rules are unchanged, and `Canonical.holdReasons` is now the one rule that `remember`, re-adjudication and this harness apply. Recall shows an accepted claim of unknown validity as an uncertain claim, never as a settled fact or at a historical time. The prompt (`cere-extraction-v2`) and parser (`zod-4-v2`) are unchanged.
+
+`glm-5.3-flash:cloud` was then run again at the same digest on the same corpus, with owner approval; only the synthetic statements left the machine. The rerun replaced `extraction-results-glm-5-3-flash-cloud.json`; the first run's file is in commit `fa1e763`.
+
+| `glm-5.3-flash:cloud` `3e780905abc0` | First run | Rerun with undated statements accepted |
+| --- | ---: | ---: |
+| Extraction failures | 3/50 | 4/50 |
+| Predicate precision | 41/47 (87.2%) | 40/45 (88.9%) |
+| Proposal precision | 38/47 (80.9%) | 37/45 (82.2%) |
+| Case recall | 38/40 (95.0%) | 37/40 (92.5%) |
+| Accepted / candidate / rejected | 0 / 44 / 3 | 32 / 11 / 2 |
+| Accepted and correct | none accepted | 32 of 32 |
+| Held only by a time rule (matching) | 33 (33) | 2 (2) |
+| Statements holding nothing | 5/10 abstained, 3 proposals, 0 accepted | 6/10 abstained, 3 proposals, 0 accepted |
+| Latency p50 / p95 / maximum | 5.0 s / 29.2 s / 50.2 s | 5.9 s / 32.4 s / 35.8 s |
+
+Gates of the rerun: predicate precision of at least 95% **failed** (88.9%); accepted-assertion precision of at least 95% **passed** (32 of 32, a small synthetic sample); no accepted assertion from a statement that holds nothing **passed**.
+
+The model still marked every time uncertain (45 of 45), as the prompt asks, and no proposal it gave no time was held for that. Two correct proposals stay candidates only because the model recorded a time for them, which the results do not keep: ext-07 ("These days I mostly work on the Quill project.") and ext-34, whose sentence names no time. The other candidates are ungrounded proposals (questions, a hypothetical, two polarities that differ from their sentence, a missing subject or cue), assistant statements and inferences. The two rejections are `HAS_STATE` values that are not registered, for ext-29 ("stuck until") and ext-35 ("is complete"): finding 2 above, which this change does not address. No call exceeded the worker's 45-second limit. Output varies between runs of the same model, so the two columns differ by more than the rule.
+
+### Pending live candidates
+
+A `VACUUM INTO` copy of the live store taken on 2026-10-16 (deleted afterwards) had 35 pending extraction candidates, all from `glm-5.3-flash:cloud`, all stored as approximate times with no stated time. A dry run of the re-adjudication that `cere memory readjudicate` performs (`Canonical.readjudicate`) on the copy accepted none and rejected all 35, none for its date: every one is ungrounded. Thirty-four are `HAS_STATE` claims proposed from Cere's own action-event records; their quoted fragment lacks the subject (27) or the value (1), or their sentence contains quotation marks (6). The other is a user's instruction proposed as an inferred `WORKS_ON`, whose quotation lacks the subject. Three of the 35 are also not actual (inferred, reported and planned). A full run on a second copy made the same decisions and passed SQLite's integrity check. The live store has not been re-adjudicated: that needs the new broker installed, and [VALIDATION.md](../../VALIDATION.md) records the steps.
