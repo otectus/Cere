@@ -27,6 +27,8 @@ export type ExtensionServer = {
   projects: string[];
   /** Tools the user lets run without asking each time. */
   allowed: string[];
+  /** Tools the user hides from models: never offered and never callable. Absent in older settings. */
+  hidden?: string[];
   timeoutSeconds: number;
 };
 type RemoteTool = { name: string; title: string; description: string; schema: Record<string, unknown>; readOnlyHint: boolean; destructiveHint: boolean; usable: boolean; problem?: string };
@@ -55,7 +57,7 @@ export async function validServers(value: unknown): Promise<ExtensionServer[]> {
   for (const item of value) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Invalid tool server');
     const p = item as Record<string, unknown>;
-    for (const key of Object.keys(p)) if (!['id', 'name', 'command', 'args', 'cwd', 'enabled', 'secrets', 'projects', 'allowed', 'timeoutSeconds'].includes(key)) throw new Error(`Unknown tool server setting: ${key}`);
+    for (const key of Object.keys(p)) if (!['id', 'name', 'command', 'args', 'cwd', 'enabled', 'secrets', 'projects', 'allowed', 'hidden', 'timeoutSeconds'].includes(key)) throw new Error(`Unknown tool server setting: ${key}`);
     if (!printable(p.name, 40)) throw new Error('Name each tool server with 1–40 printable characters');
     if (typeof p.command !== 'string' || !isAbsolute(p.command)) throw new Error('A tool server command is the absolute path of its program');
     if (!(await stat(p.command).catch(() => null))?.isFile()) throw new Error(`The program does not exist: ${p.command}`);
@@ -67,13 +69,15 @@ export async function validServers(value: unknown): Promise<ExtensionServer[]> {
     if (!Array.isArray(projects) || projects.length > extensionLimits.projects) throw new Error('Limit a tool server to at most 20 project folders');
     const allowed = p.allowed ?? [];
     if (!Array.isArray(allowed) || allowed.length > extensionLimits.tools || allowed.some(name => typeof name !== 'string' || name.length > 128)) throw new Error('Invalid allowed tools');
+    const hidden = p.hidden ?? [];
+    if (!Array.isArray(hidden) || hidden.length > extensionLimits.tools || hidden.some(name => typeof name !== 'string' || name.length > 128)) throw new Error('Invalid hidden tools');
     const timeout = p.timeoutSeconds ?? 60;
     if (!Number.isInteger(timeout) || (timeout as number) < 5 || (timeout as number) > 600) throw new Error('A tool call limit is 5–600 seconds');
     if (typeof (p.enabled ?? false) !== 'boolean') throw new Error('Choose whether the tool server is on');
     const id = typeof p.id === 'string' && /^[0-9a-f-]{36}$/.test(p.id) ? p.id : randomUUID();
     if (servers.some(server => server.id === id)) throw new Error('Two tool servers share an ID');
     servers.push({ id, name: (p.name as string).trim(), command: p.command, args: args as string[], cwd: await folder(p.cwd, 'The working folder'), enabled: p.enabled === true,
-      secrets: [...new Set(secrets as string[])], projects: await Promise.all((projects as unknown[]).map(path => folder(path, 'A project folder'))), allowed: [...new Set(allowed as string[])], timeoutSeconds: timeout as number });
+      secrets: [...new Set(secrets as string[])], projects: await Promise.all((projects as unknown[]).map(path => folder(path, 'A project folder'))), allowed: [...new Set(allowed as string[])], hidden: [...new Set(hidden as string[])], timeoutSeconds: timeout as number });
   }
   return servers;
 }
@@ -287,7 +291,7 @@ export class Extensions {
     for (const server of this.servers()) {
       const connection = this.connections.get(server.id);
       if (connection?.state !== 'ready') continue;
-      for (const tool of connection.tools.filter(item => item.usable)) {
+      for (const tool of connection.tools.filter(item => item.usable && !server.hidden?.includes(item.name))) {
         let name = `ext_${slug(server.name).slice(0, 16)}_${slug(tool.name)}`.slice(0, 60);
         for (let index = 2; taken.has(name); index++) name = name.slice(0, 57) + '_' + index;
         taken.add(name); names.set(name, { serverId: server.id, tool: tool.name });
@@ -311,6 +315,7 @@ export class Extensions {
     const current = () => {
       const server = this.servers().find(item => item.id === target?.serverId);
       if (!target || !server || !this.inScope(server, this.core.store.session(sessionId)) || !this.eligible(this.core.store.session(sessionId))) throw new Error('This extension tool is turned off');
+      if (server.hidden?.includes(target.tool)) throw new Error('This extension tool is hidden in Settings');
       const tool = this.connections.get(server.id)?.tools.find(item => item.name === target.tool && item.usable);
       if (!tool) throw new Error('This extension no longer offers that tool');
       return { server, tool };
@@ -350,7 +355,7 @@ export class Extensions {
     for (const { value } of [...this.core.approvals.values()]) {
       if (value.kind !== 'extension') continue;
       const server = servers.find(item => item.id === value.fields?.server);
-      if (!server?.enabled) this.core.answer({ id: value.id, choice: 'deny' }, true);
+      if (!server?.enabled || server.hidden?.includes(value.fields?.tool)) this.core.answer({ id: value.id, choice: 'deny' }, true);
     }
     this.secrets.keep(servers.map(server => server.id)); this.secretFlags = undefined;
   }
@@ -383,7 +388,7 @@ export class Extensions {
       const connection = this.connections.get(server.id);
       return { id: server.id, name: server.name, enabled: server.enabled, state: connection?.state || 'stopped', error: connection?.error || '', crashes: connection?.crashes.length || 0,
         secrets: server.secrets.map(name => ({ name, set: !!this.secretFlags?.get(server.id)?.has(name) })),
-        tools: (connection?.tools || []).map(tool => ({ name: tool.name, title: tool.title, description: tool.description.slice(0, 300), readOnlyHint: tool.readOnlyHint, destructiveHint: tool.destructiveHint, usable: tool.usable, problem: tool.problem || '', allowed: server.allowed.includes(tool.name) })) };
+        tools: (connection?.tools || []).map(tool => ({ name: tool.name, title: tool.title, description: tool.description.slice(0, 300), readOnlyHint: tool.readOnlyHint, destructiveHint: tool.destructiveHint, usable: tool.usable, problem: tool.problem || '', hidden: !!server.hidden?.includes(tool.name), allowed: server.allowed.includes(tool.name) })) };
     });
   }
   close() { for (const connection of this.connections.values()) connection.stop('Cere is closing'); this.connections.clear(); }

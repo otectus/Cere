@@ -68,6 +68,12 @@ ColumnLayout {
                             checked:card.modelData.allowed.indexOf(modelData.name)>=0
                             onToggled:servers.replace(card.modelData.id,{allowed:checked?card.modelData.allowed.concat([modelData.name]):card.modelData.allowed.filter(name=>name!==modelData.name)})
                         }
+                        // RC-13: a hidden tool is neither offered to models nor callable.
+                        CCheckBox {
+                            objectName:"toolServerHide_"+card.index+"_"+modelData.name;enabled:servers.request<0;Layout.leftMargin:28
+                            text:"Hide from models";checked:(card.modelData.hidden||[]).indexOf(modelData.name)>=0
+                            onToggled:servers.replace(card.modelData.id,{hidden:checked?(card.modelData.hidden||[]).concat([modelData.name]):(card.modelData.hidden||[]).filter(name=>name!==modelData.name)})
+                        }
                         CText {
                             visible:!!modelData.description||modelData.readOnlyHint||modelData.destructiveHint;Layout.fillWidth:true;Layout.leftMargin:28;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.caption
                             text:modelData.description+(modelData.readOnlyHint?" The server says this tool only reads; Cere has not verified that.":"")+(modelData.destructiveHint?" The server says this tool can change or delete things.":"")
@@ -119,7 +125,7 @@ ColumnLayout {
             CButton {
                 objectName:"toolServerFormSave";text:"Save";primary:true;Layout.fillWidth:true;enabled:servers.request<0&&name.text.trim().length>0&&command.text.trim().length>0&&cwd.text.trim().length>0
                 onClicked:{
-                    const value={name:name.text.trim(),command:command.text.trim(),args:servers.lines(args.text),cwd:cwd.text.trim(),projects:servers.lines(projects.text),secrets:servers.lines(secrets.text),timeoutSeconds:Number(timeout.text)||60,enabled:enabledBox.checked,allowed:editor.existing?.allowed||[]}
+                    const value={name:name.text.trim(),command:command.text.trim(),args:servers.lines(args.text),cwd:cwd.text.trim(),projects:servers.lines(projects.text),secrets:servers.lines(secrets.text),timeoutSeconds:Number(timeout.text)||60,enabled:enabledBox.checked,allowed:editor.existing?.allowed||[],hidden:editor.existing?.hidden||[]}
                     if(editor.existing){value.id=editor.existing.id;servers.save(servers.configs.map(item=>item.id===value.id?value:item),"Saved.")}
                     else servers.save(servers.configs.concat([value]),"Added. Start it to see its tools.")
                 }

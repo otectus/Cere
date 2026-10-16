@@ -166,3 +166,29 @@ test('A02 a crashing extension cannot take down the conversation: the turn finis
   assert.match(JSON.stringify(bodies[1].input), /Stopped unexpectedly \(exit 3\)/);
   assert.equal(core.store.session(session.id).status, 'idle');
 });
+
+test('RC-13 a hidden extension tool is neither offered nor callable, and a question waiting for it is refused', async t => {
+  const { core, project, server, calls } = await broker(t);
+  await assert.rejects(core.updateSettings({ extensions: [server({ hidden: [42] })] }), /Invalid hidden tools/);
+  await core.updateSettings({ extensions: [server({ allowed: ['lookup'] })] });
+  const session = await core.create({ provider: 'openai', model: 'm', cwd: project, tools: true, trusted: true });
+  await core.extensions.ensure(session.id);
+  const offered = () => core.toolsFor(session.id).map(tool => tool.function.name).filter(name => name.startsWith('ext_'));
+  assert.ok(offered().includes('ext_fixture_lookup') && offered().includes('ext_fixture_write_note'));
+  const waiting = core.callTool(session.id, 'ext_fixture_write_note', { text: 'x' }, new AbortController().signal);
+  await approval(core);
+  await core.updateSettings({ extensions: [{ ...core.settings.extensions[0], hidden: ['write_note', 'lookup'] }] });
+  assert.deepEqual(await waiting, { ran: false, message: 'The user declined this extension call.' }, 'hiding a tool refuses its pending question');
+  // A name the model saw before it was hidden is refused, even for a tool the user allowed to run without asking.
+  await assert.rejects(core.extensions.call(session.id, 'ext_fixture_lookup', { word: 'x' }, new AbortController().signal), /hidden in Settings/);
+  await core.extensions.ensure(session.id);
+  assert.ok(!offered().includes('ext_fixture_write_note') && !offered().includes('ext_fixture_lookup'), offered().join());
+  assert.ok(offered().includes('ext_fixture_slow'), 'other tools are unaffected');
+  await assert.rejects(core.callTool(session.id, 'ext_fixture_lookup', { word: 'x' }, new AbortController().signal));
+  assert.ok(!(await calls()).some(call => ['write_note', 'lookup'].includes(call.params?.name)), 'the server never received the call');
+  const tools = (await core.rpc('extensions.status', {}))[0].tools;
+  assert.deepEqual(tools.filter((tool: any) => tool.hidden).map((tool: any) => tool.name).sort(), ['lookup', 'write_note']);
+  await core.updateSettings({ extensions: [{ ...core.settings.extensions[0], hidden: [] }] });
+  await core.extensions.ensure(session.id);
+  assert.ok(offered().includes('ext_fixture_lookup'), 'unhiding offers it again');
+});
