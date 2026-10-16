@@ -2,6 +2,22 @@
 
 Publication check — October 15, 2026: `npm test` passed **577 tests**, with **1 optional skip** and no failures; `npm run typecheck` and `git diff --check` passed. Editor recovery files and machine-specific validation JSON/service/geometry snapshots remain local and are excluded from Git, as are runtime logs. References to those local records below document the verification performed; artwork and visual acceptance captures are included in the repository.
 
+## Undated statements, extraction default and candidate re-adjudication — October 16, 2026
+
+The owner's two decisions after EV-01, as local commits on `ui-overhaul`: `c5059bd` accepts a grounded statement that names no time, `df526ae` makes `glm-5.3-flash:cloud` the code default, `34e5da7` adds `cere memory readjudicate` for pending extraction candidates, and `beeedcc` records the evaluation. The extraction prompt is unchanged. Nothing was pushed, installed or restarted; four conversations were working when checked.
+
+Checks actually run after the last code change (logs under `~/.cache/cere-readjudication/`):
+
+- `npm run typecheck` and `git diff --check` passed.
+- `CERE_TTS_DISABLED=1 npm test`: **698 tests, 696 passed, 2 skipped**, none failed. The skips are the opt-in IndexTTS check and the source-pixel avatar check. After two test-only additions, `node --test tests/review-memory.test.ts tests/memory-curation.test.ts` passed 29 of 29.
+- `c5059bd` and `df526ae` were each checked as committed, with the typecheck and the memory, extraction and knowledge tests (50 of 50 each, the settings-catalog test included for `df526ae`), so each commit stands alone.
+- Negative controls, each a scratch edit: mapping an undated statement to an approximate time again fails both undated-statement tests; keeping a stored candidate's approximate precision fails the re-adjudication test; and a lineage role that erasure follows fails its expiry check.
+- `QT_QPA_PLATFORM=offscreen:configfile=$PWD/tests/fixtures/offscreen-scales.json QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic ./build/cere-ui-check settingsSectionNavigation extractionModelSelection`: 4 passed. The native build, `ctest` and the full UI run were not repeated: no C++ changed, and the UI loads QML from the source tree.
+- EV-01 for `glm-5.3-flash:cloud` at its recorded digest, with owner approval: 32 of 32 accepted proposals correct (gate passed), predicate precision 88.9% (gate failed), nothing accepted from the 10 statements that hold nothing; see [the evaluation](docs/memory/evaluation.md#undated-statements-and-the-new-default-ev-01-follow-up).
+- Re-adjudication on private `VACUUM INTO` copies of the live store (deleted afterwards): the dry run considered the 35 pending candidates, accepted none and rejected all 35 as ungrounded. A full run on a second copy made the same decisions and passed `PRAGMA integrity_check`, and a second pass found nothing pending.
+
+Live state: before any other step, the store was backed up through the running broker with `cere memory backup --output ~/.local/state/cere/memory-backups/before-undated-rule-2026-10-16.sqlite` (revision 98841; the copy passed `PRAGMA integrity_check`), and the current erasure registry was copied beside it. The live candidates have **not** been re-adjudicated: the installed broker predates `readjudicate`, and installing follows the safe order in §9.4 of the next-stage plan while no conversation is working. After that, run `cere memory readjudicate --dry-run`, then `cere memory readjudicate --output` with a new backup path. Nine of the 35 candidates reach their seven-day expiry on October 17 (from 13:04 EDT) and leave without a recorded decision if this waits.
+
 ## PyPersona next stage — October 16, 2026
 
 Implemented from `prompts/Cere-PyPersona-Next-Stage-Plan.md` on `ui-overhaul` as local commits, from `a0b956e` to `fa1e763`; nothing was pushed, installed or restarted. The owner authorized the commits (D1), kept `artwork/` deleted (D2) and authorized the extraction evaluation (D5). For the remaining decisions the plan's recommendations were taken: withheld recall does not skip capture (D3); collection Markdown follows the vault privacy rule (D4); the newest two pre-migration backups are kept, for at most 14 days, and clearing memory deletes them (D6). NF-02 and README feature documentation were not added (D7, D8), A05 task binding stays deferred (D9), and nothing was reinstalled (D10).
