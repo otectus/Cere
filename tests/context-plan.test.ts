@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
@@ -148,4 +148,32 @@ test('A01/M04 a CLI turn records what Cere supplied and names what it cannot see
   assert.deepEqual(calls, [], 'the inspector reads the stored plan only');
   await core.rpc('session.delete', { id: session.id, confirmed: true });
   assert.equal(core.store.get('turn-plan:' + session.id, null), null);
+});
+
+// The requests of one fixed Ollama turn (personality, memory, telemetry, web search and a tool round),
+// captured from the tree before A01 (0837f91). Any change to what such a turn sends, including the
+// operating rules, fails here; turns that use none of the newer features must keep sending exactly this.
+test('S3 a fixed Ollama turn sends byte-for-byte the requests captured before A01', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-16T12:00:00Z') });
+  const payloads: any[] = [];
+  let round = 0;
+  const server = createServer((req, res) => { let body = ''; req.on('data', c => body += c); req.on('end', () => {
+    if (req.url === '/api/show') { res.end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'general.architecture': 'x', 'x.context_length': 32768 } })); return; }
+    if (req.url === '/api/tags') { res.end(JSON.stringify({ models: [] })); return; }
+    const parsed = JSON.parse(body); payloads.push({ messages: parsed.messages, tools: parsed.tools, options: parsed.options });
+    const message = ++round === 1 ? { role: 'assistant', content: '', tool_calls: [{ function: { name: 'timer_start', arguments: { minutes: 5, label: 'tea' } } }] } : { role: 'assistant', content: 'Timer set.' };
+    res.end(JSON.stringify({ message, done: true }) + '\n');
+  }); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => server.close());
+  let history: any[] = [{ role: 'user', content: 'Earlier question about tea.' }, { role: 'assistant', content: 'Earlier answer about tea.' }];
+  const tools = [{ type: 'function', function: { name: 'timer_start', description: 'Start a timer', parameters: { type: 'object', properties: { minutes: { type: 'number' }, label: { type: 'string' } } } } },
+    { type: 'function', function: { name: 'web_search', description: 'Search', parameters: { type: 'object', properties: { query: { type: 'string' } } } } }];
+  const adapter = new OllamaAdapter({ id: 'golden', provider: 'ollama', model: 'm', cwd: '/home/demo/project', ollama: { host: `http://127.0.0.1:${(server.address() as any).port}`, tools: true } } as any,
+    { event() {}, native() {}, approve: async () => ({ choice: 'deny' }), token: 't', personality: () => 'Be brief.', assistantName: () => 'Nova' } as any,
+    { load: () => structuredClone(history), save: (messages: any[]) => { history = structuredClone(messages); }, tools: () => tools,
+      call: async () => ({ id: 'timer-1', due: 0 }), prepare: async () => '<cere_memory_data>\n{"items":[]}\n</cere_memory_data>', memoryActive: () => true,
+      telemetry: async () => '<cere_telemetry>\nworkspace\n</cere_telemetry>', telemetryValid: () => true,
+      search: async () => ({ query: 'tea', provider: 'brave', results: [] }) } as any);
+  await adapter.run('Set a tea timer and check the news.', [], new AbortController().signal, { webSearch: true });
+  assert.equal(JSON.stringify(payloads, null, 1), await readFile(new URL('fixtures/golden-ollama-payload.json', import.meta.url), 'utf8'));
 });
