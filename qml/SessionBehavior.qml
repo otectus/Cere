@@ -44,7 +44,7 @@ CDialog {
             +(behavior.resolved.posture?" · posture "+behavior.resolved.posture.label+(behavior.resolved.posture.pinned?" (pinned)":""):"")
     }
     CText { objectName:"behaviorWithheld";visible:behavior.withheld().length>0;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.secondary;text:"Withheld while this style is active: "+behavior.withheld().join(", ")+". Native CLI tools keep their own permissions." }
-    Repeater { model:behavior.resolved.warnings||[];CText { required property string modelData;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.amber;font.pixelSize:Theme.secondary;text:modelData } }
+    Repeater { model:(behavior.resolved.warnings||[]).concat(behavior.resolved.conflicts||[]);CText { required property string modelData;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.amber;font.pixelSize:Theme.secondary;text:modelData } }
     CText { text:"Style for this conversation";font.weight:Font.DemiBold }
     CComboBox { id:styleCombo;objectName:"sessionStyle";Layout.fillWidth:true;model:behavior.styleOptions;textRole:"label";Accessible.name:"Style for this conversation" }
     CText { text:"Pinned posture";font.weight:Font.DemiBold }

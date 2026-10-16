@@ -13,6 +13,7 @@ CDialog {
     property string error:""
     property string feedback:""
     property string previewText:""
+    property var conflicts:[]
     readonly property var traitRows:[
         {key:"verbosity",label:"Length",low:"Shorter",high:"Longer"},
         {key:"formality",label:"Register",low:"Casual",high:"Formal"},
@@ -24,7 +25,7 @@ CDialog {
     function load(value){profile=value||({});traits=Object.assign({},profile.traits||{});instructions.text=profile.instructions||"";posture.checked=profile.posture===true
         desktop.checked=profile.ceiling?.desktop===false;delegation.checked=profile.ceiling?.delegation===false;web.checked=profile.ceiling?.web===false;memory.checked=profile.ceiling?.memory===false;recall.checked=profile.ceiling?.recall===false;extensions.checked=profile.ceiling?.extensions===false
         const checks=profile.constraints||[];noEmoji.checked=checks.indexOf("no-emoji")>=0;noDash.checked=checks.indexOf("no-em-dash")>=0;noTable.checked=checks.indexOf("no-markdown-table")>=0
-        error="";feedback="";previewText=""}
+        error="";feedback="";previewText="";conflicts=[]}
     function ceiling(){const c={};if(desktop.checked)c.desktop=false;if(delegation.checked)c.delegation=false;if(web.checked)c.web=false;if(memory.checked)c.memory=false;if(recall.checked)c.recall=false;if(extensions.checked)c.extensions=false;return c}
     function constraints(){return [noEmoji.checked?"no-emoji":"",noDash.checked?"no-em-dash":"",noTable.checked?"no-markdown-table":""].filter(c=>c)}
     function call(method,params){error="";feedback="";action=method;request=App.rpc(method,params)}
@@ -69,6 +70,8 @@ CDialog {
         CButton { text:"Preview saved instructions";enabled:editor.previewRequest<0&&!!editor.profile.id;onClicked:editor.previewRequest=App.rpc("behavior.preview",{profileId:editor.profile.id}) }
     }
     CTextArea { visible:!!editor.previewText;objectName:"behaviorPreview";Layout.fillWidth:true;Layout.preferredHeight:160;readOnly:true;wrapMode:TextEdit.Wrap;text:editor.previewText;font.pixelSize:Theme.caption;Accessible.name:"Rendered behavior instructions" }
+    // RC-07: trait combinations that pull against each other are a note for you; the style is saved and sent as it is.
+    Repeater { model:editor.previewText?editor.conflicts:[];CText { required property string modelData;objectName:"behaviorConflict";Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.amber;font.pixelSize:Theme.secondary;text:modelData } }
     CText { text:"Checkpoints";font.weight:Font.DemiBold }
     CText { text:"A checkpoint keeps this style exactly as it is now. Restoring one saves it as a new revision; checkpoints never change.";color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
     RowLayout {
@@ -91,7 +94,7 @@ CDialog {
     Connections {
         target:App
         function onResult(id,value){
-            if(id===editor.previewRequest){editor.previewRequest=-1;if(value?.error)editor.error=value.error;else editor.previewText=value.text;return}
+            if(id===editor.previewRequest){editor.previewRequest=-1;if(value?.error)editor.error=value.error;else{editor.previewText=value.text;editor.conflicts=value.conflicts||[]}return}
             if(id!==editor.request)return
             editor.request=-1
             if(editor.action==="reload"){

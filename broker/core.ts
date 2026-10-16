@@ -1601,7 +1601,7 @@ export class Core extends EventEmitter {
         if (p.postureId !== undefined) this.posture(p.postureId);
         const resolved = resolveBehavior({ personality: this.settings.personality, profiles: this.presets.profiles(), sessionProfileId: p.profileId, instructions: typeof p.instructions === 'string' ? p.instructions.slice(0, 4000) : undefined, postureId: p.postureId });
         const text = behaviorInstructions(resolved, this.settings.assistantName);
-        return { text, characters: text.length, warnings: resolved.warnings, scope: 'cere-behavior-block', note: 'Cere’s behavior block. Provider and project instructions may add other context.' };
+        return { text, characters: text.length, warnings: resolved.warnings, conflicts: resolved.conflicts, scope: 'cere-behavior-block', note: 'Cere’s behavior block. Provider and project instructions may add other context.' };
       }
       case 'behavior.resolve': { const s = this.store.session(p.id), resolved = this.resolvedBehavior(s.id); return { ...resolved, characters: behaviorInstructions(resolved, this.settings.assistantName).length }; }
       // A conversation's style, pinned posture and standing instructions. Each field left out stays as it is.

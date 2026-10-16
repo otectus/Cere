@@ -65,11 +65,25 @@ export function validCeiling(value: unknown): ToolCeiling {
   return Object.fromEntries(Object.entries(value as Record<string, boolean>).filter(([, flag]) => flag === false)) as ToolCeiling;
 }
 
+/**
+ * Trait combinations that pull against each other, after PyPersona's three conservative pairs.
+ * They are warnings for the person choosing a style: they never block it or change what is sent.
+ */
+export function traitConflicts(traits: Traits): string[] {
+  const level = (name: TraitName) => traits[name] ?? 0, conflicts: string[] = [];
+  if (level('warmth') <= -1 && level('humor') === 2) conflicts.push('A reserved tone with very playful humor may come across as mixed signals.');
+  if (level('formality') >= 1 && level('humor') === 2) conflicts.push('A formal register with very playful humor may clash.');
+  if (level('directness') === 2 && level('warmth') >= 1) conflicts.push('Blunt directness with a warm tone may come across as mixed signals.');
+  return conflicts;
+}
+
 export type ResolvedBehavior = {
   text: string; source: 'session' | 'project' | 'global';
   profile: { id: string; label: string; revision: string } | null;
   posture: { id: string; label: string; revision: string; pinned: boolean; instructions: string } | null;
   traits: Traits; instructions: string; ceiling: ToolCeiling; constraints: StyleConstraint[]; warnings: string[];
+  /** traitConflicts of the merged traits, posture included. */
+  conflicts: string[];
 };
 
 /**
@@ -96,7 +110,7 @@ export function resolveBehavior(p: { personality: string; profiles: BehaviorProf
     profile: base ? { id: base.id, label: base.label, revision: base.revision } : null,
     posture: posture ? { id: posture.id, label: posture.label, revision: posture.revision, pinned: !!p.pinned, instructions: posture.instructions || posture.text } : null,
     traits, instructions: [base?.instructions || '', (p.instructions || '').trim()].filter(Boolean).join('\n\n'), ceiling,
-    constraints: [...new Set([...(base?.constraints || []), ...(posture?.constraints || [])])] as StyleConstraint[], warnings,
+    constraints: [...new Set([...(base?.constraints || []), ...(posture?.constraints || [])])] as StyleConstraint[], warnings, conflicts: traitConflicts(traits),
   };
 }
 

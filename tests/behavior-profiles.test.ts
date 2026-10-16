@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
-import { behaviorInstructions, builtinPostures, resolveBehavior, validCeiling, validTraits } from '../broker/behavior.ts';
+import { behaviorInstructions, builtinPostures, resolveBehavior, traitConflicts, validCeiling, validTraits } from '../broker/behavior.ts';
 import { checkReply, validConstraints } from '../broker/style-checks.ts';
 import { defaultPersonality, personalityInstructions } from '../broker/personality.ts';
 import type { BehaviorProfile } from '../broker/behavior.ts';
@@ -193,4 +193,25 @@ test('RC-02 a pinned Without memory posture keeps memory out of a CLI turn, stil
   await core.updateSettings({ memory: { enabled: false } });
   await send('And the orchid launch?');
   assert.deepEqual(outcome(), ['disabled', 'setting_off'], 'with memory off the reason is memory being off');
+});
+
+test('RC-07 conflicting traits warn, a posture can create the conflict, and what is sent never changes', async t => {
+  assert.match(traitConflicts({ warmth: -1, humor: 2 })[0], /reserved tone with very playful humor/);
+  assert.match(traitConflicts({ formality: 1, humor: 2 })[0], /formal register with very playful humor/);
+  assert.match(traitConflicts({ directness: 2, warmth: 1 })[0], /Blunt directness with a warm tone/);
+  assert.equal(traitConflicts({ warmth: -2, formality: 2, humor: 2 }).length, 2);
+  for (const traits of [{}, { humor: 1, warmth: -2 }, { directness: 1, warmth: 2 }, { formality: -2, humor: 2 }]) assert.deepEqual(traitConflicts(traits), [], JSON.stringify(traits));
+  const base = profile({ id: 'base', traits: { directness: 2 } });
+  assert.deepEqual(resolveBehavior({ personality: defaultPersonality, profiles: [base], sessionProfileId: 'base' }).conflicts, []);
+  const merged = resolveBehavior({ personality: defaultPersonality, profiles: [base], sessionProfileId: 'base', postureId: 'posture:explain' });
+  assert.match(merged.conflicts.join(), /Blunt directness/, 'the Explain posture adds warmth to a blunt style');
+  assert.equal(behaviorInstructions(merged, 'Cere'), behaviorInstructions({ ...merged, conflicts: [] }, 'Cere'));
+  assert.doesNotMatch(behaviorInstructions(merged, 'Cere'), /mixed signals/);
+  const { core, dir } = await broker(t);
+  const style = await core.rpc('presets.save', { label: 'Blunt friend', text: 'Be yourself.', traits: { directness: 2, warmth: 1 }, expectedRevision: '0' });
+  assert.equal(style.label, 'Blunt friend', 'a conflicting style still saves');
+  assert.match((await core.rpc('behavior.preview', { profileId: style.id })).conflicts[0], /Blunt directness/);
+  const session = await core.create({ provider: 'codex', cwd: dir, trusted: true });
+  await core.rpc('session.behavior', { id: session.id, profileId: style.id });
+  assert.equal((await core.rpc('behavior.resolve', { id: session.id })).conflicts.length, 1);
 });
