@@ -2,6 +2,21 @@
 
 Publication check — October 15, 2026: `npm test` passed **577 tests**, with **1 optional skip** and no failures; `npm run typecheck` and `git diff --check` passed. Editor recovery files and machine-specific validation JSON/service/geometry snapshots remain local and are excluded from Git, as are runtime logs. References to those local records below document the verification performed; artwork and visual acceptance captures are included in the repository.
 
+## Documentation screenshots — October 15, 2026
+
+`screenshots/` holds 41 PNG images (5.7 MiB) of the real interface: desktop scenes, the compact panel, the workspace, dialogs, every Settings category, the five avatars, their themes and the six gestures. `screenshots/README.md` is the gallery. The README, `docs/tts.md`, `docs/workspace-telemetry.md`, `docs/mobile/SETUP.md` and `docs/memory/operations.md` embed the relevant ones.
+
+`tools/screenshots/run.sh` regenerates them. It seeds a demo profile (`seed.ts`), starts scripted Codex, Claude Code, AntiGravity and Ollama fixtures plus `hyprctl`, `wpctl` and `busctl` shims (`fixture.mjs`), and runs the new `cere-screenshots` target (`capture.cpp`) offscreen against one 1920×1080 virtual output (`screens.json`). Everything runs in private user, mount, process and network namespaces with `/home/demo` on a tmpfs, so no real profile, compositor, media player, notification service, provider account or network is reached. Desktop scenes draw Cere's own pet, panel and bubble windows at their real positions over a generated wallpaper.
+
+Checks actually run:
+
+- `cmake --build build --target cere cere-screenshots` passed.
+- `npm run typecheck` passed, including `tools/screenshots/seed.ts`.
+- `CERE_SCREENSHOTS_DIR=$PWD/screenshots tools/screenshots/run.sh`: **23/23 passed** (21 capture slots plus setup and cleanup) in 182 s. Each image was inspected; earlier runs found and fixed reused fixture item IDs, which had overwritten a reply after Cere restarted the Codex process.
+- `tools/screenshots/run.sh settingsPages` into a scratch directory: **3/3 passed**, writing its 12 images alone.
+
+Seen in the captures and left unchanged: small grey marks, for example before the approval bubble's title, likely because `qml/CScrollBar.qml` shows its 8 px thumb whenever `size < 1`, including 0 before content is measured; and `qml/Shell.qml` reports one busy session as "1 conversations working", a state the screenshots avoid. The demo's **Health and recovery** dialog lists the API providers as network problems because the demo has no network or API keys.
+
 ## Hover blush, pickup animation and Companion settings — October 15, 2026
 
 All five reference avatars now use a gentle held blush on hover and a stronger click reaction. Clicking still toggles chat. Both strengths share one sequence: click deepens the current drawing, then eases back to the hover pose without crossing neutral. Ordinary work can continue behind that direct reaction; approvals, errors, disconnects and dragging retain priority. Quiet, hidden, reduced-motion and zero-intensity policies remain authoritative.

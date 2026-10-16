@@ -9,6 +9,13 @@ See [setup, privacy boundaries, shell hooks and measurements](docs/workspace-tel
 
 A native desktop companion for Arch Linux and Hyprland. Click Cere for chat and desktop controls; drag her to move. Cere, Daemona, Jade, Nova and Soap use their front-view reference artwork, connected full-body gesture frames and registered eyelids. Reduced motion preserves each original still pose. Always-on-top is enabled initially, including above fullscreen application windows. Disable it for normal floating-window behavior.
 
+<p align="center">
+  <img src="screenshots/desktop-companion.png" alt="Cere standing on the desktop beside her compact panel, which shows a Codex conversation about a flaky login test" height="360">
+  <img src="screenshots/workspace-conversation.png" alt="The expanded workspace showing a Claude Code release plan with a table and a task list" height="360">
+</p>
+
+The compact panel beside Cere, and the expanded workspace. See the [screenshot gallery](screenshots/README.md) for more; the conversations in it are scripted demo content.
+
 ## Run from this workspace
 
 ```sh
@@ -80,9 +87,22 @@ Use your compositor’s configuration interface to bind `cere toggle` to a conve
 - Capture in Satty opens the focused display in the crop/annotation editor. Enter saves the edited image and returns to Cere’s preview; Escape cancels. The temporary original is removed. An explicit sharing choice precedes giving an AI session the saved image.
 - Media controls prefer Spotify when it is open, otherwise the playing MPRIS application. Cere displays the target and playback state, pins button commands to that target, and disables unavailable actions. Closing the target does not silently redirect an in-flight button press to a browser.
 
+<table>
+<tr>
+<td width="50%" valign="top"><img src="screenshots/desktop-approval-bubble.png" alt="A bubble beside Cere listing two permission requests: a file change with its diff and a deploy command"><br>Pending approvals wait beside Cere while her windows are closed.</td>
+<td width="50%" valign="top"><img src="screenshots/workspace-question.png" alt="A Codex question form with option descriptions and one answer selected"><br>A Codex question form with option descriptions.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="screenshots/workspace-activity.png" alt="The Activity panel listing two working subagents and test output below a reply"><br>Activity keeps subagents and tool output below the conversation.</td>
+<td width="50%" valign="top"><img src="screenshots/desktop.png" alt="The Desktop page with output volume, Spotify playback and a running focus timer"><br>Desktop controls: quick actions, volume, media playback and timers.</td>
+</tr>
+</table>
+
 Roaming starts disabled. When enabled, Cere slowly follows the mouse across your displays, easing into motion at up to 75 logical pixels per second and stopping short of the pointer. Small pointer movements do not make her shuffle constantly. Hovering or using her menu, opening either interface, a reply, completion or approval bubble beside her, dragging, fullscreen apps, task activity, hiding, quiet mode, and reduced motion pause following. The old roaming-area presets are replaced by following across the available screens.
 
 All five avatars have six full-body routes: wave, thinking, open-hand presentation, celebration, a timid blush with both hands against the cheeks, and a dangling/flailing pickup loop. Their original front-view reference supplies the resting pose. Generated gesture frames preserve the character’s clothing, colors and silhouette, with uniform scaling and room for extended hands. Standing gestures keep their feet planted; carried poses bend their knees and swing their feet freely. The source sheets and generation prompts live in `artwork/avatars/{id}/`.
+
+![Cere in her six gestures: wave, thinking, open-hand presentation, celebration, timid blush and the pickup flail, each with its expression badge](screenshots/gestures.png)
 
 Animation follows Qt’s display animation clock. Each route contains 51 prepared frames, played at 60 Hz. Standing gestures hold their endpoint and return through the same frames. Hovering raises the hands into a gentle blush; clicking deepens the same sequence and opens or closes chat. The stronger reaction eases back to the hover pose while the pointer remains over the avatar. Dragging beyond the click threshold starts an alternating flail loop, with pendulum motion around the actual grab point and a softened shadow; releasing eases back into a standing pose. Interruptions reverse from the current frame before entering the latest requested gesture; an old gesture cannot jump back in after a newer request. Continuous breathing, restrained sway, attention and carrying/landing motion apply to the connected figure. Output-seam mirrors consume the primary avatar’s exact sample. Native GPU and software rendering use the same registered artwork, bounded lazy image caching and area-averaged textures for small desktop sizes.
 
@@ -120,6 +140,10 @@ After authoring, run `node --test tests/avatar-surface-motion.test.ts tests/avat
 
 Saving an avatar also applies her theme: **Cere** uses cool blue; **Daemona** uses black, dark red and crimson; **Jade** uses black and vibrant reds; **Nova** uses black, violet and purple; **Soap** uses tan and muted navy. Colors follow the character throughout the compact panel, menus, conversation cards, portrait frames, desktop bubbles, mood badges, motion preview and live tray/window icon. The theme follows the saved avatar immediately and across restarts; unsaved selections leave the current theme in place. New artwork was generated with built-in imagegen; `artwork/avatars/{id}/` retains the selected source sheets and prompts.
 
+![Cere, Daemona, Jade, Nova and Soap standing side by side](screenshots/avatars.png)
+
+![The compact panel in the Cere, Daemona, Jade, Nova and Soap color themes](screenshots/themes.png)
+
 The default personality is a warm, sharp-tongued rogue; edit the multiline text to replace it, or save an empty personality field for a neutral voice. **Restore default personality** fills only the personality editor with the original text for review before saving. The selected name takes precedence over an old self-name in personality text without rewriting your saved text. Changes apply on the next turn in existing and new managed Codex, Claude, AntiGravity, Ollama and API conversations; running turns retain their current instructions. Personality and names do not change permissions or project instructions. External linked terminals retain their own configuration until handed to Cere. The application, integration names and window identifiers remain Cere.
 
 ## Sessions, workflows, and companion tools
@@ -135,6 +159,17 @@ The default personality is a warm, sharp-tongued rogue; edit the multiline text 
 - Local push-to-talk records at most 60 seconds into a private temporary file and uses a user-configured local transcription executable/model. The transcript enters an editable review before the composer; there is no always-listening mode or automatic model download. Speech supports selected-text playback, rate adjustment, and an optional brief reading that preserves the full written response.
 - **Offline tools** provides notes, tasks, arithmetic, conversions, and pause/resume/repeating timers. Reviewed workspace routines use exact previews; undo is offered only for created timers. Focus, Gaming, and Presentation profiles combine visibility, speech, animation and ordinary notification preferences while retaining approval access. Home positions are per monitor; edge docking is explicit.
 - **Health and recovery** (**Settings → Application → Maintenance**, beside **Backup and restore**) distinguishes provider/authentication/protocol/network, memory, and speech problems. Diagnostics use an allowlist and must be previewed before export. Reviewed backups exclude credentials, device keys, active grants, executable actions and temporary conversations by default. Restore preserves the current forgetting registry, pauses tools, marks restored sessions interrupted, and never replays a turn. If forgetting records differ, old conversation/draft/attachment/notes payloads are omitted conservatively. Restoring keeps this computer's connections, API keys, paired phones, voice profiles, personality and other preferences, and clears project grants until you resume tools. Conversations, drafts, notes and project capsules come from the backup only when it includes them; a backup without them restores a profile without conversations. Restoration stages a new profile and restarts the broker (through `cere-broker.service` when installed); the previous private profile, including its conversations, is retained.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="screenshots/command-palette.png" alt="The command palette showing favorites and recent destinations"><br>The command palette (Ctrl+K) with favorites and recent destinations.</td>
+<td width="50%" valign="top"><img src="screenshots/sessions.png" alt="The Sessions page with a filter, folders and per-session actions"><br>Sessions with filters, folders and pins.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="screenshots/workflows.png" alt="The Project workflows dialog showing a project capsule with goal, decisions and constraints"><br>A project capsule in Project workflows.</td>
+<td width="50%" valign="top"><img src="screenshots/memory-review.png" alt="Project memory review showing a decision proposed from a reply and its supporting passage"><br>Memory review of a decision proposed from a reply.</td>
+</tr>
+</table>
 
 ## AntiGravity and direct APIs
 
@@ -175,6 +210,8 @@ Choose **DuckDuckGo**, **Brave**, **Mojeek**, or **SearXNG**. The first three re
 
 Replies include clickable source buttons; the Activity Panel shows queries, results, and errors. Public providers sometimes return CAPTCHA pages or rate limits; Cere reports these failures instead of treating a blocked page as evidence. The reader accepts public HTTP(S) HTML/text, strips scripts and navigation, and bounds page size and returned text. It checks resolved addresses and every redirect, refusing private, loopback, link-local, shared, multicast, reserved, documentation and benchmarking IPv4 ranges. It also refuses the IANA protocol-assignment block 192.0.0.0/24, including its anycast services, and the deprecated 6to4 relay range 192.88.99.0/24; the rest of 192.0.0.0/16 is public. IPv6 is limited to global unicast outside the special-purpose, 6to4 and documentation ranges. The explicitly configured SearXNG endpoint can be local. Reading a source contacts its website. Stop cancels research, and pausing AI actions or disabling search prevents further tool use. Research is limited to eight tool calls per turn. Pages and snippets are untrusted reference material.
 
+<p align="center"><img src="screenshots/workspace-web-sources.png" alt="An Ollama reply about Hyprland window rules with two web source buttons" width="640"></p>
+
 ## Shared project memory
 
 Graph memory is integrated into the broker and native inspector. **It remains experimental:** the full reference design’s release criteria have not all passed. See [implementation status](docs/memory/implementation-report.md) and [evaluation results](docs/memory/evaluation.md) for measured results and remaining work.
@@ -186,6 +223,13 @@ Managed Codex, Claude and Ollama conversations share the same memories for the s
 Canonical observations, exact source witnesses, entities, typed assertions, correction history, episodes, and erasure records live in private SQLite at `$XDG_STATE_HOME/cere/graph-memory/memory.sqlite`. Neo4j and Qdrant are rebuildable local projections. Their pointers are checked against canonical scope, time, revision, policy, and erasure state before text is recalled. See [operations](docs/memory/operations.md) for authenticated dependency setup, Fish integration, backup, restoration, and reindexing.
 
 **Manage project memory** opens saved notes and conversation passages for the selected conversation’s project folder and Ollama server. The **Graph, evidence and workspace inspector** adds temporal queries, provenance, structured corrections, conflicts, collector policy, indexing status, and forgetting progress. Structured corrections require an exact source quotation and the inspected revision. Uncertain effective dates remain candidates for review. Identity decisions (same, not the same, possible) are recorded and reversible, but they do not yet merge or split entities. Model text alone cannot establish that an action succeeded.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="screenshots/settings-knowledge.png" alt="Knowledge settings with web search and memory options"><br><b>Settings → Knowledge</b> with memory enabled.</td>
+<td width="50%" valign="top"><img src="screenshots/memory.png" alt="The Project memory dialog listing four saved facts with Evidence, Edit and Forget buttons"><br>Saved facts for a project in <b>Manage project memory</b>.</td>
+</tr>
+</table>
 
 Replies that use recalled memory cite it inline as `[evidence:ID]`. These markers are hidden by default: conversations, completion and pinned-reply cards, Activity results, the completion inbox and command-palette snippets leave them out, and so do Copy, Quote, Branch and Speak. Turn on **Settings → Knowledge → Memory → Show memory citations in replies** to see them. Saved replies keep every marker, so the record of which evidence each reply cited is unchanged, and spoken replies never read them aloud.
 
@@ -200,6 +244,13 @@ Architecture, configuration boundaries, and pinned versions are documented in [a
 Desktop AI categories start disabled. Scoped assistance enables chosen categories and asks before sensitive tools. Broad control is optional and requires project-specific, expiring grants. Pause and revoke remain available. Cere’s grants govern its own MCP tools; they do not sandbox unrelated shell access already granted to a CLI.
 
 **Permissions** opens a single center for effective access, provider state, project grants, expiry, revocation, and separate controls for pausing Cere actions and stopping provider work. **Settings → AI assistance** also has two switches that stay on until you turn them off. **Skip CLI permission prompts** approves project trust, commands, file changes, scripts and delegation in managed conversations, and auto-approves CLI requests from paired phones that hold both `providers.execute` and `approvals.provider` (see [mobile security](docs/mobile/SECURITY.md)). It also starts new `cere terminal` sessions with `--dangerously-bypass-approvals-and-sandbox` (Codex) or `--dangerously-skip-permissions` with the sandbox disabled (Claude Code). **Skip computer permission prompts** approves desktop actions. Questions always require an answer.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="screenshots/permissions.png" alt="The Permission Center with power access options for the selected session"><br>The Permission Center for the selected session.</td>
+<td width="50%" valign="top"><img src="screenshots/settings-assistance.png" alt="AI assistance settings with permission switches and desktop categories"><br><b>Settings → AI assistance</b>: permission switches and desktop categories.</td>
+</tr>
+</table>
 
 **Power sessions** deliberately grant CLI full access, computer control, or both to selected idle, locally managed sessions in one canonical project directory. Leases last 1–120 minutes, remain visible, are never persisted, and must be renewed deliberately. Temporary, remote, and linked sessions cannot start one. Enabling power does not accept existing pending requests; questions always require answers. Ending or expiring a lease revokes new authority immediately and stops owned provider work, reporting confirmed or unconfirmed termination. Leases do not reach linked terminals, which keep their own permission configuration unless launched while **Skip CLI permission prompts** is on.
 
@@ -226,6 +277,8 @@ QT_QPA_PLATFORM=offscreen:configfile=$PWD/tests/fixtures/offscreen-scales.json Q
 ```
 
 `ctest` runs the motion, avatar (GPU and software) and QML component tests; the QML tests need `QML_XHR_ALLOW_FILE_READ=1`, which CTest sets. The offscreen UI run uses virtual outputs at several scales and skips checks that need the live Hyprland compositor or desktop session, such as Spotify, Satty and layer-shell placement. Run `QT_QUICK_CONTROLS_STYLE=Basic ./build/cere-ui-check` on the live desktop for those; it moves the pointer and controls the running Spotify. For the locally extracted dependencies, prefix the UI test with `LD_LIBRARY_PATH="$PWD/.local-deps/usr/lib" QT_PLUGIN_PATH="$PWD/.local-deps/usr/lib/qt6/plugins"`. Native tests briefly open isolated test windows and write screenshots to `/tmp/cere-ui-evidence`.
+
+After `cmake --build build --target cere cere-screenshots`, `tools/screenshots/run.sh` regenerates the documentation images in [`screenshots/`](screenshots/README.md) from a scripted demo profile. It renders offscreen inside private user, mount, process and network namespaces, so it uses no real Cere profile, compositor, provider account or network. Name capture slots, such as `settingsPages`, to retake only those images.
 
 `tools/live-check.ts` runs real provider calls in a temporary project, including a named harmless printf script, approval, another turn, and a process disconnect/resume. It consumes normal CLI usage. Run it only with isolated `CERE_STATE_DIR` and `CERE_RUNTIME_DIR` values. `tools/probe-providers.ts` is a smaller no-tool connectivity check.
 

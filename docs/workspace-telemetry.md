@@ -16,6 +16,8 @@ use persistent provider conversations. No verified ephemeral input channel is
 implemented for them. This limitation appears in the settings panel and status.
 Enabling telemetry does not silently add it to CLI prompts or histories.
 
+![Settings → Workspace telemetry, off by default, with workspace selection, ignore patterns and capture options](../screenshots/settings-telemetry.png)
+
 ## Installation and walkthrough
 
 Build with `npm run build`; normal CMake installation installs `cere-report`,

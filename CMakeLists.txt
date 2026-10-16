@@ -54,6 +54,11 @@ if(BUILD_TESTING)
   qt_add_resources(cere-ui-check cere-test-palettes PREFIX "/" FILES assets/palettes.json)
   target_link_libraries(cere-ui-check PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Qml Qt6::Network Qt6::Widgets Qt6::DBus Qt6::Test LayerShellQt::Interface)
   target_compile_definitions(cere-ui-check PRIVATE CERE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  # Documentation screenshots from a scripted demo profile; tools/screenshots/run.sh prepares and runs it.
+  qt_add_executable(cere-screenshots tools/screenshots/capture.cpp ${CERE_NATIVE})
+  qt_add_resources(cere-screenshots cere-screenshot-palettes PREFIX "/" FILES assets/palettes.json)
+  target_link_libraries(cere-screenshots PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Qml Qt6::Network Qt6::Widgets Qt6::DBus Qt6::Test LayerShellQt::Interface)
+  target_compile_definitions(cere-screenshots PRIVATE CERE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   qt_add_executable(cere-motion-check tests/motion.cpp native/motion.cpp native/motion.h)
   target_link_libraries(cere-motion-check PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
   # Checked standard-library preconditions (for example std::clamp's ordered bounds).

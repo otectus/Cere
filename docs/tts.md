@@ -18,6 +18,8 @@ survive UI reconnects but are not replayed after a broker restart; full messages
 remain in the transcript. The bubble retains up to 100 recent messages within a
 512 KiB preview budget, showing up to 16,000 characters per message.
 
+<p align="center"><img src="../screenshots/desktop-reply-bubble.png" alt="A bubble beside Cere showing the latest reply from a pinned conversation, with Open conversation and Dismiss" width="520"></p>
+
 **Settings → Voice** controls **Read replies aloud** (enabled by default) and
 `voice` (default `en_US-amy-medium`). These settings persist in Cere's existing
 SQLite settings store. Voice adjustments work with Piper and Kokoro:
@@ -40,6 +42,8 @@ voice and provider-specific switches are preserved; Quiet mode still applies.
 - **Pitch:** −6 to +6 semitones, without changing speaking speed.
 - **Cere's volume:** 0–100% of the voice's normal output, independent of system
   volume. 0% also silences Test voice and stops current and queued speech.
+
+![Settings → Voice with Read replies aloud, per-provider speech switches, the local voice and voice adjustments](../screenshots/settings-voice.png)
 
 **Test voice** previews the saved adjustments. **Reset voice adjustments** restores
 1× speed, neutral pitch and 100% volume without changing the selected voice.

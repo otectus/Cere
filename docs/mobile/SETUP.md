@@ -18,6 +18,8 @@ Build the matching desktop source with `npm ci` and `npm run build`. Installed d
 
 ## Pair locally
 
+![Settings → Cere Mobile on the desktop, with the closed remote gateway, address selection and offline pairing](../../screenshots/settings-mobile.png)
+
 1. On desktop, open **Settings → Cere Mobile**. Select one to three literal IP addresses belonging to this desktop, such as its LAN and existing WireGuard addresses. Wildcard listening is rejected. The default TCP port is 8443.
 2. Prepare the offline QR offer. On Android, scan it or paste its complete `cere-pair://v1/…` text. Give the phone a recognizable name. The desktop selects biometric actions or **Trusted phone — no fingerprint or PIN** in the signed offer. Biometric mode authenticates action-key creation; trusted mode creates a separate non-exportable signing key without a biometric prompt.
 3. Get the phone's signed public response to the desktop and verify it: copy and paste it, or use **Share response** to send it to the PC (for example as a saved text file) and choose **Load response file…**. Compare all six words on both screens. An offer lasts five minutes and is single use.
