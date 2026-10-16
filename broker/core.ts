@@ -166,6 +166,8 @@ export class Core extends EventEmitter {
     this.attachments=new Attachments(store);this.organization=new Organization(store,()=>this.changed());
     this.projects=new Projects(this);
     this.diagnostics=new Diagnostics(this);this.utilities=new Utilities(this);this.recovery=new Recovery(this);this.memoryReview=new MemoryReview(this);this.workflows=new Workflows(this);
+    // RC-04: observed edits make earlier passing checks in the same folder stale.
+    this.telemetry.edited=(path,at)=>this.workflows.observeEdit(path,at,'telemetry');
     this.presets=new BehaviorPresets(store,()=>{if(!this.closed)this.changed();});
     this.localModels=new LocalModels(this);
     this.collections=new KnowledgeCollections(this);
@@ -1279,6 +1281,7 @@ export class Core extends EventEmitter {
     const result = await applyProposal(proposal, join(this.store.directory, 'vault-backups'));
     // Every applied edit is attributable: the conversation, the note and the new content's hash.
     this.store.activity({ action: 'notes.edit', sessionId: id, path: proposal.display, sha256: result.sha256, created: result.created, status: 'completed' });
+    this.workflows.observeEdit(result.path, Date.now(), 'notes');
     try { this.workflows.observeAction(id, 'notes.edit', { path: proposal.display, sha256: result.sha256 }, { paths: [result.path] }); } catch { /* A conversation without results still keeps its activity record. */ }
     this.changed();
     return { applied: true, path: proposal.display, sha256: result.sha256, created: result.created };

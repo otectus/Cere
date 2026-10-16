@@ -277,3 +277,52 @@ test('M17 a recipe reply missing its sections is flagged on the result, and the 
   const exported=f.workflows.exportRecipes([saved.id]);assert.deepEqual(exported[0].outputSections,['Findings','Open questions']);
   assert.notEqual(saved.revision,plain.revision);
 });
+
+test('RC-04 a passing check is out of date once files change after it, wherever the edit was observed',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-16T12:00:00Z')});
+  const f=await fixture(t);
+  const scripts:any[]=[{id:'unit',name:'Unit tests',command:'/usr/bin/true',args:[],cwd:f.project,timeout:60000}];
+  const telemetry={config:{enabled:true,roots:[f.root]},paused:false};
+  Object.assign(f.core as any,{settings:{scripts},sending:new Set(),action:async()=>({exitCode:0}),telemetry});
+  let capsule:any=await f.workflows.dispatch('capsules.get',{sessionId:'source'});
+  const task:any=await f.workflows.dispatch('capsules.task',{sessionId:'source',expectedRevision:capsule.revision,op:'add',text:'Fix the parser'});
+  capsule=task.capsule;
+  f.store.messagesById.set('reply',{id:'reply',sessionId:'source',role:'assistant',text:'Fixed.',time:20,turnId:'turn-1'} as any);
+  const result:any=f.workflows.observeResult(f.store.session('source'),f.store.messageById('reply'),'completed');
+  const run=()=>f.workflows.dispatch('results.runVerification',{sessionId:'source',resultId:result.id,scriptId:'unit',expectedScript:scripts[0],reviewed:true});
+  const view=async()=>((await f.workflows.dispatch('results.list',{sessionId:'source'})) as any[])[0];
+  const later=(ms=10_000)=>t.mock.timers.tick(ms),edit=(path:string,source:'telemetry'|'notes'='telemetry')=>f.workflows.observeEdit(join(f.project,path),Date.now(),source);
+  // An edit, then a pass: the pass is current.
+  edit('src/parser.ts');later();await run();
+  let current=await view();
+  assert.deepEqual([current.verification,current.editedSinceCheck,current.edits.observable],['passed',false,true]);
+  // A pass, then an edit: out of date, and it cannot complete a task.
+  later();edit('src/parser.ts');
+  current=await view();
+  assert.deepEqual([current.editedSinceCheck,current.edits.lastEditSource],[true,'telemetry']);
+  const complete=()=>f.workflows.dispatch('capsules.task',{sessionId:'source',expectedRevision:capsule.revision,op:'transition',taskId:task.task,state:'done',completion:{kind:'observed-check',resultId:result.id}});
+  await assert.rejects(complete(),/changed after that check passed/);
+  // As a required check, the row says why, and the gate is not passed.
+  capsule=await f.workflows.dispatch('capsules.setRequiredChecks',{sessionId:'source',expectedRevision:capsule.revision,scriptIds:['unit']});
+  current=await view();
+  assert.deepEqual([current.checklist[0].status,current.checklist[0].reason,current.gate],['stale','files changed after this check','incomplete']);
+  // Running it again makes it current; an applied note edit in the project then makes it stale again.
+  later();await run();
+  assert.deepEqual([(await view()).checklist[0].status,(await view()).gate],['passed','passed']);
+  later();edit('notes/todo.md','notes');
+  current=await view();
+  assert.deepEqual([current.checklist[0].status,current.edits.lastEditSource],['stale','notes']);
+  // An edit just as the check ends is taken as its own late write.
+  later();await run();edit('src/parser.ts');
+  assert.equal((await view()).checklist[0].status,'passed');
+  // The record survives a restart.
+  later();edit('src/parser.ts');f.workflows.close();
+  assert.equal(f.workflows.timers.size,0,'closing saves pending edits and leaves no timer to fire later');
+  const restarted=new Workflows(f.core as any);t.after(()=>restarted.close());
+  assert.equal(restarted.editEvidence(f.project).last?.at,Date.now());
+  // Without telemetry on this folder, later edits are not observable, and the result says so.
+  telemetry.config.roots=[f.other];
+  assert.equal(restarted.editEvidence(f.project).observable,false);
+  delete (f.core as any).telemetry;
+  assert.equal(restarted.editEvidence(f.project).observable,false);
+});

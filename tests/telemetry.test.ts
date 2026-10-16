@@ -116,3 +116,13 @@ test('a worker status that did not change is not a state change',async t=>{
   service.worker!.emit('message',{status:{...status,events:status.events+1}});assert.equal(changes,before+1);
   assert.equal(service.status.events,status.events+1);
 });
+test('RC-04 only edits outside ignored folders reach the broker, with their wall-clock time',async t=>{
+  const root=await fixture(t);await mkdir(join(root,'build'));await mkdir(join(root,'src'));
+  const state=new TelemetryState({...telemetryDefaults,roots:[root]}),files=new Files(state),seen:string[]=[],times:number[]=[];
+  state.onEdit=(owner,path,ts)=>{if(owner===root){seen.push(path);times.push(Date.parse(ts));}};
+  await files.start();t.after(()=>files.stop());
+  const before=Date.now();await writeFile(join(root,'build/out.js'),'generated');await writeFile(join(root,'src/main.ts'),'edited');
+  await until(()=>seen.includes('src/main.ts'));await new Promise(r=>setTimeout(r,600));
+  assert.deepEqual(seen,['src/main.ts'],'build output is never reported');
+  assert.ok(times[0]>=before-50&&times[0]<=Date.now(),'the time is when the edit was seen, not when it settled');
+});

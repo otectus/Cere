@@ -2,10 +2,13 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { TelemetryState } from './state.ts';
 import { Files } from './files.ts';
 import { Listener, telemetryDirectory } from './listener.ts';
+import { join } from 'node:path';
 import { canonical, matchRoot } from './paths.ts';
 import type { Event, TelemetryConfig } from './protocol.ts';
 const port=parentPort!;let config=workerData.config as TelemetryConfig,paused=workerData.paused===true,closed=false;
 const state=new TelemetryState(config);let files:Files|undefined,listener:Listener|undefined;
+// RC-04: the broker keeps when each folder last changed, so a check that passed before an edit is not current.
+state.onEdit=(root,path,ts)=>{if(!paused&&!closed)port.postMessage({edit:{path:join(root,path),at:Date.parse(ts)||Date.now()}});};
 let queue:{event:Event;at:number;generation:number}[]=[],draining=false,drops=0,error='';
 async function drain(){if(draining)return;draining=true;try{while(queue.length&&!closed){const item=queue.shift()!;if(!paused&&item.generation===state.generation)await state.ingest(item.event,item.at);}}finally{draining=false;}}
 function clear(){state.clear();queue=[];files?.clear();listener?.discardBuffers();}

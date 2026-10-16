@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { dirname, isAbsolute } from 'node:path';
 import type { Core } from './core.ts';
 import type { Message, Provider, Session } from './types.ts';
-import { checklist, contractFor, contractLimits, validSections } from './output-contracts.ts';
-import type { CheckAttempt, OutputContract, RequiredCheck } from './output-contracts.ts';
+import { checklist, contractFor, contractLimits, editedAfter, validSections } from './output-contracts.ts';
+import type { CheckAttempt, EditEvidence, OutputContract, RequiredCheck } from './output-contracts.ts';
+import { matchRoot } from './telemetry/paths.ts';
 
 type SourceRole = 'observed'|'user-confirmed'|'model-suggestion';
 type SourceRef = { messageId:string;sessionId:string;sourceRole:SourceRole };
@@ -169,6 +170,8 @@ export class Workflows {
   previews=new Map<string,Preview>();
   verificationReviews=new Map<string,{sessionId:string;name:string;argsDigest:string;label:string;expires:number}>();
   timers=new Map<string,NodeJS.Timeout>();
+  /** RC-04: the latest observed edit under each folder, by workspace telemetry or an applied note edit. */
+  edits?:Map<string,{at:number;source:string}>;
   core:Core;
   constructor(core:Core) {this.core=core}
 
@@ -262,6 +265,8 @@ export class Workflows {
           if(result.verification!=='passed'||!result.observed.some(action=>action.verification==='reviewed-check'))throw new Error('Only a passing broker-observed check can complete a task. Use your own decision otherwise.');
           const gate=this.gate(result).gate;
           if(gate!=='none'&&gate!=='passed')throw new Error('Every required check must pass for this result before it can complete a task.');
+          const passed=result.observed.filter(action=>action.verification==='reviewed-check'&&action.exitCode===0).at(-1);
+          if(passed&&editedAfter(this.editEvidence(cwd),passed.observedAt))throw new Error('Files in this project changed after that check passed. Run it again first.');
           changed.completion={kind:'observed-check',resultId:result.id,verification:'passed',decidedAt:time};
         } else if(evidence.kind==='user-decision'){
           const note=text(evidence.note,'completion note',2_000);if(!note)throw new Error('Say why the task is done');
@@ -560,16 +565,38 @@ export class Workflows {
     row.attempts=[...(row.attempts||[]).slice(-49),{scriptId,state,at:Date.now(),seq:row.sequence,...(typeof reason==='string'&&reason?{reason:reason.slice(0,300)}:{})}];
     if(index<0)rows.push(row);this.saveResults(rows);
   }
+  /**
+   * RC-04: records an edit at `at` (wall-clock ms) for the edited path's folder and every folder above
+   * it, so a project's latest edit is one lookup. Kept for the 2,000 most recently edited folders.
+   */
+  observeEdit(path:string,at:number,source:'telemetry'|'notes') {
+    if(typeof path!=='string'||!isAbsolute(path)||!Number.isFinite(at))return;
+    const edits=this.editLog();
+    for(let folder=dirname(path);;folder=dirname(folder)){const known=edits.get(folder);if(!known||known.at<at){edits.delete(folder);edits.set(folder,{at,source});}if(folder===dirname(folder))break;}
+    while(edits.size>2_000)edits.delete(edits.keys().next().value!);
+    if(!this.timers.has('edits'))this.timers.set('edits',setTimeout(()=>this.saveEdits(),1_000).unref());
+  }
+  private editLog(){return this.edits??=new Map(Object.entries(this.core.store.get<Record<string,{at:number;source:string}>>('workflow:observed-edits',{})));}
+  private saveEdits(){clearTimeout(this.timers.get('edits'));this.timers.delete('edits');if(this.edits)this.core.store.set('workflow:observed-edits',Object.fromEntries(this.edits));}
+  /** Edit evidence for a project folder: watched by workspace telemetry now, and its latest observed edit. */
+  editEvidence(cwd:string):EditEvidence {
+    const telemetry=(this.core as any).telemetry,config=telemetry?.config;
+    const observable=!!config?.enabled&&!telemetry.paused&&!!matchRoot(config.roots||[],cwd);
+    const last=this.editLog().get(cwd);
+    return {observable,...(last?{last}:{})};
+  }
   /** M17: the project's required checks, judged for one result with the checks' current definitions. */
   private gate(row:ResultRecord) {
     const capsule=this.core.store.get<Capsule>(this.capsuleKey(row.cwd),this.emptyCapsule(row.cwd));
     const scripts=this.core.settings?.scripts||[];
-    return checklist(capsule.requiredChecks||[],row.observed,row.attempts||[],scriptId=>{const script=scripts.find(item=>item.id===scriptId);return script?{definitionDigest:digest(script),label:script.name}:undefined},digest);
+    return checklist(capsule.requiredChecks||[],row.observed,row.attempts||[],scriptId=>{const script=scripts.find(item=>item.id===scriptId);return script?{definitionDigest:digest(script),label:script.name}:undefined},digest,this.editEvidence(row.cwd));
   }
   private hydrateResult(row:ResultRecord) {
     const message=row.messageId?this.core.store.messageById(row.messageId):undefined;
-    const {rows:checks,gate}=this.gate(row);
-    return {...row,checklist:checks,gate,source:message?{id:message.id,role:message.role,time:message.time,text:message.text.slice(0,4_000),truncated:message.text.length>4_000}:null,artifacts:[...new Set(row.observed.flatMap(action=>action.paths))],uncertainty:row.providerOutcome==='unknown'?'The provider outcome was not confirmed.':row.verification==='not-run'?'No broker-observed verification has run.':row.verification==='inconclusive'?'Observed evidence did not establish pass or fail.':'',followUp:'Open session'};
+    const {rows:checks,gate,edits}=this.gate(row);
+    const passed=row.observed.filter(action=>action.verification==='reviewed-check'&&action.exitCode===0).at(-1);
+    const editedSinceCheck=!!passed&&editedAfter(this.editEvidence(row.cwd),passed.observedAt);
+    return {...row,checklist:checks,gate,edits,editedSinceCheck,source:message?{id:message.id,role:message.role,time:message.time,text:message.text.slice(0,4_000),truncated:message.text.length>4_000}:null,artifacts:[...new Set(row.observed.flatMap(action=>action.paths))],uncertainty:row.providerOutcome==='unknown'?'The provider outcome was not confirmed.':row.verification==='not-run'?'No broker-observed verification has run.':row.verification==='inconclusive'?'Observed evidence did not establish pass or fail.':'',followUp:'Open session'};
   }
   private listResults(p:any){let rows=this.resultRows();if(p?.sessionId)rows=rows.filter(row=>row.sessionId===p.sessionId);if(p?.cwd)rows=rows.filter(row=>row.cwd===canonicalCwd(p.cwd));const limit=p?.limit??100;if(!Number.isInteger(limit)||limit<1||limit>200)throw new Error('Result limit must be 1–200');return rows.slice(0,limit).map(row=>this.hydrateResult(row))}
 
@@ -594,5 +621,5 @@ export class Workflows {
     default:throw new Error('Unknown workflow method: '+method);
     }
   }
-  close(){for(const timer of this.timers.values())clearTimeout(timer);for(const check of this.checks.values())check.abort(new Error('Cere is closing'));this.checks.clear();this.timers.clear();this.previews.clear();this.verificationReviews.clear()}
+  close(){if(this.timers.has('edits'))this.saveEdits();for(const timer of this.timers.values())clearTimeout(timer);for(const check of this.checks.values())check.abort(new Error('Cere is closing'));this.checks.clear();this.timers.clear();this.previews.clear();this.verificationReviews.clear()}
 }

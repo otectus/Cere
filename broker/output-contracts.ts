@@ -66,12 +66,17 @@ export function contractFor(definition: { id: string; version: number; outputSec
   return { definitionId: definition.id, version: definition.version, sections, status: sections.every(section => section.present) ? 'met' : 'missing' };
 }
 
+/** What is known about edits in a result's folder: whether any source watches it, and the latest one seen. */
+export type EditEvidence = { observable: boolean; last?: { at: number; source: string } };
+/** Edits reported this soon after a check ends are taken as the check's own late writes. */
+export const editGraceMs = 1000;
+
 /**
  * The required checks of a project, judged for one result. The latest event for each check wins:
- * a later cancellation or start failure replaces an earlier pass, and a check whose definition
- * changed since it ran is stale.
+ * a later cancellation or start failure replaces an earlier pass, a check whose definition changed
+ * since it ran is stale, and so is a pass older than an edit observed later in the same folder.
  */
-export function checklist(required: RequiredCheck[], observed: Observed[], attempts: CheckAttempt[], current: (scriptId: string) => { definitionDigest: string; label: string } | undefined, digestOf: (value: unknown) => string) {
+export function checklist(required: RequiredCheck[], observed: Observed[], attempts: CheckAttempt[], current: (scriptId: string) => { definitionDigest: string; label: string } | undefined, digestOf: (value: unknown) => string, edits: EditEvidence = { observable: false }) {
   const rows: ChecklistRow[] = required.map(check => {
     const script = current(check.scriptId), label = script?.label || check.label;
     if (!script) return { scriptId: check.scriptId, label, status: 'missing' as const };
@@ -82,9 +87,12 @@ export function checklist(required: RequiredCheck[], observed: Observed[], attem
     if (attempt && later) return { scriptId: check.scriptId, label, status: attempt.state, at: attempt.at, ...(attempt.reason ? { reason: attempt.reason } : {}) };
     if (!run) return { scriptId: check.scriptId, label, status: 'not-run' as const };
     const base = { scriptId: check.scriptId, label, at: run.observedAt, ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}), ...(run.durationMs !== undefined ? { durationMs: run.durationMs } : {}) };
-    if (digestOf((run.args as any)?.definition) !== script.definitionDigest) return { ...base, status: 'stale' as const };
+    if (digestOf((run.args as any)?.definition) !== script.definitionDigest) return { ...base, status: 'stale' as const, reason: 'the check changed since it ran' };
+    if (run.exitCode === 0 && editedAfter(edits, run.observedAt)) return { ...base, status: 'stale' as const, reason: 'files changed after this check' };
     return { ...base, status: run.exitCode === 0 ? 'passed' as const : 'failed' as const };
   });
   const gate: Gate = !rows.length ? 'none' : rows.every(row => row.status === 'passed') ? 'passed' : rows.some(row => row.status === 'failed') ? 'failed' : 'incomplete';
-  return { rows, gate };
+  return { rows, gate, edits: { observable: edits.observable, ...(edits.last ? { lastEditAt: edits.last.at, lastEditSource: edits.last.source } : {}) } };
 }
+/** Whether an observed edit in the folder came after a check that ended at `at`. */
+export function editedAfter(edits: EditEvidence, at: number) { return !!edits.last && edits.last.at > at + editGraceMs; }

@@ -9,6 +9,8 @@ export class TelemetryState {
   sequences=new Map<string,{seq:number;seen:number}>();
   generation=0; drops=0;
   config:TelemetryConfig;now:()=>number;
+  /** Told about every edit kept here, with its wall-clock time; the worker forwards it to the broker. */
+  onEdit?:(root:string,path:string,ts:string)=>void;
   constructor(config:TelemetryConfig,now:()=>number=()=>performance.now()){this.config=config;this.now=now;}
   clear(){this.generation++;this.sessions.clear();this.sequences.clear();this.edits.clear();this.branches.clear();}
   reap(){const now=this.now();for(const [id,s] of this.sessions)if(now-s.seen>TTL)this.sessions.delete(id);for(const [id,s]of this.sequences)if(now-s.seen>TTL)this.sequences.delete(id);for(const [root,edits] of this.edits)this.edits.set(root,edits.filter(e=>now-e.at<=TTL));}
@@ -31,6 +33,7 @@ export class TelemetryState {
     this.sessions.set(e.session,{root,cwd,seq:e.seq,pid:e.pid,start,seen:receipt,commandAt:receipt,commandSeq:e.seq,cmd:e.cmd,status:e.status!});return true;
   }
   edit(root:string,path:string,type:string,at=this.now(),ts=new Date().toISOString()) {
+    this.onEdit?.(root,path,ts);
     const current=(this.edits.get(root)||[]).filter(e=>e.path!==path&&this.now()-e.at<=TTL);
     if(type!=='delete')current.unshift({path,type,at,ts});
     this.edits.set(root,current.sort((a,b)=>b.at-a.at).slice(0,5));

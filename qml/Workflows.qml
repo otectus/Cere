@@ -344,11 +344,14 @@ CDialog {
                     CText {
                         required property var modelData;required property int index
                         objectName:"resultCheck_"+index
-                        readonly property var words:({passed:"passed",failed:"failed","not-run":"not run",stale:"changed since it ran",cancelled:"cancelled",error:"could not start",missing:"no longer saved"})
+                        readonly property var words:({passed:"passed",failed:"failed","not-run":"not run",stale:"out of date",cancelled:"cancelled",error:"could not start",missing:"no longer saved"})
                         text:"Required · "+modelData.label+" · "+words[modelData.status]+(modelData.exitCode!==undefined?" · exit "+modelData.exitCode:"")+(modelData.durationMs!==undefined?" · "+(modelData.durationMs/1000).toFixed(1)+" s":"")+(modelData.reason?" · "+modelData.reason:"")
                         color:modelData.status==="passed"?Theme.success:modelData.status==="failed"?Theme.danger:Theme.amber;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true
                     }
                 }
+                // RC-04: without workspace telemetry on this folder, a pass cannot be checked against later edits.
+                CText { objectName:"resultEditsUnobservable";visible:(modelData.checklist||[]).length>0&&!!modelData.edits&&!modelData.edits.observable;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.caption
+                    text:"Later edits in this folder are not observable, because workspace telemetry is not watching it: a passed check shows the files as they were when it ran." }
                 CText {
                     objectName:"resultContract";visible:!!modelData.contract;Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.caption
                     color:modelData.contract?.status==="met"?Theme.muted:Theme.amber
@@ -445,7 +448,7 @@ CDialog {
         function onResult(id,value){
             if(id===workflow.relatedRequest){workflow.relatedRequest=-1;if(!value?.error)workflow.relatedSessions=value.sessions||[];return}
             if(workflow.scheduleRequests[id]){const pending=Object.assign({},workflow.scheduleRequests);delete pending[id];workflow.scheduleRequests=pending;if(!value?.error)workflow.schedules=value||[];return}
-            if(id===workflow.passingRequest){workflow.passingRequest=-1;if(!value?.error)workflow.passingResults=(value||[]).filter(result=>result.verification==="passed"&&(!result.gate||result.gate==="none"||result.gate==="passed"));return}
+            if(id===workflow.passingRequest){workflow.passingRequest=-1;if(!value?.error)workflow.passingResults=(value||[]).filter(result=>result.verification==="passed"&&!result.editedSinceCheck&&(!result.gate||result.gate==="none"||result.gate==="passed"));return}
             if(id!==workflow.requestId)return
             workflow.requestId=-1
             if(value?.error){workflow.error=workflow.failure(value);return}
