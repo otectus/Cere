@@ -12,7 +12,7 @@ ColumnLayout {
     property int extractionRequest:-1
     property int extractionRefreshRequest:-1
     property var extractionCapability:App.state.capabilities?.ollama||({})
-    property string selectedExtractionModel:memory.extractionModel||"nemotron-3-super"
+    property string selectedExtractionModel:memory.extractionModel||"glm-5.3-flash:cloud"
     function matchesExtraction(id) { return id===selectedExtractionModel||id===selectedExtractionModel+":cloud"||id===selectedExtractionModel+"-cloud" }
     property var extractionChoices: {
         const models=(extractionCapability.models||[]).filter(m=>m.cloud)

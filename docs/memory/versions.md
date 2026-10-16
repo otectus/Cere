@@ -9,7 +9,7 @@
 | Neo4j driver | 6.2.0, exact package lock |
 | Zod | 4.6.5, exact package lock |
 | Ollama | 0.34.4 in live adapter validation |
-| Extraction default | `nemotron-3-super`, resolved to `nemotron-3-super:cloud`; evaluated 2026-10-16, see [evaluation](evaluation.md) |
+| Extraction default | `glm-5.3-flash:cloud`; evaluated 2026-10-16, see [evaluation](evaluation.md) |
 | Extraction evaluated | `glm-5.3-flash:cloud`, `nemotron-3-super:cloud` and `gpt-oss:20b-cloud` (EV-01, 2026-10-16) |
 | Extraction digests tested | `3e780905abc0e7240dd1489935ec1e3c7fcf1854a6f4e7f8688f9bb0bdacb1a5` (`glm-5.3-flash:cloud`), `c6398e09afd407f9988333b6e48629c0afb143c1116f5f79e877552b68a684e4` (`nemotron-3-super:cloud`), `9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae` (`gpt-oss:20b-cloud`) |
 | Extraction prompt / parser | `cere-extraction-v2` / `zod-4-v2` |

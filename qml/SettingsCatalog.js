@@ -88,7 +88,7 @@ var categories = [
             {label: "Search provider", target: "webSearchProvider", keywords: "duckduckgo brave mojeek searxng"},
             {label: "Remember and recall conversations", target: "memoryEnabled", keywords: "memory recall shared"},
             {label: "Embedding model", target: "embeddingModel", keywords: "nomic embed ollama"},
-            {label: "Graph extraction model", target: "extractionModel", keywords: "nemotron cloud extraction"},
+            {label: "Graph extraction model", target: "extractionModel", keywords: "glm cloud extraction"},
             {label: "Share recalled memory with cloud models", target: "cloudMemoryEnabled", keywords: "codex claude cloud privacy"},
             {label: "Show memory citations in replies", target: "showMemoryCitations", keywords: "evidence markers references"},
             {label: "Manage project memory", target: "manageMemories", keywords: "facts notes forget correct inspector graph"},
