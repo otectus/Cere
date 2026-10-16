@@ -23,7 +23,7 @@ CDialog {
     readonly property var postureOptions:[{id:"",label:"No pinned posture"}].concat(postures.map(item=>({id:item.id,label:item.label})))
     readonly property var nextOptions:[{id:"",label:"No posture for the next message"}].concat(postures.map(item=>({id:item.id,label:item.label})))
     readonly property var sourceLabels:({session:"this conversation",project:"its project",global:"Settings › Personality"})
-    readonly property var toolLabels:({desktop:"desktop actions",delegation:"delegation",web:"web search",memory:"memory and notes",extensions:"tool servers and custom tools"})
+    readonly property var toolLabels:({desktop:"desktop actions",delegation:"delegation",web:"web search",memory:"memory and notes",extensions:"tool servers and custom tools",recall:"automatic memory recall"})
     function openFor(id,turnPostureId){
         sessionId=id;nextPostureId=turnPostureId||"";error="";feedback=""
         stylesRequest=App.rpc("presets.list",{});posturesRequest=App.rpc("behavior.postures",{});resolveRequest=App.rpc("behavior.resolve",{id:id})
