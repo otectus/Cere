@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, rm, writeFile, symlink, unlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, symlink, unlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
@@ -84,6 +84,38 @@ test('M06 a collection indexes only the files it may, reindexes changes with era
   await core.rpc('collections.delete', { id: collection.id, expectedRevision: current.revision, confirmed: true });
   assert.equal(await live('obsidian'), 0);
   assert.deepEqual((await core.rpc('collections.list', {})).bindings.sessions[session.id], []);
+});
+
+test('RC-01 collection Markdown follows the vault privacy rules, and notes indexed under older rules are checked again', async t => {
+  const { root, core } = await fixture(t);
+  const notes = join(root, 'notes'), then = new Date(2026, 0, 1);
+  await mkdir(notes);
+  await writeFile(join(notes, 'public.md'), '---\r\ntitle: Lab\r\n---\r\nThe kestrel sensor reads hourly.');
+  await writeFile(join(notes, 'private.md'), '﻿---\r\nprivate: yes\r\n---\r\nThe marmot code is 4417.');
+  await writeFile(join(notes, 'plain.txt'), '---\nprivate: true\n---\nPlain text has no front matter rules: the ibex note.');
+  await writeFile(join(notes, 'held.md'), '---\nprivate: no\n---\nThe walrus vault opens at dawn.'); await utimes(join(notes, 'held.md'), then, then);
+  let collection = await core.rpc('collections.create', { name: 'Notes' });
+  collection = await core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: notes });
+  await indexed(core, collection.id);
+  let listed = (await core.rpc('collections.list', {})).collections[0];
+  assert.deepEqual([listed.files, listed.private, listed.errors], [4, 1, []], 'a private note is counted as private, not as unreadable');
+  const session = await core.create({ provider: 'codex', cwd: root, trusted: true });
+  await core.rpc('collections.bind', { id: collection.id, target: 'session', sessionId: session.id, bound: true });
+  const excerpt = async (text: string) => (await core.collections.context(core.store.session(session.id), text, 2000, 'local', new AbortController().signal)).text;
+  assert.match(await excerpt('kestrel sensor'), /kestrel sensor/);
+  assert.equal(await excerpt('marmot code 4417'), '');
+  assert.match(await excerpt('ibex note'), /ibex note/, 'only Markdown carries front matter privacy');
+  assert.match(await excerpt('walrus vault'), /walrus vault/);
+  // A record written before these rules carries no privacy revision, so even an unchanged size and time is read again.
+  await writeFile(join(notes, 'held.md'), '---\nprivate: on\n---\nThe walrus vault opens at dawn.'); await utimes(join(notes, 'held.md'), then, then);
+  const stored = core.store.get<any[]>('knowledge:collections', []);
+  for (const file of stored[0].files) delete file.privacy;
+  core.store.set('knowledge:collections', stored);
+  await indexed(core, collection.id);
+  listed = (await core.rpc('collections.list', {})).collections[0];
+  assert.equal(listed.private, 2);
+  assert.equal(await excerpt('walrus vault'), '', 'its old passages were erased');
+  assert.match(await excerpt('kestrel sensor'), /kestrel sensor/);
 });
 
 test('M06 a bound collection reaches an Ollama request as reference data and its plan lists the sources', async t => {

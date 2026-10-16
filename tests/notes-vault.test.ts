@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
-import { NotesVault, frontMatter, privateNote } from '../broker/notes-vault.ts';
+import { NotesVault, frontMatter, privateNote, readNote } from '../broker/notes-vault.ts';
 import { confinedPath, lineDiff } from '../broker/file-proposals.ts';
 
 test('M07 front matter privacy fails closed', () => {
@@ -14,6 +14,52 @@ test('M07 front matter privacy fails closed', () => {
   assert.equal(frontMatter('---\nnested:\n  key: value\n---'), null, 'structures Cere cannot read are unreadable');
   for (const meta of [{ private: true }, { cere: false }, { cere: 'private' }, { visibility: 'team' }, { privacy: 'confidential' }, null]) assert.equal(privateNote(meta as any), true, JSON.stringify(meta));
   for (const meta of [{ visibility: 'public' }, { title: 'x' }, undefined]) assert.equal(privateNote(meta as any), false, JSON.stringify(meta));
+});
+
+test('RC-01 privacy fails closed however a note was saved', () => {
+  const privateCases = {
+    crlf: '---\r\nprivate: true\r\n---\r\nbody', cr: '---\rprivate: true\r---\rbody', bom: '﻿---\nprivate: true\n---\nbody',
+    trailingSpaceFence: '--- \nprivate: true\n---\nbody', yes: '---\nprivate: yes\n---\nbody', on: '---\nprivate: on\n---\nbody',
+    one: '---\nprivate: 1\n---\nbody', quotedTrue: '---\nprivate: "true"\n---\nbody', upperKey: '---\nPrivate: True\n---\nbody',
+    dotsEnd: '---\nprivate: true\n...\nbody', spacedDotsEnd: '---\nprivate: true\n... \nbody', empty: '---\nprivate:\n---\nbody',
+    unknownCere: '---\ncere: maybe\n---\nbody', upperVisibility: '---\nVisibility: Team\n---\nbody',
+  };
+  for (const [name, text] of Object.entries(privateCases)) assert.equal(privateNote(frontMatter(text)), true, name);
+  for (const text of ['---\ndate created: 2026-01-01\nprivate: true\n---\nbody', '---\nmeta:\n  owner: me\n---\nbody', '---\r\nprivate: true\r\nbody']) assert.equal(frontMatter(text), null, JSON.stringify(text));
+  for (const value of ['false', 'no', 'off', 'No', '"false"']) assert.equal(privateNote(frontMatter(`---\nprivate: ${value}\n---\nbody`)), false, value);
+  for (const value of ['true', 'yes', 'include']) assert.equal(privateNote(frontMatter(`---\ncere: ${value}\n---\nbody`)), false, value);
+  const crlf = readNote('﻿---\r\ntitle: Plan\r\ntags: [work]\r\n---\r\n# Plan\r\nBody text');
+  assert.deepEqual(crlf, { meta: { title: 'Plan', tags: ['work'] }, body: '\n# Plan\nBody text' }, 'front matter never reaches the body');
+  assert.deepEqual(readNote('---\ntags: [a]\n---\n# T\nx'), { meta: { tags: ['a'] }, body: '\n# T\nx' }, 'LF notes read as before');
+  assert.deepEqual(readNote('# No front matter\nx'), { meta: undefined, body: '# No front matter\nx' });
+  assert.deepEqual(readNote('---\n---\nx'), { meta: {}, body: '\nx' }, 'empty front matter is no privacy metadata');
+});
+
+test('RC-01 the vault never searches, reads or edits a private note, whatever its line endings', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cere-vault-privacy-')), vault = join(root, 'vault');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(vault);
+  const notes: Record<string, string> = {
+    'crlf.md': '---\r\nprivate: true\r\n---\r\ntangerines in a CRLF diary', 'bom.md': '﻿---\nprivate: true\n---\ntangerines after a mark',
+    'fence.md': '--- \nprivate: true\n---\ntangerines behind a spaced fence', 'yes.md': '---\nprivate: yes\n---\ntangerines said yes',
+    'quoted.md': '---\nprivate: "true"\n---\ntangerines in quotes', 'dots.md': '---\nprivate: true\n...\ntangerines after dots',
+    'spaced.md': '---\ndate created: 2026-01-01\n---\ntangerines with a spaced key', 'nested.md': '---\nmeta:\n  owner: me\n---\ntangerines nested',
+    'groceries.md': '---\r\ntitle: Groceries\r\nsecretword: zebra\r\n---\r\n# Groceries\r\n\r\nBuy kumquats on Friday.',
+  };
+  for (const [name, text] of Object.entries(notes)) await writeFile(join(vault, name), text);
+  const vaultNotes = new NotesVault(() => vault);
+  assert.deepEqual(await vaultNotes.scan().then(status => [status.notes, status.private, status.unreadable]), [1, 6, 2]);
+  assert.deepEqual((await vaultNotes.search('tangerines')).results, []);
+  const found = await vaultNotes.search('kumquats');
+  assert.equal(found.results[0].path, 'groceries.md'); assert.doesNotMatch(found.results[0].excerpt, /secretword|zebra/);
+  assert.deepEqual((await vaultNotes.search('zebra')).results, [], 'front matter is not indexed as text');
+  const read = await vaultNotes.read('Groceries');
+  assert.equal(read.title, 'Groceries'); assert.doesNotMatch(read.text, /secretword|---/); assert.match(read.text, /Buy kumquats/);
+  for (const name of Object.keys(notes).filter(name => name !== 'groceries.md')) {
+    await assert.rejects(vaultNotes.read(name), /Private notes are not available/, name);
+    await assert.rejects(vaultNotes.editable(name), /Private notes cannot be edited/, name);
+  }
+  assert.equal(await vaultNotes.editable('groceries.md'), 'groceries.md');
 });
 
 test('M07 file proposals stay confined and show a readable diff', async t => {

@@ -44,7 +44,7 @@ CDialog {
                 CText {
                     objectName:"collectionStatus_"+card.index;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.muted;font.pixelSize:Theme.secondary
                     text:card.modelData.files+(card.modelData.files===1?" file · ":" files · ")+card.modelData.chunks+" passages · "+library.indexed(card.modelData.lastIndexed)
-                        +(card.modelData.stale>0?" · "+card.modelData.stale+" changed since indexing":"")+(card.modelData.errors.length?" · "+card.modelData.errors.length+" could not be read":"")
+                        +(card.modelData.stale>0?" · "+card.modelData.stale+" changed since indexing":"")+(card.modelData.errors.length?" · "+card.modelData.errors.length+" could not be read":"")+(card.modelData.private?" · "+card.modelData.private+" private, not indexed":"")
                 }
                 Repeater { model:card.modelData.errors.slice(0,3);CText { required property var modelData;Layout.fillWidth:true;elide:Text.ElideMiddle;color:Theme.amber;font.pixelSize:Theme.caption;text:modelData.path.split("/").pop()+": "+modelData.error } }
                 Flow {

@@ -25,14 +25,28 @@ export const notesDefinitions: ToolDefinition[] = [
     schema: { path: { type: 'string', maxLength: 1000 }, content: { type: 'string', maxLength: 200000 }, reason: { type: 'string', maxLength: 500 } } },
 ];
 
+type Meta = Record<string, string | boolean | string[]>;
+/**
+ * Splits a note into front matter and body. A byte-order mark and CR or CRLF line endings are
+ * normalized first, so how a note was saved never decides its privacy. The opening fence is `---`
+ * and the closing fence `---` or `...`, each with optional trailing whitespace; front matter never
+ * reaches the body. `meta` is undefined without front matter and null when it cannot be read.
+ */
+export function readNote(text: string): { meta: Meta | null | undefined; body: string } {
+  const note = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const open = note.match(/^---[ \t]*\n/);
+  if (!open) return { meta: undefined, body: note };
+  const rest = note.slice(open[0].length), close = rest.match(/^(?:---|\.\.\.)[ \t]*$/m);
+  if (!close) return { meta: null, body: '' };
+  const meta = fields(rest.slice(0, close.index));
+  return { meta, body: meta ? rest.slice(close.index! + close[0].length) : '' };
+}
 /** A minimal front matter reader: scalars, inline lists and dash lists. Anything else is unreadable. */
-export function frontMatter(text: string): Record<string, string | boolean | string[]> | null | undefined {
-  if (!text.startsWith('---\n')) return undefined;
-  const end = text.indexOf('\n---', 4);
-  if (end < 0) return null;
-  const result: Record<string, string | boolean | string[]> = {};
+export function frontMatter(text: string) { return readNote(text).meta; }
+function fields(block: string): Meta | null {
+  const result: Meta = {};
   let listKey = '';
-  for (const raw of text.slice(4, end).split('\n')) {
+  for (const raw of block.split('\n')) {
     const line = raw.replace(/\s+$/, '');
     if (!line.trim() || line.trim().startsWith('#')) continue;
     const item = line.match(/^\s+-\s+(.*)$/);
@@ -47,12 +61,20 @@ export function frontMatter(text: string): Record<string, string | boolean | str
   }
   return result;
 }
-/** Private by its own front matter, or by privacy metadata Cere does not understand. */
+/**
+ * Private by its own front matter, or by privacy metadata Cere does not understand. Keys match in
+ * any case. `private` leaves a note public only when it is false, no or off, and `cere` only when it
+ * is true, yes, on, include or public; any other value of either is private.
+ */
 export function privateNote(meta: Record<string, unknown> | null | undefined) {
   if (meta === null) return true;
   if (!meta) return false;
-  if (meta.private === true || meta.cere === false || meta.cere === 'private' || meta.cere === 'exclude') return true;
-  for (const key of ['visibility', 'privacy', 'access']) if (key in meta && !['public', 'shared'].includes(String(meta[key]).toLowerCase())) return true;
+  for (const [name, value] of Object.entries(meta)) {
+    const key = name.toLowerCase(), word = typeof value === 'boolean' ? String(value) : typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (key === 'private' && !['false', 'no', 'off'].includes(word)) return true;
+    if (key === 'cere' && !['true', 'yes', 'on', 'include', 'public'].includes(word)) return true;
+    if (['visibility', 'privacy', 'access'].includes(key) && !['public', 'shared'].includes(String(value).trim().toLowerCase())) return true;
+  }
   return false;
 }
 const words = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
@@ -91,9 +113,8 @@ export class NotesVault {
           if (info.size > vaultLimits.noteBytes) { counts.unreadable++; continue; }
           const cached = this.cache.get(path);
           if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) { seen.add(path); continue; }
-          const text = await readFile(path, 'utf8'), meta = frontMatter(text);
+          const { meta, body } = readNote(await readFile(path, 'utf8'));
           if (privateNote(meta)) { this.cache.delete(path); if (meta === null) counts.unreadable++; else counts.private++; continue; }
-          const body = meta === undefined ? text : text.slice(text.indexOf('\n---', 4) + 4);
           const list = (value: unknown) => Array.isArray(value) ? value.map(String) : typeof value === 'string' && value ? [value] : [];
           const tags = [...new Set([...list(meta?.tags), ...(body.match(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gu) || []).map(tag => tag.trim().slice(1))].map(tag => tag.toLowerCase()))];
           const links = [...new Set([...body.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)].map(match => key(match[1])))];

@@ -14,9 +14,10 @@ import { homedir } from 'node:os';
 import type { Core } from './core.ts';
 import type { Session } from './types.ts';
 import { ollamaHost, type ModelRoute } from './ollama.ts';
+import { frontMatter, privateNote } from './notes-vault.ts';
 
 export type Grounding = 'strict' | 'balanced' | 'exploratory';
-export type CollectionFile = { path: string; size: number; mtimeMs: number; sha256: string; chunks: number; indexed: number; error?: string };
+export type CollectionFile = { path: string; size: number; mtimeMs: number; sha256: string; chunks: number; indexed: number; error?: string; private?: boolean; privacy?: number };
 export type Collection = {
   id: string; name: string; revision: string; created: number; updated: number; scopeId: string;
   grounding: Grounding; allowCloud: boolean;
@@ -28,6 +29,9 @@ type Job = { collectionId: string; processed: number; total: number; started: nu
 
 export const collectionLimits = { collections: 20, sources: 50, files: 2000, fileBytes: 2 * 1024 * 1024, depth: 12, chunkChars: 1200, overlap: 150, perTurnCollections: 4 };
 const textTypes = new Set(['.md', '.markdown', '.mdx', '.txt', '.text', '.rst', '.adoc', '.asciidoc', '.org']);
+const markdownTypes = new Set(['.md', '.markdown', '.mdx']);
+/** Revision of the notes-vault privacy rules a Markdown file was last checked under. */
+const privacyRules = 1;
 const skippedFolders = new Set(['node_modules', 'build', 'dist', 'target', 'venv', '__pycache__', 'vendor']);
 const groundingText: Record<Grounding, string> = {
   strict: 'Answer only from these excerpts. If they do not contain the answer, say so plainly instead of answering from general knowledge. Cite the file for every claim taken from them.',
@@ -85,7 +89,8 @@ export class KnowledgeCollections {
     return { bindings, collections: await Promise.all(this.all().map(async collection => ({
       id: collection.id, name: collection.name, revision: collection.revision, grounding: collection.grounding, allowCloud: collection.allowCloud,
       sources: collection.sources, lastIndexed: collection.lastIndexed, files: collection.files.length, chunks: collection.files.reduce((sum, file) => sum + file.chunks, 0),
-      errors: collection.files.filter(file => file.error).map(file => ({ path: file.path, error: file.error })).slice(0, 20),
+      errors: collection.files.filter(file => file.error && !file.private).map(file => ({ path: file.path, error: file.error })).slice(0, 20),
+      private: collection.files.filter(file => file.private).length,
       stale: await this.stale(collection),
       ...(session ? { bound: { global: bindings.global.includes(collection.id), project: (bindings.projects[session.cwd] || []).includes(collection.id), session: (bindings.sessions[session.id] || []).includes(collection.id) } } : {}),
     }))) };
@@ -226,25 +231,29 @@ export class KnowledgeCollections {
         await this.core.jobs.yieldToForeground(signal);
         const old = previous.get(path); previous.delete(path);
         try {
-          const info = await stat(path);
-          if (old && !old.error && old.size === info.size && old.mtimeMs === info.mtimeMs) { files.push(old); continue; }
+          const info = await stat(path), markdown = markdownTypes.has(extname(path).toLowerCase());
+          // Markdown checked under older privacy rules is read again once, even when unchanged.
+          if (old && !old.error && (!markdown || old.privacy === privacyRules) && old.size === info.size && old.mtimeMs === info.mtimeMs) { files.push(old); continue; }
           if (info.size > collectionLimits.fileBytes) throw new Error('Larger than 2 MB');
           const bytes = await readFile(path), sha256 = createHash('sha256').update(bytes).digest('hex');
-          if (old && !old.error && old.sha256 === sha256) { files.push({ ...old, size: info.size, mtimeMs: info.mtimeMs }); continue; }
           if (bytes.includes(0)) throw new Error('Not a text file');
-          const text = bytes.toString('utf8'), chunks = chunkDocument(text);
+          const text = bytes.toString('utf8'), checked = markdown ? { privacy: privacyRules } : {};
+          // The notes vault's rules apply to Markdown here too: private or unreadable front matter is never indexed.
+          if (markdown && privateNote(frontMatter(text))) throw Object.assign(new Error('Private note, not indexed'), { private: true });
+          if (old && !old.error && old.sha256 === sha256) { files.push({ ...old, size: info.size, mtimeMs: info.mtimeMs, ...checked }); continue; }
+          const chunks = chunkDocument(text);
           // Old chunks go first, with canonical erasure; the new revision's chunks are keyed by its hash.
           if (old) await this.erase(collection, path);
           for (const [index, chunk] of chunks.entries()) {
             signal.throwIfAborted();
             await this.core.memory.service.call('observe_text', { scope_id: collection.scopeId, text: chunk.text, role: 'document', kind: 'document', session_id: 'file:' + path, source_event_id: `${sha256}#${index}` });
           }
-          files.push({ path, size: info.size, mtimeMs: info.mtimeMs, sha256, chunks: chunks.length, indexed: Date.now() });
+          files.push({ path, size: info.size, mtimeMs: info.mtimeMs, sha256, chunks: chunks.length, indexed: Date.now(), ...checked });
           job.changed++;
         } catch (error: any) {
           if (signal.aborted) throw error;
           if (old && !old.error) await this.erase(collection, path).catch(() => {});
-          files.push({ path, size: 0, mtimeMs: 0, sha256: '', chunks: 0, indexed: Date.now(), error: String(error?.message || error).slice(0, 200) });
+          files.push({ path, size: 0, mtimeMs: 0, sha256: '', chunks: 0, indexed: Date.now(), error: String(error?.message || error).slice(0, 200), ...(error?.private ? { private: true } : {}) });
         } finally { job.processed++; if (job.processed % 10 === 0) this.core.changed(); }
       }
       // Files that left the sources, or the disk, leave the index.
