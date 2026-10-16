@@ -22,13 +22,13 @@ node --test tests/review-benchmark.test.ts
 
 The corpus in `tests/fixtures/memory/retrieval-cases.json` (schema version 2) contains 70 cases: 10 each for exact identifiers, single-hop relationships, multi-hop relationships, temporal changes, historical views, interrupted tasks, and contradiction/abstention. There are 35 development and 35 held-out cases. Twenty questions require relationship paths. Every case records its source timeline, eligible scope, world time, knowledge revision, expected facts, required assertion/evidence IDs and paths, forbidden facts, abstention decision, repeated sources, and any deletion or policy change. The temporal cases carry an actual correction timeline. Each temporal change adds pre-change and old-knowledge views, and each historical view adds a current-knowledge view. Together with each case's main view, 50 temporal views are evaluated.
 
-Run the separately authorized real cloud extraction sample with:
+Run the separately authorized real extraction evaluation for one model with:
 
 ```sh
-CERE_ALLOW_CLOUD_EVAL=1 node benchmarks/memory/evaluate-extraction.ts
+CERE_ALLOW_CLOUD_EVAL=1 node benchmarks/memory/evaluate-extraction.ts --approve MODEL [--model MODEL] [--digest SHA256]
 ```
 
-This command dispatches five synthetic statements to `gpt-oss:20b-cloud`, the model it is configured for. That is not the current default extraction model (`nemotron-3-super`), which has not been evaluated yet. It never uses user or local-only sources. The environment flag is required to prevent accidental cloud execution.
+It sends the 50 synthetic statements of `tests/fixtures/memory/extraction-cases.json`, and nothing else, to that model through the local Ollama server, then submits the proposals through `Canonical.remember` in a temporary store. Without `--model` it evaluates the running broker's configured extraction model; `--approve` must name the model, so every cloud model is approved explicitly, and the environment flag prevents accidental cloud execution. Results go to `benchmarks/memory/extraction-results-<model>.json`; the preserved `extraction-results.json` runs are never written. `node --test tests/extraction-eval.test.ts` checks the corpus, the scoring and the canonical pass offline, under the same `fetch` guard.
 
 ## Metric status
 
@@ -98,3 +98,39 @@ The v1 baseline returned five assertions, of which three used the registered exp
 The v2 prompt and closed ontology schema returned five assertions with all five expected predicates. Predicate-level precision and case recall were 100% on this sample, and all proposals passed the adapter's closed schema and exact-quote validation. Latency was p50 7.749 seconds and p95/max 11.965 seconds. This clears the predicate-level 95% target for this five-case sample and fixes both observed v1 failure modes.
 
 The sample is too small to estimate production-domain quality. The evaluator did not submit these proposals through `Canonical.remember`, so it does not establish canonical accepted-assertion precision or exercise every predicate-specific qualifier and authority rule. Canonical validation remains required, and a larger held-out accepted-precision evaluation remains an unmet release check.
+
+## Extraction through canonical memory (EV-01)
+
+Measured on 2026-10-16 against the three models the next-stage plan named: `glm-5.3-flash:cloud` (configured on the evaluation machine), `nemotron-3-super` (the code default, which the adapter resolves to `nemotron-3-super:cloud`) and `gpt-oss:20b-cloud` (the model of the preserved runs, pinned to their digest). Each run used prompt `cere-extraction-v2` and parser `zod-4-v2`, the production adapter, and the corpus file with SHA-256 `582d3fb61df8a563…`. Results are in `benchmarks/memory/extraction-results-<model>.json`; only the synthetic corpus left the machine.
+
+The corpus `tests/fixtures/memory/extraction-cases.json` holds 50 held-out statements: the five of the preserved runs, at least three for each of the eleven registered predicates (40 statements that hold something to remember, including tool and assistant sources), and 10 that hold nothing (questions, a hypothetical, small talk, an instruction-shaped request, a tool error). Proposals are mapped to claims by `broker/graph-memory/proposals.ts`, the same function the memory worker uses, and submitted through `Canonical.remember` as model proposals in a temporary store, one scope per statement.
+
+- **Predicate precision**: proposals whose predicate is one the statement expects.
+- **Proposal precision**: proposals that also match the expected subject (by name, or by type for "I"), object or state value, and polarity.
+- **Case recall**: statements with at least one matching proposal.
+- **Accepted, candidate, rejected**: what canonical memory did with each proposal. *Held only by the time rule* counts candidates whose single reason was an uncertain effective time, and how many of them matched.
+
+| Model and digest | Extraction failures | Predicate precision | Proposal precision | Case recall | Accepted / candidate / rejected | Time-uncertain proposals | Held only by the time rule (matching) | Statements holding nothing | Latency p50 / p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| `glm-5.3-flash:cloud` `3e780905abc0` | 3/50 | 41/47 (87.2%) | 38/47 (80.9%) | 38/40 (95.0%) | 0 / 44 / 3 | 47/47 | 33/33 | 5/10, 3 proposals, 0 accepted | 5.0 s / 29.2 s |
+| `nemotron-3-super:cloud` `c6398e09afd4` | 2/50 | 39/44 (88.6%) | 38/44 (86.4%) | 38/40 (95.0%) | 0 / 42 / 2 | 44/44 | 33/33 | 6/10, 5 proposals, 0 accepted | 26.9 s / 81.3 s |
+| `gpt-oss:20b-cloud` `9a01793d9ef8` | 0/50 | 40/49 (81.6%) | 38/49 (77.6%) | 38/40 (95.0%) | 8 / 35 / 6 | 33/49 | 17/18 | 2/10, 8 proposals, 0 accepted | 6.9 s / 17.9 s |
+
+Gates, as each result file records them:
+
+| Gate | `glm-5.3-flash:cloud` | `nemotron-3-super:cloud` | `gpt-oss:20b-cloud` |
+| --- | --- | --- | --- |
+| Predicate precision at least 95% | failed (87.2%) | failed (88.6%) | failed (81.6%) |
+| Accepted-assertion precision at least 95% | unmeasured (0 accepted) | unmeasured (0 accepted) | passed (8 of 8), on a very small sample |
+| No accepted assertion from a statement that holds nothing | passed | passed | passed |
+
+Findings:
+
+1. **The model is not the main obstacle to accepted memory.** The extraction prompt tells every model to leave the interpretation empty and mark the time uncertain when a statement has no effective date, and the worker maps an uncertain time to `time_precision: approximate`, which `Canonical.remember` always keeps as a candidate when the claim is a model proposal. `glm-5.3-flash:cloud` and `nemotron-3-super:cloud` marked every proposal that way, so nothing they proposed could be accepted. Of their candidates, 33 each were held back by that rule alone, and all 33 matched the expected assertion. This is a counterfactual for an owner decision about undated statements, not a measurement of accepted precision. `gpt-oss:20b-cloud` marked 33 of 49 proposals uncertain; the other 16 went through the full rules, and the 8 it accepted were all correct.
+2. **The prompt does not list the registered HAS_STATE values** (`open`, `blocked`, `running`, `proposed`, `authorized`, `succeeded`, `failed`, `cancelled`, `closed`, `unknown`). Paraphrased states such as "done" are rejected as unregistered (3, 1 and 1 proposals respectively). Other rejections were entity or literal type mismatches (1 for `nemotron-3-super:cloud`, 3 for `gpt-oss:20b-cloud`) and 2 unregistered qualifiers from `gpt-oss:20b-cloud`.
+3. **Statements that hold nothing were never accepted.** The models abstained on 5, 6 and 2 of the 10; every proposal they did make there was held as a candidate or rejected.
+4. **Latency matters in production.** The memory worker gives extraction 45 seconds. At that limit, 8 of 50 `nemotron-3-super:cloud` calls (16%) would have failed, against 1 for `glm-5.3-flash:cloud` and none for `gpt-oss:20b-cloud` (maximum 34.9 s). The evaluation allowed 120 seconds. `glm-5.3-flash:cloud` and `nemotron-3-super:cloud` also returned invalid structured output after one repair attempt for 3 and 2 statements.
+
+The live store agrees. A `VACUUM INTO` copy taken on 2026-10-16 (counts only, deleted afterwards) had 96 accepted assertions, none from extraction, and 35 candidates, all from `glm-5.3-flash:cloud` runs: 34 instrumented `HAS_STATE` claims from tool output and one inferred `WORKS_ON` claim. Every one had an approximate time; every one was also ungrounded in the quoted span (28 without the subject, 6 with quotation marks in the sentence, 1 without the value).
+
+Recommendation for the default model: do not keep `nemotron-3-super` as the code default, since about one call in six would time out. The choice between the other two depends on an owner decision about undated statements. Under the current rule, only `gpt-oss:20b-cloud` produces accepted memory (8 of 8 correct), at the lowest predicate precision. If a grounded, undated statement may be accepted, `glm-5.3-flash:cloud`, the configured model, is faster at the median and more precise, and its 33 correct, time-held proposals would become eligible. Either way, rerun this evaluation after a change to the prompt or the time rule. The samples are small, the statements synthetic, and cloud aliases can change behind the same name, so the recorded digests identify what was measured.

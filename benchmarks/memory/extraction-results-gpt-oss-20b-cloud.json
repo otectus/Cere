@@ -1,0 +1,1087 @@
+{
+ "schemaVersion": 1,
+ "evaluatedAt": "2026-10-16T12:53:35.562Z",
+ "requestedModel": "gpt-oss:20b-cloud",
+ "probe": {
+  "model": "gpt-oss:20b-cloud",
+  "digest": "9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae"
+ },
+ "model": "gpt-oss:20b-cloud",
+ "modelDigest": "9a01793d9ef8de5309f157c06dbcbadfb598001b4a6f13cbc699cdff5042eaae",
+ "endpointClass": "ollama_cloud",
+ "promptVersion": "cere-extraction-v2",
+ "parserVersion": "zod-4-v2",
+ "fixture": {
+  "path": "tests/fixtures/memory/extraction-cases.json",
+  "sha256": "582d3fb61df8a563943fd4178962bf1f436cb84543239454bf48014067a2c07c",
+  "cases": 50
+ },
+ "metrics": {
+  "samples": 50,
+  "positiveCases": 40,
+  "negativeCases": 10,
+  "extractionFailures": 0,
+  "mappingFailures": 0,
+  "assertionProposals": 49,
+  "expectedPredicateProposals": 40,
+  "correctProposals": 38,
+  "predicatePrecision": 0.8163265306122449,
+  "proposalPrecision": 0.7755102040816326,
+  "caseRecall": 0.95,
+  "recalledCases": 38,
+  "canonical": {
+   "accepted": 8,
+   "candidate": 35,
+   "disputed": 0,
+   "rejected": 6,
+   "acceptedCorrect": 8,
+   "candidateReasons": {
+    "uncertain time": 29,
+    "modality reported": 7,
+    "ungrounded: subject not in the quoted span": 6,
+    "ungrounded: question, hedge, quotation, negation or missing cue": 4,
+    "epistemic type derived_summary": 2,
+    "assistant source": 2,
+    "modality hypothetical": 1,
+    "ungrounded: value not in the quoted span": 1,
+    "modality planned": 1
+   },
+   "rejections": {
+    "INVALID_ARGUMENT: Predicate entity or literal type mismatch": 3,
+    "INVALID_ARGUMENT: Unregistered identity qualifier": 2,
+    "INVALID_ARGUMENT: Unregistered state": 1
+   }
+  },
+  "acceptedAssertionPrecision": 1,
+  "uncertainTimeProposals": 33,
+  "heldOnlyByTimeRule": {
+   "proposals": 18,
+   "correct": 17
+  },
+  "negatives": {
+   "abstained": 2,
+   "abstention": 0.2,
+   "proposals": 8,
+   "accepted": 0
+  },
+  "latencyMs": {
+   "p50": 6927,
+   "p95": 17905,
+   "maximum": 34879
+  },
+  "perPredicate": {
+   "WORKS_ON": {
+    "expectedCases": 3,
+    "recalledCases": 3,
+    "proposals": 5,
+    "correct": 3,
+    "accepted": 0,
+    "acceptedCorrect": 0
+   },
+   "USES_TOOL": {
+    "expectedCases": 6,
+    "recalledCases": 6,
+    "proposals": 9,
+    "correct": 6,
+    "accepted": 1,
+    "acceptedCorrect": 1
+   },
+   "PREFERS_TOOL": {
+    "expectedCases": 5,
+    "recalledCases": 4,
+    "proposals": 5,
+    "correct": 4,
+    "accepted": 0,
+    "acceptedCorrect": 0
+   },
+   "BELONGS_TO": {
+    "expectedCases": 3,
+    "recalledCases": 3,
+    "proposals": 4,
+    "correct": 3,
+    "accepted": 2,
+    "acceptedCorrect": 2
+   },
+   "CHECKOUT_OF": {
+    "expectedCases": 4,
+    "recalledCases": 4,
+    "proposals": 4,
+    "correct": 4,
+    "accepted": 1,
+    "acceptedCorrect": 1
+   },
+   "IMPLEMENTS": {
+    "expectedCases": 4,
+    "recalledCases": 4,
+    "proposals": 4,
+    "correct": 4,
+    "accepted": 1,
+    "acceptedCorrect": 1
+   },
+   "DEPENDS_ON": {
+    "expectedCases": 3,
+    "recalledCases": 2,
+    "proposals": 2,
+    "correct": 2,
+    "accepted": 1,
+    "acceptedCorrect": 1
+   },
+   "BLOCKED_BY": {
+    "expectedCases": 4,
+    "recalledCases": 4,
+    "proposals": 4,
+    "correct": 4,
+    "accepted": 1,
+    "acceptedCorrect": 1
+   },
+   "LOCATED_AT": {
+    "expectedCases": 3,
+    "recalledCases": 3,
+    "proposals": 3,
+    "correct": 3,
+    "accepted": 1,
+    "acceptedCorrect": 1
+   },
+   "HAS_STATE": {
+    "expectedCases": 4,
+    "recalledCases": 2,
+    "proposals": 6,
+    "correct": 2,
+    "accepted": 0,
+    "acceptedCorrect": 0
+   },
+   "RELATED_TO": {
+    "expectedCases": 3,
+    "recalledCases": 3,
+    "proposals": 3,
+    "correct": 3,
+    "accepted": 0,
+    "acceptedCorrect": 0
+   }
+  }
+ },
+ "gates": {
+  "predicatePrecisionAtLeast95Percent": {
+   "status": "failed",
+   "value": 0.8163265306122449,
+   "threshold": ">= 0.95"
+  },
+  "acceptedAssertionPrecisionAtLeast95Percent": {
+   "status": "passed",
+   "value": 1,
+   "threshold": ">= 0.95 of accepted assertions"
+  },
+  "noAcceptedAssertionFromNegatives": {
+   "status": "passed",
+   "value": 0,
+   "threshold": "= 0"
+  }
+ },
+ "caseResults": [
+  {
+   "id": "ext-01",
+   "role": "user",
+   "expected": [
+    "USES_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "accepted"
+    }
+   ],
+   "latencyMs": 9529
+  },
+  {
+   "id": "ext-02",
+   "role": "user",
+   "expected": [
+    "BLOCKED_BY"
+   ],
+   "proposals": [
+    {
+     "predicate": "BLOCKED_BY",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 12367
+  },
+  {
+   "id": "ext-03",
+   "role": "user",
+   "expected": [
+    "PREFERS_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "PREFERS_TOOL",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 6965
+  },
+  {
+   "id": "ext-04",
+   "role": "user",
+   "expected": [
+    "IMPLEMENTS"
+   ],
+   "proposals": [
+    {
+     "predicate": "IMPLEMENTS",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 5989
+  },
+  {
+   "id": "ext-05",
+   "role": "user",
+   "expected": [
+    "CHECKOUT_OF"
+   ],
+   "proposals": [
+    {
+     "predicate": "CHECKOUT_OF",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 6318
+  },
+  {
+   "id": "ext-06",
+   "role": "user",
+   "expected": [
+    "WORKS_ON"
+   ],
+   "proposals": [
+    {
+     "predicate": "WORKS_ON",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 7654
+  },
+  {
+   "id": "ext-07",
+   "role": "user",
+   "expected": [
+    "WORKS_ON"
+   ],
+   "proposals": [
+    {
+     "predicate": "WORKS_ON",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time",
+      "ungrounded: subject not in the quoted span"
+     ]
+    }
+   ],
+   "latencyMs": 5898
+  },
+  {
+   "id": "ext-08",
+   "role": "user",
+   "expected": [
+    "WORKS_ON"
+   ],
+   "proposals": [
+    {
+     "predicate": "WORKS_ON",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time",
+      "ungrounded: subject not in the quoted span"
+     ]
+    }
+   ],
+   "latencyMs": 5461
+  },
+  {
+   "id": "ext-09",
+   "role": "user",
+   "expected": [
+    "USES_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 6744
+  },
+  {
+   "id": "ext-10",
+   "role": "user",
+   "expected": [
+    "USES_TOOL",
+    "PREFERS_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 5253
+  },
+  {
+   "id": "ext-11",
+   "role": "user",
+   "expected": [
+    "USES_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "candidate",
+     "reasons": [
+      "modality reported",
+      "ungrounded: question, hedge, quotation, negation or missing cue"
+     ]
+    }
+   ],
+   "latencyMs": 6217
+  },
+  {
+   "id": "ext-12",
+   "role": "user",
+   "expected": [
+    "PREFERS_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "PREFERS_TOOL",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "rejected",
+     "reason": "INVALID_ARGUMENT: Unregistered identity qualifier"
+    }
+   ],
+   "latencyMs": 10021
+  },
+  {
+   "id": "ext-13",
+   "role": "user",
+   "expected": [
+    "PREFERS_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "PREFERS_TOOL",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "candidate",
+     "reasons": [
+      "ungrounded: subject not in the quoted span"
+     ]
+    }
+   ],
+   "latencyMs": 6102
+  },
+  {
+   "id": "ext-14",
+   "role": "user",
+   "expected": [
+    "PREFERS_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "PREFERS_TOOL",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "candidate",
+     "reasons": [
+      "ungrounded: subject not in the quoted span"
+     ]
+    }
+   ],
+   "latencyMs": 11033
+  },
+  {
+   "id": "ext-15",
+   "role": "user",
+   "expected": [
+    "BELONGS_TO"
+   ],
+   "proposals": [
+    {
+     "predicate": "BELONGS_TO",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "modality reported",
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 7712
+  },
+  {
+   "id": "ext-16",
+   "role": "user",
+   "expected": [
+    "BELONGS_TO"
+   ],
+   "proposals": [
+    {
+     "predicate": "BELONGS_TO",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "accepted"
+    }
+   ],
+   "latencyMs": 7734
+  },
+  {
+   "id": "ext-17",
+   "role": "user",
+   "expected": [
+    "BELONGS_TO"
+   ],
+   "proposals": [
+    {
+     "predicate": "BELONGS_TO",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "accepted"
+    }
+   ],
+   "latencyMs": 5445
+  },
+  {
+   "id": "ext-18",
+   "role": "user",
+   "expected": [
+    "CHECKOUT_OF"
+   ],
+   "proposals": [
+    {
+     "predicate": "CHECKOUT_OF",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 8843
+  },
+  {
+   "id": "ext-19",
+   "role": "user",
+   "expected": [
+    "CHECKOUT_OF"
+   ],
+   "proposals": [
+    {
+     "predicate": "CHECKOUT_OF",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "accepted"
+    }
+   ],
+   "latencyMs": 7213
+  },
+  {
+   "id": "ext-20",
+   "role": "user",
+   "expected": [
+    "CHECKOUT_OF"
+   ],
+   "proposals": [
+    {
+     "predicate": "CHECKOUT_OF",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 6086
+  },
+  {
+   "id": "ext-21",
+   "role": "user",
+   "expected": [
+    "IMPLEMENTS"
+   ],
+   "proposals": [
+    {
+     "predicate": "IMPLEMENTS",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 8350
+  },
+  {
+   "id": "ext-22",
+   "role": "user",
+   "expected": [
+    "IMPLEMENTS"
+   ],
+   "proposals": [
+    {
+     "predicate": "IMPLEMENTS",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "accepted"
+    }
+   ],
+   "latencyMs": 4751
+  },
+  {
+   "id": "ext-23",
+   "role": "user",
+   "expected": [
+    "IMPLEMENTS"
+   ],
+   "proposals": [
+    {
+     "predicate": "IMPLEMENTS",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 5077
+  },
+  {
+   "id": "ext-24",
+   "role": "user",
+   "expected": [
+    "DEPENDS_ON"
+   ],
+   "proposals": [
+    {
+     "predicate": "DEPENDS_ON",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "accepted"
+    }
+   ],
+   "latencyMs": 4450
+  },
+  {
+   "id": "ext-25",
+   "role": "user",
+   "expected": [
+    "DEPENDS_ON"
+   ],
+   "proposals": [
+    {
+     "predicate": "DEPENDS_ON",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 6389
+  },
+  {
+   "id": "ext-26",
+   "role": "user",
+   "expected": [
+    "DEPENDS_ON",
+    "USES_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time",
+      "ungrounded: question, hedge, quotation, negation or missing cue"
+     ]
+    }
+   ],
+   "latencyMs": 6515
+  },
+  {
+   "id": "ext-27",
+   "role": "user",
+   "expected": [
+    "BLOCKED_BY"
+   ],
+   "proposals": [
+    {
+     "predicate": "BLOCKED_BY",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 6417
+  },
+  {
+   "id": "ext-28",
+   "role": "user",
+   "expected": [
+    "BLOCKED_BY"
+   ],
+   "proposals": [
+    {
+     "predicate": "BLOCKED_BY",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 4875
+  },
+  {
+   "id": "ext-29",
+   "role": "user",
+   "expected": [
+    "BLOCKED_BY"
+   ],
+   "proposals": [
+    {
+     "predicate": "BLOCKED_BY",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "accepted"
+    }
+   ],
+   "latencyMs": 6595
+  },
+  {
+   "id": "ext-30",
+   "role": "user",
+   "expected": [
+    "LOCATED_AT"
+   ],
+   "proposals": [
+    {
+     "predicate": "LOCATED_AT",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "accepted"
+    }
+   ],
+   "latencyMs": 8564
+  },
+  {
+   "id": "ext-31",
+   "role": "user",
+   "expected": [
+    "LOCATED_AT"
+   ],
+   "proposals": [
+    {
+     "predicate": "LOCATED_AT",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 8103
+  },
+  {
+   "id": "ext-32",
+   "role": "user",
+   "expected": [
+    "LOCATED_AT"
+   ],
+   "proposals": [
+    {
+     "predicate": "BELONGS_TO",
+     "correct": false,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    },
+    {
+     "predicate": "LOCATED_AT",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 17905
+  },
+  {
+   "id": "ext-33",
+   "role": "tool",
+   "expected": [
+    "HAS_STATE"
+   ],
+   "proposals": [
+    {
+     "predicate": "HAS_STATE",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 4933
+  },
+  {
+   "id": "ext-34",
+   "role": "tool",
+   "expected": [
+    "HAS_STATE"
+   ],
+   "proposals": [
+    {
+     "predicate": "HAS_STATE",
+     "correct": false,
+     "uncertainTime": false,
+     "status": "rejected",
+     "reason": "INVALID_ARGUMENT: Predicate entity or literal type mismatch"
+    }
+   ],
+   "latencyMs": 7263
+  },
+  {
+   "id": "ext-35",
+   "role": "user",
+   "expected": [
+    "HAS_STATE",
+    "HAS_STATE"
+   ],
+   "proposals": [
+    {
+     "predicate": "HAS_STATE",
+     "correct": false,
+     "uncertainTime": false,
+     "status": "rejected",
+     "reason": "INVALID_ARGUMENT: Unregistered state"
+    }
+   ],
+   "latencyMs": 3755
+  },
+  {
+   "id": "ext-36",
+   "role": "user",
+   "expected": [
+    "RELATED_TO"
+   ],
+   "proposals": [
+    {
+     "predicate": "RELATED_TO",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "modality reported",
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 6927
+  },
+  {
+   "id": "ext-37",
+   "role": "user",
+   "expected": [
+    "RELATED_TO"
+   ],
+   "proposals": [
+    {
+     "predicate": "RELATED_TO",
+     "correct": true,
+     "uncertainTime": false,
+     "status": "candidate",
+     "reasons": [
+      "modality reported"
+     ]
+    }
+   ],
+   "latencyMs": 4733
+  },
+  {
+   "id": "ext-38",
+   "role": "user",
+   "expected": [
+    "RELATED_TO"
+   ],
+   "proposals": [
+    {
+     "predicate": "RELATED_TO",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "modality reported",
+      "uncertain time"
+     ]
+    }
+   ],
+   "latencyMs": 5949
+  },
+  {
+   "id": "ext-39",
+   "role": "assistant",
+   "expected": [
+    "USES_TOOL"
+   ],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "epistemic type derived_summary",
+      "uncertain time",
+      "assistant source"
+     ]
+    }
+   ],
+   "latencyMs": 6461
+  },
+  {
+   "id": "ext-40",
+   "role": "assistant",
+   "expected": [
+    "HAS_STATE"
+   ],
+   "proposals": [
+    {
+     "predicate": "HAS_STATE",
+     "correct": true,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "epistemic type derived_summary",
+      "modality reported",
+      "uncertain time",
+      "assistant source"
+     ]
+    }
+   ],
+   "latencyMs": 6971
+  },
+  {
+   "id": "neg-01",
+   "role": "user",
+   "expected": [],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": false,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "modality reported",
+      "uncertain time",
+      "ungrounded: question, hedge, quotation, negation or missing cue"
+     ]
+    }
+   ],
+   "latencyMs": 8379
+  },
+  {
+   "id": "neg-02",
+   "role": "user",
+   "expected": [],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": false,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "modality hypothetical",
+      "uncertain time",
+      "ungrounded: question, hedge, quotation, negation or missing cue"
+     ]
+    }
+   ],
+   "latencyMs": 9620
+  },
+  {
+   "id": "neg-03",
+   "role": "user",
+   "expected": [],
+   "proposals": [
+    {
+     "predicate": "HAS_STATE",
+     "correct": false,
+     "uncertainTime": true,
+     "status": "rejected",
+     "reason": "INVALID_ARGUMENT: Predicate entity or literal type mismatch"
+    }
+   ],
+   "latencyMs": 8146
+  },
+  {
+   "id": "neg-04",
+   "role": "user",
+   "expected": [],
+   "proposals": [],
+   "latencyMs": 2101
+  },
+  {
+   "id": "neg-05",
+   "role": "user",
+   "expected": [],
+   "proposals": [
+    {
+     "predicate": "WORKS_ON",
+     "correct": false,
+     "uncertainTime": true,
+     "status": "rejected",
+     "reason": "INVALID_ARGUMENT: Predicate entity or literal type mismatch"
+    }
+   ],
+   "latencyMs": 9621
+  },
+  {
+   "id": "neg-06",
+   "role": "user",
+   "expected": [],
+   "proposals": [],
+   "latencyMs": 5430
+  },
+  {
+   "id": "neg-07",
+   "role": "user",
+   "expected": [],
+   "proposals": [
+    {
+     "predicate": "PREFERS_TOOL",
+     "correct": false,
+     "uncertainTime": true,
+     "status": "rejected",
+     "reason": "INVALID_ARGUMENT: Unregistered identity qualifier"
+    }
+   ],
+   "latencyMs": 27763
+  },
+  {
+   "id": "neg-08",
+   "role": "user",
+   "expected": [],
+   "proposals": [
+    {
+     "predicate": "USES_TOOL",
+     "correct": false,
+     "uncertainTime": false,
+     "status": "candidate",
+     "reasons": [
+      "ungrounded: subject not in the quoted span"
+     ]
+    }
+   ],
+   "latencyMs": 7148
+  },
+  {
+   "id": "neg-09",
+   "role": "tool",
+   "expected": [],
+   "proposals": [
+    {
+     "predicate": "HAS_STATE",
+     "correct": false,
+     "uncertainTime": true,
+     "status": "candidate",
+     "reasons": [
+      "uncertain time",
+      "ungrounded: value not in the quoted span"
+     ]
+    }
+   ],
+   "latencyMs": 34879
+  },
+  {
+   "id": "neg-10",
+   "role": "user",
+   "expected": [],
+   "proposals": [
+    {
+     "predicate": "WORKS_ON",
+     "correct": false,
+     "uncertainTime": false,
+     "status": "candidate",
+     "reasons": [
+      "modality planned",
+      "ungrounded: subject not in the quoted span"
+     ]
+    }
+   ],
+   "latencyMs": 8940
+  }
+ ],
+ "caveat": "Synthetic held-out statements; canonical acceptance comes from Canonical.remember in a temporary store. Not an estimate of production-domain quality."
+}
