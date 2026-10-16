@@ -4,7 +4,7 @@ Publication check — October 15, 2026: `npm test` passed **577 tests**, with **
 
 ## PyPersona enhancement plan, slices 0–5 — October 15–16, 2026
 
-Implemented from `prompts/Cere-PyPersona-Enhancement-Plan.md` on `ui-overhaul` at `0837f91`, uncommitted. The in-flight screenshot and documentation edits and the removal of `artwork/` are preserved. Slices 0–4 are complete. Slice 5 adds M22 and M14; A03, M11 and slice 6 are deferred. The per-proposal record and every log are local, under `~/.cache/cere-pypersona/` (`PROGRESS.md`, `baseline/` and `final/`).
+Implemented from `prompts/Cere-PyPersona-Enhancement-Plan.md` on `ui-overhaul` at `0837f91`, and committed on October 16 as `6e6aa8a`. The in-flight screenshot and documentation edits and the removal of `artwork/` are preserved, in their own commits (`a0b956e`, `83b02d5`). Slices 0–4 are complete. Slice 5 adds M22 and M14; A03, M11 and slice 6 are deferred. The per-proposal record and every log are local, under `~/.cache/cere-pypersona/` (`PROGRESS.md`, `baseline/` and `final/`).
 
 Baseline before any change (clean `git archive HEAD` tree): `npm test` 578 tests, 576 passed, 1 skipped, 1 failed (`tests/avatar-surface-motion.test.ts`, which cannot read `artwork/avatars/cere/registration.json` since `artwork/` moved). `ctest` passed 4/4. The offscreen `cere-ui-check` had 65 passed, 1 failed (`reviewTransitions`) and 9 skipped.
 
@@ -20,7 +20,7 @@ Checks actually run after the last change:
 
 Existing tests changed deliberately: the provider counts in `apiProviderSetup` and `ollamaConversation` include the compatible endpoint, with 8 providers and 7 handoff targets. The shared API adapter tests now also run against the compatible endpoint. The Review posture's expected ceiling now includes extension tools. `markdownMessages` injected its fixture row before the reload that follows selecting a conversation had finished, so the reload could replace the row mid-test. One full run crashed at `tests/ui.cpp:1078` because of this; the slot now waits for both resets, as `avatarThemeSwitching` already did. On this host `ananicy-cpp` renices every `node` process to 16, so the background-priority test compares against the test process's own priority.
 
-Not established: native file dialogs cannot be driven offscreen (Save as…, Import a package…, Add folder…). Their broker side is covered by tests and the dialogs' callers by RPC-level UI checks. The microphone was not recorded, since a test would capture the host's microphone; dictation is covered with a recorder stand-in in the broker tests. Nothing was installed, and the running broker and interface were not restarted.
+Not established: native file dialogs cannot be driven offscreen (Save as…, Import a package…, Add folder…). Their broker side is covered by tests and the dialogs' callers by RPC-level UI checks. The microphone was not recorded, since a test would capture the host's microphone; dictation is covered with a recorder stand-in in the broker tests. This session installed nothing and restarted nothing. The tree was installed afterwards, at 21:28 EDT on October 15: the broker and interface restarted then, and the live memory store applied migration 5 (`retention_pins`) at 21:28:53, without a backup.
 
 ## Documentation screenshots — October 15, 2026
 
