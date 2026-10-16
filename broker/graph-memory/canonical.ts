@@ -1110,32 +1110,12 @@ export class Canonical {
             "Correction must resolve to the original slot",
           );
       }
-      let status = "accepted";
-      if (p.model_proposal || p.extraction_run_id) {
-        // A quoted span proves words were said, not that the user asserted this
-        // relation. Anything short of a grounded direct statement stays a candidate.
-        if (!this.grounded(e, claim)) status = "candidate";
-        if (
-          (claim.valid_mode === "unknown" && claim.time_expression.trim()) ||
-          claim.time_precision === "approximate"
-        )
-          status = "candidate";
-      }
+      let status = this.holdReasons(e, claim, !!(p.model_proposal || p.extraction_run_id)).length ? "candidate" : "accepted";
       if (
-        e.trust === "derived_summary" ||
-        claim.epistemic_type === "derived_summary" ||
-        claim.epistemic_type === "inference" ||
-        claim.modality !== "actual"
+        e.trust === "document_claim" &&
+        (claim.epistemic_type !== "document_claim" || claim.modality !== "reported")
       )
-        status = "candidate";
-      if (e.trust === "document_claim") {
-        if (
-          claim.epistemic_type !== "document_claim" ||
-          claim.modality !== "reported"
-        )
-          fail("INVALID_ARGUMENT", "Document claims must remain attributed");
-        status = "candidate";
-      }
+        fail("INVALID_ARGUMENT", "Document claims must remain attributed");
       if (e.trust !== "instrumented" && claim.epistemic_type === "instrumented")
         fail(
           "INVALID_ARGUMENT",
@@ -1306,13 +1286,38 @@ export class Canonical {
     return v.version_id as string;
   }
   /**
+   * Why a claim stays a candidate rather than an accepted fact; none means it is accepted, or
+   * disputed by a conflict. A quoted span proves words were said, not that the user asserted this
+   * relation, so a model proposal must be grounded. Grounding is the gate, not a date: a statement
+   * that names no time is undated (unknown validity and precision, as extraction records it), and
+   * recall shows it as an uncertain claim. A time that was stated but not resolved, or given only
+   * approximately, still holds a proposal for review (F-034).
+   */
+  holdReasons(e: Row, claim: Claim, proposal: boolean) {
+    const reasons: string[] = [];
+    if (proposal) {
+      const problem = this.grounding(e, claim);
+      if (problem) reasons.push("ungrounded: " + problem);
+      if ((claim.valid_mode === "unknown" && claim.time_expression.trim()) || claim.time_precision === "approximate") reasons.push("unresolved time");
+    }
+    if (e.trust === "derived_summary") reasons.push("assistant source");
+    if (claim.epistemic_type === "derived_summary" || claim.epistemic_type === "inference") reasons.push("epistemic type " + claim.epistemic_type);
+    if (claim.modality !== "actual") reasons.push("modality " + claim.modality);
+    if (e.trust === "document_claim") reasons.push("document source");
+    return reasons;
+  }
+  grounded(e: Row, claim: Claim) {
+    return this.grounding(e, claim) === null;
+  }
+  /**
    * Conservative semantic grounding for model-proposed claims: the quoted
    * sentence must be a direct, unquoted, non-interrogative, non-hypothetical
    * first-hand statement whose negation matches the proposal and which contains
    * the named entities and a cue for the registered predicate. This is a
-   * candidate gate, not a certificate of natural-language meaning.
+   * candidate gate, not a certificate of natural-language meaning. Returns the
+   * first check that fails, or null for a grounded claim.
    */
-  grounded(e: Row, claim: Claim) {
+  grounding(e: Row, claim: Claim): string | null {
     const body: string = this.one(
       "SELECT p.body FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.id=?",
       e.observation_id,
@@ -1326,16 +1331,16 @@ export class Canonical {
     const sentence = normalized(points.slice(start, end).join("")),
       quotation = normalized(e.witness);
     const object = normalized(claim.object?.name ?? String(claim.value));
-    if (!quotation.includes(object)) return false;
-    if (!quotation.includes(normalized(claim.subject.name)) && !/\bthis project\b/u.test(quotation)) return false;
+    if (!quotation.includes(object)) return "value not in the quoted span";
+    if (!quotation.includes(normalized(claim.subject.name)) && !/\bthis project\b/u.test(quotation)) return "subject not in the quoted span";
     // Questions, including interrogative clauses without a terminal question mark.
     if (/\?/u.test(sentence) || /^(?:do|does|did|is|are|was|were|am|can|could|should|would|will|shall|may|might|must|has|have|had|who|whom|whose|what|when|where|why|which|how|whether)\b/u.test(sentence) ||
-      /\b(?:i wonder|wondering|not sure (?:if|whether)|asked (?:if|whether)|ask (?:if|whether)|unsure)\b/u.test(sentence)) return false;
+      /\b(?:i wonder|wondering|not sure (?:if|whether)|asked (?:if|whether)|ask (?:if|whether)|unsure)\b/u.test(sentence)) return "question";
     // Hypothetical, planned, reported or quoted statements are not first-hand facts.
-    if (/\b(?:if|might|could|would|may|maybe|perhaps|probably|possibly|suppose|supposing|unless|hypothetical|hypothetically|assume|assuming|plan|plans|planning|planned|will|going to|want to|wants to|should|said|says|told|tells|according to|reportedly|reported|claims?|claimed|heard|apparently|ignore|pretend|fabricate|invent)\b/u.test(sentence)) return false;
-    if (/["“”«»„]/u.test(sentence)) return false;
+    if (/\b(?:if|might|could|would|may|maybe|perhaps|probably|possibly|suppose|supposing|unless|hypothetical|hypothetically|assume|assuming|plan|plans|planning|planned|will|going to|want to|wants to|should|said|says|told|tells|according to|reportedly|reported|claims?|claimed|heard|apparently|ignore|pretend|fabricate|invent)\b/u.test(sentence)) return "hedge, plan, report or instruction";
+    if (/["“”«»„]/u.test(sentence)) return "quotation marks in the sentence";
     const negated = /\b(?:not|never|no longer|cannot|stopped|without)\b|n['’]t\b/u.test(quotation);
-    if (negated !== (claim.polarity === "negative")) return false;
+    if (negated !== (claim.polarity === "negative")) return "negation differs from the claim";
     const cues: Record<string, RegExp> = {
       WORKS_ON: /\b(?:works?|working|worked) on\b|\b(?:build|builds|building|develop|develops|developing|maintain|maintains|maintaining|contribute|contributes|contributing)\b/u,
       USES_TOOL: /\b(?:use|uses|used|using|run|runs|running|ran|adopt|adopts|adopted)\b|\b(?:relies|rely|relied|relying) on\b|\b(?:switched|moved|migrated) to\b|\b(?:formats?|formatted|lints?|linted|built|builds) with\b|\bpowered by\b/u,
@@ -1349,7 +1354,7 @@ export class Canonical {
       HAS_STATE: /./u,
       RELATED_TO: /\b(?:related|relates|relation|connected|linked|associated|about|regarding)\b/u,
     };
-    return cues[claim.predicate].test(quotation);
+    return cues[claim.predicate].test(quotation) ? null : "no cue for the predicate";
   }
   support(version: string) {
     return this.all(

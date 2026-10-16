@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { Canonical } from '../../broker/graph-memory/canonical.ts';
-import { predicates } from '../../broker/graph-memory/contracts.ts';
+import { claimSchema, parse, predicates } from '../../broker/graph-memory/contracts.ts';
 import { normalized } from '../../broker/graph-memory/ontology.ts';
 import { extractionProposals } from '../../broker/graph-memory/proposals.ts';
 import type { ExtractionAdapter } from '../../broker/graph-memory/adapters/contracts.ts';
@@ -40,22 +40,10 @@ export function matches(claim: Row, expected: Expected) {
   return subject && object;
 }
 
-/** The acceptance rules that hold a model proposal back as a candidate, in Canonical.remember's terms. */
+/** The acceptance rules that hold a model proposal back as a candidate, from Canonical.holdReasons itself. */
 export function candidateReasons(c: Canonical, claim: Row, versionId: string) {
-  const reasons: string[] = [];
-  if (['inference', 'derived_summary'].includes(claim.epistemic_type)) reasons.push('epistemic type ' + claim.epistemic_type);
-  if (claim.modality !== 'actual') reasons.push('modality ' + claim.modality);
-  if ((claim.valid_mode === 'unknown' && (claim.time_expression || '').trim()) || claim.time_precision === 'approximate') reasons.push('uncertain time');
-  for (const evidence of c.support(versionId)) {
-    if (evidence.trust === 'derived_summary') reasons.push('assistant source');
-    if (evidence.trust === 'document_claim') reasons.push('document source');
-    if (c.grounded(evidence, claim as any)) continue;
-    const quotation = normalized(evidence.witness);
-    reasons.push(!quotation.includes(normalized(claim.object?.name ?? String(claim.value))) ? 'ungrounded: value not in the quoted span'
-      : !quotation.includes(normalized(claim.subject.name)) && !/\bthis project\b/u.test(quotation) ? 'ungrounded: subject not in the quoted span'
-        : 'ungrounded: question, hedge, quotation, negation or missing cue');
-  }
-  return [...new Set(reasons)];
+  const parsed = parse(claimSchema, claim);
+  return [...new Set(c.support(versionId).flatMap(evidence => c.holdReasons(evidence, parsed, true)))];
 }
 
 const percentile = (values: number[], p: number) => { const sorted = [...values].sort((a, b) => a - b); return sorted.length ? Math.round(sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))]) : null; };
@@ -99,7 +87,7 @@ export async function evaluate(adapter: ExtractionAdapter, cases: ExtractionCase
             if (entry.status === 'candidate') {
               entry.reasons = candidateReasons(c, claim, remembered.id);
               for (const reason of entry.reasons) reasons.set(reason, (reasons.get(reason) || 0) + 1);
-              if (entry.reasons.length === 1 && entry.reasons[0] === 'uncertain time') { totals.heldOnlyByTime++; if (correct) totals.heldOnlyByTimeCorrect++; }
+              if (entry.reasons.length === 1 && entry.reasons[0] === 'unresolved time') { totals.heldOnlyByTime++; if (correct) totals.heldOnlyByTimeCorrect++; }
             }
           } catch (error: any) {
             entry.status = 'rejected'; entry.reason = `${error?.code || 'ERROR'}: ${String(error?.message || error).slice(0, 120)}`;
@@ -134,7 +122,7 @@ export async function evaluate(adapter: ExtractionAdapter, cases: ExtractionCase
       candidateReasons: Object.fromEntries([...reasons].sort((a, b) => b[1] - a[1])), rejections: Object.fromEntries([...rejections].sort((a, b) => b[1] - a[1])) },
     acceptedAssertionPrecision: ratio(totals.acceptedCorrect, totals.accepted),
     uncertainTimeProposals: totals.uncertainTime,
-    // Counterfactual only: candidates whose single reason is the approximate-time rule, and how many are correct.
+    // Counterfactual only: candidates whose single reason is a stated but unresolved time, and how many are correct.
     heldOnlyByTimeRule: { proposals: totals.heldOnlyByTime, correct: totals.heldOnlyByTimeCorrect },
     negatives: { abstained: totals.abstained, abstention: ratio(totals.abstained, negative), proposals: totals.negativeProposals, accepted: totals.negativeAccepted },
     latencyMs: { p50: percentile(latencies, .5), p95: percentile(latencies, .95), maximum: latencies.length ? Math.round(Math.max(...latencies)) : null },

@@ -29,6 +29,10 @@ export function extractionProposals(result: ExtractionRun, observationId: string
         : NaN;
     const temporal = Number.isSafeInteger(parsed) ? parsed : null;
     const uncertain = a.temporal.uncertain || (!!a.temporal.interpretation && temporal === null);
+    // A statement that names no time is undated, not approximately dated: its validity stays
+    // unknown and no date is invented. Only a time that was stated but not resolved is approximate;
+    // its words, or without them the model's reading, are kept so it stays reviewable.
+    const stated = Array.from(a.temporal.expression?.trim() || (temporal === null ? a.temporal.interpretation?.trim() : "") || "").slice(0, 500).join("");
     const claim = {
       subject: { type: entityTypes.find(type=>type.toUpperCase()===s.kind), name: s.aliases[0] },
       predicate: a.predicate,
@@ -47,8 +51,8 @@ export function extractionProposals(result: ExtractionRun, observationId: string
             : "known_current",
       valid_from_us: temporal,
       valid_to_us: null,
-      time_precision: temporal !== null ? "instant" : uncertain ? "approximate" : "unknown",
-      time_expression: a.temporal.expression || "",
+      time_precision: temporal !== null ? "instant" : uncertain && stated ? "approximate" : "unknown",
+      time_expression: stated,
       extraction_confidence: 1,
     };
     // Unresolved natural-language corrections remain reviewable candidates; resolved inspector APIs apply intervals.

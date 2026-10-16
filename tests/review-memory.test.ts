@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Canonical } from "../broker/graph-memory/canonical.ts";
 import { schema, migrations } from "../broker/graph-memory/schema.ts";
+import { claimSchema, parse } from "../broker/graph-memory/contracts.ts";
+import { extractionProposals } from "../broker/graph-memory/proposals.ts";
 
 // Regressions for the canonical-engine findings of docs/REVIEW.md.
 function fixture(t: any, directory = mkdtempSync(join(tmpdir(), "cere-review-"))) {
@@ -472,4 +474,34 @@ test("F-034 uncertain effective dates from model proposals remain reviewable can
   const stored = c.one("SELECT * FROM assertion_versions WHERE version_id=?", result.id);
   assert.equal(stored.valid_from_us, null); assert.equal(stored.valid_mode, "unknown");
   assert.equal(c.retrieve({ scope_id: scope, text: "Ruff" }).assertions.length, 0);
+});
+
+// Owner decision after EV-01: grounding, not a date, decides whether an extracted statement is accepted.
+test("EV-01 a grounded, undated extraction proposal is accepted with unknown validity; a stated time or an ungrounded quotation still holds it", (t) => {
+  const { c, scope } = fixture(t);
+  const propose = (text: string, tool: string, temporal: { expression: string | null; interpretation: string | null; uncertain: boolean }) => {
+    const o = observe(c, scope, text);
+    const [mapped] = extractionProposals({ model: "stub", modelDigest: "stub", endpointClass: "local", promptVersion: "p", schemaVersion: 1, parserVersion: "q", proposals: {
+      entities: [{ temporaryRef: "s", kind: "PROJECT", aliases: ["Atlas"] }, { temporaryRef: "o", kind: "TOOL", aliases: [tool] }],
+      assertions: [{ subjectRef: "s", predicate: "USES_TOOL", object: { entityRef: "o" }, qualifiers: {}, polarity: "positive", modality: "actual", epistemicType: "explicit_user", operation: "asserts",
+        temporal, quotes: [{ sourceRecordId: o.id, quote: text, occurrenceIndex: 0 }], durabilityHint: 0.5, importanceHint: 0.5 }] } }, o.id);
+    return { claim: mapped.claim, result: c.remember({ scope_id: scope, ...mapped, model_proposal: true }) };
+  };
+  // Marked uncertain with no time, as the extraction prompt asks for an unknown effective date.
+  const undated = propose("Atlas uses Ruff for formatting.", "Ruff", { expression: null, interpretation: null, uncertain: true });
+  assert.deepEqual([undated.claim.valid_mode, undated.claim.time_precision, undated.claim.valid_from_us, undated.claim.time_expression], ["unknown", "unknown", null, ""], "no date is invented");
+  assert.equal(undated.result.status, "accepted");
+  const packet = c.retrieve({ scope_id: scope, text: "Ruff" });
+  assert.equal(packet.assertions.length, 0, "unknown validity is never presented as a settled fact");
+  assert.deepEqual(packet.conflicts.map((a: any) => [a.status, a.valid_mode]), [["accepted", "unknown"]]);
+  assert.equal(packet.items.find((item: any) => /Ruff/.test(item.text))?.kind, "claim");
+  assert.equal(c.retrieve({ scope_id: scope, text: "Ruff", world_at_us: Date.UTC(2026, 0, 1) * 1000 }).conflicts.length, 0, "nor placed at any historical time");
+  // A stated time that cannot be resolved stays reviewable, keeping the model's reading when it gave no words.
+  const stated = propose("Atlas uses Black since around September.", "Black", { expression: null, interpretation: "around September", uncertain: true });
+  assert.deepEqual([stated.claim.time_precision, stated.claim.time_expression], ["approximate", "around September"]);
+  assert.equal(stated.result.status, "candidate");
+  // Grounding still decides: an undated question is not a statement of fact.
+  const question = propose("Does Atlas use Biome for formatting?", "Biome", { expression: null, interpretation: null, uncertain: true });
+  assert.equal(question.result.status, "candidate");
+  assert.deepEqual(c.holdReasons(c.support(question.result.id)[0], parse(claimSchema, question.claim), true), ["ungrounded: question"]);
 });
