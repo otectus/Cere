@@ -54,6 +54,17 @@ test('M02 output checks annotate prose only and never edit it', () => {
   assert.throws(() => validConstraints(['no-adverbs']), /supported formatting checks/);
 });
 
+test('RC-06 emoji are what a reader sees as emoji, and every GFM table shape is a table, outside code', () => {
+  const emoji = (text: string) => checkReply(text, ['no-emoji'])[0]?.count ?? 0;
+  for (const [text, count] of [['😀', 1], ['👍🏽', 1], ['❤️', 1], ['🇺🇸', 1], ['👨‍👩‍👧', 1], ['✅ done', 1], ['😀 and 🇺🇸 and ❤️', 3]] as const) assert.equal(emoji(text), count, text);
+  for (const text of ['©', '®', '™', '→', '↔', '•', '✓', 'Copyright © 2026, Cere™ ↔ ok ✓']) assert.equal(emoji(text), 0, text);
+  const tables = (text: string) => checkReply(text, ['no-markdown-table'])[0]?.count ?? 0;
+  for (const text of ['a | b\n--- | ---\n1 | 2', '| a |\n| --- |\n| 1 |', '| a | b |\n|-|-|\n| 1 | 2 |', 'a | b\n:-- | --:\n1 | 2', '| A | B |\n|---|---|\n| 1 | 2 |'])
+    assert.equal(tables(text), 1, JSON.stringify(text));
+  for (const text of ['Heading\n---\nprose', 'a\n\n| --- |', '```\n| a | b |\n|---|---|\n```', 'x - y | z'])
+    assert.equal(tables(text), 0, JSON.stringify(text));
+});
+
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any, factory: any = idle) {
   const dir = await mkdtemp(join(tmpdir(), 'cere-behavior-'));

@@ -19,16 +19,39 @@ export function validConstraints(value: unknown): StyleConstraint[] {
 
 /** Prose outside fenced and inline code: constraints describe writing, not code or quoted output. */
 function prose(text: string) { return text.replace(/```[\s\S]*?(```|$)/g, '\n').replace(/`[^`\n]*`/g, ' '); }
-const emoji = /\p{Extended_Pictographic}/gu;
-const table = /^\s*\|.*\|\s*\n\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/m;
+/**
+ * Emoji as a reader sees them: a code point shown as emoji by default, a pictograph followed by the
+ * emoji variation selector (U+FE0F), or a flag, which is a pair of regional indicators. Skin-tone
+ * modifiers and the parts of a joined sequence belong to the emoji they follow. Text symbols such
+ * as ©, ™, → or a plain ✓ are not emoji.
+ */
+function emojiCount(text: string) {
+  const points = Array.from(text);
+  let count = 0;
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index], joined = points[index - 1] === '\u200D';
+    if (/\p{Regional_Indicator}/u.test(point)) { if (/\p{Regional_Indicator}/u.test(points[index + 1] ?? '')) index++; count++; continue; }
+    if (joined || /\p{Emoji_Modifier}/u.test(point)) continue;
+    if (/\p{Emoji_Presentation}/u.test(point) || (/\p{Extended_Pictographic}/u.test(point) && points[index + 1] === '\uFE0F')) count++;
+  }
+  return count;
+}
+/** A GFM table: a delimiter row (cells of dashes with optional colons, with at least one pipe; the outer pipes are optional) under a header line. */
+const delimiterRow = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+function tableCount(text: string) {
+  const lines = text.split('\n');
+  let count = 0;
+  for (let index = 1; index < lines.length; index++) if (lines[index].includes('|') && delimiterRow.test(lines[index]) && lines[index - 1].trim()) count++;
+  return count;
+}
 
 export type StyleViolation = { constraint: StyleConstraint; label: string; count: number };
 export function checkReply(text: string, constraints: StyleConstraint[]): StyleViolation[] {
   const body = prose(text), violations: StyleViolation[] = [];
   for (const constraint of constraints) {
-    const count = constraint === 'no-emoji' ? (body.match(emoji) || []).length
+    const count = constraint === 'no-emoji' ? emojiCount(body)
       : constraint === 'no-em-dash' ? (body.match(/—/g) || []).length
-        : (body.match(new RegExp(table.source, 'gm')) || []).length;
+        : tableCount(body);
     if (count) violations.push({ constraint, label: styleConstraints[constraint].label, count });
   }
   return violations;
