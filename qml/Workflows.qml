@@ -352,7 +352,9 @@ CDialog {
                 CText {
                     objectName:"resultContract";visible:!!modelData.contract;Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.caption
                     color:modelData.contract?.status==="met"?Theme.muted:Theme.amber
-                    text:!modelData.contract?"":modelData.contract.status==="met"?"Output sections: all present.":"Output sections missing: "+modelData.contract.sections.filter(section=>!section.present).map(section=>section.name).join(", ")+". The reply is shown as written."
+                    readonly property var mentioned:(modelData.contract?.sections||[]).filter(section=>section.how==="mentioned").map(section=>section.name)
+                    text:!modelData.contract?"":(modelData.contract.status==="met"?"Output sections: all present.":"Output sections missing: "+modelData.contract.sections.filter(section=>!section.present).map(section=>section.name).join(", ")+". The reply is shown as written.")
+                        +(mentioned.length?" "+mentioned.join(", ")+(mentioned.length===1?" is":" are")+" mentioned, not as a heading.":"")
                 }
                 Repeater { model:modelData.artifacts||[];CButton { required property string modelData;text:"Open artifact · "+modelData;quiet:true;onClicked:App.rpc("action.run",{name:"files.open",args:{path:modelData}}) } }
                 CText { visible:!!modelData.uncertainty;text:modelData.uncertainty||"";color:Theme.amber;font.pixelSize:Theme.caption }

@@ -195,10 +195,18 @@ test('M08 a utility-shelf task moves into the project tasks instead of being cop
 });
 
 test('M17 output sections are checked as headings outside code and never rewrite the reply',async()=>{
-  const { checkSections, validSections } = await import('../broker/output-contracts.ts');
+  const { checkSections, contractFor, validSections } = await import('../broker/output-contracts.ts');
   const reply='## Findings\nA bug.\n\n**Open questions:** none\n\nNext steps: ship it\n```md\n# Verification\n```';
   assert.deepEqual(checkSections(reply,['Findings','Open questions','Next steps','Verification']).map(item=>item.present),[true,true,true,false],'a heading inside a code block does not count');
   assert.deepEqual(checkSections('# findings',['Findings'])[0].present,true,'case does not matter');
+  // RC-03: numbered, qualified, listed, bold and bare headings all count; a prose mention is present but labelled.
+  for (const line of ['## 1. Findings','## Findings and evidence','1. **Findings**','Findings','**Findings:**','## Findings','> ### Findings','- _Findings_','`Findings`: none','# findings_and_more'])
+    assert.deepEqual(checkSections(line+'\nText.',['Findings'])[0],{name:'Findings',present:true,how:'heading'},line);
+  assert.deepEqual(checkSections('### Risks (high level)\nNone.',['Risks'])[0].how,'heading');
+  assert.deepEqual(checkSections('## Riskscore\nThe riskscore is 4.',['Risk'])[0],{name:'Risk',present:false},'Riskscore does not satisfy Risk');
+  assert.deepEqual(checkSections('Below are the open questions we found.',['Open questions'])[0],{name:'Open questions',present:true,how:'mentioned'});
+  assert.deepEqual(checkSections('```\n## Findings\n```\nnothing else',['Findings'])[0].present,false,'neither a heading nor a mention inside code counts');
+  assert.equal(contractFor({id:'r',version:1,outputSections:['Findings','Open questions']},'## Findings\nWe list open questions later.')!.status,'met');
   assert.equal(validSections([]),undefined);
   assert.throws(()=>validSections(['# Bad']),/without # or \*/);
   assert.throws(()=>validSections(['A','a']),/different names/);
@@ -263,7 +271,7 @@ test('M17 a recipe reply missing its sections is flagged on the result, and the 
   const text='## Findings\nThe install guide is stale.';
   f.store.messagesById.set('answer',{id:'answer',sessionId:id,role:'assistant',text,time:30} as any);
   const result:any=f.workflows.observeResult(f.store.session(id),f.store.messageById('answer'),'completed');
-  assert.deepEqual(result.contract,{definitionId:saved.id,version:1,sections:[{name:'Findings',present:true},{name:'Open questions',present:false}],status:'missing'});
+  assert.deepEqual(result.contract,{definitionId:saved.id,version:1,sections:[{name:'Findings',present:true,how:'heading'},{name:'Open questions',present:false}],status:'missing'});
   assert.equal(f.store.messageById('answer')!.text,text);
   // The sections travel with the recipe and are part of its revision.
   const exported=f.workflows.exportRecipes([saved.id]);assert.deepEqual(exported[0].outputSections,['Findings','Open questions']);

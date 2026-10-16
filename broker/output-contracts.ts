@@ -9,7 +9,8 @@ export type CheckAttempt = { scriptId: string; state: 'cancelled' | 'error'; at:
 export type CheckStatus = 'passed' | 'failed' | 'not-run' | 'stale' | 'cancelled' | 'error' | 'missing';
 export type ChecklistRow = { scriptId: string; label: string; status: CheckStatus; exitCode?: number; durationMs?: number; at?: number; reason?: string };
 export type Gate = 'none' | 'passed' | 'failed' | 'incomplete';
-export type OutputContract = { definitionId: string; version: number; sections: { name: string; present: boolean }[]; status: 'met' | 'missing' };
+export type SectionCheck = { name: string; present: boolean; how?: 'heading' | 'mentioned' };
+export type OutputContract = { definitionId: string; version: number; sections: SectionCheck[]; status: 'met' | 'missing' };
 
 type Observed = { name: string; args: unknown; exitCode?: number; observedAt: number; verification?: 'reviewed-check'; durationMs?: number; seq?: number };
 
@@ -27,23 +28,36 @@ export function validSections(value: unknown): string[] | undefined {
   return names.length ? names : undefined;
 }
 
-const fold = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
+const fold = (value: string) => value.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+const escaped = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** A line without its Markdown dressing: heading hashes, quote markers, bullets, list numbers, emphasis and code marks. */
+const bare = (line: string) => {
+  let value = line.replace(/\*\*|__|[*`]/g, ''), previous = '';
+  while (value !== previous) { previous = value; value = value.replace(/^\s+|^>|^#{1,6}(?=\s|$)|^[-+](?=\s)|^\d{1,3}[.)](?=\s)|^_+/, ''); }
+  return fold(value);
+};
 
-/** Whether each section starts a line as a Markdown heading, a bold label or a "Name:" label, outside code. */
-export function checkSections(text: string, sections: string[]): { name: string; present: boolean }[] {
+/**
+ * Whether each section is present in a reply, outside code. A section counts as a heading when a line
+ * starts with its name, once the line's Markdown dressing is removed, followed by the end of the line,
+ * a space or punctuation, so "Riskscore" never satisfies "Risk". A name that appears only in prose
+ * counts as mentioned. Only a section that is never named is missing: like PyPersona's check, this
+ * prefers missing a problem to raising a false alarm.
+ */
+export function checkSections(text: string, sections: string[]): SectionCheck[] {
   const lines: string[] = [];
   let fenced = false;
   for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
     if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
     if (!fenced) lines.push(line);
   }
-  const labels = lines.map(line => {
-    const heading = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/)?.[1];
-    const bold = line.match(/^\s*(?:[-*]\s+)?\*\*(.+?)\*\*/)?.[1];
-    const plain = line.match(/^\s*([^:]{1,80}):(?:\s|$)/)?.[1];
-    return [heading, bold, plain].filter(Boolean).map(value => fold(String(value).replace(/:$/, '')));
-  }).flat();
-  return sections.map(name => ({ name, present: labels.includes(fold(name)) }));
+  const heads = lines.map(bare), prose = fold(lines.join('\n').replace(/\*\*|__|[*`]/g, ''));
+  return sections.map(name => {
+    const wanted = escaped(fold(name));
+    if (heads.some(line => new RegExp(`^${wanted}(?:$|[\\s\\p{P}\\p{S}])`, 'u').test(line))) return { name, present: true, how: 'heading' as const };
+    if (new RegExp(`(?:^|[^\\p{L}\\p{N}])${wanted}(?:$|[^\\p{L}\\p{N}])`, 'u').test(prose)) return { name, present: true, how: 'mentioned' as const };
+    return { name, present: false };
+  });
 }
 
 export function contractFor(definition: { id: string; version: number; outputSections?: string[] }, reply: string): OutputContract | undefined {
