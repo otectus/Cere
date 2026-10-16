@@ -129,3 +129,15 @@ export function span(text: string, quote: string, occurrence: number) {
     "Evidence quotation is absent from sanitized source",
   );
 }
+/** The occurrence that span() resolves to a match starting at `start`, or -1 if none starts there. */
+export function occurrenceAt(text: string, quote: string, start: number) {
+  const chars = Array.from(text),
+    needle = Array.from(quote);
+  let n = 0;
+  for (let i = 0; i <= Math.min(start, chars.length - needle.length); i++)
+    if (needle.every((c, j) => chars[i + j] === c)) {
+      if (i === start) return n;
+      n++;
+    }
+  return -1;
+}

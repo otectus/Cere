@@ -32,7 +32,7 @@ import {
   type Policy,
 } from "./contracts.ts";
 import { factTimeline } from "./timeline.ts";
-import { validateClaim, normalized, stableJSON, span } from "./ontology.ts";
+import { validateClaim, normalized, stableJSON, span, occurrenceAt } from "./ontology.ts";
 import { overlaps, remainder, eligibleTime } from "./temporal.ts";
 import { rrf, relationalRank, ftsQuery, lexicalFloor, informativeTerms, hasInformativeTerm } from "./ranking.ts";
 import { compactItem, itemTokens, packetOverheadTokens, itemEvidenceLimit } from "./packet.ts";
@@ -1225,8 +1225,7 @@ export class Canonical {
       // actually corrected, so other values of a multivalued slot keep their own pins.
       if (operation !== "assert" && corrected.length) {
         const logical = this.one("SELECT logical_id FROM assertion_versions WHERE version_id=?", version).logical_id;
-        for (const old of corrected) if (old.logical_id !== logical)
-          this.run("UPDATE retention_pins SET target_id=? WHERE target_kind='assertion' AND target_id=? AND released_revision IS NULL AND NOT EXISTS (SELECT 1 FROM retention_pins r WHERE r.target_id=? AND r.released_revision IS NULL)", logical, old.logical_id, logical);
+        for (const old of corrected) if (old.logical_id !== logical) this.followPin(old.logical_id, logical);
       }
       this.run(
         "UPDATE fact_slots SET aggregate_revision=? WHERE id=?",
@@ -1355,6 +1354,117 @@ export class Canonical {
       RELATED_TO: /\b(?:related|relates|relation|connected|linked|associated|about|regarding)\b/u,
     };
     return cues[claim.predicate].test(quotation) ? null : "no cue for the predicate";
+  }
+  /** Moves an active retention pin from one logical assertion to the one that replaced it. */
+  followPin(from: string, to: string) {
+    this.run("UPDATE retention_pins SET target_id=? WHERE target_kind='assertion' AND target_id=? AND released_revision IS NULL AND NOT EXISTS (SELECT 1 FROM retention_pins r WHERE r.target_id=? AND r.released_revision IS NULL)", to, from, to);
+  }
+  /**
+   * Decides pending extraction candidates under the current acceptance rule (holdReasons), as if
+   * each were proposed again with its stored claim and quotation. One the rule now admits goes
+   * through remember, which accepts it or disputes it against a conflicting fact; one it still
+   * holds is rejected, with its reasons, and expires on the candidate schedule. An approximate
+   * precision with no stated time records no date (how undated statements were stored before they
+   * could be accepted), so such a claim is re-expressed with an unknown precision. No model is
+   * called and nothing is extracted again; expired candidates are left to expiry. A dry run makes
+   * the same decisions and rolls them back. Otherwise the store is first backed up to `output` in
+   * this worker call, as compaction does, so nothing commits in between.
+   */
+  async readjudicate(p: Row): Promise<Row> {
+    strict(p, ["output", "dry_run"]);
+    const dry = p.dry_run === true;
+    if (!dry && p.output === undefined)
+      fail("INVALID_ARGUMENT", "Re-adjudication backs memory up first; name a new output file");
+    const backup = dry ? null : (await this.backup({ output: p.output })).output;
+    const candidates = this.all(
+      "SELECT * FROM assertion_versions WHERE status='candidate' AND known_to_revision IS NULL AND erased=0 AND extraction_run_id IS NOT NULL AND (expires_at_us IS NULL OR expires_at_us>?) ORDER BY known_from_revision,version_id",
+      now(),
+    );
+    const decided: Row = { considered: 0, accepted: [], rejected: [] }, rollback = new Error("dry run");
+    try {
+      if (candidates.length)
+        this.tx((_r, time) => {
+          this.batchTransaction = true;
+          try {
+            for (const v of candidates) this.decideCandidate(v, time, decided, dry);
+          } finally {
+            this.batchTransaction = false;
+          }
+          if (dry) throw rollback;
+        });
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
+    const tally = (keys: string[]) => {
+      const counts: Record<string, number> = {};
+      for (const key of keys) counts[key] = (counts[key] ?? 0) + 1;
+      return counts;
+    };
+    return {
+      dry_run: dry, backup, revision: this.revision, ...decided,
+      counts: { ...tally(decided.accepted.map((row: Row) => row.status)), rejected: decided.rejected.length },
+      reasons: tally(decided.rejected.flatMap((row: Row) => row.reasons)),
+    };
+  }
+  /** One candidate's re-adjudication, inside readjudicate's transaction. */
+  decideCandidate(v: Row, time: number, decided: Row, dry: boolean) {
+    decided.considered++;
+    const entity = (id: string) => this.one("SELECT id,type,name FROM entities WHERE id=? AND erased=0", id);
+    const subject = entity(v.subject_id),
+      object = v.object_entity_id ? entity(v.object_entity_id) : null;
+    const stated = !!v.time_expression.trim() || v.valid_from_us !== null || v.valid_to_us !== null;
+    const precision = !stated && v.time_precision === "approximate" ? "unknown" : v.time_precision;
+    const raw = {
+      subject: { id: subject.id, type: subject.type, name: subject.name },
+      predicate: v.predicate,
+      ...(v.object_entity_id ? { object: { id: object!.id, type: object!.type, name: object!.name } } : { value: JSON.parse(v.value_json) }),
+      qualifiers: JSON.parse(v.qualifiers),
+      polarity: v.polarity,
+      modality: v.modality,
+      epistemic_type: v.epistemic_type,
+      valid_mode: v.valid_mode,
+      valid_from_us: v.valid_from_us,
+      valid_to_us: v.valid_to_us,
+      time_precision: precision,
+      time_zone: v.time_zone,
+      time_expression: v.time_expression,
+      extraction_confidence: v.extraction_confidence,
+    };
+    const text = this.assertionText(v);
+    let reasons: string[], admitted: Row | undefined;
+    try {
+      const claim = parse(claimSchema, raw);
+      validateClaim(claim);
+      const verdicts = this.support(v.version_id).map((e) => ({ e, reasons: this.holdReasons(e, claim, true) }));
+      admitted = verdicts.find((verdict) => !verdict.reasons.length)?.e;
+      reasons = verdicts.length ? [...new Set(verdicts.flatMap((verdict) => verdict.reasons))] : ["no remaining evidence"];
+    } catch (error: any) {
+      reasons = ["no longer valid: " + (error?.message || error)];
+    }
+    if (admitted) {
+      const effects = new Set(this.effects);
+      this.db.exec("SAVEPOINT readjudicate");
+      try {
+        const body = this.one("SELECT p.body FROM observations o JOIN payloads p ON p.id=o.payload_id WHERE o.id=? AND o.erased=0 AND p.erased=0", admitted.observation_id).body;
+        const occurrence = typeof body === "string" ? occurrenceAt(body, admitted.witness, JSON.parse(admitted.locator).start) : -1;
+        if (occurrence < 0) fail("SOURCE_CHANGED", "Evidence source is no longer eligible");
+        this.closeVersion(v, time);
+        const result = this.remember({ scope_id: v.scope_id, claim: raw, witness: { observation_id: admitted.observation_id, quote: admitted.witness, occurrence }, extraction_run_id: v.extraction_run_id });
+        if (result.status === "candidate") fail("INVALID_ARGUMENT", "The acceptance rule still holds it");
+        this.lineage(result.id, v.version_id, "supersedes");
+        this.followPin(v.logical_id, this.one("SELECT logical_id FROM assertion_versions WHERE version_id=?", result.id).logical_id);
+        this.db.exec("RELEASE readjudicate");
+        decided.accepted.push({ from: v.version_id, ...(dry ? {} : { id: result.id }), status: result.status, claim: text });
+        return;
+      } catch (error: any) {
+        this.db.exec("ROLLBACK TO readjudicate");
+        this.db.exec("RELEASE readjudicate");
+        this.effects = effects;
+        reasons = ["not accepted: " + (error?.message || error)];
+      }
+    }
+    const id = this.amend(v, { status: "rejected", time_precision: precision }, time);
+    decided.rejected.push({ from: v.version_id, ...(dry ? {} : { id }), claim: text, reasons });
   }
   support(version: string) {
     return this.all(
@@ -3837,6 +3947,8 @@ export class Canonical {
         return this.remember(p, "correct");
       case "resolve_conflict":
         return this.remember(p, "resolve");
+      case "readjudicate":
+        return this.readjudicate(p);
       case "identity":
         return this.identity(p);
       case "pin":

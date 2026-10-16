@@ -448,9 +448,9 @@ export class Memory {
     return { items: shown, text: renderPacket(shown, packet.budget?.trimmed_items || 0, items.length - shown.length) };
   }
   async graph(session: Session | undefined, method: string, params: Record<string, unknown> = {}, signal?:AbortSignal, authorize?:()=>void) {
-    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology','delete_migration_backups'];
+    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology','delete_migration_backups'];
     if (!allowed.includes(method)) throw new Error('This memory method is not exposed to clients');
-    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','erasure_status','ontology','delete_migration_backups'].includes(method);
+    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','readjudicate','erasure_status','ontology','delete_migration_backups'].includes(method);
     if (!global && !session) throw new Error('Choose a conversation to select its authorized project scope');
     const { scope_id: _scope, owner_id: _owner, ...safe } = params;
     await this.ready;

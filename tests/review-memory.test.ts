@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -504,4 +504,80 @@ test("EV-01 a grounded, undated extraction proposal is accepted with unknown val
   const question = propose("Does Atlas use Biome for formatting?", "Biome", { expression: null, interpretation: null, uncertain: true });
   assert.equal(question.result.status, "candidate");
   assert.deepEqual(c.holdReasons(c.support(question.result.id)[0], parse(claimSchema, question.claim), true), ["ungrounded: question"]);
+});
+
+test("pending extraction candidates are re-adjudicated under the current rule through remember, after a backup", async (t) => {
+  const { c, scope, directory } = fixture(t);
+  c.policyUpdate({ policy: { enabled: true } });
+  const extract = (scopeId: string, text: string, role: string, claim: any, quote = text) => {
+    const o = c.observeText({ scope_id: scopeId, text, role });
+    let run = c.extractionNext();
+    while (run && run.observation_id !== o.id) { c.extractionResult({ id: run.id, error: "MODEL_UNAVAILABLE_OR_INVALID" }); run = c.extractionNext(); }
+    c.extractionResult({ id: run!.id, identity: { model: "fixture" } });
+    return c.applyExtraction({ id: run!.id, proposals: [{ claim, witness: { observation_id: o.id, quote } }] })[0];
+  };
+  // Extraction stored an undated statement this way before this change, and the time rule holds it.
+  const legacy = { valid_mode: "unknown", time_precision: "approximate", time_expression: "" };
+  const grounded = extract(scope, "Atlas uses Ruff for formatting.", "user", tool("Ruff", {}, legacy));
+  const ungrounded = extract(scope, '{"action_id":"a1","phase":"succeeded","name":"deploy"}', "tool",
+    { subject: { type: "Action", name: "deploy" }, predicate: "HAS_STATE", value: "succeeded", epistemic_type: "instrumented", ...legacy }, '"phase":"succeeded"');
+  const dated = extract(scope, "Jade prefers Ruff since around September.", "user",
+    { subject: { type: "User", name: "Jade" }, predicate: "PREFERS_TOOL", object: { type: "Tool", name: "Ruff" }, valid_mode: "unknown", time_precision: "approximate", time_expression: "around September" });
+  // A grounded candidate that conflicts with an accepted fact of a single-valued slot is disputed, as remember decides.
+  const other = c.registerScope({ key: "dispute", label: "Dispute" }).id;
+  const black = remember(c, other, "Jade prefers Black.", { subject: { type: "User", name: "Jade" }, predicate: "PREFERS_TOOL", object: { type: "Tool", name: "Black" } });
+  const conflicting = extract(other, "Jade prefers Helix.", "user", { subject: { type: "User", name: "Jade" }, predicate: "PREFERS_TOOL", object: { type: "Tool", name: "Helix" }, ...legacy });
+  // Neither a user's own candidate nor an expired extraction candidate is re-adjudicated.
+  const planned = remember(c, scope, "Atlas will use Biome.", tool("Biome", {}, { modality: "planned" }));
+  const expired = extract(scope, "Atlas uses Zed.", "user", tool("Zed", {}, legacy));
+  c.run("UPDATE assertion_versions SET expires_at_us=? WHERE version_id=?", Date.now() * 1000 - 1, expired.id);
+  const pin = c.pin({ scope_id: scope, id: grounded.id, note: "keep" });
+  const version = (id: string) => c.one("SELECT * FROM assertion_versions WHERE version_id=?", id);
+  assert.deepEqual([grounded, ungrounded, dated, conflicting, planned, expired, black].map((r) => version(r.id).status), ["candidate", "candidate", "candidate", "candidate", "candidate", "candidate", "accepted"]);
+  assert.equal(c.retrieve({ scope_id: scope, text: "succeeded deploy Jade September" }).conflicts.length, 2, "pending candidates are recalled as conflicts");
+
+  const snapshot = () => ({ revision: c.revision, versions: c.all("SELECT version_id,status,known_to_revision FROM assertion_versions ORDER BY version_id") });
+  const unchanged = snapshot();
+  const dry = await c.readjudicate({ dry_run: true });
+  assert.deepEqual(snapshot(), unchanged, "a dry run writes nothing");
+  assert.equal(dry.considered, 4);
+  assert.deepEqual(dry.counts, { accepted: 1, disputed: 1, rejected: 2 });
+  assert.deepEqual(dry.reasons, { "ungrounded: subject not in the quoted span": 1, "unresolved time": 1 });
+  await assert.rejects(c.readjudicate({}), /output file/);
+  const output = join(directory, "before-readjudication.sqlite");
+  const done = await c.readjudicate({ output });
+  assert.equal(done.backup, output);
+  assert.ok(existsSync(output) && existsSync(output + ".manifest.json"));
+  assert.equal(done.revision, unchanged.revision + 1, "one commit");
+  assert.deepEqual([done.considered, done.counts, done.reasons], [dry.considered, dry.counts, dry.reasons], "the dry run predicted the decisions");
+  // Admitted: accepted through remember with an honest, undated time, superseding the closed candidate.
+  const accepted = done.accepted.find((row: any) => row.from === grounded.id);
+  assert.equal(accepted.status, "accepted");
+  assert.deepEqual([version(accepted.id).status, version(accepted.id).valid_mode, version(accepted.id).time_precision, version(accepted.id).extraction_run_id],
+    ["accepted", "unknown", "unknown", version(grounded.id).extraction_run_id]);
+  assert.ok(version(grounded.id).known_to_revision !== null);
+  assert.ok(c.one("SELECT 1 AS n FROM lineage WHERE derived_id=? AND input_id=? AND role='supersedes'", accepted.id, grounded.id).n);
+  assert.equal(c.one("SELECT target_id FROM retention_pins WHERE id=?", pin.id).target_id, version(accepted.id).logical_id, "the pin follows the fact");
+  assert.deepEqual(c.retrieve({ scope_id: scope, text: "Ruff formatting" }).conflicts.map((a: any) => [a.version_id, a.status]), [[accepted.id, "accepted"]]);
+  assert.equal(done.accepted.find((row: any) => row.from === conflicting.id).status, "disputed");
+  assert.equal(c.one("SELECT status FROM assertion_versions WHERE logical_id=? AND known_to_revision IS NULL", version(black.id).logical_id).status, "disputed");
+  // Held: rejected with reasons, out of recall, and still expiring on the candidate schedule.
+  for (const [candidate, reason] of [[ungrounded, "ungrounded: subject not in the quoted span"], [dated, "unresolved time"]] as const) {
+    const rejected = done.rejected.find((row: any) => row.from === candidate.id);
+    assert.deepEqual(rejected.reasons, [reason]);
+    const row = version(rejected.id), old = version(candidate.id);
+    assert.deepEqual([row.status, row.logical_id, row.expires_at_us, row.retention_class], ["rejected", old.logical_id, old.expires_at_us, "candidate"]);
+    assert.ok(old.known_to_revision !== null);
+  }
+  assert.equal(c.retrieve({ scope_id: scope, text: "succeeded deploy Jade September" }).conflicts.length, 0);
+  assert.deepEqual([version(planned.id).status, version(planned.id).known_to_revision, version(expired.id).status, version(expired.id).known_to_revision], ["candidate", null, "candidate", null]);
+  assert.equal((await c.readjudicate({ dry_run: true })).considered, 0, "nothing is left pending");
+  // When their candidate retention ends, closed candidates and rejected versions expire, while an
+  // accepted fact keeps its shared evidence: a superseded version has no erasure descendants.
+  const decided = [grounded.id, ungrounded.id, dated.id, ...done.rejected.map((row: any) => row.id)];
+  for (const id of decided) c.run("UPDATE assertion_versions SET expires_at_us=? WHERE version_id=?", Date.now() * 1000 - 1, id);
+  c.expire();
+  assert.deepEqual(decided.map((id) => version(id).erased), decided.map(() => 1));
+  assert.deepEqual([version(accepted.id).erased, c.support(accepted.id).length], [0, 1]);
+  assert.deepEqual(c.retrieve({ scope_id: scope, text: "Ruff formatting" }).conflicts.map((a: any) => a.version_id), [accepted.id]);
 });

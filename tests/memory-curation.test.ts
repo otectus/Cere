@@ -1,6 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Canonical } from '../broker/graph-memory/canonical.ts';
@@ -114,6 +114,22 @@ test('M05 the broker exposes curation through memory.graph within the conversati
   assert.equal((await core.rpc('memory.graph', { sessionId: session.id, method: 'pins', params: {} })).total, 1);
   assert.ok((await core.rpc('memory.graph', { method: 'ontology', params: {} })).predicates.includes('BLOCKED_BY'));
   await assert.rejects(core.rpc('memory.graph', { method: 'pins', params: {} }), /Choose a conversation/);
+});
+
+test('re-adjudication is a global memory.graph method that backs memory up before it writes', async t => {
+  const { Core } = await import('../broker/core.ts');
+  const { Store } = await import('../broker/store.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'cere-readjudicate-core-'));
+  const core = new Core(new Store(dir), () => ({ async send() {}, async interrupt() {}, async close() {} }));
+  t.after(async () => { await core.close(); rmSync(dir, { recursive: true, force: true }); });
+  await core.updateSettings({ memory: { enabled: true }, ollama: { host: 'http://127.0.0.1:9' } });
+  await core.memory.ready;
+  const dry = await core.rpc('memory.graph', { method: 'readjudicate', params: { dry_run: true } });
+  assert.deepEqual([dry.dry_run, dry.considered, dry.backup], [true, 0, null]);
+  await assert.rejects(core.rpc('memory.graph', { method: 'readjudicate', params: {} }), /output file/);
+  const output = join(dir, 'before-readjudication.sqlite');
+  assert.equal((await core.rpc('memory.graph', { method: 'readjudicate', params: { output } })).backup, output);
+  assert.ok(existsSync(output));
 });
 
 test('A05 identity decisions take effect in recall: same joins, not-same blocks, revert splits', t => {

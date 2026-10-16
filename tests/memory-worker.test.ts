@@ -63,7 +63,7 @@ test('erasure previews and expiry carry time budgets; accepted erasures, backups
   assert.equal(watchdogLimit('forget_preview'), 90000);
   assert.equal(watchdogLimit('health'), 60000);
   assert.equal(watchdogLimit('forget'), 600000);
-  for (const method of ['backup', 'restore', 'rebuild', 'compact']) assert.equal(watchdogLimit(method), Infinity);
+  for (const method of ['backup', 'restore', 'rebuild', 'compact', 'readjudicate']) assert.equal(watchdogLimit(method), Infinity);
 });
 
 test('closing gives a busy worker five seconds, then ends it', async t => {

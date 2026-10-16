@@ -56,11 +56,11 @@ try {
     );
   if (flags.help) {
     console.log(
-      "cere memory health|doctor|query|inspect|remember|correct|resolve-conflict|forget-preview|forget|erasure-status|workspace|policy-get|policy-update|rebuild|backup|restore|compact\nUse --session SESSION_ID to select a project, --file CLAIM.json or --stdin for structured requests, --json for machine output.\ncompact --output BACKUP.sqlite backs memory up to that new file, then removes rows that only erased records still use.",
+      "cere memory health|doctor|query|inspect|remember|correct|resolve-conflict|forget-preview|forget|erasure-status|workspace|policy-get|policy-update|rebuild|backup|restore|compact|readjudicate\nUse --session SESSION_ID to select a project, --file CLAIM.json or --stdin for structured requests, --json for machine output.\ncompact --output BACKUP.sqlite backs memory up to that new file, then removes rows that only erased records still use.\nreadjudicate --output BACKUP.sqlite backs memory up to that new file, then accepts or rejects pending extraction candidates under the current acceptance rule; --dry-run reports the same decisions without writing.",
     );
   } else {
-    // Backup, restore, rebuild and compaction rewrite the whole store and can take minutes.
-    const slow = ["backup", "restore", "rebuild", "compact"].includes(method);
+    // Backup, restore, rebuild, compaction and re-adjudication (which backs up first) can take minutes.
+    const slow = ["backup", "restore", "rebuild", "compact", "readjudicate"].includes(method);
     const result = await request("memory.graph", {
       sessionId: flags.session,
       method,

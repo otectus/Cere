@@ -20,10 +20,10 @@ export const memoryBudgets: Readonly<Record<string, number>> = {
 /**
  * How long one call may run before the watchdog ends the worker and starts another. An erasure or
  * expiry that has begun committing may outlast its budget while it finishes; backup, restore,
- * rebuild, compaction and legacy import are never ended.
+ * rebuild, compaction, re-adjudication (which backs up first) and legacy import are never ended.
  */
 export function watchdogLimit(method: string) {
-  if (["backup", "restore", "rebuild", "compact", "import_legacy", "close"].includes(method)) return Infinity;
+  if (["backup", "restore", "rebuild", "compact", "readjudicate", "import_legacy", "close"].includes(method)) return Infinity;
   if (["forget", "mobile_forget", "maintenance", "expire"].includes(method)) return 600000;
   return (memoryBudgets[method] ?? 0) + 60000;
 }
