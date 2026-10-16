@@ -23,6 +23,12 @@ CDialog {
         }
     }
     CText { text:"Memory: "+(health.report.memory?.state||"unknown")+" · "+(health.report.memory?.coverage||"") }
+    CText { objectName:"healthMemoryError";visible:!!health.report.memory?.error;text:health.report.memory?.error||"";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    CText {
+        objectName:"healthMigrationBackup";visible:(health.report.memory?.backups||[]).length>0;color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
+        readonly property var newest:(health.report.memory?.backups||[])[0]||({})
+        text:"Pre-migration backup from "+new Date((newest.created_us||0)/1000).toLocaleDateString()+(newest.from?" (memory schema "+newest.from+" to "+newest.to+")":"")+". It is deleted after 14 days, or when memory is cleared."
+    }
     CButton { text:"Check memory connection";enabled:health.request<0;onClicked:health.call("memory.check") }
     CText { text:"Speech: "+(health.report.speech?.state||"unknown") }
         RowLayout { Layout.fillWidth:true;CButton {text:"Test voice";onClicked:health.call("tts.test")} CButton{text:"Stop voice";onClicked:health.call("tts.stop")} }

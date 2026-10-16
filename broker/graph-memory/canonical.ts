@@ -11,6 +11,9 @@ import {
   closeSync,
   statSync,
   readdirSync,
+  renameSync,
+  rmSync,
+  statfsSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { schema, migrations } from "./schema.ts";
@@ -59,8 +62,13 @@ export class Canonical {
   cancelled?: () => boolean;
   /** Recent forget previews by selector; each stays valid until the next canonical commit. */
   previews = new Map<string, { revision: number; preview: Row }>();
-  constructor(directory: string) {
+  /** Where copies taken before a migration go; only the serving store passes one. */
+  backups?: string;
+  static freeBytes = (directory: string) => { const fs = statfsSync(directory); return fs.bavail * fs.bsize; };
+  static migrationBackupLimit = { keep: 2, days: 14 };
+  constructor(directory: string, options: { backups?: string } = {}) {
     this.directory = directory;
+    this.backups = options.backups;
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     chmodSync(directory, 0o700);
     this.db = new DatabaseSync(join(directory, "memory.sqlite"), {
@@ -82,10 +90,8 @@ export class Canonical {
     this.db.exec(
       "PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000;PRAGMA secure_delete=ON;CREATE VIRTUAL TABLE temp.fts_probe USING fts5(text);DROP TABLE temp.fts_probe;",
     );
-    if (
-      !this.one("SELECT name FROM sqlite_master WHERE name='schema_migrations'")
-        .name
-    ) {
+    const existing = !!this.one("SELECT name FROM sqlite_master WHERE name='schema_migrations'").name;
+    if (!existing) {
       this.db.exec("BEGIN IMMEDIATE");
       try {
         this.db.exec(schema);
@@ -100,7 +106,8 @@ export class Canonical {
         throw e;
       }
     }
-    this.migrate();
+    this.migrate(existing ? this.backups : undefined);
+    if (this.backups) this.pruneMigrationBackups();
     this.owner = this.meta("owner_id", "");
     if (!this.owner) {
       this.owner = uuid();
@@ -183,8 +190,11 @@ export class Canonical {
     }
     return { rescheduled };
   }
-  /** Verifies every applied migration by checksum, then applies the missing suffix in order. */
-  migrate() {
+  /**
+   * Verifies every applied migration by checksum, then applies the missing suffix in order. Given a
+   * backup directory, an existing store is first copied there and checked (backupBeforeMigration).
+   */
+  migrate(backups?: string) {
     const known = new Map<number, string>([
       [1, digest(schema)],
       ...migrations.map((m): [number, string] => [m.id, digest(m.sql)]),
@@ -193,8 +203,9 @@ export class Canonical {
     for (const [index, row] of applied.entries())
       if (row.id !== index + 1 || known.get(row.id) !== row.checksum)
         fail("INCOMPATIBLE_SCHEMA", "Unknown or modified memory migration");
-    for (const migration of migrations) {
-      if (applied.some((row) => row.id === migration.id)) continue;
+    const pending = migrations.filter((migration) => !applied.some((row) => row.id === migration.id));
+    if (backups && pending.length) this.backupBeforeMigration(backups, applied.length, pending.at(-1)!.id);
+    for (const migration of pending) {
       this.db.exec("BEGIN IMMEDIATE");
       try {
         this.db.exec(migration.sql);
@@ -210,6 +221,96 @@ export class Canonical {
         throw e;
       }
     }
+  }
+  /**
+   * NF-01: before a migration changes an existing store, a copy is written beside it and must pass
+   * SQLite's integrity check. Without room for the copy (twice the store), or if writing or checking
+   * it fails, the store is left unchanged and opening it fails with the reason. Restoring a copy
+   * re-applies the current erasure registry, so it cannot bring back anything forgotten later.
+   */
+  backupBeforeMigration(directory: string, from: number, to: number) {
+    const store = join(this.directory, "memory.sqlite"),
+      size = (path: string) => (existsSync(path) ? statSync(path).size : 0),
+      needed = 2 * (size(store) + size(store + "-wal")),
+      mib = (bytes: number) => (bytes / 1048576).toFixed(1) + " MiB";
+    let partial = "";
+    try {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      chmodSync(directory, 0o700);
+      const free = Canonical.freeBytes(directory);
+      if (free < needed) throw new Error(`its backup needs ${mib(needed)} free and ${mib(free)} is available`);
+      const date = new Date().toISOString().slice(0, 10);
+      let name = `before-migration-${from}-to-${to}-${date}`;
+      for (let n = 2; existsSync(join(directory, name + ".sqlite")); n++) name = `before-migration-${from}-to-${to}-${date}-${n}`;
+      partial = join(directory, `.${name}.partial`);
+      rmSync(partial, { force: true });
+      this.db.prepare("VACUUM INTO ?").run(partial);
+      chmodSync(partial, 0o600);
+      const file = openSync(partial, "r+");
+      try { fsyncSync(file); } finally { closeSync(file); }
+      const copy = new DatabaseSync(partial, { readOnly: true });
+      try {
+        const integrity = copy.prepare("PRAGMA integrity_check").all() as Row[];
+        if (integrity.length !== 1 || integrity[0].integrity_check !== "ok") throw new Error("its backup failed SQLite's integrity check");
+        if ((copy.prepare("SELECT MAX(id) AS n FROM schema_migrations").get() as Row).n !== from) throw new Error("its backup does not match the store");
+      } finally {
+        copy.close();
+      }
+      const output = join(directory, name + ".sqlite");
+      renameSync(partial, output);
+      partial = "";
+      const manifest = {
+        schema_version: 1,
+        kind: "before_migration",
+        from,
+        to,
+        created_us: now(),
+        owner_id: this.meta("owner_id", ""),
+        revision: this.one("SELECT COALESCE(MAX(revision),0) AS n FROM commits").n,
+        policy_epoch: this.epoch("policy"),
+        erasure_epoch: this.epoch("erasure"),
+        integrity: "ok",
+        erasure_registry_required: true,
+      };
+      const fd = openSync(output + ".manifest.json", "wx", 0o600);
+      try {
+        writeSync(fd, JSON.stringify(manifest));
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      const folder = openSync(directory, "r");
+      try { fsyncSync(folder); } finally { closeSync(folder); }
+    } catch (e: any) {
+      if (partial) rmSync(partial, { force: true });
+      fail("MIGRATION_BACKUP_FAILED", `Memory needs a schema update (${from} to ${to}) and was left unchanged: ${e?.message || e}. Make room or fix ${directory}, then restart Cere.`);
+    }
+    this.pruneMigrationBackups(directory);
+  }
+  /** Pre-migration backups, newest first. */
+  migrationBackups(directory = this.backups) {
+    if (!directory || !existsSync(directory)) return [];
+    const found: { name: string; path: string; created_us: number; from: number | null; to: number | null }[] = [];
+    for (const name of readdirSync(directory)) {
+      if (!/^before-migration-\d+-to-\d+-\d{4}-\d{2}-\d{2}(-\d+)?\.sqlite$/.test(name)) continue;
+      const path = join(directory, name);
+      let manifest: Row = {};
+      try { manifest = JSON.parse(readFileSync(path + ".manifest.json", "utf8")); } catch {}
+      try { found.push({ name, path, created_us: Number(manifest.created_us) || Math.round(statSync(path).mtimeMs * 1000), from: manifest.from ?? null, to: manifest.to ?? null }); } catch {}
+    }
+    return found.sort((a, b) => b.created_us - a.created_us);
+  }
+  /** Keeps the newest two pre-migration backups, none older than 14 days. */
+  pruneMigrationBackups(directory = this.backups) {
+    const { keep, days } = Canonical.migrationBackupLimit, cutoff = now() - days * 86_400_000_000;
+    for (const [index, old] of this.migrationBackups(directory).entries())
+      if (index >= keep || old.created_us < cutoff) for (const path of [old.path, old.path + ".manifest.json"]) rmSync(path, { force: true });
+  }
+  /** Deletes every pre-migration backup, for example when memory is cleared. */
+  deleteMigrationBackups() {
+    const all = this.migrationBackups();
+    for (const old of all) for (const path of [old.path, old.path + ".manifest.json"]) rmSync(path, { force: true });
+    return { deleted: all.length };
   }
   one(sql: string, ...args: any[]): Row {
     return (this.db.prepare(sql).get(...args) as Row) || {};
@@ -2293,7 +2394,7 @@ export class Canonical {
     // Erasing right after previewing (the usual order) reuses the preview while nothing has committed.
     const key = JSON.stringify([p.scope_id, p.id ?? null, p.from_us ?? null, p.to_us ?? null, p.document_source ?? null]),
       cached = this.previews.get(key);
-    if (cached && cached.revision === this.revision) return cached.preview;
+    if (cached && cached.revision === this.revision) return this.withBackups(cached.preview);
     const { selector, roots } = this.resolveForget(p.scope_id, p);
     const ids = this.closure(roots, !!p.id || p.document_source !== undefined);
     const preview = {
@@ -2312,6 +2413,14 @@ export class Canonical {
     this.previews.delete(key);
     this.previews.set(key, { revision: this.revision, preview });
     for (const old of this.previews.keys()) if (this.previews.size > 8) this.previews.delete(old);
+    return this.withBackups(preview);
+  }
+  /**
+   * A pre-migration backup keeps its copy of forgotten text until it expires or is deleted. The list
+   * is refreshed on the cached preview itself, so a reused preview is still the same object.
+   */
+  withBackups(preview: Row): Row {
+    preview.migration_backups = this.migrationBackups().map(({ created_us, from, to }) => ({ created_us, from, to }));
     return preview;
   }
   /** Descendant erasure closure with independent-survivor and orphan-entity handling. */
@@ -3050,6 +3159,7 @@ export class Canonical {
     });
   }
   maintenance(){
+    if(this.backups)this.pruneMigrationBackups();
     const result=this.expire();
     const episodes=[
       ...this.all("SELECT ep.id,ep.scope_id FROM episodes ep JOIN episode_events m ON m.episode_id=ep.id JOIN events e ON e.id=m.event_id WHERE ep.state='open' AND ep.erased=0 AND e.erased=0 GROUP BY ep.id HAVING COUNT(e.id)>=500 OR MAX(e.captured_us)<? LIMIT 4",now()-600e6),
@@ -3437,6 +3547,7 @@ export class Canonical {
         supplemented: this.registryRepairs.supplemented.length,
         unresolved: this.registryRepairs.unresolved,
       },
+      migration_backups: this.migrationBackups().map(({ name, created_us, from, to }) => ({ name, created_us, from, to })),
       wal_bytes: existsSync(join(this.directory, "memory.sqlite-wal"))
         ? statSync(join(this.directory, "memory.sqlite-wal")).size
         : 0,
@@ -3820,6 +3931,10 @@ export class Canonical {
         return this.effectiveScopes(p.scope_id);
       case "maintenance":
         return this.maintenance();
+      case "migration_backups":
+        return this.migrationBackups().map(({ name, created_us, from, to }) => ({ name, created_us, from, to }));
+      case "delete_migration_backups":
+        return this.deleteMigrationBackups();
       case "rebuild":
         return this.rebuild(p);
       case "backup":

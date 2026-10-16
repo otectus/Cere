@@ -134,6 +134,10 @@ CDialog {
         }
     }
     CText { objectName:"graphMemoryForgetImpact";visible:inspector.previewCurrent;text:"Forgetting "+(inspector.preview.selector?.kind||"record").replace("_"," ")+" "+inspector.preview.id+" suppresses "+inspector.preview.count+" records and dependent copies immediately. Physical purge waits for database acknowledgements.";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap }
+    // NF-01: a pre-migration backup keeps its own copy of the text until it expires or is deleted.
+    CText { objectName:"graphMemoryForgetBackups";visible:inspector.previewCurrent&&(inspector.preview.backups||[]).length>0;Layout.fillWidth:true;wrapMode:Text.Wrap;color:Theme.amber;font.pixelSize:Theme.secondary
+        text:"A backup taken before a memory update on "+new Date(((inspector.preview.backups||[])[0]?.created_us||0)/1000).toLocaleDateString()+" may still contain this text. Forgetting does not change that file, and restoring it would forget this again. It is deleted after 14 days." }
+    CButton { objectName:"graphMemoryDeleteBackups";visible:inspector.previewCurrent&&(inspector.preview.backups||[]).length>0;text:"Delete the pre-migration backup";enabled:inspector.pending<0;onClicked:inspector.call("delete_migration_backups",{}) }
     CButton { objectName:"graphMemoryForget";visible:inspector.previewCurrent;text:"Forget "+inspector.preview.id;danger:true;enabled:inspector.pending<0&&inspector.previewCurrent;onClicked:inspector.call("forget",{id:inspector.preview.id,expected_revision:inspector.preview.revision,selection:inspector.preview.selection}) }
     CButton { visible:!!inspector.erasureJob;text:"Check purge progress";onClicked:inspector.call("erasure_status",{job_id:inspector.erasureJob}) }
     CText { text:"Details";font.weight:Font.DemiBold }
@@ -210,8 +214,9 @@ CDialog {
         // A pin change is reflected by inspecting the record again.
         if((inspector.action==="pin"||inspector.action==="unpin")&&record.text)Qt.callLater(()=>inspector.call("inspect",{id:record.text}))
         // The selection binds to the ID the preview was requested for, never a later edit.
-        if(inspector.action==="forget_preview"&&value.selection&&inspector.previewTarget===record.text)inspector.preview={sessionId:inspector.sessionId,id:inspector.previewTarget,revision:value.revision,selection:value.selection,selector:value.selector,target_ids:value.target_ids,count:value.count}
+        if(inspector.action==="forget_preview"&&value.selection&&inspector.previewTarget===record.text)inspector.preview={sessionId:inspector.sessionId,id:inspector.previewTarget,revision:value.revision,selection:value.selection,selector:value.selector,target_ids:value.target_ids,count:value.count,backups:value.migration_backups||[]}
         if(inspector.action==="forget"){inspector.erasureJob=value.job_id;inspector.preview={}}
+        if(inspector.action==="delete_migration_backups"&&inspector.preview.id)inspector.preview=Object.assign({},inspector.preview,{backups:[]})
         if(["correct","resolve_conflict","consolidate","rebuild"].includes(inspector.action))inspector.preview={}
     } }
     Connections { target:App;function onStateChanged(){if(!App.connected){inspector.preview={};inspector.policyLoaded=false}} }

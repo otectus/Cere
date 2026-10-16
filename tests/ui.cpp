@@ -2776,8 +2776,16 @@ Unicode: café ✦ 日本語
         auto listed=[&](const QString &id){return QJsonDocument::fromVariant(call("memory.list",{{"sessionId",session}})).toJson().contains(id.toUtf8());};
         QVERIFY(listed(a));QVERIFY(listed(b));
         auto record=item("graphMemoryRecord");QVERIFY(record);
+        // NF-01: a preview names a pre-migration backup that still holds the text, and can delete it.
+        const auto backups=data.path()+"/state/memory-backups",backupFile=backups+"/before-migration-4-to-5-2026-10-15.sqlite";
+        QVERIFY(QDir().mkpath(backups));
+        {QFile file(backupFile);QVERIFY(file.open(QIODevice::WriteOnly));file.write("x");}
+        {QFile file(backupFile+".manifest.json");QVERIFY(file.open(QIODevice::WriteOnly));file.write(QJsonDocument(QJsonObject{{"created_us",double(QDateTime::currentMSecsSinceEpoch())*1000},{"from",4},{"to",5}}).toJson());}
         record->setProperty("text",a);click("graphMemoryPreviewForget");
         QTRY_VERIFY(item("graphMemoryForget"));QVERIFY(item("graphMemoryForget")->property("text").toString().contains(a));
+        QTRY_VERIFY(item("graphMemoryForgetBackups"));QVERIFY(item("graphMemoryForgetBackups")->property("text").toString().contains("may still contain this text"));
+        click("graphMemoryDeleteBackups");
+        QTRY_VERIFY(!QFile::exists(backupFile));QTRY_VERIFY(!item("graphMemoryForgetBackups"));QVERIFY(item("graphMemoryForget"));
         record->setProperty("text",b);QTest::qWait(100);
         QVERIFY(!item("graphMemoryForget"));QVERIFY(!item("graphMemoryForgetImpact"));
         // A preview still in flight binds to the ID it was requested for, not a later edit.

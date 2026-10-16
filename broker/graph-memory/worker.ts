@@ -3,7 +3,7 @@ import { Canonical } from "./canonical.ts";
 const port = parentPort!;
 let store: Canonical;
 try {
-  store = new Canonical(workerData.directory);
+  store = new Canonical(workerData.directory, { backups: workerData.backups });
   port.postMessage({ ready: true });
 } catch (e: any) {
   port.postMessage({

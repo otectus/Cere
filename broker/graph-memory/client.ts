@@ -67,7 +67,7 @@ export class GraphMemory {
   /** Starts a worker. Messages, errors and exits from a replaced worker are ignored. */
   spawn() {
     const worker = new Worker(this.workerUrl, {
-      workerData: { directory: join(this.directory, "graph-memory") },
+      workerData: { directory: join(this.directory, "graph-memory"), backups: join(this.directory, "memory-backups") },
     });
     this.worker = worker;
     let resolve!: () => void, reject!: (e: any) => void;

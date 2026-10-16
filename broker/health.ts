@@ -14,7 +14,7 @@ export function healthReport(core:Core) {
   });
   const memory=core.memory.summary(),speech=core.speech.snapshot();
   return {schema:1,time:new Date().toISOString(),node:process.version,providers,
-    memory:{enabled:core.settings.memory.enabled,state:core.memory.status.state,pending:core.memory.status.pending,coverage:core.memory.status.warning?'degraded':'not-measured'},
+    memory:{enabled:core.settings.memory.enabled,state:core.memory.status.state,pending:core.memory.status.pending,coverage:core.memory.status.warning?'degraded':'not-measured',error:core.memory.status.error,backups:core.memory.status.backups},
     speech:{enabled:core.settings.speechEnabled,state:speech.state,backend:speech.backend,problem:speech.error?'speech':null},
     sessions:{count:core.store.sessionCount(),active:core.store.sessions().filter(s=>['starting','working','waiting','stopping'].includes(s.status)).length},
     permissions:{paused:core.settings.paused,activePowerSessions:core.power.snapshot().filter(p=>p.state==='active').length},

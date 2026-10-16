@@ -139,7 +139,7 @@ export class Memory {
    * transcript: an item still there is not sent again. Reset by compaction or another provider thread.
    */
   recent = new Map<string, { nativeId: string | null; turns: string[][] }>();
-  status = { state: 'idle', error: '', warning: '', total: 0, saved: 0, pending: 0 };
+  status = { state: 'idle', error: '', warning: '', total: 0, saved: 0, pending: 0, backups: [] as { created_us: number; from: number | null; to: number | null }[] };
   /** How long a turn waits for memory before it goes ahead without recalled context. */
   recallDeadlineMs = 8000;
   constructor(store: Store, settings: () => Settings, notify: () => void = () => {}) {
@@ -178,7 +178,7 @@ export class Memory {
   }
   invalidate() { this.revision++; this.controller.abort(new Error('Memory settings changed')); this.controller = new AbortController(); this.packets.clear(); this.recent.clear(); void this.ready.then(() => this.configure()).catch(e => this.setStatus('degraded', e.message)); }
   summary() { return { ...this.status }; }
-  async refresh() { const health = await this.service.call('health'); this.status.total = health.counts.artifacts; this.status.saved = health.counts.saved; this.status.pending = health.queues.outbox; this.notify(); return health; }
+  async refresh() { const health = await this.service.call('health'); this.status.total = health.counts.artifacts; this.status.saved = health.counts.saved; this.status.pending = health.queues.outbox; this.status.backups = (health.migration_backups || []).map(({ created_us, from, to }: any) => ({ created_us, from, to })); this.notify(); return health; }
   setStatus(state: string, error = '') { this.status = { ...this.status, state, error }; this.notify(); }
   host(session: Session) { return ollamaHost(session.ollama?.host||this.settings().ollama.host); }
   async scope(session: Session, signal?: AbortSignal) { await (signal ? abortable(this.ready, signal) : this.ready); const key = memoryScope(session,this.host(session)); let id = this.scopes.get(key); if (!id) { id = (await this.service.call('scope', { key, label: session.cwd }, signal)).id; this.scopes.set(key, id!); } return id!; }
@@ -302,7 +302,14 @@ export class Memory {
     await this.refreshAfterCommit();return result;
   }
   async forget(session: Session, id: unknown, signal?:AbortSignal, authorize?:()=>void) { return this.erase(session,{id},signal,authorize); }
-  async clear(session: Session, signal?:AbortSignal, authorize?:()=>void) { return this.erase(session,{},signal,authorize); }
+  async clear(session: Session, signal?:AbortSignal, authorize?:()=>void) {
+    const result = await this.erase(session,{},signal,authorize);
+    // A pre-migration backup holds every project's text; clearing memory deletes it too.
+    try { await this.service.call('delete_migration_backups'); }
+    catch (error: any) { throw new Error('Memory was cleared, but its pre-migration backup could not be deleted: ' + (error?.message || error)); }
+    finally { await this.refreshAfterCommit(); }
+    return result;
+  }
   /** M09: the effect of switching the embedding model, measured with that model before anything changes. */
   async embeddingImpact(model: unknown, signal = AbortSignal.timeout(60_000)) {
     if (typeof model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(model)) throw new Error('Enter an Ollama embedding model name');
@@ -441,9 +448,9 @@ export class Memory {
     return { items: shown, text: renderPacket(shown, packet.budget?.trimmed_items || 0, items.length - shown.length) };
   }
   async graph(session: Session | undefined, method: string, params: Record<string, unknown> = {}, signal?:AbortSignal, authorize?:()=>void) {
-    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology'];
+    const allowed = ['health','stats','doctor','inspect','retrieve','remember','correct','resolve_conflict','identity','forget_preview','forget','erasure_status','workspace','policy_get','policy_update','rebuild','backup','restore','compact','freeze_episode','consolidate','pin','unpin','pins','timeline','neighborhood','ontology','delete_migration_backups'];
     if (!allowed.includes(method)) throw new Error('This memory method is not exposed to clients');
-    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','erasure_status','ontology'].includes(method);
+    const global = ['health','stats','doctor','workspace','policy_get','policy_update','rebuild','backup','restore','compact','erasure_status','ontology','delete_migration_backups'].includes(method);
     if (!global && !session) throw new Error('Choose a conversation to select its authorized project scope');
     const { scope_id: _scope, owner_id: _owner, ...safe } = params;
     await this.ready;
