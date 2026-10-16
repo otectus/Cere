@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto';
 
 /**
  * Notices when Cere's own API/Ollama tool loop stops making progress within one turn: the same
- * tool called with the same arguments keeps returning the same result. It only warns, once per
- * call, and never stops, retries or replays a tool; the 24-round limit and Stop stay in charge.
- * A changed result counts as progress. Waiting and status tools legitimately repeat, so they never
- * trigger it. Loops inside native CLI providers are theirs to report and are not observed here.
+ * tool called with the same arguments keeps returning the same result, or one tool keeps failing
+ * whatever its arguments. It only warns, once per call or failure streak, and never stops, retries or
+ * replays a tool; the 24-round limit and Stop stay in charge. A changed result counts as progress,
+ * and a success ends a failure streak. Waiting and status tools legitimately repeat the same answer,
+ * so only their failures count. Loops inside native CLI providers are theirs to report.
  */
 export const noProgressRepeats = 3;
 /** Tools whose purpose is to be asked again until something changes. */
@@ -21,8 +22,18 @@ const fingerprint = (value: string) => createHash('sha256').update(value.length 
 
 export class ToolProgress {
   private calls = new Map<string, { result: string; repeats: number; warned: boolean }>();
-  /** Records one finished call; returns a warning the first time it has repeated without progress. */
-  observe(name: string, args: unknown, serializedResult: string): string | undefined {
+  private failures = new Map<string, { count: number; warned: boolean }>();
+  /** Records one finished call; returns a warning the first time it has repeated or kept failing without progress. */
+  observe(name: string, args: unknown, serializedResult: string, failed = false): string | undefined {
+    const streak = this.failures.get(name);
+    if (!failed) this.failures.delete(name);
+    else if (!streak) this.failures.set(name, { count: 1, warned: false });
+    else if (++streak.count >= noProgressRepeats && !streak.warned) {
+      streak.warned = true;
+      const same = this.calls.get(name + '\u0000' + fingerprint(canonical(args)));
+      if (same) same.warned = true;
+      return `No progress: ${name} failed ${streak.count} times in a row in this turn. Stop the turn if it looks stuck; Cere does not stop or retry it for you.`;
+    }
     if (pollingTools.has(name)) return;
     const key = name + '\u0000' + fingerprint(canonical(args)), result = fingerprint(serializedResult);
     const previous = this.calls.get(key);

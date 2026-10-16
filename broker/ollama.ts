@@ -418,20 +418,20 @@ export class OllamaAdapter implements Adapter {
           signal.throwIfAborted();
           const id = randomUUID(), name = call.function.name;
           this.hooks.event({ type: 'tool', id, text: name + '\n' + JSON.stringify(call.function.arguments, null, 2) });
-          let result: unknown;
+          let result: unknown, failed = false;
           try {
             if (!tools.some(t => t.function.name === name)) throw new Error('This tool was not offered for this request');
             if (name.startsWith('web_') && ++webCalls > 8) throw new Error('Web research is limited to eight requests per turn. Use the evidence already collected.');
             result = await this.context.call(name, call.function.arguments, signal);
             if (name.startsWith('web_')) collectSources(result);
-          } catch (error: any) { if (signal.aborted) throw error; result = { error: error.message }; }
+          } catch (error: any) { if (signal.aborted) throw error; result = { error: error.message }; failed = true; }
           signal.throwIfAborted();
           const serialized = JSON.stringify(result ?? null);
           const content = serialized.length > 60000 ? JSON.stringify({truncated:true,output:serialized.slice(0,56000)}) : serialized;
           messages.push({ role: 'tool', tool_name: name, ...(call.id ? {tool_call_id:call.id} : {}), content }); this.context.save(messages);
           this.hooks.event({ type: 'tool', id, text: name + '\n' + content });
           // A user-facing notice only: it is not added to the model's history and changes nothing.
-          const stuck = progress.observe(name, call.function.arguments, serialized);
+          const stuck = progress.observe(name, call.function.arguments, serialized, failed);
           if (stuck) this.hooks.event({ type: 'tool', id: 'no-progress-' + randomUUID(), text: 'No progress detected\n' + stuck, data: { notice: true } });
           // Captures reach the model only after Core's separate sharing approval.
           if (name === 'screenshot_capture' && (result as any)?.path && capabilities.includes('vision')) {

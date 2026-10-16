@@ -56,3 +56,52 @@ test('Q06 the Ollama tool loop shows one notice for a stuck tool without changin
   assert.equal(history.filter(message => message.role === 'tool').length, 4, 'every call still ran; nothing was skipped or retried');
   assert.equal(history.at(-1).content, 'I could not open it.');
 });
+
+test('RC-05 a tool that keeps failing warns once per streak, whatever its arguments; a success ends the streak', () => {
+  const progress = new ToolProgress(), fail = (args: unknown) => progress.observe('web_read', args, '{"error":"timeout"}', true);
+  assert.equal(fail({ url: 'https://a.example' }), undefined);
+  assert.equal(fail({ url: 'https://b.example' }), undefined);
+  assert.match(fail({ url: 'https://c.example' })!, /^No progress: web_read failed 3 times in a row in this turn/);
+  assert.equal(fail({ url: 'https://d.example' }), undefined, 'one notice per streak');
+  assert.equal(progress.observe('web_read', { url: 'https://e.example' }, '{"text":"ok"}'), undefined);
+  for (const url of ['f', 'g']) assert.equal(fail({ url }), undefined, 'a success started a new streak');
+  assert.match(fail({ url: 'h' })!, /failed 3 times in a row/);
+  // Another tool's failures are counted separately, and waiting tools' failures count too.
+  const other = new ToolProgress();
+  assert.equal(other.observe('sessions_wait', { id: 'x' }, '{"error":"gone"}', true), undefined);
+  assert.equal(other.observe('files_open', { path: '/x' }, '{"error":"missing"}', true), undefined);
+  assert.equal(other.observe('sessions_wait', { id: 'x' }, '{"error":"gone"}', true), undefined);
+  assert.match(other.observe('sessions_wait', { id: 'x' }, '{"error":"gone"}', true)!, /sessions_wait failed 3 times/);
+  // The same failing call three times gives one notice, not two.
+  const same = new ToolProgress(), calls = [1, 2, 3, 4].map(() => same.observe('files_open', { path: '/x' }, '{"error":"missing"}', true));
+  assert.deepEqual(calls.map(call => call === undefined), [true, true, false, true]);
+});
+
+test('RC-05 the Ollama tool loop shows one notice when a tool keeps failing with new arguments, and the model sees nothing extra', async t => {
+  let round = 0;
+  const server = createServer((req, res) => {
+    let body = ''; req.on('data', chunk => body += chunk); req.on('end', () => {
+      if (req.url === '/api/show') { res.end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'general.architecture': 'x', 'x.context_length': 32768 } })); return; }
+      if (req.url === '/api/tags') { res.end(JSON.stringify({ models: [] })); return; }
+      round++;
+      const message = round <= 4 ? { role: 'assistant', content: '', tool_calls: [{ function: { name: 'web_read', arguments: { url: `https://site-${round}.example` } } }] } : { role: 'assistant', content: 'Every page timed out.' };
+      res.end(JSON.stringify({ message, done: true }) + '\n');
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const session = { id: 's', provider: 'ollama', model: 'm', cwd: '/tmp', ollama: { host: `http://127.0.0.1:${(server.address() as any).port}`, tools: true } } as Session;
+  const events: any[] = [];
+  let history: any[] = [];
+  const adapter = new OllamaAdapter(session, { event: e => events.push(e), native() {}, approve: async () => ({ choice: 'deny' }), token: 't' }, {
+    load: () => structuredClone(history), save: messages => { history = structuredClone(messages); },
+    tools: () => [{ type: 'function', function: { name: 'web_read', description: 'Read', parameters: { type: 'object', properties: { url: { type: 'string' } } } } }],
+    call: async () => { throw new Error('The page did not answer in time'); },
+  });
+  await adapter.run('Read these pages', [], new AbortController().signal);
+  const notices = events.filter(event => event.type === 'tool' && event.data?.notice);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0].text, /^No progress detected\nNo progress: web_read failed 3 times in a row/);
+  assert.ok(history.every(message => !String(message.content).includes('No progress')), 'the notice never enters the model history');
+  assert.equal(history.filter(message => message.role === 'tool').length, 4, 'every call still ran');
+});
