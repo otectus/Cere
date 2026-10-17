@@ -4,7 +4,10 @@ import sharp from 'sharp';
 import { readFile, writeFile } from 'node:fs/promises';
 const directory = 'artwork/avatars';
 const sources = JSON.parse(await readFile(`${directory}/sources.json`, 'utf8'));
+const ids = process.argv.slice(2);
+for (const id of ids) if (id !== 'cere' && !sources[id]) throw Error(`Unknown avatar source: ${id}`);
 for (const [id, source] of Object.entries(sources)) {
+  if (ids.length && !ids.includes(id)) continue;
   const [left, top, width, height] = source.crop;
   const crop = { left, top, width, height };
   const open = await sharp(`reference/${id}.png`).extract(crop).ensureAlpha().raw().toBuffer();
@@ -20,6 +23,12 @@ for (const [id, source] of Object.entries(sources)) {
     const [r, g, b] = open.subarray(i, i + 3), chroma = Math.max(r, g, b) - Math.min(r, g, b);
     if (low < 220 && r > 100 && g > 100 && b > 100 && chroma < 30)
       alpha = Math.round(alpha * Math.max(0, (chroma - 12) / 18));
+    // Witty's lavender studio background can remain in the narrow fringe of
+    // the generated matte. Refine that edge using original background colours;
+    // mint accents, warm violet hair highlights and all original RGB stay intact.
+    if (source.edgeBackdrop === 'lavender' && low < 220 && r > 90 && g > 90 &&
+        b - Math.max(r, g) > 18 && Math.abs(r - g) < 24)
+      alpha = Math.round(alpha * Math.max(0, (Math.abs(r - g) - 8) / 16));
     open[i + 3] = alpha < 8 ? 0 : alpha;
   }
   const closed = Buffer.from(open);
@@ -37,7 +46,7 @@ for (const [id, source] of Object.entries(sources)) {
 }
 
 // Cere uses its existing registered blue-fringe matte refinement.
-{
+if (!ids.length || ids.includes('cere')) {
 const crop = { left: 0, top: 170, width: 430, height: 760 };
 const input = 'artwork/avatars/cere/';
 const source = await sharp('reference/cere.png').extract(crop).ensureAlpha().raw().toBuffer();

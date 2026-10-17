@@ -991,6 +991,14 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
             routePainter.setPen(Qt::white);
             routePainter.drawText(routeIndex * 192 + 4, 18, routeName);
             routePainter.drawImage(routeIndex * 192, 24, endpoint);
+            puppet.setPose({{QStringLiteral("blink"), 1.0}, {QStringLiteral("bodyTilt"), 3.0},
+                            {QStringLiteral("hipX"), 2.0}});
+            ok &= check(!synchronizedGrab(window).isNull(), "held route must support secondary motion and blink");
+            puppet.setSurfaceFrame(0);
+            puppet.setPose({});
+            ok &= check(synchronizedGrab(window) == neutral,
+                        QStringLiteral("%1 must restore exact neutral pixels without residual offsets or stale blink textures")
+                            .arg(routeName));
         }
         routePainter.end();
         QDir().mkpath("/tmp/cere-motion-evidence");
@@ -1494,7 +1502,7 @@ int main(int argc, char **argv)
     QFile avatars(root + "/assets/avatars.json");
     if (!check(avatars.open(QIODevice::ReadOnly), "avatar catalog must open")) return 1;
     const auto entries=QJsonDocument::fromJson(avatars.readAll()).array();
-    ok &= check(entries.size()==5, "all five selectable connected avatars must be checked");
+    ok &= check(entries.size()==20, "all twenty selectable connected avatars must be checked");
     // Match the application: switch every avatar on one live scene graph.
     QQuickWindow productionWindow;
     productionWindow.setColor(Qt::transparent);

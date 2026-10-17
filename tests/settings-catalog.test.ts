@@ -72,7 +72,7 @@ test('search ranks a setting by its own words and honours unavailable categories
   assert.equal(catalog.search('backup')[0].setting.target, 'openBackup');
   assert.equal(catalog.search('quiet')[0].setting.target, 'quietMode');
   assert.equal(catalog.categoryOf('avatarSelection'), 'companion');
-  for (const word of ['avatar', 'appearance', 'jade', 'nova', 'soap', 'tactical', 'tan', 'violet', 'purple']) {
+  for (const word of ['avatar', 'appearance', 'jade', 'nova', 'soap', 'brandy', 'archy', 'ghost', 'violet', 'leafy', 'cachy', 'usagi', 'cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty', 'tactical', 'tan', 'purple']) {
     const result = catalog.search(word)[0];
     assert.equal(result.setting.target, 'avatarSelection');
     assert.equal(result.category.id, 'companion');

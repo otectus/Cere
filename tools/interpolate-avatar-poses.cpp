@@ -12,6 +12,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
+#include "avatar-registration.h"
 
 #include <algorithm>
 #include <charconv>
@@ -229,9 +230,51 @@ std::string outputName(const std::string &prefix, int index, int steps)
 
 int main(int argc, char **argv)
 {
-    if (argc != 5) {
+    if (argc == 10 && std::string(argv[1]) == "--register") {
+        try {
+            cv::setNumThreads(2);
+            const cv::Mat reference = cv::imread(argv[2], cv::IMREAD_UNCHANGED);
+            const cv::Mat open = cv::imread(argv[3], cv::IMREAD_UNCHANGED);
+            const cv::Mat closed = cv::imread(argv[4], cv::IMREAD_UNCHANGED);
+            if (open.empty() || closed.type() != open.type() || closed.size() != open.size())
+                throw std::runtime_error("registration requires matching open and blink drawings");
+            const auto registration = AvatarRegistration::estimate(reference, open,
+                {std::stof(argv[6]), std::stof(argv[7])}, std::string(argv[8]) == "grounded");
+            if (std::string(argv[9]) != "v1") throw std::runtime_error("unsupported registration version");
+            cv::Mat x, y;
+            AvatarRegistration::maps(registration, open.size(), x, y);
+            const std::string prefix(argv[5]);
+            for (const auto &[input, suffix] : std::vector<std::pair<cv::Mat, std::string>>{
+                     {open, "-open.png"}, {closed, "-blink.png"}}) {
+                cv::Mat registered;
+                cv::remap(premultiply(input), registered, x, y, cv::INTER_LINEAR,
+                          cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0, 0));
+                if (registration.grounded)
+                    registered = AvatarRegistration::pinGround(registered, int(registration.ground));
+                if (!cv::imwrite(prefix + suffix, unpremultiply(registered)))
+                    throw std::runtime_error("could not write registered drawing");
+            }
+            cv::FileStorage metadata(prefix + ".json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
+            if (!metadata.isOpened()) throw std::runtime_error("could not write registration metadata");
+            metadata << "version" << 1 << "eye" << registration.eye << "top" << registration.top
+                     << "ground" << registration.ground << "sourceGround" << registration.sourceGround
+                     << "grounded" << int(registration.grounded);
+            const auto &head = registration.head;
+            metadata << "head" << "[" << head.scale << head.turn << head.x << head.y << "]";
+            metadata << "body" << "[";
+            for (float value : registration.body.val) metadata << value;
+            metadata << "]";
+            return 0;
+        } catch (const std::exception &error) {
+            std::cerr << "Registration error: " << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (argc != 5 && argc != 6) {
         std::cerr << "Usage: " << argv[0]
-                  << " FROM.png TO.png OUTPUT_PREFIX STEPS\n";
+                  << " FROM.png TO.png OUTPUT_PREFIX STEPS [GROUND_Y]\n"
+                  << "       " << argv[0]
+                  << " --register NEUTRAL.png OPEN.png BLINK.png OUTPUT_PREFIX EYE_X EYE_Y grounded|carried v1\n";
         return 2;
     }
 
@@ -274,6 +317,17 @@ int main(int argc, char **argv)
         dis->calc(fromGray, toGray, fromFlow);
         dis->calc(toGray, fromGray, toFlow);
 
+        if (argc == 6) {
+            const float ground = std::stof(argv[5]);
+            if (!std::isfinite(ground) || ground < 8 || ground >= from.rows)
+                throw std::runtime_error("GROUND_Y must be inside the image");
+            // Constrain the geometric flow at the shared sole anchor. Pasting
+            // neutral lower legs here used to reintroduce the seam a second time.
+            for (cv::Mat *flow : {&fromFlow, &toFlow})
+                for (int y = 0; y < flow->rows; ++y) for (int x = 0; x < flow->cols; ++x)
+                    flow->at<cv::Vec2f>(y, x)[1] *= 1 - AvatarRegistration::smooth(ground - 8, ground, y);
+        }
+
         cv::Mat baseX, baseY;
         coordinateMaps(from.size(), baseX, baseY);
         const cv::Mat fromConfidence = consistency(fromFlow, toFlow, baseX, baseY);
@@ -281,9 +335,11 @@ int main(int argc, char **argv)
 
         for (int index = 1; index <= steps; ++index) {
             const float time = float(index) / float(steps + 1);
-            const cv::Mat frame = unpremultiply(interpolate(
+            cv::Mat pixels = interpolate(
                     fromPremultiplied, toPremultiplied, fromFlow, toFlow,
-                    fromConfidence, toConfidence, baseX, baseY, time));
+                    fromConfidence, toConfidence, baseX, baseY, time);
+            if (argc == 6) pixels = AvatarRegistration::pinGround(pixels, int(std::stof(argv[5])));
+            const cv::Mat frame = unpremultiply(pixels);
             const std::string name = outputName(argv[3], index, steps);
             if (!cv::imwrite(name, frame)) {
                 std::cerr << "Could not write " << name << ".\n";

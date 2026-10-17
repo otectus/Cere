@@ -8,6 +8,9 @@ Item {
     height: 180
     visible: true
     property var moodConfig: ({})
+    readonly property var avatarIds: ["cere", "daemona", "jade", "nova", "soap",
+                                     "brandy", "archy", "ghost", "violet", "leafy", "cachy", "usagi",
+                                     "cynthia", "genga", "kippy", "pomni", "rem", "sarah", "sylva", "witty"]
     Component.onCompleted: {
         var request=new XMLHttpRequest()
         request.open("GET",Qt.resolvedUrl("../../assets/motions.json"),false);request.send()
@@ -44,7 +47,7 @@ Item {
         var portrait = make({settings:({assistantName:"Étoile", reducedMotion:true}), mood:"concerned"})
         compare(portrait.face, 7)
         var originalColor = portrait.color.toString()
-        for (var id of ["daemona", "jade", "nova", "soap"]) {
+        for (var id of scene.avatarIds.slice(1)) {
             portrait.blinking = false
             portrait.avatar = ({id:id,portrait:id+"-portraits.png"})
             tryVerify(function() { return portrait.artworkReady }, 10000)
@@ -154,7 +157,7 @@ Item {
     }
 
     function test_hover_click_and_every_expression_texture_is_ready_data() {
-        return ["cere", "daemona", "jade", "nova", "soap"].map(function(id) { return {tag:id,id:id} })
+        return scene.avatarIds.map(function(id) { return {tag:id,id:id} })
     }
     function test_hover_click_and_every_expression_texture_is_ready(data) {
         var portrait = make({avatar:({id:data.id,portrait:data.id+"-portraits.png"})})

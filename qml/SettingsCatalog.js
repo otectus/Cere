@@ -14,9 +14,9 @@ var groups = [
 var categories = [
     {id: "companion", group: "cere", label: "Companion", icon: "desktop",
         blurb: "How your companion looks, where they sit, and whether they wander. Profiles reduce distractions when you need to focus.",
-        keywords: "appearance avatar character theme color colour cere daemona jade nova soap tactical tan pet window desktop size placement position dock home monitor login startup profile always on top",
+        keywords: "appearance avatar character theme color colour cere daemona jade nova soap brandy archy ghost violet leafy cachy usagi cynthia genga kippy pomni rem sarah sylva witty tactical tan pet window desktop size placement position dock home monitor login startup profile always on top",
         settings: [
-            {label: "Avatar & colors", target: "avatarSelection", keywords: "appearance character cere daemona jade nova soap portrait skin theme colour color black red crimson blue violet purple tactical tan"},
+            {label: "Avatar & colors", target: "avatarSelection", keywords: "appearance character cere daemona jade nova soap brandy archy ghost violet leafy cachy usagi cynthia genga kippy pomni rem sarah sylva witty portrait skin theme colour color black red crimson blue violet purple tactical tan olive cyan bone green teal iridescent"},
             {label: "Desktop profile", target: "desktopProfile", keywords: "normal focus gaming presentation mode"},
             {label: "Always on top", target: "alwaysOnTop", keywords: "topmost above fullscreen windows"},
             {label: "Show or hide companion", target: "hideCere", keywords: "hidden visible pet cere"},
@@ -169,7 +169,8 @@ function categoryOf(target) {
     return ""
 }
 
-// A setting's own label beats its keywords, which beat a category; an exact category name leads.
+// Exact words beat partial words ("Rem" must not prefer "Remember").
+// Exact category names still lead their settings.
 function containsWords(text, words) {
     var tokens = text.toLowerCase().split(/[^a-z0-9]+/).filter(function (token) { return token.length > 0 })
     return words.every(function (word) {
@@ -181,6 +182,10 @@ function rank(label, text, words) {
     label = label.toLowerCase()
     if (!containsWords(text, words)) return 0
     if (label === phrase) return 100
+    var labelWords = label.split(/[^a-z0-9]+/)
+    if (words.every(function (word) { return labelWords.indexOf(word) >= 0 })) return 94
+    var exactWords = text.split(/[^a-z0-9]+/)
+    if (words.every(function (word) { return exactWords.indexOf(word) >= 0 })) return 92
     if (label.indexOf(phrase) === 0) return 90
     if (label.indexOf(phrase) >= 0) return 80
     if (words.every(function (word) { return label.indexOf(word) >= 0 })) return 70

@@ -95,7 +95,8 @@ int main(int argc,char **argv) {
     if(avatarError.error!=QJsonParseError::NoError||!avatarDocument.isArray()){
         qCritical("Cere avatar catalog is invalid: %s",qPrintable(avatarError.errorString()));return 1;
     }
-    QStringList missingIds{"cere","daemona","jade","nova","soap"};
+    QStringList missingIds{"cere","daemona","jade","nova","soap", "brandy","archy","ghost","violet","leafy","cachy","usagi",
+                           "cynthia","genga","kippy","pomni","rem","sarah","sylva", "witty"};
     for(const auto &value:avatarDocument.array()){
         if(!value.isObject()){qCritical("Cere avatar catalog contains a non-object entry.");return 1;}
         const auto entry=value.toObject();const QString id=entry.value("id").toString();

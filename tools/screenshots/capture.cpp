@@ -413,11 +413,12 @@ private slots:
         search->setProperty("text","");
     }
 
-    // Every avatar's theme in the compact panel, and the five characters side by side.
+    // Every avatar's theme in the compact panel, and the characters side by side.
     void themesAndAvatars(){
         QVERIFY(settings({{"reducedMotion",true}}));
         QList<QImage> panels,pets;
-        for(const QString id:{"cere","daemona","jade","nova","soap"}){
+        for(const auto &entry:app->avatars()){
+            const QString id=entry.toMap().value("id").toString();
             QVERIFY(settings({{"avatar",id}}));QTest::qWait(900);
             open("Fix the flaky login test");compact();QTest::qWait(900);scrollTo("messageList",0);rest();
             panels<<window->grabWindow();pets<<petImage();

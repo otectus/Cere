@@ -38,5 +38,125 @@
     "themeLabel": "Charcoal & tan",
     "portrait": "soap-portraits.png",
     "rig": "soap-surface-rig.json"
+  },
+  {
+    "id": "brandy",
+    "label": "Brandy",
+    "description": "Ash-blonde ponytail, striped top, olive camouflage jacket, denim shorts and black combat boots.",
+    "themeLabel": "Olive & denim",
+    "portrait": "brandy-portraits.png",
+    "rig": "brandy-surface-rig.json"
+  },
+  {
+    "id": "archy",
+    "label": "Archy",
+    "description": "Electric-blue twin ponytails, mechanical cat ears and black, white and blue technical gear.",
+    "themeLabel": "Electric blue & white",
+    "portrait": "archy-portraits.png",
+    "rig": "archy-surface-rig.json"
+  },
+  {
+    "id": "ghost",
+    "label": "Ghost",
+    "description": "Weathered skull mask, tactical headset, camouflage scarf and black equipment.",
+    "themeLabel": "Charcoal & bone",
+    "portrait": "ghost-portraits.png",
+    "rig": "ghost-surface-rig.json"
+  },
+  {
+    "id": "violet",
+    "label": "Violet",
+    "description": "Purple hair, gothic maid dress, feathered wings and violet roses.",
+    "themeLabel": "Plum & lilac",
+    "portrait": "violet-portraits.png",
+    "rig": "violet-surface-rig.json"
+  },
+  {
+    "id": "leafy",
+    "label": "Leafy",
+    "description": "Blonde and green hair, tall leafy ears, amber eyes, floral clothing and a green tail.",
+    "themeLabel": "Leaf green & cream",
+    "portrait": "leafy-portraits.png",
+    "rig": "leafy-surface-rig.json"
+  },
+  {
+    "id": "cachy",
+    "label": "Cachy",
+    "description": "Black and teal ponytail, green eyes, hexagonal jewelry and black technical gear.",
+    "themeLabel": "Black & teal",
+    "portrait": "cachy-portraits.png",
+    "rig": "cachy-surface-rig.json"
+  },
+  {
+    "id": "usagi",
+    "label": "Usagi",
+    "description": "Crystal rabbit ears, iridescent lavender hair, a shimmering jacket and black boots.",
+    "themeLabel": "Iridescent lavender",
+    "portrait": "usagi-portraits.png",
+    "rig": "usagi-surface-rig.json"
+  },
+  {
+    "id": "cynthia",
+    "label": "Cynthia",
+    "description": "Champagne-blonde bob, blue eyes, white android joints, gold openwork armor and a red bow.",
+    "themeLabel": "Ivory, gold & crimson",
+    "portrait": "cynthia-portraits.png",
+    "rig": "cynthia-surface-rig.json"
+  },
+  {
+    "id": "genga",
+    "label": "Genga",
+    "description": "Spiky plum hair with magenta tips, red eyes, a golden forehead ornament and violet armor.",
+    "themeLabel": "Plum & magenta",
+    "portrait": "genga-portraits.png",
+    "rig": "genga-surface-rig.json"
+  },
+  {
+    "id": "kippy",
+    "label": "Kippy",
+    "description": "Wavy sky-blue hair, blue head fins, orange cheek fins and a blue-and-white ruffled outfit.",
+    "themeLabel": "Sky blue & orange",
+    "portrait": "kippy-portraits.png",
+    "rig": "kippy-surface-rig.json"
+  },
+  {
+    "id": "pomni",
+    "label": "Pomni",
+    "description": "Brown bob, pinwheel eyes and a red-and-indigo jester outfit with golden bells.",
+    "themeLabel": "Indigo, red & gold",
+    "portrait": "pomni-portraits.png",
+    "rig": "pomni-surface-rig.json"
+  },
+  {
+    "id": "rem",
+    "label": "Rem",
+    "description": "Periwinkle bob covering one eye, a glowing pink horn and a floral black-and-white maid dress.",
+    "themeLabel": "Periwinkle & lilac",
+    "portrait": "rem-portraits.png",
+    "rig": "rem-surface-rig.json"
+  },
+  {
+    "id": "sarah",
+    "label": "Sarah",
+    "description": "Silver twin ponytails, golden eyes behind a black mask and black-and-gold android armor.",
+    "themeLabel": "Obsidian & gold",
+    "portrait": "sarah-portraits.png",
+    "rig": "sarah-surface-rig.json"
+  },
+  {
+    "id": "sylva",
+    "label": "Sylva",
+    "description": "Pink hair, tall pink-and-blue ears, pastel ribbon streamers and a frilled white-and-pink dress.",
+    "themeLabel": "Rose pink & sky blue",
+    "portrait": "sylva-portraits.png",
+    "rig": "sylva-surface-rig.json"
+  },
+  {
+    "id": "witty",
+    "label": "Witty",
+    "description": "Dark armor, a black-and-violet high ponytail, a mint eye and X mark, and a torn cape with glowing spades.",
+    "themeLabel": "Obsidian, mint & violet",
+    "portrait": "witty-portraits.png",
+    "rig": "witty-surface-rig.json"
   }
 ]

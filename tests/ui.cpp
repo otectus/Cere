@@ -39,6 +39,9 @@
 #include "../native/citations.h"
 #include <QMutex>
 #include <signal.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include "acceptancepointer.h"
 
 class UiCheck : public QObject {
     Q_OBJECT
@@ -49,6 +52,16 @@ class UiCheck : public QObject {
     QPointer<QQuickWindow> window;
     QString sessionId;
     QUrl openedMessageLink;
+    QStringList avatarIds(bool includeCere=true) const {
+        QStringList ids;
+        const auto selected=qEnvironmentVariable("CERE_TEST_AVATAR");
+        for(const auto &entry:app->avatars()){
+            const auto id=entry.toMap().value("id").toString();
+            if((includeCere||id!="cere")&&(selected.isEmpty()||selected==id))ids.append(id);
+        }
+        if(!selected.isEmpty()&&ids.isEmpty())qFatal("CERE_TEST_AVATAR does not select a tested avatar");
+        return ids;
+    }
     QQuickItem *item(const QString &name){
         if(!window)return nullptr;
         std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem*root)->QQuickItem*{if(!root->isVisible())return nullptr;if(root->objectName()==name)return root;for(auto child:root->childItems())if(auto match=find(child))return match;return nullptr;};
@@ -140,6 +153,8 @@ private slots:
     // A failed check must not leave the next one without a window to drive.
     void init(){if(app&&!window)restoreWorkspace();}
     void initTestCase(){
+        QVERIFY2(offscreen() || qEnvironmentVariable("CERE_VIRTUAL_DESKTOP")=="1",
+                 "Run desktop checks through tools/test-virtual-desktop.sh; never on the working desktop.");
         qputenv("CERE_TTS_DISABLED","1"); // UI fixtures must never speak on the user's speakers.
         // The broker and overlay host inherit this, so an offscreen run is fully isolated.
         if(offscreen())qunsetenv("HYPRLAND_INSTANCE_SIGNATURE");
@@ -822,7 +837,7 @@ private slots:
         QCOMPARE(name->property("text").toString(),QString("Cere"));
         QCOMPARE(item("settingsCategoryTitle")->property("text").toString(),QString("Personality"));
         QVERIFY(!item("avatarSelection"));
-        QCOMPARE(app->avatars().size(),5);
+        QCOMPARE(app->avatars().size(),20);
         name->setProperty("text","  Daemona  ");
         QCOMPARE(app->assistantName(),QString("Cere"));
         // Unrelated edits must not destroy the name/personality draft or create a conflict.
@@ -837,7 +852,7 @@ private slots:
         auto avatarSelection=openSetting("avatarSelection");QVERIFY(avatarSelection);
         QCOMPARE(item("settingsCategoryTitle")->property("text").toString(),QString("Companion"));
         QVERIFY(avatarSelection->isVisible());QVERIFY(!item("assistantName"));
-        for(const auto &id:{"cere","daemona","jade","nova","soap"}){
+        for(const auto &id:avatarIds()){
             auto preview=item(QString("avatarPreview_")+id);QVERIFY(preview);
             QTRY_VERIFY(preview->property("ready").toBool());
         }
@@ -901,8 +916,9 @@ private slots:
         QVERIFY(openSetting("avatarSelection"));
         QVERIFY(item("avatar_daemona")->property("checked").toBool());
         QTest::qWait(100);capture("avatar-settings-compact");
-        for(const auto &next:{QString("jade"),QString("nova"),QString("soap")}){
+        for(const auto &next:avatarIds(false)){
             const auto previous=app->avatar().value("id").toString();
+            if(next==previous)continue;
             click("avatar_"+next);
             QCOMPARE(app->avatar().value("id").toString(),previous);
             click("avatarDiscard");
@@ -933,6 +949,9 @@ private slots:
         // Soap's neutral tan palette is asset-owned; the test below still
         // verifies every native and QML consumer uses its catalog tokens.
         QTest::newRow("Soap") << QString("soap") << QString() << QString() << QString() << QString() << QString() << QString();
+        for(const auto &id:{"brandy","archy","ghost","violet","leafy","cachy","usagi",
+                            "cynthia","genga","kippy","pomni","rem","sarah","sylva", "witty"})
+            QTest::newRow(id) << QString(id) << QString() << QString() << QString() << QString() << QString() << QString();
     }
     void avatarThemeSwitching(){
         QFETCH(QString,avatarId);QFETCH(QString,background);QFETCH(QString,accent);
@@ -1839,35 +1858,86 @@ Unicode: café ✦ 日本語
         app->rpc("settings.update",{{"hidden",false},{"topmost",true},{"scale",1.0}});
         app->expand();QTRY_VERIFY(window->isVisible());
     }
+    void avatarPointerReactions_data(){
+        QTest::addColumn<double>("pointerScale");
+        QTest::newRow("desktop-100") << 1.0;
+        QTest::newRow("desktop-200") << 2.0;
+    }
     void avatarPointerReactions(){
-        QDir().mkpath("/tmp/cere-ui-evidence");
+        QFETCH(double,pointerScale);
+        const QString evidence=qEnvironmentVariable("CERE_POINTER_EVIDENCE_ROOT","/tmp/cere-ui-evidence")+
+                               QString("/pointer-%1").arg(qRound(pointerScale*100));
+        QDir().mkpath(evidence);
         std::unique_ptr<Controller> compositorOverlay;
+        QProcess *spawnedOverlay=nullptr;
+        const auto restoreOverlay=qScopeGuard([&]{
+            compositorOverlay.reset();
+            if(spawnedOverlay)spawnedOverlay->start();
+        });
         Controller *petApp=app.get();
         const bool layerSurface=liveHyprland();
+        const QPoint originalPointer=layerSurface?pointer():QPoint();
+        AcceptancePointer nativePointer;
+        if(layerSurface){
+            QVERIFY2(nativePointer.create(),"Live pointer acceptance needs the isolated virtual Wayland seat");
+            QTest::qWait(400);
+        }
+        const auto moveDesktopPointer=[&](QPoint point){
+            movePointer(point);
+            // A compositor warp can leave Qt's last delivered position stale.
+            // Real motion frames synchronize it with the cursor before a press.
+            if(layerSurface){
+                QVERIFY(nativePointer.motion(1,0));QTest::qWait(20);
+                QVERIFY(nativePointer.motion(-1,0));QTest::qWait(20);
+            }
+        };
+        bool physicalButtonDown=false;
         const auto original=petApp->state().value("settings").toMap();
         QString session;
         const auto restore=qScopeGuard([&]{
+            if(physicalButtonDown){nativePointer.button(false);QTest::qWait(30);}
             petApp->setPetHovered(false);petApp->endDrag();petApp->closePanel();
             for(const auto &entry:petApp->state().value("approvals").toList())
                 call("approval.answer",{{"id",entry.toMap().value("id")},{"choice","deny"}});
             if(!session.isEmpty()&&QStringList{"working","starting","stopping","waiting"}.contains(petApp->session().value("status").toString()))
                 call("session.stop",{{"id",session}});
             call("settings.update",original);restoreWorkspace();
+            if(layerSurface)moveDesktopPointer(originalPointer);
         });
         QVERIFY(!call("settings.update",{{"avatar","cere"},{"topmost",layerSurface},{"hidden",false},
                                            {"quiet",false},{"reducedMotion",false},{"motionIntensity",1.0},
-                                           {"roaming",false},{"scale",1.0},{"idleEnergy","calm"},
+                                           {"roaming",false},{"scale",pointerScale},{"idleEnergy","calm"},
                                            {"bypassCliPermissions",false}}).contains("error"));
         if(layerSurface){
+            // start() already launches an overlay child. The in-process host
+            // below is needed for Qt pointer assertions, so suspend that test
+            // child to avoid two surfaces fighting for the same broker/seat.
+            for(auto process:app->findChildren<QProcess*>())if(process->arguments().contains("--overlay")){
+                spawnedOverlay=process;process->terminate();
+                if(!process->waitForFinished(3000)){process->kill();QVERIFY(process->waitForFinished(3000));}
+                break;
+            }
             compositorOverlay=std::make_unique<Controller>(CERE_SOURCE_DIR,true);
             compositorOverlay->start(false);petApp=compositorOverlay.get();
             QTRY_VERIFY_WITH_TIMEOUT(petApp->connected(),8000);
             QTRY_COMPARE(petApp->state().value("settings").toMap().value("topmost").toBool(),true);
         }
-        petApp->closePanel();petApp->setPetHovered(false);petApp->setPetInteracting(false);
+        petApp->closePanel();
+        if(layerSurface){moveDesktopPointer(petApp->petPosition()+QPoint(-30,-30));QTest::qWait(100);}
+        petApp->setPetHovered(false);petApp->setPetInteracting(false);
         QQuickWindow *pet=nullptr;QTRY_VERIFY_WITH_TIMEOUT((pet=titled("Cere Pet")),5000);
         auto player=pet->findChild<QQuickItem*>("gesturePlayer");QVERIFY(player);
         auto puppet=pet->findChild<QQuickItem*>("avatarPuppet");QVERIFY(puppet);
+        QQuickItem *pointerArea=nullptr;
+        // A previous data row can leave the pet's resize queued while its
+        // title is already visible. Wait for the MouseArea to follow the window.
+        QTRY_VERIFY(([&]{
+            for(auto child:pet->findChildren<QQuickItem*>())
+                if(QByteArray(child->metaObject()->className()).contains("QQuickMouseArea")&&child->width()==pet->width()){
+                    pointerArea=child;return true;
+                }
+            return false;
+        })());
         QTRY_VERIFY(puppet->property("ready").toBool());
         QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("idle"),8000);
 
@@ -1897,22 +1967,66 @@ Unicode: café ✦ 日本語
         QVERIFY(hoverFrame>0&&clickFrame>hoverFrame);
 
         const QPoint center(pet->width()/2,pet->height()/2),outside(-20,-20);
-        const auto leavePet=[&]{
-            QTest::mouseMove(pet,outside);
-            QEvent leave(QEvent::Leave);
-            QCoreApplication::sendEvent(pet,&leave);
+        // The live compositor owns pointer focus and button grabs. Mixing Qt
+        // button injection with native motion cancels grabs when a panel opens
+        // or the animated input region changes, so use its complete event path.
+        const auto moveOnPet=[&](QPoint local){
+            if(layerSurface){moveDesktopPointer(petApp->petPosition()+local);QTest::qWait(30);}
+            else QTest::mouseMove(pet,local);
         };
-        leavePet();QTest::mouseMove(pet,center);
+        const auto pressOnPet=[&](QPoint local){
+            if(layerSurface){
+                moveOnPet(local);
+                QTRY_COMPARE(qRound(pointerArea->property("mouseX").toDouble()),local.x());
+                QTRY_COMPARE(qRound(pointerArea->property("mouseY").toDouble()),local.y());
+                QVERIFY(pet->mask().contains(local));
+                physicalButtonDown=true;QVERIFY(nativePointer.button(true));
+                QTRY_VERIFY(pointerArea->property("pressed").toBool());
+            }else QTest::mousePress(pet,Qt::LeftButton,Qt::NoModifier,local);
+        };
+        const auto releaseOnPet=[&](QPoint local){
+            if(layerSurface){
+                QVERIFY(nativePointer.button(false));physicalButtonDown=false;
+                QTRY_VERIFY(!pointerArea->property("pressed").toBool());
+            }else QTest::mouseRelease(pet,Qt::LeftButton,Qt::NoModifier,local);
+        };
+        const auto clickOnPet=[&](QPoint local){
+            pressOnPet(local);releaseOnPet(local);
+        };
+        const auto leavePet=[&]{
+            moveOnPet(outside);
+            if(!layerSurface){QEvent leave(QEvent::Leave);QCoreApplication::sendEvent(pet,&leave);}
+        };
+        const auto releaseCarry=[&](const QVariantList &frames,int gentleFrame){
+            if(!layerSurface)leavePet();
+            releaseOnPet(outside);
+            if(layerSurface){
+                // The real mouse remains over the grabbed point. Hover has
+                // priority over land, and must reverse the carry route smoothly.
+                QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
+                const int returning=frames.indexOf(puppet->property("surfaceFrame"));
+                QVERIFY(returning>0);
+                QTRY_VERIFY_WITH_TIMEOUT(([&]{const int index=frames.indexOf(puppet->property("surfaceFrame"));
+                    return index>0&&index<returning;})(),1000);
+                QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),gentleFrame,3000);
+            }else QTRY_COMPARE(petApp->motion(),QString("land"));
+            leavePet();
+        };
+        leavePet();moveOnPet(center);
         QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
         QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),hoverFrame,3000);
-        QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/pointer-cere-hover.png"));
+        QVERIFY(pet->grabWindow().save(evidence+"/pointer-cere-hover.png"));
 
         // A click opens the compact conversation and reaches the full shy pose.
-        QTest::mouseClick(pet,Qt::LeftButton,Qt::NoModifier,center);
+        clickOnPet(center);
         QTRY_COMPARE(petApp->motion(),QString("clickBlush"));
         QTRY_VERIFY(titled("Cere Panel"));
+        if(layerSurface){
+            QTRY_VERIFY(titled("Cere Panel")->isExposed());
+            leavePet();moveOnPet(center);
+        }
         QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),clickFrame,3000);
-        QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/pointer-cere-click.png"));
+        QVERIFY(pet->grabWindow().save(evidence+"/pointer-cere-click.png"));
         QList<int> settle;
         QElapsedTimer settleClock;settleClock.start();
         while(settleClock.elapsed()<4500){
@@ -1931,26 +2045,28 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),0,3000);
 
         // Five pixels of pointer travel remains a click and keeps the panel behavior.
-        const QPoint press(72,64),subthreshold=press+QPoint(3,4);
-        QTest::mouseMove(pet,press);QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
-        QTest::mousePress(pet,Qt::LeftButton,Qt::NoModifier,press);
-        QCOMPARE(player->property("carryAnchor").toPointF(),QPointF(double(press.x())/pet->width(),double(press.y())/pet->height()));
-        QTest::mouseMove(pet,subthreshold);QTest::qWait(80);
+        const QPoint press(qRound(72*pointerScale),qRound(64*pointerScale)),subthreshold=press+QPoint(3,4);
+        moveOnPet(press);QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
+        pressOnPet(press);
+        const auto pressedAt=layerSurface?QPointF(pointerArea->property("mouseX").toDouble(),pointerArea->property("mouseY").toDouble()):QPointF(press);
+        QCOMPARE(player->property("carryAnchor").toPointF(),QPointF(pressedAt.x()/pet->width(),pressedAt.y()/pet->height()));
+        moveOnPet(subthreshold);QTest::qWait(80);
         QCOMPARE(petApp->motion(),QString("hoverBlush"));
-        QTest::mouseRelease(pet,Qt::LeftButton,Qt::NoModifier,subthreshold);
+        releaseOnPet(subthreshold);
         QTRY_COMPARE(petApp->motion(),QString("clickBlush"));QTRY_VERIFY(titled("Cere Panel"));
         petApp->closePanel();QTRY_VERIFY(!titled("Cere Panel"));
 
         // Crossing the six-pixel threshold interrupts the click reaction with
         // carried art. Hold long enough to see its authored ping-pong reversal.
-        const QPoint dragStart(80,72),dragPoint=dragStart+QPoint(10,0);
-        QTest::mousePress(pet,Qt::LeftButton,Qt::NoModifier,dragStart);
-        QTest::mouseMove(pet,dragPoint);
+        const QPoint dragStart(qRound(80*pointerScale),qRound(90*pointerScale)),dragPoint=dragStart+QPoint(10,0);
+        moveOnPet(dragStart);
+        pressOnPet(dragStart);
+        moveOnPet(dragPoint);
         QTRY_COMPARE(petApp->motion(),QString("dragging"));
         QTRY_VERIFY_WITH_TIMEOUT(carryFrames.indexOf(puppet->property("surfaceFrame"))>0,3000);
         QSet<int> carriedFrames;bool peaked=false,reversed=false;QImage early,peak;
         const bool recordCarry=qEnvironmentVariableIsSet("CERE_CAPTURE_POINTER");
-        const QString carryDirectory="/tmp/cere-ui-evidence/pointer-carry-frames";
+        const QString carryDirectory=evidence+"/pointer-carry-frames";
         if(recordCarry){
             QDir directory(carryDirectory);QVERIFY(directory.mkpath("."));
             for(const auto &old:directory.entryList({"frame-*.png"},QDir::Files))QVERIFY(directory.remove(old));
@@ -1963,7 +2079,10 @@ Unicode: café ✦ 日本語
             if(index<0)continue;
             carriedFrames.insert(index);
             if(early.isNull()&&index>=8)early=pet->grabWindow();
-            if(index==carryFrames.size()-1){peaked=true;if(peak.isNull())peak=pet->grabWindow();}
+            // GPU readback may skip a single 60 Hz endpoint between samples.
+            // Require the end of the route and a subsequent reversal, as the
+            // per-avatar checks below do, rather than one exact sampled frame.
+            if(index>=carryFrames.size()-3){peaked=true;if(peak.isNull())peak=pet->grabWindow();}
             if(peaked&&index<carryFrames.size()-4)reversed=true;
             if(recordCarry&&carryClock.elapsed()>=nextCapture){
                 const auto frame=pet->grabWindow();QVERIFY(!frame.isNull());
@@ -1975,11 +2094,9 @@ Unicode: café ✦ 日本語
         if(recordCarry)QVERIFY(captureNumber>=24);
         QVERIFY(!early.isNull()&&!peak.isNull()&&early!=peak);
         QVERIFY(player->property("carried").toDouble()>.5);
-        QVERIFY(early.save("/tmp/cere-ui-evidence/pointer-cere-carry-enter.png"));
-        QVERIFY(peak.save("/tmp/cere-ui-evidence/pointer-cere-carry-peak.png"));
-        leavePet();
-        QTest::mouseRelease(pet,Qt::LeftButton,Qt::NoModifier,outside);
-        QTRY_COMPARE(petApp->motion(),QString("land"));
+        QVERIFY(early.save(evidence+"/pointer-cere-carry-enter.png"));
+        QVERIFY(peak.save(evidence+"/pointer-cere-carry-peak.png"));
+        releaseCarry(carryFrames,hoverFrame);
         QVERIFY(!titled("Cere Panel"));
         QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),0,3000);
         QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("idle"),3000);
@@ -1987,9 +2104,9 @@ Unicode: café ✦ 日本語
         // Reduced motion suppresses both pointer poses and the connected frame.
         QVERIFY(!call("settings.update",{{"reducedMotion",true}}).contains("error"));
         QTRY_COMPARE(puppet->property("surfaceFrame").toInt(),0);
-        QTest::mouseMove(pet,center);QTest::qWait(200);
+        moveOnPet(center);QTest::qWait(200);
         QVERIFY(petApp->motion()!="hoverBlush");
-        QTest::mouseClick(pet,Qt::LeftButton,Qt::NoModifier,center);QTest::qWait(200);
+        clickOnPet(center);QTest::qWait(200);
         QVERIFY(petApp->motion()!="clickBlush");QCOMPARE(puppet->property("surfaceFrame").toInt(),0);
         petApp->closePanel();leavePet();
         QVERIFY(!call("settings.update",{{"reducedMotion",false}}).contains("error"));
@@ -1998,18 +2115,18 @@ Unicode: café ✦ 日本語
         // Explicit attention wins over ordinary task activity, while permission
         // and failure states retain their higher priority on hover and click.
         session=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Pointer priority fixture"}}).value("id").toString();
-        QVERIFY(!session.isEmpty());QTRY_COMPARE(petApp->selectedId(),session);
+        QVERIFY(!session.isEmpty());petApp->select(session);QTRY_COMPARE(petApp->selectedId(),session);
         QVERIFY(!call("session.send",{{"id",session},{"text","acting"}}).contains("error"));
         QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("working"),4000);
-        QTest::mouseMove(pet,center);QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
+        moveOnPet(center);QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
         leavePet();QTRY_COMPARE(petApp->motion(),QString("working"));
         QTRY_COMPARE_WITH_TIMEOUT(petApp->session().value("status").toString(),QString("idle"),7000);
 
         QVERIFY(!call("session.send",{{"id",session},{"text","pointer permission"}}).contains("error"));
         QTRY_COMPARE(petApp->state().value("approvals").toList().size(),1);
         QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("waiting"),4000);
-        QTest::mouseMove(pet,center);QTest::qWait(200);QCOMPARE(petApp->motion(),QString("waiting"));
-        QTest::mouseClick(pet,Qt::LeftButton,Qt::NoModifier,center);QTest::qWait(200);
+        moveOnPet(center);QTest::qWait(200);QCOMPARE(petApp->motion(),QString("waiting"));
+        clickOnPet(center);QTest::qWait(200);
         QCOMPARE(petApp->motion(),QString("waiting"));QVERIFY(titled("Cere Panel"));
         petApp->closePanel();leavePet();
         const auto approval=petApp->state().value("approvals").toList().first().toMap().value("id");
@@ -2018,8 +2135,8 @@ Unicode: café ✦ 日本語
 
         QVERIFY(!call("session.send",{{"id",session},{"text","acting-error"}}).contains("error"));
         QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("problem"),5000);
-        QTest::mouseMove(pet,center);QTest::qWait(200);QCOMPARE(petApp->motion(),QString("problem"));
-        QTest::mouseClick(pet,Qt::LeftButton,Qt::NoModifier,center);QTest::qWait(200);
+        moveOnPet(center);QTest::qWait(200);QCOMPARE(petApp->motion(),QString("problem"));
+        clickOnPet(center);QTest::qWait(200);
         QCOMPARE(petApp->motion(),QString("problem"));QVERIFY(titled("Cere Panel"));
         petApp->closePanel();leavePet();
         QVERIFY(!call("session.send",{{"id",session},{"text","completion-pointer-reset"}}).contains("error"));
@@ -2028,7 +2145,7 @@ Unicode: café ✦ 日本語
         // Drive the same real pointer path through every other connected avatar.
         // Cere above additionally checks subthreshold clicks, interruption, and a
         // complete ping-pong reversal; these samples prove each packed route is wired.
-        for(const QString &avatarId:{QString("daemona"),QString("jade"),QString("nova"),QString("soap")}){
+        for(const QString &avatarId:avatarIds(false)){
             QVERIFY(!call("settings.update",{{"avatar",avatarId}}).contains("error"));
             QTRY_COMPARE(petApp->avatar().value("id").toString(),avatarId);
             QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith(avatarId+"-surface.png"));
@@ -2042,29 +2159,39 @@ Unicode: café ✦ 日本語
             const int avatarCarryEnd=avatarCarry.last().toInt();
             QVERIFY(avatarHover>0&&avatarClick>avatarHover&&avatarCarryEnd>0);
 
-            leavePet();QTest::mouseMove(pet,center);
+            leavePet();moveOnPet(center);
             QTRY_COMPARE(petApp->motion(),QString("hoverBlush"));
             QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),avatarHover,3000);
-            QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/pointer-"+avatarId+"-hover.png"));
+            QVERIFY(pet->grabWindow().save(evidence+"/pointer-"+avatarId+"-hover.png"));
 
-            QTest::mouseClick(pet,Qt::LeftButton,Qt::NoModifier,center);
+            clickOnPet(center);
             QTRY_COMPARE(petApp->motion(),QString("clickBlush"));QTRY_VERIFY(titled("Cere Panel"));
             QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),avatarClick,3000);
-            QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/pointer-"+avatarId+"-click.png"));
+            QVERIFY(pet->grabWindow().save(evidence+"/pointer-"+avatarId+"-click.png"));
             petApp->closePanel();QTRY_VERIFY(!titled("Cere Panel"));
 
             const QPoint avatarDrag= center+QPoint(10,0);
-            QTest::mousePress(pet,Qt::LeftButton,Qt::NoModifier,center);
-            QTest::mouseMove(pet,avatarDrag);QTRY_COMPARE(petApp->motion(),QString("dragging"));
+            moveOnPet(center);
+            pressOnPet(center);
+            moveOnPet(avatarDrag);QTRY_COMPARE(petApp->motion(),QString("dragging"));
+            if(recordCarry){
+                const QString directory=evidence+"/pointer-carry-"+avatarId;
+                QDir frames(directory);QVERIFY(frames.mkpath("."));
+                for(const auto &old:frames.entryList({"frame-*.png"},QDir::Files))QVERIFY(frames.remove(old));
+                for(int sample=0;sample<30;++sample){
+                    QTest::qWait(67);
+                    QVERIFY(pet->grabWindow().save(directory+QString("/frame-%1.png").arg(sample,3,10,QChar('0'))));
+                }
+            }
             QTRY_VERIFY_WITH_TIMEOUT(avatarCarry.indexOf(puppet->property("surfaceFrame"))>=avatarCarry.size()-4,4000);
             const int carryPeakIndex=avatarCarry.indexOf(puppet->property("surfaceFrame"));
-            QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/pointer-"+avatarId+"-carry.png"));
+            QVERIFY(pet->grabWindow().save(evidence+"/pointer-"+avatarId+"-carry.png"));
             QTRY_VERIFY_WITH_TIMEOUT(avatarCarry.indexOf(puppet->property("surfaceFrame"))<carryPeakIndex-3,2000);
-            leavePet();
-            QTest::mouseRelease(pet,Qt::LeftButton,Qt::NoModifier,outside);
-            QTRY_COMPARE(petApp->motion(),QString("land"));QVERIFY(!titled("Cere Panel"));
+            releaseCarry(avatarCarry,avatarHover);QVERIFY(!titled("Cere Panel"));
             QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),0,3000);
             QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("idle"),3000);
+            QVERIFY(pet->grabWindow().save(evidence+"/pointer-"+avatarId+"-rest.png"));
+            qInfo("Pointer hover, click, carry and release passed: %s",qPrintable(avatarId));
         }
     }
     void fluidAvatarAnimation(){
@@ -2173,6 +2300,14 @@ Unicode: café ✦ 日本語
         qInfo("Avatar cadence: %d updates / 900 ms; %lld distinct head positions; max sampled step %.5f degrees",rendered,qlonglong(distinctHead.size()),maxStep);
     }
     void connectedSurfacePoses(){
+        std::unique_ptr<Controller> compositorOverlay;
+        QProcess *spawnedOverlay=nullptr;
+        const auto restoreOverlay=qScopeGuard([&]{
+            compositorOverlay.reset();
+            if(spawnedOverlay)spawnedOverlay->start();
+        });
+        Controller *petApp=app.get();
+        const bool layerSurface=liveHyprland();
         app->closePanel();
         QQuickItem *player=nullptr;
         const auto restore=qScopeGuard([&]{
@@ -2181,24 +2316,33 @@ Unicode: café ✦ 日本語
             app->rpc("settings.update",{{"avatar","cere"},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"scale",1.0},{"topmost",true}});
             restoreWorkspace();
         });
-        QVERIFY(!call("settings.update",{{"avatar","cere"},{"topmost",false},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.0},{"scale",1.0},{"roaming",false}}).contains("error"));
+        QVERIFY(!call("settings.update",{{"avatar","cere"},{"topmost",layerSurface},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.0},{"scale",1.0},{"roaming",false}}).contains("error"));
+        if(layerSurface){
+            for(auto process:app->findChildren<QProcess*>())if(process->arguments().contains("--overlay")){
+                spawnedOverlay=process;process->terminate();
+                if(!process->waitForFinished(3000)){process->kill();QVERIFY(process->waitForFinished(3000));}
+                break;
+            }
+            compositorOverlay=std::make_unique<Controller>(CERE_SOURCE_DIR,true);
+            compositorOverlay->start(false);petApp=compositorOverlay.get();
+            QTRY_VERIFY_WITH_TIMEOUT(petApp->connected(),8000);
+        }
         QQuickWindow *pet=nullptr;QTRY_VERIFY((pet=titled("Cere Pet")));
         player=pet->findChild<QQuickItem*>("gesturePlayer");QVERIFY(player);
         auto puppet=pet->findChild<QQuickItem*>("avatarPuppet");QVERIFY(puppet);
         QVERIFY(app->animations().value("clips").toMap().contains("shy"));
         QTRY_VERIFY(!app->state().value("settings").toMap().value("reducedMotion").toBool());
         QTRY_COMPARE(app->state().value("settings").toMap().value("motionIntensity").toDouble(),1.0);
-        QTRY_COMPARE(app->state().value("settings").toMap().value("topmost").toBool(),false);
-        QTRY_COMPARE(app->motion(),QString("idle"));
-        app->preview("shy");
-        QTRY_COMPARE(app->motion(),QString("shy"));
+        QTRY_COMPARE(petApp->state().value("settings").toMap().value("topmost").toBool(),layerSurface);
+        QTRY_COMPARE(petApp->motion(),QString("idle"));
+        petApp->preview("shy");
+        QTRY_COMPARE(petApp->motion(),QString("shy"));
         player->setProperty("followAppMotion",false);
         QDir().mkpath("/tmp/cere-ui-evidence");
         const QList<QPair<QString,QString>> gestures{{"wave","wave"},{"thinking","thinking"},
                                                      {"explainOpen","present"},{"celebrate","celebrate"},
                                                      {"shy","shy"}};
-        for(const QString &avatarId:{QString("cere"),QString("daemona"),QString("jade"),
-                                     QString("nova"),QString("soap")}){
+        for(const QString &avatarId:avatarIds()){
             QVERIFY(!call("settings.update",{{"avatar",avatarId},{"scale",1.0},
                                                {"reducedMotion",false}}).contains("error"));
             QTRY_COMPARE(app->avatar().value("id").toString(),avatarId);
@@ -2960,7 +3104,7 @@ Unicode: café ✦ 日本語
         call("settings.update",{{"avatar","cere"}});
         QTRY_COMPARE(bubble->property("accent").value<QColor>(),QColor("#49dfff"));
         QCOMPARE(bubble->property("currentReply").toMap().value("id"),shown.value("id"));
-        for(const auto &id:{QString("daemona"),QString("jade"),QString("nova"),QString("soap")}){
+        for(const auto &id:avatarIds(false)){
             call("settings.update",{{"avatar",id}});
             const auto accent=app->themes().value(id).toMap().value("accentText").toString();
             QTRY_COMPARE(bubble->property("accent").value<QColor>(),QColor(accent));

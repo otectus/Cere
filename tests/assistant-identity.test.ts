@@ -94,7 +94,7 @@ test('every selectable avatar ships transparent artwork, usable cutouts, and a c
   const entries = JSON.parse(await readFile('assets/avatars.json', 'utf8'));
   const base = JSON.parse(await readFile('assets/cere-rig.json', 'utf8'));
   assert.deepEqual(entries.map((entry: any) => entry.id), [...avatarIds]);
-  assert.deepEqual(entries.map((entry: any) => entry.label), ['Cere', 'Daemona', 'Jade', 'Nova', 'Soap']);
+  assert.deepEqual(entries.map((entry: any) => entry.label), ['Cere', 'Daemona', 'Jade', 'Nova', 'Soap', 'Brandy', 'Archy', 'Ghost', 'Violet', 'Leafy', 'Cachy', 'Usagi', 'Cynthia', 'Genga', 'Kippy', 'Pomni', 'Rem', 'Sarah', 'Sylva', 'Witty']);
   for (const entry of entries) {
     const rig = { ...base, ...(entry.rig ? JSON.parse(await readFile(join('assets', entry.rig), 'utf8')) : {}) };
     const { data, info } = await sharp(join('assets', rig.texture)).raw().toBuffer({ resolveWithObject: true });
@@ -113,13 +113,16 @@ test('every selectable avatar ships transparent artwork, usable cutouts, and a c
     assert.equal(portrait.info.width / 4, portrait.info.height / 3);
     const size = portrait.info.width / 4;
     for (let face = 0; face < 12; face++) {
-      let visible = 0, transparent = 0;
+      let visible = 0, transparent = 0, clipped = 0;
       for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
         const alpha = portrait.data[((Math.floor(face / 4) * size + y) * portrait.info.width + (face % 4) * size + x) * 4 + 3];
         if (alpha > 200) visible++;
         if (alpha === 0) transparent++;
+        if (alpha > 12 && (y === 0 || x === 0 || x === size - 1)) clipped++;
       }
       assert.ok(visible > size * size * .3 && transparent > size * size * .03, `${entry.id}: portrait ${face} has artwork and transparency`);
+      if (['cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty'].includes(entry.id))
+        assert.equal(clipped, 0, `${entry.id}: portrait ${face} preserves the head silhouette without gutter bleed`);
     }
   }
 });
