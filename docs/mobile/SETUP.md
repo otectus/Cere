@@ -60,6 +60,15 @@ If the app reports missing pairing keys, install the corrected build, revoke tha
 
 Desktop settings can disable the gateway, revoke a phone, reduce/change its grants, renew a live device for 90 days, or clear its retained uploaded images. Disable and revoke stop remotely controlled work and close sockets. Ordinary phone disconnection leaves accepted work running. Renewing a device does not add capabilities.
 
+Grants that the phone uses with protocol 1.1 (desktop Settings → Cere Mobile):
+
+- **Hosted and compatible APIs**: `providers.api` plus each provider the phone may run (OpenAI, Claude, Google, Compatible endpoint). These may be billed to the desktop's keys. A compatible endpoint is granted by its origin; changing the endpoint on the desktop needs a new grant. AntiGravity stays desktop-only: its headless mode cannot prove restricted execution.
+- **Memory**: `memory.read`/`memory.write` and the memory server (Ollama host) the conversation uses. Memory then works for any provider's conversation in a granted project, as on the desktop.
+- **Capture**: Desktop control with the capture category starts screen captures; `capture.preview` lets the phone see them and `attachments.write` attach the reviewed image to a message. Editing in Satty waits for someone at the desktop.
+- **Desktop draft attachments**: with `attachments.write`, the phone can send a desktop draft's attachments exactly as it reviewed them; with `capture.preview` it can preview images among them.
+
+A phone shows only what both sides support: an older desktop leaves new options out, and a version mismatch says whether the desktop or the phone needs updating. Drafts are kept either way.
+
 `cere remote status` and `cere remote off` provide local CLI status and shutdown. The tray also exposes remote shutdown. No remote method can re-enable the gateway, edit endpoints, grant privileges, change scripts, or invoke general local RPC.
 
 Changed desktop address or expiring one-year certificate: use **Update gateway addresses / certificate**, then replace each phone pairing as described above. **Reset gateway identity** remains destructive recovery: it revokes every device and requires fresh pairing. Devices still expire after 90 days unless renewed locally. Automatic unattended certificate/key rotation is not implemented.

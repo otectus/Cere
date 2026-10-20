@@ -138,6 +138,8 @@ Setup also required an owner-authenticated UFW rule restricted to the phone's LA
 
 ## Plan inventory disposition
 
+Superseded by [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md), reconciled against source on 2026-10-20 and checked by `tests/feature-matrix.test.ts`. The table below is the earlier (2026-10-09) disposition, kept for history.
+
 IDs refer to [`MOBILE_PLAN.md`](../../mobile/MOBILE_PLAN.md). “Implemented” here describes source behavior, not a substitute for hardware/provider validation.
 
 | Plan rows | Current disposition |
@@ -176,8 +178,8 @@ Architecture adaptations: AES-GCM Keystore-encrypted bounded file cache instead 
 - Per-session scroll restoration across process death and older-page insertion, TalkBack review of capture and permission controls, and an actual grant reduction followed by command-ledger reconciliation and reconnect.
 - Mobile-data WireGuard reconnect, screen-off/doze notifications and measured latency/battery behavior; no-Play validation on the owner's installed OS.
 - Real harmless Codex/Ollama approval workflows, simultaneous phone/desktop choices, and provider-policy failure behavior. Never test a real effect by replaying an unknown command.
-- Real Hyprland/MPRIS window, workspace, volume, playback, app and file actions with state restoration (timers and saved scripts were exercised against the isolated review broker only); implementation of unported plan features before claiming full parity.
+- Window, workspace, volume, mute, playback, app and file actions now run against real private fixtures (Hyprland, a PipeWire null sink, an MPRIS player and a private-home desktop entry) inside `tools/test-virtual-desktop.sh`, read back and restored (`tests/desktop-hyprland.test.ts`, `tests/desktop-services.test.ts`). A check against the working desktop's own players and windows, from the phone, remains for the owner.
 - TalkBack, 200% fonts, landscape/cutouts and lock-screen privacy on target hardware.
-- Permanent signing identity, APK signature verification, arm64 R8 fresh install and previous-version update, Obtainium filtering, dependency notices, protected GitHub environment and publication review.
+- Permanent signing identity, APK signature verification, arm64 R8 fresh install and previous-version update, Obtainium filtering, dependency notices, protected GitHub environment and publication review. The release workflow now signs only an APK whose bytes, signer, source commit, desktop build, device/OS, date and gates are certified by a committed evidence record (`docs/mobile/release-evidence/`, checked by `tools/mobile-release-evidence.ts`); the old `MOBILE_HARDWARE_GATES=passed` variable is no longer read.
 
 The APK is installable for development. Do not describe it as the complete roadmap or a release-certified build while these limitations remain.

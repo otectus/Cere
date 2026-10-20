@@ -2,6 +2,19 @@
 
 Date: 2026-09-29. This initial repository publication contains an integrated, experimental graph-memory implementation. It does **not** satisfy every completion criterion in `docs/Cere_Graph_Memory_Implementation.md` yet.
 
+## Status reconciled with source (2026-10-20)
+
+Graph memory remains **experimental**. The reference-design gates below are still open; none was closed by this review pass. In particular the recorded extraction rerun's predicate precision is 88.9%, below its 95% gate ([evaluation](evaluation.md)), and 32 of 32 accepted assertions on a small synthetic set does not establish production precision. A representative held-out evaluation was not run: it needs a production-domain corpus, the extraction models and billed cloud calls the owner has not authorized.
+
+Changed in this pass, with tests:
+
+- **Shared scope across providers.** A conversation's memory is its project on its memory server, whichever provider it uses; a paired phone reaches it only while that server is granted (`tests/remote.test.ts`, "project memory is shared across provider conversations…").
+- **Phone workflows.** History and evidence (`memory.timeline`), revision-bound corrections and conflict resolution, identity decisions and episode freezing, each witnessed by the person's own statement and refused at a stale revision; erasure receipts kept on the phone and rechecked after reconnect; sanitized health (`memory.health`) without endpoints, models or error text.
+- **Restore staging** now copies with a synchronous `VACUUM INTO`, like backups. The asynchronous SQLite backup it replaced was seen once to stall a restore for 30 s under load (`tests/recovery-races.test.ts`).
+- **Degradation.** With memory retrieval failing, chat completes within the recall deadline (`tests/core.test.ts`, `tests/degraded-services.test.ts`).
+
+Task creation/binding (item 3), the collector/editor integrations (item 4) and the full M01–M36 failure matrix (item 5) are unchanged.
+
 ## Implemented and exercised
 
 - Worker-owned canonical SQLite, strict ontology/DTOs, exact Unicode evidence, scoped entity resolution, atomic FTS changes, mutation revisions, ordered outbox, and read tokens.

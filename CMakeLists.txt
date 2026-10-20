@@ -139,6 +139,7 @@ install(FILES packaging/cere-broker.service DESTINATION ${CMAKE_INSTALL_LIBDIR}/
 install(FILES README.md VALIDATION.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/cere)
 install(FILES docs/tts.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/cere/docs)
 install(FILES docs/workspace-telemetry.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/cere/docs)
+install(FILES docs/FEATURE-MATRIX.md docs/CONVERSATION-STATES.md docs/SERVICES-GATE.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/cere/docs)
 install(FILES packaging/tts-NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/cere/packaging)
 install(DIRECTORY docs/memory DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/cere)
 install(DIRECTORY docs/mobile DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/cere)
