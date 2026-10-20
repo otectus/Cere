@@ -7,37 +7,131 @@ on:
     paths-ignore: ['mobile/**', 'docs/**', '**/*.md']
 permissions:
   contents: read
+# Three independent jobs, so a failure in one gate does not hide the results of the others; the final
+# `desktop` job fails unless all three succeeded. Packages are installed as root, then every build and
+# test step runs as an ordinary user (tools/ci-user.sh): root ignores the file permission bits that
+# the backup and private-directory checks depend on. Reports are uploaded and summarized even when a
+# step fails, and every skipped test is listed with its reason.
 jobs:
-  desktop:
+  broker:
+    name: Broker, contract and Node tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 45
+    # Cere targets Arch's current toolchain; the Node tests need no Qt.
+    container: archlinux:base-devel
+    steps:
+      - name: Install test dependencies (root)
+        run: pacman -Syu --noconfirm --needed git nodejs npm python fish zsh sox
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+      - name: Hand the checkout to an unprivileged user
+        run: tools/ci-user.sh setup
+      - run: tools/ci-user.sh run npm ci
+      - run: tools/ci-user.sh run npm run typecheck
+      - run: tools/ci-user.sh run npx tsc -p tsconfig.mobile.json
+      - run: tools/ci-user.sh run node tools/mobile-contract.ts --check
+      - name: Build the Node-API modules the tests load
+        run: tools/ci-user.sh run tools/build-node-addons.sh
+      - name: Node tests (npm test, with a JUnit report)
+        run: tools/ci-user.sh run env CERE_TTS_DISABLED=1 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/node-tests.xml tests/*.test.ts
+      - name: Test report
+        if: ${{ !cancelled() }}
+        run: node tools/ci-test-report.mjs reports >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: desktop-broker-reports
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+  native:
+    name: Native build and QML component tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     # Cere targets Arch's current Qt and layer-shell-qt, which Ubuntu does not ship.
     container: archlinux:base-devel
     steps:
-      - name: Install build and test dependencies
+      - name: Install build and test dependencies (root)
+        run: pacman -Syu --noconfirm --needed git cmake ninja nodejs npm python qt6-base qt6-declarative layer-shell-qt adwaita-fonts xorg-server-xvfb
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+      - name: Hand the checkout to an unprivileged user
+        run: tools/ci-user.sh setup
+      - run: tools/ci-user.sh run npm ci
+      - run: tools/ci-user.sh run npm run build
+      - name: Native and QML component tests
+        # The offscreen platform creates the avatar check's OpenGL context through an X display.
+        run: tools/ci-user.sh run xvfb-run -a ctest --test-dir build --output-on-failure --output-junit "$GITHUB_WORKSPACE/reports/ctest.xml"
+      - name: Test report
+        if: ${{ !cancelled() }}
+        run: node tools/ci-test-report.mjs reports >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: desktop-native-reports
+          path: |
+            reports/
+            build/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
+  interface:
+    name: Offscreen interface checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    container: archlinux:base-devel
+    steps:
+      - name: Install build and test dependencies (root)
         run: pacman -Syu --noconfirm --needed git cmake ninja nodejs npm python qt6-base qt6-declarative layer-shell-qt adwaita-fonts fish zsh sox xorg-server-xvfb
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .node-version
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
-      - name: Native and QML component tests
-        # The offscreen platform creates the avatar check's OpenGL context through an X display.
-        run: xvfb-run -a ctest --test-dir build --output-on-failure
+      - name: Hand the checkout to an unprivileged user
+        run: tools/ci-user.sh setup
+      - run: tools/ci-user.sh run npm ci
+      - run: tools/ci-user.sh run npm run build
       - name: Offscreen interface checks
         env:
           QT_QUICK_BACKEND: software
           QT_QUICK_CONTROLS_STYLE: Basic
+          CERE_TTS_DISABLED: '1'
         # Every assertion slot plus the scale review; the other review slots only record screenshots.
-        # Slots that need the live Hyprland compositor or desktop session skip themselves offscreen.
-        # The workspace expression names the host path in a container job, so the path is set here.
+        # Slots that need the live Hyprland compositor or desktop session skip themselves offscreen;
+        # the report lists each of those skips. The workspace expression names the host path in a
+        # container job, so the path is set here.
         run: |
           export QT_QPA_PLATFORM="offscreen:configfile=$GITHUB_WORKSPACE/tests/fixtures/offscreen-scales.json"
-          ./build/cere-ui-check -functions > "$RUNNER_TEMP/ui-functions"
+          tools/ci-user.sh run ./build/cere-ui-check -functions > "$RUNNER_TEMP/ui-functions"
           mapfile -t slots < <(sed -n 's/()$//p' "$RUNNER_TEMP/ui-functions" | grep -v '^review')
           test "${#slots[@]}" -gt 0
-          ./build/cere-ui-check "${slots[@]}" reviewSurfacesAtScale
+          tools/ci-user.sh run ./build/cere-ui-check -o "$GITHUB_WORKSPACE/reports/ui-check.xml,junitxml" -o -,txt "${slots[@]}" reviewSurfacesAtScale
+      - name: Test report
+        if: ${{ !cancelled() }}
+        run: node tools/ci-test-report.mjs reports >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: desktop-interface-reports
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+  desktop:
+    # The single required result: every gate above must have succeeded.
+    name: Cere desktop checks
+    if: ${{ always() }}
+    needs: [broker, native, interface]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every desktop gate
+        env:
+          BROKER: ${{ needs.broker.result }}
+          NATIVE: ${{ needs.native.result }}
+          INTERFACE: ${{ needs.interface.result }}
+        run: |
+          echo "broker=$BROKER native=$NATIVE interface=$INTERFACE"
+          test "$BROKER" = success && test "$NATIVE" = success && test "$INTERFACE" = success

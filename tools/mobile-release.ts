@@ -17,7 +17,16 @@ const verified=execFileSync(join(buildTools,'apksigner'),['verify','--verbose','
 const signer=/^Signer #1 certificate SHA-256 digest: ([a-fA-F0-9]{64})$/m.exec(verified)?.[1];if(signer?.toLowerCase()!==fingerprint.toLowerCase())throw new Error('APK signer differs from the reviewed certificate');
 const output=resolve(destination),name=`cere-${tag}.apk`,bytes=readFileSync(apk),sha256=createHash('sha256').update(bytes).digest('hex');mkdirSync(output,{recursive:true});
 if(resolve(apk)!==join(output,name))copyFileSync(apk,join(output,name));
-const metadata={packageId:'dev.otectus.cere.mobile',versionName,versionCode,minSdk:30,protocol:{major:1,minMinor:0,maxMinor:0},minimumDesktop:'0.1.0/mobile-v1',apk:{name,sha256},signingCertificateSha256:fingerprint.toLowerCase()};
+// The APK speaks protocol 1 at hello revision 0 and uses each newer feature only when a desktop
+// offers it, so any desktop serving cere.mobile.v1 works; features names what it can use.
+const contract=JSON.parse(readFileSync(new URL('../protocol/mobile/v1/CONTRACT.json',import.meta.url),'utf8'));
+// W16: the evidence record that certified these bytes (checked by tools/mobile-release-evidence.ts before signing).
+const evidencePath=process.env.RELEASE_EVIDENCE,evidence=evidencePath?readFileSync(evidencePath):undefined;
+if(evidence)writeFileSync(join(output,'RELEASE-EVIDENCE.json'),evidence);
+const metadata={packageId:'dev.otectus.cere.mobile',versionName,versionCode,minSdk:30,
+  protocol:{major:contract.protocol.major,minMinor:0,maxMinor:0,desktopMinor:contract.protocol.minor,features:Object.keys(contract.features||{})},
+  minimumDesktop:'0.1.0/mobile-v1',sourceCommit:process.env.GITHUB_SHA||null,apk:{name,sha256},signingCertificateSha256:fingerprint.toLowerCase(),
+  ...(evidence?{evidence:{file:'RELEASE-EVIDENCE.json',sha256:createHash('sha256').update(evidence).digest('hex')}}:{})};
 writeFileSync(join(output,'mobile-release.json'),JSON.stringify(metadata,null,2)+'\n');
 writeFileSync(join(output,'SIGNING-CERTIFICATE-SHA256.txt'),fingerprint.toLowerCase()+'\n');
 writeFileSync(join(output,'SHA256SUMS'),`${sha256}  ${name}\n`);

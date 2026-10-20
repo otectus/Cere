@@ -15,6 +15,9 @@ jobs:
     environment: mobile-release
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # The evidence check compares the tested commit with this one.
+          fetch-depth: 0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .node-version
@@ -38,12 +41,15 @@ jobs:
           MOBILE_KEY_PASSWORD: ${{ secrets.MOBILE_KEY_PASSWORD }}
           MOBILE_KEY_ALIAS: ${{ secrets.MOBILE_KEY_ALIAS }}
           MOBILE_SIGNING_CERT_SHA256: ${{ vars.MOBILE_SIGNING_CERT_SHA256 }}
-          MOBILE_HARDWARE_GATES: ${{ vars.MOBILE_HARDWARE_GATES }}
         run: |
           set -euo pipefail
-          test "$MOBILE_HARDWARE_GATES" = passed
           test -n "$MOBILE_KEYSTORE_BASE64"
           test -n "$MOBILE_SIGNING_CERT_SHA256"
+          # W16: sign only the exact bytes a committed evidence record certifies (tested commit, unsigned
+          # APK SHA-256, signer, desktop build, device/OS, date and every required gate).
+          export RELEASE_EVIDENCE="docs/mobile/release-evidence/$GITHUB_REF_NAME.json"
+          node tools/mobile-release-evidence.ts check "$RELEASE_EVIDENCE" --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" \
+            --unsigned-apk unsigned/outputs/apk/release/app-release-unsigned.apk --signer "$MOBILE_SIGNING_CERT_SHA256"
           umask 077
           task_key="$RUNNER_TEMP/cere-mobile-release.jks"
           trap 'rm -f "$task_key"' EXIT
@@ -52,6 +58,8 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/zipalign" -p -f 4 unsigned/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --ks "$task_key" --ks-key-alias "$MOBILE_KEY_ALIAS" --ks-pass env:MOBILE_KEYSTORE_PASSWORD --key-pass env:MOBILE_KEY_PASSWORD --out release/signed.apk "$RUNNER_TEMP/aligned.apk"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs release/signed.apk > release/APK-VERIFICATION.txt
+          # 16 KiB page-size devices need uncompressed native libraries aligned to 16 KiB.
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 release/signed.apk > release/ZIPALIGN-16K.txt
           task_fingerprint=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' release/APK-VERIFICATION.txt)
           test "${task_fingerprint,,}" = "${MOBILE_SIGNING_CERT_SHA256,,}"
           node tools/mobile-release.ts "$GITHUB_REF_NAME" release/signed.apk "$task_fingerprint" release

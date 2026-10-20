@@ -36,6 +36,9 @@ const server=createServer(async(req,res)=>{
   else if(req.url.startsWith('/search?'))res.end(JSON.stringify({results:[{title:'Ollama embeddings',url:'https://docs.ollama.com/api/embed',content:'Generate embeddings with Ollama.'}]}));
   else if(req.url==='/api/chat'){
     res.setHeader('Content-Type','application/x-ndjson');
+    // The phone's paired connectivity check (ConnectedDesktopTest) asks for this exact reply.
+    const users=(body.messages||[]).filter(m=>m.role==='user');
+    if(String(users.at(-1)?.content).includes('Reply with exactly CERE_MOBILE_OK'))return res.end(JSON.stringify({message:{role:'assistant',content:'CERE_MOBILE_OK'},done:true})+'\n');
     res.write(JSON.stringify({message:{role:'assistant',content:'Hello from Ollama. '},done:false})+'\n');
     if(body.messages?.at(-1)?.content==='queue-validation-hold')await new Promise(resolve=>setTimeout(resolve,2500));
     res.end(JSON.stringify({message:{role:'assistant',content:'Your conversation is ready.'},done:true})+'\n');

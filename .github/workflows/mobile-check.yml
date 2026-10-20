@@ -1,13 +1,17 @@
 name: Cere Mobile checks
 on:
   pull_request:
-    paths: ['mobile/**', 'broker/**', 'protocol/**', 'tests/**', 'tools/mobile-*', 'package*.json', 'tsconfig*.json', '.github/workflows/mobile-*.yml']
+    paths: ['mobile/**', 'broker/**', 'protocol/**', 'tests/**', 'tools/mobile-*', 'tools/ci-*', 'tools/build-node-addons.sh', 'package*.json', 'tsconfig*.json', '.github/workflows/mobile-*.yml']
   push:
     branches: [main, master]
-    paths: ['mobile/**', 'broker/**', 'protocol/**', 'tests/**', 'tools/mobile-*', 'package*.json', 'tsconfig*.json', '.github/workflows/mobile-*.yml']
+    paths: ['mobile/**', 'broker/**', 'protocol/**', 'tests/**', 'tools/mobile-*', 'tools/ci-*', 'tools/build-node-addons.sh', 'package*.json', 'tsconfig*.json', '.github/workflows/mobile-*.yml']
   workflow_call:
 permissions:
   contents: read
+# Each job reports independently and uploads its results even when it fails. The final `mobile` job
+# fails unless every gate succeeded. `emulator` runs the self-contained instrumentation suite, whose
+# paired-desktop tests skip without arguments; `paired` runs those tests against an isolated broker
+# with fixture providers and fails if any of them does not actually pass.
 jobs:
   contract:
     runs-on: ubuntu-24.04
@@ -22,12 +26,21 @@ jobs:
       - run: npx tsc -p tsconfig.mobile.json
       - run: node tools/mobile-contract.ts --check
       - name: Build same-user peer credentials adapter for isolated process tests
-        run: |
-          mkdir -p build
-          curl --fail --silent --show-error "https://nodejs.org/dist/v$(node --version | cut -c2-)/node-$(node --version)-headers.tar.gz" -o /tmp/node-headers.tar.gz
-          tar -xzf /tmp/node-headers.tar.gz -C /tmp
-          g++ -std=c++17 -shared -fPIC -I"/tmp/node-$(node --version)/include/node" native/peercred.cpp -o build/cere-peercred.node
-      - run: node --test tests/remote.test.ts tests/remote-rate-limits.test.ts tests/remote-process.test.ts tests/send-queue.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
+        run: tools/build-node-addons.sh
+      - name: Broker and gateway tests (JUnit report)
+        run: CERE_TTS_DISABLED=1 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/mobile-contract.xml tests/remote.test.ts tests/remote-rate-limits.test.ts tests/remote-process.test.ts tests/mobile-transcript.test.ts tests/mobile-conformance.test.ts tests/fanout.test.ts tests/send-queue.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
+      - name: Test report
+        if: ${{ !cancelled() }}
+        run: node tools/ci-test-report.mjs reports >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mobile-contract-reports
+          path: |
+            reports/
+            /tmp/cere-mobile-process.log
+          if-no-files-found: warn
+          retention-days: 14
   android:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -47,6 +60,20 @@ jobs:
       - run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - run: ./gradlew --no-daemon :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:lintDev :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:assembleDev
       - run: ./gradlew --no-daemon --no-configuration-cache -I ../../tools/mobile-sbom.gradle :app:mobileSbom
+      - name: Test report
+        if: ${{ !cancelled() }}
+        working-directory: .
+        run: node tools/ci-test-report.mjs mobile/android/core/protocol/build/test-results mobile/android/core/data/build/test-results mobile/android/app/build/test-results >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mobile-android-reports
+          path: |
+            mobile/android/*/build/test-results/
+            mobile/android/core/*/build/test-results/
+            mobile/android/app/build/reports/lint-results-*.html
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cere-mobile-unsigned
@@ -75,8 +102,9 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      # Instrumentation tests that need a paired desktop skip themselves without their explicit arguments.
-      # The R8-optimized development build is then installed and launched to catch shrinking crashes.
+      # Instrumentation tests that need a paired desktop skip themselves without their explicit
+      # arguments (the `paired` job runs them). The R8-optimized development build is then installed
+      # and launched to catch shrinking crashes.
       - uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 35
@@ -90,3 +118,87 @@ jobs:
             adb shell am start -W -n dev.otectus.cere.mobile.debug/dev.otectus.cere.mobile.MainActivity
             sleep 5
             adb shell pidof dev.otectus.cere.mobile.debug
+      - name: Test report
+        if: ${{ !cancelled() }}
+        run: node tools/ci-test-report.mjs mobile/android/app/build/outputs/androidTest-results >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mobile-emulator-reports
+          path: |
+            mobile/android/app/build/outputs/androidTest-results/
+            mobile/android/app/build/reports/androidTests/
+          if-no-files-found: warn
+          retention-days: 14
+  paired:
+    name: Paired emulator and isolated broker (API ${{ matrix.api-level }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum supported Android (11) and a current one.
+        api-level: [30, 35]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          cmdline-tools-version: '16111833'
+          packages: platform-tools
+      - run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - run: npm ci
+      - name: Build same-user peer credentials adapter for the isolated broker
+        run: tools/build-node-addons.sh
+      - name: Build the debug app and its instrumentation APK
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # The harness starts an isolated broker with fixture providers (no owner account or state),
+      # pairs the app over adb reverse with a trusted-device offer, and runs the paired tests with
+      # their explicit arguments. Each emulator-runner script line runs on its own.
+      - uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install -r -t mobile/android/app/build/outputs/apk/debug/app-debug.apk
+            adb install -r -t mobile/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            node tools/mobile-paired-check.ts --evidence reports/paired-api-${{ matrix.api-level }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mobile-paired-api-${{ matrix.api-level }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+  mobile:
+    # The single required result: every mobile gate above must have succeeded.
+    name: Cere Mobile checks
+    if: ${{ always() }}
+    needs: [contract, android, emulator, paired]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every mobile gate
+        env:
+          CONTRACT: ${{ needs.contract.result }}
+          ANDROID: ${{ needs.android.result }}
+          EMULATOR: ${{ needs.emulator.result }}
+          PAIRED: ${{ needs.paired.result }}
+        run: |
+          echo "contract=$CONTRACT android=$ANDROID emulator=$EMULATOR paired=$PAIRED"
+          test "$CONTRACT" = success && test "$ANDROID" = success && test "$EMULATOR" = success && test "$PAIRED" = success
