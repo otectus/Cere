@@ -60,7 +60,10 @@ const server = net.createServer(socket => {
   socket.on('data', chunk => {
     try { lines.push(String(chunk), m => {
       if (!m || typeof m.method !== 'string' || m.id === undefined) { send(client,{id:m?.id ?? null,error:{message:'Invalid request'}}); return; }
-      if (m.method === 'subscribe') { subscribed = true; client.subscribed = true; client.role=m.params?.role; send(client,{id:m.id,result:core.snapshot()}); return; }
+      // A subscriber that offers `resync` is asked to reread its transcript when its backlog is dropped.
+      if (m.method === 'subscribe') { subscribed = true; client.subscribed = true; client.role=m.params?.role; client.resync=m.params?.resync===true; send(client,{id:m.id,result:core.snapshot()}); return; }
+      // Liveness: answered by this loop directly, so a reply means the broker itself is running.
+      if (m.method === 'ping') { send(client,{id:m.id,result:{}}); return; }
       if (['ui.toggle','ui.expand'].includes(m.method)&&![...clients].some(c=>c.role==='ui')){send(client,{id:m.id,error:{message:'Cere interface is not running'}});return;}
       if (m.method.startsWith('memory.') && Buffer.byteLength(JSON.stringify(m)) > 1024*1024) { send(client,{id:m.id,error:{code:'INVALID_ARGUMENT',message:'Memory frame exceeds 1 MiB'}}); return; }
       void (m.method.startsWith('remote.') ? core.withMutation(()=>mobile.local(m.method,m.params)) : core.rpc(m.method,m.params)).then(result => send(client,{id:m.id,result}), error => send(client,{id:m.id,error:{code:error.code||'INVALID_ARGUMENT',message:error.message}}));

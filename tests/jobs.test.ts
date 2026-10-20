@@ -7,6 +7,9 @@ import { getPriority, tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
 import { Transcription, backgroundNice } from '../broker/transcription.ts';
+import { getEventListeners } from 'node:events';
+import { BackgroundJobs, jobLimits } from '../broker/jobs.ts';
+import { abortableDelay } from '../broker/abortable.ts';
 
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any) {
@@ -36,6 +39,42 @@ test('A04 background work is listed together, cancels through the list, and yiel
   assert.ok(await core.jobs.yieldToForeground(new AbortController().signal, 100) < 1000, 'bounded: work is never starved');
   const controller = new AbortController(); setTimeout(() => controller.abort(new Error('Indexing cancelled')), 50);
   await assert.rejects(core.jobs.yieldToForeground(controller.signal), /Indexing cancelled/);
+});
+
+// The review's reproduction left 31 abort listeners on the job's signal after one short wait with fast
+// polling; a normal 120-second wait could leave hundreds. Every path now returns to the baseline.
+test('waiting for a reply leaves no abort listener behind, whether it ends by the reply, the limit or cancellation', async t => {
+  const pollMs = jobLimits.pollMs; jobLimits.pollMs = 1; t.after(() => { jobLimits.pollMs = pollMs; });
+  let working = true;
+  const jobs = new BackgroundJobs({ store: { sessions: () => [{ status: working ? 'working' : 'idle' }] } } as any);
+  const listeners = (signal: AbortSignal) => getEventListeners(signal, 'abort').length;
+  const keepAlive = setInterval(() => {}, 1000); t.after(() => clearInterval(keepAlive)); // the polls are unref'd
+  const controller = new AbortController(), baseline = listeners(controller.signal);
+  for (let round = 0; round < 5; round++) await jobs.yieldToForeground(controller.signal, 25);
+  assert.equal(listeners(controller.signal), baseline, 'a wait that reached its limit five times left nothing behind');
+  setTimeout(() => { working = false; }, 30);
+  await jobs.yieldToForeground(controller.signal);
+  assert.equal(listeners(controller.signal), baseline, 'a wait ended by the reply left nothing behind');
+  working = true;
+  const cancelled = new AbortController(), cancelledBaseline = listeners(cancelled.signal), started = Date.now();
+  setTimeout(() => cancelled.abort(new Error('Indexing cancelled')), 20);
+  await assert.rejects(jobs.yieldToForeground(cancelled.signal), /Indexing cancelled/);
+  assert.ok(Date.now() - started < 1000, 'cancellation wakes the wait at once');
+  assert.equal(listeners(cancelled.signal), cancelledBaseline);
+  await assert.rejects(jobs.yieldToForeground(cancelled.signal), /Indexing cancelled/, 'an already cancelled signal ends the wait before it starts');
+});
+
+test('the abortable delay settles once, clears its timer and removes its listener', async () => {
+  const controller = new AbortController();
+  await abortableDelay(1, controller.signal);
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+  const pending = abortableDelay(60_000, controller.signal);
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 1);
+  controller.abort(new Error('stop'));
+  await assert.rejects(pending, /stop/);
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+  await assert.rejects(abortableDelay(60_000, controller.signal), /stop/, 'an aborted signal rejects without waiting');
+  await abortableDelay(1);
 });
 
 test('A04 indexing waits while a reply is generated, and a download is listed and cancelled from the list', async t => {

@@ -10,7 +10,7 @@ const respond = (m: any) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',.
 let initialized=false,lastTools='';
 const changes=net.createConnection(socketPath()),changeLines=new JsonLines();
 changes.setEncoding('utf8');changes.on('error',()=>{});
-changes.on('connect',()=>{let trusted=false;try{trusted=trustedServer(changes);}catch{}if(!trusted){changes.destroy();return;}changes.write(JSON.stringify({id:'watch',method:'subscribe',params:{role:'mcp'}})+'\n');});
+changes.on('connect',()=>{let trusted=false;try{trusted=trustedServer(changes);}catch{}if(!trusted){changes.destroy();return;}changes.write(JSON.stringify({id:'watch',method:'subscribe',params:{role:'mcp',resync:true}})+'\n');});
 changes.on('data',chunk=>{try{changeLines.push(String(chunk),m=>{
   const state=m.method==='state'?m.params:m.id==='watch'?m.result:null, settings=state?.settings;
   if(!settings)return;

@@ -7,6 +7,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Core } from './core.ts';
+import { abortableDelay } from './abortable.ts';
 
 export type JobKind = 'model-pull' | 'collection-index' | 'transcription';
 type Job = { id: string; kind: JobKind; label: string; started: number; cancel: () => void; progress?: () => { done: number; total: number } | undefined };
@@ -34,14 +35,13 @@ export class BackgroundJobs {
   foregroundActive() { return this.core.store.sessions().some(session => session.status === 'starting' || session.status === 'working'); }
   /**
    * Waits while a reply is being generated, up to a bounded time so background work cannot starve.
-   * Returns how long it waited; cancellation ends the wait at once.
+   * Returns how long it waited; cancellation ends the wait at once with the signal's reason. Each poll
+   * removes its abort listener when it ends, so a long wait leaves none behind on the job's signal.
    */
   async yieldToForeground(signal: AbortSignal, maxWaitMs = jobLimits.foregroundWaitMs) {
     const started = Date.now();
-    while (this.foregroundActive() && Date.now() - started < maxWaitMs) {
-      signal.throwIfAborted();
-      await new Promise<void>(resolve => { const timer = setTimeout(resolve, jobLimits.pollMs); timer.unref(); signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true }); });
-    }
+    signal.throwIfAborted();
+    while (this.foregroundActive() && Date.now() - started < maxWaitMs) await abortableDelay(jobLimits.pollMs, signal, { unref: true });
     signal.throwIfAborted();
     return Date.now() - started;
   }
