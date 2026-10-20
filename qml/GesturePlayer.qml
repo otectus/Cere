@@ -154,10 +154,18 @@ Item {
                    : player.visual.angle
         }
         AvatarPuppet {
+            id: puppetView
             objectName: "avatarPuppet"
             anchors.fill: parent
             source: App.assetPath + player.puppet.texture
             definition: player.puppet
+            // Artwork that passed the catalog's header check but cannot be drawn is set aside by the
+            // desktop. Switching avatars updates the atlas and its definition one after the other, so
+            // only an error that remains afterwards is reported, naming the atlas actually shown.
+            onErrorChanged: if (error && player.followAppMotion) Qt.callLater(() => {
+                if (puppetView.error && typeof App.avatarFailed === "function")
+                    App.avatarFailed(String(puppetView.source).slice(App.assetPath.length), puppetView.error)
+            })
             pose: player.referenceStill ? ({}) : player.visual.rig
             surfaceFrame: player.referenceStill ? 0 : player.visual.surfaceFrame
         }

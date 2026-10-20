@@ -3828,6 +3828,24 @@ Unicode: café ✦ 日本語
         QCOMPARE(received.count("settings.update"),sentWhileFrozen); // nothing was resent
         QCOMPARE(fake.selectedId(),QString("fake-a"));
     }
+    // W13: while avatars switch, the atlas and its definition briefly belong to different avatars. A
+    // failure reported then, or for an avatar not on show, changes nothing: artwork is set aside only
+    // when a full load of the shown avatar's atlas confirms that it cannot be drawn.
+    void avatarFailureReportsNeedConfirmation(){
+        const auto shown=app->avatar();
+        const QString texture=shown.value("puppet").toMap().value("texture").toString();
+        QVERIFY(!texture.isEmpty());
+        QString other;
+        for(const auto &value:app->avatars()){const QString candidate=value.toMap().value("puppet").toMap().value("texture").toString();if(candidate!=texture){other=candidate;break;}}
+        QVERIFY(!other.isEmpty());
+        const QString toast=app->toast();
+        QSignalSpy changed(app.get(),&Controller::avatarChanged);
+        app->avatarFailed(texture,"part 'reference' surface frame 283 sourceRect is outside the atlas");
+        app->avatarFailed(other,"definition version must be 1");
+        QCOMPARE(changed.count(),0);
+        QCOMPARE(app->avatar().value("id"),shown.value("id"));
+        QCOMPARE(app->toast(),toast);
+    }
     // A draft save whose reply is lost is this composer's own work, not another client's edit: after
     // reconnecting, the newer text is kept without a conflict and saved against the broker's revision,
     // and the state that clears a draft during a send never raises a conflict either.

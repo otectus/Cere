@@ -35,6 +35,11 @@ public:
     bool ready() const;
     QString error() const;
 
+    // Checks the definition and every source rectangle against the atlas's stored size without
+    // decoding the image: a catalog check that costs a file header, not hundreds of megabytes.
+    // A puppet in this mode is never drawn. Set it before the definition and source.
+    void setValidationOnly(bool validationOnly);
+
     // Reference-space world matrices, encoded as
     // [m11, m12, m21, m22, dx, dy] for each bone name.
     Q_INVOKABLE QVariantMap boneTransforms() const;

@@ -317,6 +317,7 @@ struct AvatarPuppet::Private
     QVector<PartImages> partImages;
     quint64 revision = 0;
     bool ready = false;
+    bool validationOnly = false;
     QString error;
 };
 
@@ -381,7 +382,7 @@ void AvatarPuppet::setSurfaceFrame(int frame)
     if (d->surfaceFrame == frame)
         return;
     d->surfaceFrame = frame;
-    if (d->ready) {
+    if (d->ready && !d->validationOnly) {
         QString preparationError;
         if (!prepareFrameImages(frame, &preparationError))
             setStatus(false, preparationError);
@@ -393,6 +394,14 @@ void AvatarPuppet::setSurfaceFrame(int frame)
 bool AvatarPuppet::ready() const
 {
     return d->ready;
+}
+
+void AvatarPuppet::setValidationOnly(bool validationOnly)
+{
+    if (d->validationOnly == validationOnly)
+        return;
+    d->validationOnly = validationOnly;
+    rebuild();
 }
 
 QString AvatarPuppet::error() const
@@ -736,10 +745,22 @@ void AvatarPuppet::rebuild()
         });
     }
 
-    const QImage atlas = validationError.isEmpty()
-            ? cachedAtlas(imagePath(d->source), d->sourceKey) : QImage();
-    if (validationError.isEmpty() && atlas.isNull())
-        validationError = QStringLiteral("source atlas could not be loaded");
+    // Validation only: the atlas's stored size is enough to check every rectangle against it.
+    QImage atlas;
+    QRect atlasRect;
+    if (validationError.isEmpty() && d->validationOnly) {
+        QImageReader reader(imagePath(d->source));
+        reader.setAutoTransform(true);
+        const QSize size = reader.canRead() ? reader.size() : QSize();
+        if (!size.isValid() || size.isEmpty())
+            validationError = QStringLiteral("source atlas could not be read");
+        atlasRect = QRect(QPoint(), size);
+    } else if (validationError.isEmpty()) {
+        atlas = cachedAtlas(imagePath(d->source), d->sourceKey);
+        if (atlas.isNull())
+            validationError = QStringLiteral("source atlas could not be loaded");
+        atlasRect = atlas.rect();
+    }
 
     if (validationError.isEmpty()) {
         for (const Part &part : std::as_const(d->parts)) {
@@ -748,13 +769,13 @@ void AvatarPuppet::rebuild()
             images.blinks.resize(part.surfaceFrames.size());
             for (int frameIndex = 0; frameIndex < part.surfaceFrames.size(); ++frameIndex) {
                 const Part::SurfaceFrame &frame = part.surfaceFrames[frameIndex];
-                if (!atlas.rect().contains(frame.sourceRect)) {
+                if (!atlasRect.contains(frame.sourceRect)) {
                     validationError = QStringLiteral("part '%1' surface frame %2 sourceRect is outside the atlas")
                                               .arg(part.name).arg(frameIndex);
                     break;
                 }
                 if (!frame.blinkSourceRect.isNull()
-                        && !atlas.rect().contains(frame.blinkSourceRect)) {
+                        && !atlasRect.contains(frame.blinkSourceRect)) {
                     validationError = QStringLiteral("part '%1' surface frame %2 blinkSourceRect is outside the atlas")
                                               .arg(part.name).arg(frameIndex);
                     break;
@@ -764,7 +785,7 @@ void AvatarPuppet::rebuild()
                 break;
             d->partImages.append(images);
         }
-        if (validationError.isEmpty()
+        if (validationError.isEmpty() && !d->validationOnly
                 && !prepareFrameImages(d->surfaceFrame, &validationError)) {
             // prepareFrameImages supplies the diagnostic.
         }

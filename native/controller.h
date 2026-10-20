@@ -95,6 +95,8 @@ public:
     QVariantList avatars() const { return m_avatars; }
     QVariantMap avatar() const;
     QVariantMap themes() const { return m_themes; }
+    // The shown avatar's puppet could not draw its atlas (texture as in its definition).
+    Q_INVOKABLE void avatarFailed(const QString &texture, const QString &error);
     QVariantMap theme() const { return m_theme; }
     QString assistantName() const;
     QString toast() const { return m_toast; }
@@ -207,6 +209,7 @@ private:
     QByteArray m_buffer;
     QVariantMap m_state, m_animations;
     QVariantList m_avatars;
+    QSet<QString> m_brokenAvatars;
     QVariantMap m_themes, m_theme;
     QString m_themeId;
     void applyTheme();

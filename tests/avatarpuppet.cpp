@@ -25,6 +25,7 @@
 #include <QDir>
 
 #include <algorithm>
+#include <memory>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -1464,6 +1465,59 @@ bool surfaceRenderChecks(const QUrl &firstSource, const QUrl &secondSource)
 
 } // namespace
 
+// W13: the application checks its catalog from each atlas's header. That check must accept what
+// the full decode accepts, reject what it rejects (a rectangle outside the atlas, a missing or
+// unreadable file), and never decode the atlas.
+bool validationOnlyChecks(const QUrl &source, const QString &directory)
+{
+    bool ok = true;
+    const auto validated = [&](const QUrl &url, const QVariantMap &definition) {
+        auto puppet = std::make_unique<AvatarPuppet>();
+        puppet->setValidationOnly(true);
+        puppet->setDefinition(definition);
+        puppet->setSource(url);
+        return std::make_pair(puppet->ready(), puppet->error());
+    };
+    ok &= check(validated(source, validDefinition()).first, "the header check accepts a valid definition and atlas");
+    QVariantMap outside = validDefinition();
+    QVariantList parts = outside.value(QStringLiteral("parts")).toList();
+    QVariantMap first = parts.first().toMap();
+    first.insert(QStringLiteral("sourceRect"), QVariantList{0, 0, 100000, 8});
+    parts[0] = first;
+    outside.insert(QStringLiteral("parts"), parts);
+    ok &= check(!validated(source, outside).first, "the header check rejects a rectangle outside the atlas");
+    ok &= check(!validated(QUrl::fromLocalFile(directory + QStringLiteral("/missing.png")), validDefinition()).first, "the header check rejects a missing atlas");
+    QFile garbage(directory + QStringLiteral("/garbage.png"));
+    ok &= check(garbage.open(QIODevice::WriteOnly) && garbage.write("not an image") > 0, "garbage fixture must be written");
+    garbage.close();
+    ok &= check(!validated(QUrl::fromLocalFile(garbage.fileName()), validDefinition()).first, "the header check rejects a file that is not an image");
+    // A valid header over corrupt image data passes the header check; the full load the desktop makes
+    // before setting an avatar aside (Controller::avatarFailed) rejects it.
+    QFile atlasFile(source.toLocalFile());
+    QByteArray bytes = atlasFile.open(QIODevice::ReadOnly) ? atlasFile.readAll() : QByteArray();
+    const qsizetype data = bytes.indexOf("IDAT");
+    ok &= check(data > 0, "fixture atlas must contain image data");
+    if (data > 0) {
+        for (qsizetype n = data + 4; n < bytes.size() - 12 && n < data + 4 + 4096; ++n)
+            bytes[n] = char(0x5a);
+        QFile corrupt(directory + QStringLiteral("/corrupt.png"));
+        ok &= check(corrupt.open(QIODevice::WriteOnly) && corrupt.write(bytes) == bytes.size(), "corrupt fixture must be written");
+        corrupt.close();
+        const QUrl corruptUrl = QUrl::fromLocalFile(corrupt.fileName());
+        ok &= check(validated(corruptUrl, validDefinition()).first, "the header check accepts a valid header over corrupt image data");
+        AvatarPuppet full;
+        full.setDefinition(validDefinition());
+        full.setSource(corruptUrl);
+        ok &= check(!full.ready(), "a full load rejects corrupt image data");
+    }
+    // Recorded for the startup budget: the cost of fifty header checks of the fixture atlas.
+    QElapsedTimer timer; timer.start();
+    for (int n = 0; n < 50; ++n) validated(source, validDefinition());
+    const qint64 headerMs = timer.elapsed();
+    std::cout << "header check x50: " << headerMs << " ms" << std::endl;
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     if (qEnvironmentVariableIsSet("CERE_PUPPET_TEST_SOFTWARE"))
@@ -1496,7 +1550,8 @@ int main(int argc, char **argv)
             && malformedChecks(source)
             && renderChecks(source)
             && surfaceRenderChecks(QUrl::fromLocalFile(surfaceAtlasPath),
-                                   QUrl::fromLocalFile(secondSurfaceAtlasPath));
+                                   QUrl::fromLocalFile(secondSurfaceAtlasPath))
+            && validationOnlyChecks(source, directory.path());
     const QString root = argc > 1 ? QString::fromLocal8Bit(argv[1])
                                   : QStringLiteral(".");
     QFile avatars(root + "/assets/avatars.json");

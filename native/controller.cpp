@@ -116,7 +116,11 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
             const auto resolved=AvatarDefinition::resolve(baseRig,overrides);
             if(!resolved.error.isEmpty()){qWarning()<<"Invalid avatar"<<entry.value("id")<<resolved.error;continue;}
             const auto definition=resolved.definition;
+            // The catalog is checked from each atlas's header, never by decoding every atlas at
+            // startup; the build's asset checks decode them all. The selected avatar is decoded when
+            // shown, and one whose artwork then fails is set aside (avatarFailed).
             AvatarPuppet check;
+            check.setValidationOnly(true);
             check.setDefinition(definition);
             check.setSource(QUrl::fromLocalFile(m_root+"/assets/"+definition.value("texture").toString()));
             if(!check.ready()||!QFileInfo::exists(m_root+"/assets/"+entry.value("portrait").toString()))continue;
@@ -186,8 +190,25 @@ Controller::~Controller(){
 QString Controller::assetPath()const{return QUrl::fromLocalFile(m_root+"/assets/").toString();}
 QVariantMap Controller::avatar()const{
     const auto selected=m_state.value("settings").toMap().value("avatar","cere").toString();
-    for(const auto &entry:m_avatars)if(entry.toMap().value("id").toString()==selected)return entry.toMap();
+    if(!m_brokenAvatars.contains(selected))for(const auto &entry:m_avatars)if(entry.toMap().value("id").toString()==selected)return entry.toMap();
+    for(const auto &entry:m_avatars)if(!m_brokenAvatars.contains(entry.toMap().value("id").toString()))return entry.toMap();
     return m_avatars.first().toMap();
+}
+void Controller::avatarFailed(const QString &texture,const QString &error){
+    // Artwork that passed the header check but cannot be drawn: that avatar is set aside, the next
+    // usable one is shown, and chat is unaffected. A switch passes through moments when the atlas and
+    // its definition belong to different avatars, so a report counts only for the avatar on show and
+    // only once a full load of its artwork confirms the failure.
+    const auto shown=avatar();const auto id=shown.value("id").toString();
+    const auto definition=shown.value("puppet").toMap();
+    if(definition.value("texture").toString()!=texture||m_brokenAvatars.contains(id))return;
+    int usable=0;for(const auto &entry:m_avatars)if(!m_brokenAvatars.contains(entry.toMap().value("id").toString()))++usable;
+    if(usable<2)return; // Nothing else could be shown.
+    AvatarPuppet check;check.setDefinition(definition);check.setSource(QUrl::fromLocalFile(m_root+"/assets/"+texture));
+    if(check.ready())return;
+    m_brokenAvatars.insert(id);qWarning()<<"Avatar artwork could not be loaded"<<id<<error<<check.error();
+    notify(QStringLiteral("The %1 avatar's artwork could not be loaded, so %2 is shown instead.").arg(shown.value("label",id).toString(),avatar().value("label").toString()));
+    emit avatarChanged();
 }
 QString Controller::assistantName()const{
     const auto name=m_state.value("settings").toMap().value("assistantName").toString().trimmed();

@@ -86,6 +86,11 @@ if(BUILD_TESTING)
   qt_add_resources(cere-ui-check cere-test-palettes PREFIX "/" FILES assets/palettes.json)
   target_link_libraries(cere-ui-check PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Qml Qt6::Network Qt6::Widgets Qt6::DBus Qt6::Test LayerShellQt::Interface PkgConfig::WAYLAND_CLIENT)
   target_compile_definitions(cere-ui-check PRIVATE CERE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  # Startup cost of the interface controller (time and peak memory), for before/after comparisons.
+  qt_add_executable(cere-measure-startup tools/measure-startup.cpp ${CERE_NATIVE})
+  qt_add_resources(cere-measure-startup cere-measure-palettes PREFIX "/" FILES assets/palettes.json)
+  target_include_directories(cere-measure-startup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/native)
+  target_link_libraries(cere-measure-startup PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Qml Qt6::Network Qt6::Widgets Qt6::DBus LayerShellQt::Interface)
   # Documentation screenshots from a scripted demo profile; tools/screenshots/run.sh prepares and runs it.
   qt_add_executable(cere-screenshots tools/screenshots/capture.cpp ${CERE_NATIVE})
   qt_add_resources(cere-screenshots cere-screenshot-palettes PREFIX "/" FILES assets/palettes.json)
