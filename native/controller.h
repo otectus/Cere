@@ -56,7 +56,10 @@ class Controller : public QObject {
     Q_PROPERTY(int activityCount READ activityCount NOTIFY activityChanged)
     Q_PROPERTY(QVariantMap session READ session NOTIFY stateChanged)
     Q_PROPERTY(QString selectedId READ selectedId WRITE select NOTIFY stateChanged)
+    // Connected and answering: false while the socket is down or the broker stopped responding.
     Q_PROPERTY(bool connected READ connected NOTIFY stateChanged)
+    // The socket is open but the broker has not answered for a while (frozen, overloaded).
+    Q_PROPERTY(bool brokerUnresponsive READ brokerUnresponsive NOTIFY stateChanged)
     Q_PROPERTY(bool overlay READ overlay CONSTANT)
     Q_PROPERTY(QString assetPath READ assetPath CONSTANT)
     Q_PROPERTY(QVariantMap animations READ animations CONSTANT)
@@ -84,7 +87,8 @@ public:
     int activityCount() const {return m_activity.rowCount();}
     QVariantMap session() const;
     QString selectedId() const { return m_selected; }
-    bool connected() const { return m_socket.state()==QLocalSocket::ConnectedState; }
+    bool connected() const { return m_socket.state()==QLocalSocket::ConnectedState&&m_responsive; }
+    bool brokerUnresponsive() const { return m_socket.state()==QLocalSocket::ConnectedState&&!m_responsive; }
     bool overlay() const { return m_overlay; }
     QString assetPath() const;
     QVariantMap animations() const { return m_animations; }
@@ -218,7 +222,20 @@ private:
     bool m_bubbleFocusable=false;
     TranscriptModel m_transcript;
     TranscriptFilter m_replies{false},m_activity{true};
-    QHash<int,QString> m_requests;
+    // Requests in flight by ID: the method and when it was written (m_clock). Each ends exactly once:
+    // with its answer, a lost connection, an unresponsive broker or its deadline. A later answer to an
+    // ended request is ignored, and nothing is ever resent.
+    struct PendingRequest { QString method; qint64 sent=0; };
+    QHash<int,PendingRequest> m_requests;
+    // Liveness: a ping goes out while connected; with no bytes from the broker for m_unresponsiveMs
+    // the broker counts as unresponsive and every request in flight ends as unconfirmed.
+    QTimer m_liveness;
+    QElapsedTimer m_clock, m_lastInbound;
+    bool m_responsive=true;
+    int m_pingRequest=-1;
+    qint64 m_unresponsiveMs=15000, m_requestDeadlineMs=30*60*1000;
+    void checkLiveness();
+    void endRequests(const QList<int> &ids, const QString &message, const QString &reason);
     int m_sequence=0;
     int m_messagesRequest=-1, m_olderRequest=-1;
     qint64 m_olderCursor=0;

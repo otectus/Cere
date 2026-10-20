@@ -129,6 +129,11 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
     if(palettes.open(QIODevice::ReadOnly))m_themes=QJsonDocument::fromJson(palettes.readAll()).object().toVariantMap();
     applyTheme();
     m_director=MotionDirector(m_animations);m_reactionClock.start();
+    m_clock.start();
+    // Tests shorten these; the defaults tolerate a busy machine without flagging a healthy broker.
+    const auto timing=[](const char *name,qint64 fallback){const qint64 value=qEnvironmentVariableIntValue(name);return value>0?value:fallback;};
+    m_liveness.setInterval(int(timing("CERE_UI_PING_MS",5000)));m_unresponsiveMs=timing("CERE_UI_UNRESPONSIVE_MS",15000);m_requestDeadlineMs=timing("CERE_UI_REQUEST_DEADLINE_MS",30*60*1000);
+    connect(&m_liveness,&QTimer::timeout,this,&Controller::checkLiveness);
     connect(&m_socket,&QLocalSocket::readyRead,this,&Controller::receive);
     connect(&m_socket,&QLocalSocket::connected,this,[this]{
         m_retry.stop();m_buffer.clear();
@@ -138,12 +143,14 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
             m_socket.abort();notify("Cere refused a broker socket owned by another user.");m_retry.start(1500);return;
         }
         m_disconnected.invalidate();
-        rpc("subscribe",{{"role",m_overlay?"overlay":"ui"}});emit stateChanged();
+        m_responsive=true;m_pingRequest=-1;m_lastInbound.start();m_liveness.start();
+        // resync: when this host falls far behind, the broker drops held message copies and says so.
+        rpc("subscribe",{{"role",m_overlay?"overlay":"ui"},{"resync",true}});emit stateChanged();
     });
     connect(&m_socket,&QLocalSocket::disconnected,this,[this]{
         // Every request in flight ends exactly once; none is replayed, since its
         // outcome is unknown. Framing restarts with the next connection.
-        m_buffer.clear();failPendingRequests("Connection lost; the operation outcome was not confirmed.");
+        m_buffer.clear();m_liveness.stop();m_pingRequest=-1;m_responsive=true;failPendingRequests("Connection lost; the operation outcome was not confirmed.");
         if(!m_disconnected.isValid())m_disconnected.start();
         stopRoaming(false);refreshMotion();emit stateChanged();m_retry.start(1500);
     });
@@ -168,7 +175,7 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
     connect(qApp,&QGuiApplication::screenAdded,this,[this]{m_placedPosition.clear();syncPet();});
 }
 Controller::~Controller(){
-    m_retry.stop();m_roamTimer.stop();m_motionTimer.stop();m_idleTimer.stop();m_toastTimer.stop();m_successTimer.stop();
+    m_retry.stop();m_roamTimer.stop();m_motionTimer.stop();m_idleTimer.stop();m_toastTimer.stop();m_successTimer.stop();m_liveness.stop();
     QObject::disconnect(&m_socket,nullptr,this,nullptr);
     if(m_overlayProcess){m_overlayProcess->terminate();m_overlayProcess->waitForFinished(2000);}
     if(m_panel)QObject::disconnect(m_panel,nullptr,this,nullptr);
@@ -242,6 +249,40 @@ void Controller::connectBroker(){
     if(QFileInfo::exists(runtime)&&!privateRuntime(runtime)){notify("Cere's runtime directory is not private to you; refusing to connect.");m_retry.start(5000);return;}
     m_socket.abort();m_socket.connectToServer(runtime+"/broker.sock");
 }
+void Controller::checkLiveness(){
+    if(m_socket.state()!=QLocalSocket::ConnectedState){m_liveness.stop();return;}
+    const qint64 now=m_clock.elapsed();
+    // A request the broker has not answered by its deadline ends as unconfirmed. Long jobs the user
+    // started and can watch or cancel (a file transcription, a Satty edit) have no deadline.
+    static const QSet<QString> longJobs{"transcription.importFile","screenshot.capture"};
+    QList<int> expired;
+    for(auto it=m_requests.cbegin();it!=m_requests.cend();++it)
+        if(it.key()!=m_pingRequest&&!longJobs.contains(it->method)&&now-it->sent>=m_requestDeadlineMs)expired<<it.key();
+    if(!expired.isEmpty())endRequests(expired,"Cere did not confirm this in time. It may still complete; nothing will be resent.","deadline");
+    if(m_responsive&&m_lastInbound.elapsed()>=m_unresponsiveMs){
+        m_responsive=false;
+        QList<int> pending=m_requests.keys();pending.removeAll(m_pingRequest);
+        endRequests(pending,"Cere's session broker stopped responding before confirming this. It may still complete; nothing will be resent.","unresponsive");
+        stopRoaming(false);refreshMotion();emit stateChanged();
+        notify("Cere's session broker is not responding. Your drafts stay here.");
+    }
+    // One ping at a time, written directly: rpc() refuses new requests while the broker is unresponsive.
+    if(m_pingRequest<0){
+        m_pingRequest=++m_sequence;m_requests[m_pingRequest]={QStringLiteral("ping"),now};
+        m_socket.write(QJsonDocument(QJsonObject{{"id",m_pingRequest},{"method","ping"},{"params",QJsonObject{}}}).toJson(QJsonDocument::Compact)+'\n');
+    }
+}
+void Controller::endRequests(const QList<int> &ids,const QString &message,const QString &reason){
+    for(const int id:ids){
+        if(!m_requests.remove(id))continue;
+        if(id==m_messagesRequest){m_messagesRequest=-1;m_liveMessages.clear();}
+        if(id==m_olderRequest)m_olderRequest=-1;
+        m_copies.remove(id);m_deferredDrafts.remove(id);
+        // An offline draft whose save went unconfirmed stays held, to be saved again or handed back.
+        m_offlineFlushes.remove(id);
+        emit result(id,QVariantMap{{"error",message},{"code","CONNECTION_LOST"},{"reason",reason}});
+    }
+}
 void Controller::failPendingRequests(const QString &message){
     const auto pending=std::exchange(m_requests,{});
     // Offline flushes in flight ended with the connection; their conversations may flush again.
@@ -290,15 +331,24 @@ void Controller::openCompanionReply(const QString &replyId){
 }
 int Controller::rpc(const QString &method,const QVariantMap &params){
     if(!connected()){notify("Cere is reconnecting to her session broker.");return -1;}
-    const int id=++m_sequence;m_requests[id]=method;
+    const int id=++m_sequence;m_requests[id]={method,m_clock.elapsed()};
     m_socket.write(QJsonDocument(QJsonObject{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}}).toJson(QJsonDocument::Compact)+'\n');return id;
 }
 void Controller::receive(){
     m_buffer+=m_socket.readAll();if(m_buffer.size()>16*1024*1024){m_socket.abort();return;}
+    m_lastInbound.restart();
+    if(!m_responsive&&m_socket.state()==QLocalSocket::ConnectedState){
+        // Answering again: requests ended meanwhile stay ended; the open transcript is reread.
+        m_responsive=true;emit stateChanged();refreshMotion();reloadMessages();notify("Cere's session broker is responding again.");
+    }
     int newline;
     while((newline=m_buffer.indexOf('\n'))>=0){auto line=m_buffer.left(newline);m_buffer.remove(0,newline+1);auto object=QJsonDocument::fromJson(line).object();
         if(object.contains("id")){
-            int id=object["id"].toInt();QString method=m_requests.take(id);
+            int id=object["id"].toInt();
+            // An answer to a request that already ended (deadline, unresponsive broker) changes nothing.
+            if(!m_requests.contains(id))continue;
+            QString method=m_requests.take(id).method;
+            if(id==m_pingRequest){m_pingRequest=-1;continue;}
             // A saved offline draft is done; a refused one stays for its conversation's composer.
             if(m_offlineFlushes.contains(id)){const auto sessionId=m_offlineFlushes.take(id);if(!object.contains("error"))m_offlineDrafts.remove(sessionId);}
             if(object.contains("error")){
@@ -380,6 +430,8 @@ void Controller::receive(){
                 const auto revision=params.value("revision");
                 if(!revision.isValid()||revision!=m_state.value("revision"))applyState(params);
             }
+            // The broker dropped message copies this host was too busy to read: reread the open transcript.
+            if(method=="resync")reloadMessages();
             if(method=="message")observeConversation(params);
             if(method=="message"&&params.value("sessionId").toString()==m_selected){
                 // An older revision can arrive after a newer page; it never overwrites it.

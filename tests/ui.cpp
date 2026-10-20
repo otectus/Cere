@@ -3763,6 +3763,71 @@ Unicode: café ✦ 日本語
         QCOMPARE(outcomes(saving),1);QCOMPARE(outcomes(creating),1);
         view.hide();
     }
+    // W04: a broker that stays connected but stops answering (frozen, stopped) cannot leave an
+    // Online interface or a request pending forever. A request past its deadline ends once as
+    // unconfirmed; without any answer for the unresponsive period every request ends once, the
+    // interface shows the broker as not responding and refuses new requests; a late answer changes
+    // nothing; when the broker answers again the interface recovers and rereads the transcript.
+    void frozenBrokerEndsRequestsOnceAndRecovers(){
+        QTemporaryDir runtime;QVERIFY(runtime.isValid());
+        QFile::setPermissions(runtime.path(),QFileDevice::ReadOwner|QFileDevice::WriteOwner|QFileDevice::ExeOwner);
+        QLocalServer server;QVERIFY(server.listen(runtime.path()+"/broker.sock"));
+        const QVariantMap state{{"sessions",QVariantList{QVariantMap{{"id","fake-a"},{"title","Fake A"},{"provider","codex"},{"status","idle"},{"cwd","/tmp"}}}},
+            {"settings",QVariantMap{{"hidden",true}}},{"settingsRevision","1"},{"approvals",QVariantList{}}};
+        QStringList received;QHash<QString,int> ids;QPointer<QLocalSocket> client;QByteArray buffer;bool frozen=false;
+        auto send=[&](const QJsonObject &o){if(client)client->write(QJsonDocument(o).toJson(QJsonDocument::Compact)+'\n');};
+        connect(&server,&QLocalServer::newConnection,this,[&]{
+            client=server.nextPendingConnection();buffer.clear();
+            connect(client,&QLocalSocket::readyRead,this,[&]{
+                buffer+=client->readAll();int newline;
+                while((newline=buffer.indexOf('\n'))>=0){
+                    const auto request=QJsonDocument::fromJson(buffer.left(newline)).object();buffer.remove(0,newline+1);
+                    const auto method=request["method"].toString();const int id=request["id"].toInt();received<<method;ids[method]=id;
+                    if(frozen)continue; // A frozen broker reads nothing and answers nothing.
+                    auto reply=[&](const QVariant &value){send(QJsonObject{{"id",id},{"result",QJsonValue::fromVariant(value)}});};
+                    if(method=="subscribe")reply(state);
+                    else if(method=="session.messages")reply(QVariantMap{{"messages",QVariantList{}},{"before",0},{"hasMore",false}});
+                    else if(method=="ping")reply(QVariantMap{});
+                    else if(method=="settings.update"||method=="transcription.importFile"||method=="session.create"){} // Left unanswered.
+                    else reply(true);
+                }
+            });
+        });
+        QHash<QByteArray,QByteArray> saved;
+        for(const QByteArray name:{QByteArray("CERE_RUNTIME_DIR"),QByteArray("CERE_UI_PING_MS"),QByteArray("CERE_UI_UNRESPONSIVE_MS"),QByteArray("CERE_UI_REQUEST_DEADLINE_MS")})saved[name]=qgetenv(name.constData());
+        const auto restore=qScopeGuard([&]{for(auto it=saved.cbegin();it!=saved.cend();++it){if(it.value().isEmpty())qunsetenv(it.key().constData());else qputenv(it.key().constData(),it.value());}});
+        qputenv("CERE_RUNTIME_DIR",runtime.path().toUtf8());qputenv("CERE_UI_PING_MS","100");qputenv("CERE_UI_UNRESPONSIVE_MS","1500");qputenv("CERE_UI_REQUEST_DEADLINE_MS","2500");
+        Controller fake(CERE_SOURCE_DIR,true);QSignalSpy results(&fake,&Controller::result);
+        fake.start(false);
+        QTRY_VERIFY(fake.connected());QTRY_VERIFY(received.contains("ping"));QVERIFY(!fake.brokerUnresponsive());
+        auto outcomes=[&](int id){QVariantList found;for(const auto &r:results)if(r.at(0).toInt()==id)found<<r.at(1);return found;};
+        // Responsive broker, one lost answer: only that request ends, as unconfirmed, at its deadline.
+        const int saving=fake.rpc("settings.update",{{"hidden",true}}),transcribing=fake.rpc("transcription.importFile",{{"path","/tmp/a.wav"}});
+        QVERIFY(saving>0&&transcribing>0);
+        QTRY_COMPARE_WITH_TIMEOUT(outcomes(saving).size(),1,8000);
+        QCOMPARE(outcomes(saving).first().toMap().value("code").toString(),QString("CONNECTION_LOST"));
+        QCOMPARE(outcomes(saving).first().toMap().value("reason").toString(),QString("deadline"));
+        QVERIFY(fake.connected());QCOMPARE(outcomes(transcribing).size(),0); // a long job the user watches has no deadline
+        // Freeze: nothing is answered, not even pings.
+        frozen=true;const int creating=fake.rpc("session.create",{{"provider","codex"},{"cwd","/tmp"}});QVERIFY(creating>0);
+        QTRY_VERIFY_WITH_TIMEOUT(fake.brokerUnresponsive(),6000);
+        QVERIFY(!fake.connected());
+        QTRY_COMPARE(outcomes(creating).size(),1);QCOMPARE(outcomes(transcribing).size(),1);
+        for(const int id:{creating,transcribing}){const auto outcome=outcomes(id).first().toMap();QCOMPARE(outcome.value("code").toString(),QString("CONNECTION_LOST"));QCOMPARE(outcome.value("reason").toString(),QString("unresponsive"));}
+        QCOMPARE(fake.rpc("settings.update",{{"hidden",false}}),-1); // no new request while it is not responding
+        const int sentWhileFrozen=received.count("settings.update");
+        // The broker resumes: it answers its backlog late, which changes nothing, and the ping brings it back.
+        frozen=false;
+        send(QJsonObject{{"id",creating},{"result",QJsonObject{{"id","late-session"}}}});
+        send(QJsonObject{{"id",ids.value("ping")},{"result",QJsonObject{}}});
+        const int reads=received.count("session.messages");
+        QTRY_VERIFY_WITH_TIMEOUT(fake.connected(),6000);QVERIFY(!fake.brokerUnresponsive());
+        QTRY_VERIFY(received.count("session.messages")>reads); // the open transcript is reread
+        QTest::qWait(300);
+        for(const int id:{saving,transcribing,creating})QCOMPARE(outcomes(id).size(),1); // each request ended exactly once
+        QCOMPARE(received.count("settings.update"),sentWhileFrozen); // nothing was resent
+        QCOMPARE(fake.selectedId(),QString("fake-a"));
+    }
     // A draft save whose reply is lost is this composer's own work, not another client's edit: after
     // reconnecting, the newer text is kept without a conflict and saved against the broker's revision,
     // and the state that clears a draft during a send never raises a conflict either.

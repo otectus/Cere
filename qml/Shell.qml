@@ -61,7 +61,7 @@ Rectangle {
     Shortcut { sequence: "Ctrl+N"; onActivated: shell.page===4?projectsPage.newProjectSession():newSession.open() }
     Shortcut { sequence: "Ctrl+,"; onActivated: shell.navigate(3) }
     readonly property bool wide: expanded && width >= 920
-    readonly property string statusText: !App.connected ? "Reconnecting…" : approvals.length ? approvals.length+" waiting for input" : busySessions ? busySessions+" conversations working" : "Ready when you are"
+    readonly property string statusText: App.brokerUnresponsive ? "Cere is not responding…" : !App.connected ? "Reconnecting…" : approvals.length ? approvals.length+" waiting for input" : busySessions ? busySessions+" conversations working" : "Ready when you are"
     readonly property bool bypassActive: settings.bypassCliPermissions||settings.bypassComputerPermissions
     readonly property string permissionText: settings.paused?"Tools paused":bypassActive?[settings.bypassCliPermissions?"CLI bypass":"",settings.bypassComputerPermissions?"Computer bypass":""].filter(s=>s).join(" · "):settings.profile==="manual"?"Manual desktop controls":settings.profile==="broad"?"Broad control · project grants apply":(settings.categories||[]).length+" AI desktop categories enabled"
     // Paused tools and permission bypasses stay visible in the one-row compact header.
@@ -276,7 +276,7 @@ Rectangle {
                         }
                     }
                 }
-                Text { text:App.connected?"Connected":"Offline";color:App.connected?Theme.success:Theme.amber;font.family:Theme.font;font.pixelSize:Theme.caption }
+                Text { text:App.connected?"Connected":App.brokerUnresponsive?"Not responding":"Offline";color:App.connected?Theme.success:Theme.amber;font.family:Theme.font;font.pixelSize:Theme.caption }
                 CButton { objectName:"shellPermissionCenter";visible:shell.wide;text:"Permissions";quiet:true;implicitHeight:30;onClicked:permissionCenter.open() }
             }
         }

@@ -160,6 +160,7 @@ Item {
     property var trackedAnchor:({anchorId:"",anchorOffset:0,atEnd:true})
     function activityStatus() {
         // The last known turn may have ended while the broker was away; never show it as live.
+        if (App.brokerUnresponsive) return "Cere is not responding — waiting for it…"
         if (!App.connected) return "Connection lost — reconnecting…"
         if (App.session.status === "stopping") return "Stopping…"
         if (pendingQuestions.length) return pendingQuestions.length === 1 ? "Waiting for your answer…" : "Waiting for your answers…"

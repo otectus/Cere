@@ -8,6 +8,8 @@ export function request(method: string, params: any = {}, timeout = 10000, expec
     const timer=setTimeout(() => { socket.destroy(); reject(new Error('Cere did not respond')); },timeout);
     const done=(error?: Error,value?: any) => { clearTimeout(timer); socket.destroy(); error ? reject(error) : resolve(value); };
     socket.setEncoding('utf8'); socket.on('error',error => done(error));
+    // A broker that exits or drops the connection first: the outcome is unknown, reported at once.
+    socket.on('close',() => done(new Error('Cere closed the connection before answering; the outcome was not confirmed')));
     // The server's credentials are verified before any request data is written.
     socket.on('connect',() => {
       try { if (!trustedServer(socket, expectedUid)) { done(new Error('The Cere broker socket belongs to another user; refusing to connect')); return; } }

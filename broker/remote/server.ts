@@ -22,6 +22,12 @@ type Peer = {socket:WebSocket;device?:Device;hello?:any;challenge?:any;authSessi
 export class MobileGateway {
   core:Core;registry:RemoteStore;identity:Identity;pairing:Pairing;router:Router;
   servers:Server[]=[];wsServers:WebSocketServer[]=[];peers=new Set<Peer>();closed=false;
+  /** Work this gateway started that can touch Core or the store: frame handlers, media, maintenance, revocation. */
+  work=new Set<Promise<unknown>>();
+  closing?:Promise<void>;
+  /** Owned work still running when close stopped waiting; reported by shutdown, never awaited forever. */
+  unsettled=0;
+  static closeDrainMs=5000;
   heartbeat:NodeJS.Timeout;stateTimer?:NodeJS.Timeout;
   lifecycle=Promise.resolve();
   bindings=new Map<string,{server:Server;ws:WebSocketServer}>();
@@ -37,7 +43,13 @@ export class MobileGateway {
       return !!device&&this.registry.config().enabled&&device.scopeVersion===execution.scopeVersion&&device.projects.some(p=>p.id===execution.projectId&&p.path===session.cwd)&&this.router.inScope(device,session);
     };
     core.on('changed',this.onChanged);core.on('state',this.onState);core.on('message',this.onMessage);core.on('notice',this.onNotice);
-    this.heartbeat=setInterval(()=>{void this.maintain();},20000);this.heartbeat.unref();this.presence();
+    this.heartbeat=setInterval(()=>{void this.track(this.maintain()).catch(()=>{});},20000);this.heartbeat.unref();this.presence();
+  }
+  /** Remembers owned work until it settles, so close can let it finish before Core closes the store. */
+  track<T>(work:Promise<T>):Promise<T> {
+    this.work.add(work);
+    const forget=()=>{this.work.delete(work);};work.then(forget,forget);
+    return work;
   }
   // Scope and pause enforcement follow every change at once, ahead of the paced state snapshot.
   onChanged=()=> {
@@ -71,7 +83,7 @@ export class MobileGateway {
     }
   };
   event(peer:Peer,name:string,data:any) {
-    if(!peer.device)return;
+    if(!peer.device||this.closed)return;
     try{this.router.current(peer.device);}catch(error){peer.socket.close(4003,(error as any)?.code||'AUTH_REVOKED');return;}
     this.registry.journal(peer.device.id,{name,...(name==='message.upsert'?{messageId:data.id}:{} )});
     this.send(peer,{v:1,type:'event',eventId:randomUUID(),cursor:this.router.cursor(peer.device),name,resourceRevision:data.revision||'1',data});
@@ -84,6 +96,8 @@ export class MobileGateway {
     peer.socket.send(data);
   }
   presence() {
+    // A socket closing during or after shutdown must not reach a store that is closing.
+    if(this.closed||this.core.closed)return;
     this.core.remoteStatus={enabled:this.registry.config().enabled,listening:this.servers.length>0,listeningAddresses:[...this.bindings.keys()],waitingForNetwork:this.registry.config().enabled&&!this.servers.length,networkError:this.networkError,connected:[...new Map([...this.peers].filter(p=>p.device).map(p=>[p.device!.id,{id:p.device!.id,name:p.device!.name}])).values()],
       activeTurns:this.core.store.sessions().filter(s=>s.remote&&busy(s)).map(s=>({sessionId:s.id,deviceId:s.remote!.deviceId,project:s.cwd}))};
     if(!this.closed)this.core.changed();
@@ -129,18 +143,20 @@ export class MobileGateway {
       if(isBinary) {
         if(!peer.device){socket.close(4001,'UNAUTHENTICATED');return;}
         peer.inFlight++;
-        void this.core.withMutation(()=>this.router.media.chunk(peer.device!,bytes)).then(progress=>this.event(peer,'attachment.progress',progress)).catch(()=>socket.close(4009,'ATTACHMENT_INVALID')).finally(()=>peer.inFlight--);return;
+        void this.track(this.core.withMutation(()=>this.router.media.chunk(peer.device!,bytes)).then(progress=>this.event(peer,'attachment.progress',progress)).catch(()=>socket.close(4009,'ATTACHMENT_INVALID')).finally(()=>peer.inFlight--));return;
       }
       let frame:any;
       try{frame=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{socket.close(4000,'INVALID_ARGUMENT');return;}
       peer.inFlight++;
-      void this.frame(peer,frame).catch(error=>{
-        if(!peer.device){if(!this.core.recovery.pending)this.registry.audit({operation:'auth.failed',decision:'denied'});socket.close(4001,'UNAUTHENTICATED');}
+      // Tracked with its error handling, which can still write an audit record.
+      void this.track(this.frame(peer,frame).catch(error=>{
+        if(!peer.device){if(!this.core.recovery.pending&&!this.core.closed)this.registry.audit({operation:'auth.failed',decision:'denied'});socket.close(4001,'UNAUTHENTICATED');}
         else this.send(peer,{v:1,type:'response',id:frame?.id||null,error:safeError(error)});
-      }).finally(()=>peer.inFlight--);
+      }).finally(()=>peer.inFlight--));
     });
   }
   async frame(peer:Peer,frame:any) {
+    if(this.closed)throw remoteError('REMOTE_DISABLED','The desktop gateway is shutting down.');
     return this.core.withMutation(()=>this.frameInner(peer,frame));
   }
   private async frameInner(peer:Peer,frame:any) {
@@ -315,5 +331,20 @@ export class MobileGateway {
       default:throw new Error('Unknown remote management method');
     }
   }
-  async close() {this.closed=true;this.router.abortActions();clearInterval(this.heartbeat);if(this.stateTimer)clearTimeout(this.stateTimer);this.core.off('changed',this.onChanged);this.core.off('state',this.onState);this.core.off('message',this.onMessage);this.core.off('notice',this.onNotice);await this.stopListeners();}
+  /**
+   * Closes once; every caller awaits the same close. New connections and frames are refused first,
+   * then owned work already running (frame handlers, media, maintenance, revocation, a listener
+   * refresh) gets a bounded time to finish or observe the aborted actions, so none of it reaches the
+   * store after Core closes it. Work still running at the bound is counted in `unsettled`.
+   */
+  close():Promise<void> {return this.closing??=this.closeOnce();}
+  private async closeOnce() {
+    this.closed=true;this.router.abortActions();clearInterval(this.heartbeat);if(this.stateTimer)clearTimeout(this.stateTimer);
+    this.core.off('changed',this.onChanged);this.core.off('state',this.onState);this.core.off('message',this.onMessage);this.core.off('notice',this.onNotice);
+    await this.stopListeners();
+    let timer:NodeJS.Timeout|undefined;
+    const settled=await Promise.race([Promise.allSettled([...this.work,this.lifecycle]).then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),MobileGateway.closeDrainMs);timer.unref();})]);
+    clearTimeout(timer);
+    this.unsettled=settled?0:this.work.size;
+  }
 }

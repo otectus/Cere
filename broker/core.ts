@@ -1477,10 +1477,21 @@ export class Core extends EventEmitter {
     return this.withMutation(()=>this.rpcInner(method,p));
   }
   activeMutations=0;
+  /** False once shutdown begins: changes already running finish, none starts. */
+  acceptingMutations=true;
+  private mutationsIdle=new Set<()=>void>();
   async withMutation<T>(work:()=>Promise<T>):Promise<T>{
     if(this.recovery.pending)throw new Error('Recovery is pending. Wait for the broker to restart before making changes.');
+    if(!this.acceptingMutations||this.closed)throw new Error('Cere is shutting down; nothing new is started.');
     this.activeMutations++;
-    try{return await work();}finally{this.activeMutations--;}
+    try{return await work();}finally{if(--this.activeMutations===0)for(const idle of this.mutationsIdle)idle();}
+  }
+  /** Shutdown's first step: refuse new local and remote changes before owned services are torn down. */
+  refuseMutations(){this.acceptingMutations=false;}
+  /** Resolves when no change is running. */
+  mutationsSettled():Promise<void>{
+    if(!this.activeMutations)return Promise.resolve();
+    return new Promise(resolve=>{const idle=()=>{this.mutationsIdle.delete(idle);resolve();};this.mutationsIdle.add(idle);});
   }
   private async rpcInner(method:string,p:any):Promise<any>{
     if(method==='telemetry.pause'){if(typeof p.paused!=='boolean')throw new Error('Invalid telemetry pause');return this.telemetry.pause(p.paused);}
@@ -1807,7 +1818,7 @@ export class Core extends EventEmitter {
   /** Closes once; a second caller (a server error followed by shutdown, a test hook) awaits the same close. */
   close(): Promise<void> { return this.closing ??= this.closeOnce(); }
   private async closeOnce() {
-    this.closed = true;
+    this.closed = true; this.acceptingMutations = false;
     if (this.stateTimer) { clearTimeout(this.stateTimer); this.stateTimer=undefined; }
     for (const session of this.store.sessions()) this.sendQueue.cancel(session.id, 'Cere closed before sending');
     await this.telemetry.close();
@@ -1825,6 +1836,9 @@ export class Core extends EventEmitter {
     await bounded([...this.adapters.values()].map(a => a.close()));
     await bounded([...this.stopping.values()]);
     await bounded([...this.memoryCaptures]);
+    // Changes already running (a local RPC, a phone's frame) see their aborts and settle before the
+    // memory service and the store close beneath them; past the bound, closing continues.
+    await bounded([this.mutationsSettled()]);
     for(const timer of this.stopTimers)clearTimeout(timer);this.stopTimers.clear();
     await this.memory.close();
     await speechClosed;

@@ -1,4 +1,5 @@
 import { writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID,createHash } from 'node:crypto';
 import { privateDir } from './paths.ts';
@@ -13,6 +14,9 @@ export function healthReport(core:Core) {
       authentication:'not-verified',problem:error?classify(error):null,repair:'Refresh provider catalog; sign in through the provider’s own application if authentication fails.'};
   });
   const memory=core.memory.summary(),speech=core.speech.snapshot();
+  // Written by the broker as it exits: whether every owned operation was confirmed finished.
+  let previousShutdown:{at:number;confirmed:boolean;problems:string[]}|null=null;
+  try{const value=JSON.parse(readFileSync(join(core.store.directory,'last-shutdown.json'),'utf8'));previousShutdown={at:Number(value.at)||0,confirmed:value.confirmed===true,problems:(Array.isArray(value.problems)?value.problems:[]).map(String).slice(0,5)};}catch{}
   return {schema:1,time:new Date().toISOString(),node:process.version,providers,
     memory:{enabled:core.settings.memory.enabled,state:core.memory.status.state,pending:core.memory.status.pending,coverage:core.memory.status.warning?'degraded':'not-measured',error:core.memory.status.error,backups:core.memory.status.backups},
     speech:{enabled:core.settings.speechEnabled,state:speech.state,backend:speech.backend,problem:speech.error?'speech':null},
@@ -20,6 +24,7 @@ export function healthReport(core:Core) {
     permissions:{paused:core.settings.paused,activePowerSessions:core.power.snapshot().filter(p=>p.state==='active').length},
     // M16: aggregate durations only, and only while the user measures them.
     responsiveness:core.spans.summary(),
+    previousShutdown,
     privacy:'Excludes conversation text, drafts, project paths, saved commands, credentials, device identities and raw provider errors.'};
 }
 export class Diagnostics {

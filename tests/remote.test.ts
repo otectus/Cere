@@ -464,6 +464,39 @@ test('a transient bind failure retries without poisoning gateway lifecycle',asyn
   await connect(t,f);
 });
 
+// The CI failure's order (Core closed while a gateway still has a connected phone): the phone's late
+// close must not reach the closed store. Before the fence this threw "database is not open" from the
+// WebSocket close callback.
+test('a phone that disconnects after Core closed does not reach the closed store',async t=>{
+  const f=await fixture(t),client=await connect(t,f);
+  await f.core.close();
+  const closed=new Promise(r=>client.ws.once('close',r));client.ws.terminate();await closed;
+  await new Promise(r=>setTimeout(r,200)); // the server side sees the close a little later
+  assert.equal(f.core.closed,true);
+});
+
+test('gateway close is idempotent, refuses new frames and lets running ones finish before Core closes',async t=>{
+  const f=await fixture(t),client=await connect(t,f);
+  let release!:()=>void;const held=new Promise<void>(r=>release=r);
+  const dispatch=f.gateway.router.dispatch.bind(f.gateway.router);
+  f.gateway.router.dispatch=(async(device:any,method:string,params:any,commandId?:string)=>{if(method==='projects.list'){await held;return [];}return dispatch(device,method,params,commandId);}) as any;
+  client.send({v:1,type:'request',id:randomUUID(),method:'projects.list',params:{}});
+  for(let n=0;n<100&&!f.gateway.work.size;n++)await new Promise(r=>setTimeout(r,10));
+  assert.equal(f.gateway.work.size,1,'the frame is running');
+  const first=f.gateway.close(),second=f.gateway.close();
+  assert.equal(first,second,'every caller awaits the same close');
+  let done=false;void first.then(()=>{done=true;});
+  await new Promise(r=>setTimeout(r,150));
+  assert.equal(done,false,'close waits for the running frame');
+  await assert.rejects(f.gateway.frame({device:f.device} as any,{}),/shutting down/,'a new frame is refused');
+  release();await first;
+  assert.equal(f.gateway.work.size,0);assert.equal(f.gateway.unsettled,0);
+  // A frame that never finishes is counted, not awaited forever.
+  const g=new MobileGateway(f.core),drain=MobileGateway.closeDrainMs;MobileGateway.closeDrainMs=100;f.own(()=>{MobileGateway.closeDrainMs=drain;});
+  void g.track(new Promise(()=>{}));
+  await g.close();assert.equal(g.unsettled,1);
+});
+
 test('trusted replacement is desktop-selected, retains scopes and ownership, and still requires exact action signatures',async t=>{
   const f=await fixture(t),oldClient=await connect(t,f);
   assert.equal(oldClient.welcome.actionAuthentication,'biometric');

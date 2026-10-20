@@ -74,15 +74,29 @@ for (const event of ['state','message','notice','ui']) core.on(event, params => 
 server.on('error', error => { console.error(error.message); process.exitCode=1; void core.close(); });
 server.listen(path, async () => { await chmod(path,0o600); await writeFile(join(paths().runtime,'broker.pid'),String(process.pid),{mode:0o600}); void core.detect(); });
 let closing = false;
+/**
+ * Bounded, ordered shutdown: no new local or phone change starts; the gateway refuses frames and lets
+ * the ones running finish; then Core stops providers, workers, memory and speech and closes the store
+ * last. A deadline or unfinished gateway work is recorded in last-shutdown.json, which Health shows
+ * after the next start: termination that was not confirmed is never reported as clean.
+ */
 async function closeOwnedWork(){
   let deadline:NodeJS.Timeout|undefined;
+  const problems:string[]=[];
+  core.refuseMutations();
   try{
     await Promise.race([
-      Promise.all([mobile.close(),core.close()]),
+      (async()=>{
+        await mobile.close();
+        if(mobile.unsettled)problems.push(`${mobile.unsettled} phone operation${mobile.unsettled===1?' was':'s were'} still running; ${mobile.unsettled===1?'its':'their'} outcome was not confirmed.`);
+        await core.close();
+      })(),
       new Promise((_,reject)=>{deadline=setTimeout(()=>reject(new Error('Shutdown deadline reached; memory/provider termination was not confirmed.')),10000);})
     ]);
-  }catch(error){console.error(String(error));}
+  }catch(error){problems.push(error instanceof Error?error.message:String(error));}
   finally{if(deadline)clearTimeout(deadline);}
+  for(const problem of problems)console.error(problem);
+  await writeFile(join(paths().state,'last-shutdown.json'),JSON.stringify({at:Date.now(),confirmed:!problems.length,problems}),{mode:0o600}).catch(()=>{});
 }
 async function shutdown() {
   if (closing) return; closing=true;
