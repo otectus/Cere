@@ -1,4 +1,4 @@
-import { DatabaseSync, backup } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID, createHash } from "node:crypto";
 import {
   mkdirSync,
@@ -3807,7 +3807,9 @@ export class Canonical {
     mkdirSync(staging, { recursive: true, mode: 0o700 });
     const source = new DatabaseSync(input, { readOnly: true });
     try {
-      await backup(source, join(staging, "memory.sqlite"));
+      // Synchronous, like backup(): an asynchronous SQLite backup can leave this worker's promise
+      // undelivered until an unrelated wakeup (seen as a 30-second stall under load).
+      source.prepare("VACUUM INTO ?").run(join(staging, "memory.sqlite"));
     } finally {
       source.close();
     }

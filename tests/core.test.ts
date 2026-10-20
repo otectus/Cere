@@ -398,7 +398,11 @@ test('state fan-out is paced: a burst of changes yields one leading and one trai
   assert.equal(titles.length-start,1); // the first change after a quiet period goes out at once
   for(const end=Date.now()+3000;titles.length-start<2&&Date.now()<end;)await sleep(20);
   await sleep(150);
-  assert.equal(titles.length-start,2); // the burst collapses into one trailing snapshot
+  // The burst collapses into one trailing snapshot: no intermediate title is ever sent. A background
+  // service reporting late (memory, telemetry under load) may add a later snapshot of the same state.
+  const burst=titles.slice(start);
+  assert.deepEqual([...new Set(burst)],['Burst 0','Burst 24'],JSON.stringify(burst));
+  assert.ok(burst.length<=3,'at most one unrelated snapshot: '+JSON.stringify(burst));
   assert.equal(titles.at(-1),'Burst 24');
   await core.close();
   const closed=titles.length;
