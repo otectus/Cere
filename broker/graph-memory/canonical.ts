@@ -65,6 +65,8 @@ export class Canonical {
   /** Where copies taken before a migration go; only the serving store passes one. */
   backups?: string;
   static freeBytes = (directory: string) => { const fs = statfsSync(directory); return fs.bavail * fs.bsize; };
+  /** Writes the pre-migration copy; tests replace it to fail the write the way a full or broken disk does. */
+  static copyStore = (db: DatabaseSync, path: string) => { db.prepare("VACUUM INTO ?").run(path); };
   static migrationBackupLimit = { keep: 2, days: 14 };
   constructor(directory: string, options: { backups?: string } = {}) {
     this.directory = directory;
@@ -244,7 +246,7 @@ export class Canonical {
       for (let n = 2; existsSync(join(directory, name + ".sqlite")); n++) name = `before-migration-${from}-to-${to}-${date}-${n}`;
       partial = join(directory, `.${name}.partial`);
       rmSync(partial, { force: true });
-      this.db.prepare("VACUUM INTO ?").run(partial);
+      Canonical.copyStore(this.db, partial);
       chmodSync(partial, 0o600);
       const file = openSync(partial, "r+");
       try { fsyncSync(file); } finally { closeSync(file); }
@@ -282,7 +284,8 @@ export class Canonical {
       const folder = openSync(directory, "r");
       try { fsyncSync(folder); } finally { closeSync(folder); }
     } catch (e: any) {
-      if (partial) rmSync(partial, { force: true });
+      // A cleanup failure must not replace the reason the backup failed.
+      if (partial) try { rmSync(partial, { force: true }); } catch {}
       fail("MIGRATION_BACKUP_FAILED", `Memory needs a schema update (${from} to ${to}) and was left unchanged: ${e?.message || e}. Make room or fix ${directory}, then restart Cere.`);
     }
     this.pruneMigrationBackups(directory);

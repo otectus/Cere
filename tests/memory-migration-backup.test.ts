@@ -60,11 +60,52 @@ test('S4 an existing store is copied and checked before it migrates; new and cur
   finally { rmSync(fresh, { recursive: true, force: true }); }
 });
 
-test('S4 without a writable backup directory or enough room, the store is left unmigrated with the reason', t => {
-  const { root, directory } = storeAtFour(t);
-  const locked = join(root, 'locked'); mkdirSync(locked); chmodSync(locked, 0o500);
-  assert.throws(() => new Canonical(directory, { backups: join(locked, 'memory-backups') }), (error: any) => error.code === 'MIGRATION_BACKUP_FAILED' && /schema update \(4 to 5\) and was left unchanged/.test(error.message));
+/** Every row of every table, read without changing the store: a failed migration must leave this identical. */
+const contents = (directory: string) => {
+  const db = new DatabaseSync(join(directory, 'memory.sqlite'), { readOnly: true });
+  try {
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as any[]).map(row => row.name);
+    return Object.fromEntries(tables.map(name => [name, db.prepare(`SELECT * FROM "${name}"`).all().map(row => JSON.stringify(row)).sort()]));
+  } finally { db.close(); }
+};
+const refusedMigration = (pattern: RegExp) => (error: any) => error.code === 'MIGRATION_BACKUP_FAILED' && /schema update \(4 to 5\) and was left unchanged/.test(error.message) && pattern.test(error.message);
+const runningAsRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
+// Root bypasses directory permission bits, so this fixture only proves anything for an ordinary user;
+// CI runs the suite as one. The failures below go through the filesystem for any user.
+test('S4 without a writable backup directory, the store is left unmigrated with the reason', { skip: runningAsRoot ? 'needs an unprivileged user: root ignores the read-only directory mode' : false }, t => {
+  const { root: state, directory } = storeAtFour(t);
+  const before = contents(directory);
+  const locked = join(state, 'locked'); mkdirSync(locked); chmodSync(locked, 0o500);
+  assert.throws(() => new Canonical(directory, { backups: join(locked, 'memory-backups') }), refusedMigration(/EACCES|permission denied/i));
   assert.deepEqual(version(directory), [4, false]);
+  assert.deepEqual(contents(directory), before, 'the refused migration changed no data');
+});
+
+test('S4 a backup directory that cannot be created, a disk that fills mid-copy, or a copy that is not a database leaves the store unchanged', t => {
+  const { root: state, directory } = storeAtFour(t);
+  const before = contents(directory);
+  // A path below a regular file fails for every user, root included.
+  const file = join(state, 'not-a-directory'); writeFileSync(file, 'x');
+  assert.throws(() => new Canonical(directory, { backups: join(file, 'memory-backups') }), refusedMigration(/ENOTDIR|not a directory/i));
+  assert.deepEqual(version(directory), [4, false]);
+  const backups = join(state, 'memory-backups'), copy = Canonical.copyStore;
+  t.after(() => { Canonical.copyStore = copy; });
+  Canonical.copyStore = (_db, path) => { writeFileSync(path, 'half a copy'); throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }); };
+  assert.throws(() => new Canonical(directory, { backups }), refusedMigration(/ENOSPC/));
+  assert.deepEqual(backupFiles(backups), [], 'the partial copy is removed');
+  Canonical.copyStore = (_db, path) => { writeFileSync(path, 'x'.repeat(4096)); };
+  assert.throws(() => new Canonical(directory, { backups }), refusedMigration(/not a database|integrity|malformed/i));
+  assert.deepEqual(backupFiles(backups), [], 'a copy that fails its check is removed');
+  assert.deepEqual(version(directory), [4, false]);
+  assert.deepEqual(contents(directory), before, 'no failed attempt changed the store');
+  Canonical.copyStore = copy;
+  new Canonical(directory, { backups }).close();
+  assert.deepEqual(version(directory), [5, true], 'once the copy can be written, the next open migrates');
+});
+
+test('S4 without enough room for the copy, the store is left unmigrated with the reason', t => {
+  const { root, directory } = storeAtFour(t);
   const free = Canonical.freeBytes;
   Canonical.freeBytes = () => 1024;
   try { assert.throws(() => new Canonical(directory, { backups: join(root, 'memory-backups') }), /needs .* MiB free and 0\.0 MiB is available/); }

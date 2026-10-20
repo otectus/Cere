@@ -30,8 +30,13 @@ async function port() {const server=net.createServer();await new Promise<void>(r
 async function fixture(t:any) {
   const directory=await mkdtemp(join(tmpdir(),'cere-mobile-test-'));let sends=0;const hooks=new Map<string,Hooks>();
   const core=new Core(new Store(directory),(session,h)=>{hooks.set(session.id,h);return {async send(_text,_images,options){sends++;h.policy?.(true);options?.beforeAccept?.();options?.onDispatched?.();options?.onAccepted?.();},async interrupt(){h.event({type:'interrupted'});},async close(){}};});
-  const gateway=new MobileGateway(core);
-  t.after(async()=>{await gateway.close();await core.close();await rm(directory,{recursive:true,force:true});});
+  // One cleanup owner, released in reverse order: client sockets, then every gateway (a replacement
+  // included), then Core and its store, then the directory. No gateway callback can outlive the store.
+  const resources:(()=>unknown)[]=[];
+  const own=(release:()=>unknown)=>{resources.push(release);};
+  t.after(async()=>{for(const release of resources.reverse())await release();});
+  own(()=>rm(directory,{recursive:true,force:true}));own(()=>core.close());
+  const gateway=new MobileGateway(core);own(()=>gateway.close());
   await gateway.start();assert.equal(gateway.servers.length,0);
   const pairing:any=await gateway.local('remote.preparePair',{addresses:['127.0.0.1'],name:'Test desktop',port:await port()});
   assert.equal(gateway.servers.length,0);assert.ok(pairing.uri.length<=2000);
@@ -43,7 +48,7 @@ async function fixture(t:any) {
   assert.equal(review.sas.split(' ').length,6);
   await gateway.local('remote.confirmPair',{response,sas:review.sas,confirmed:true,projectPaths:[directory],caps:['chat.read','chat.write','providers.execute','approvals.answer','approvals.provider','desktop.control','settings.write'],categories:['audio','files','scripts'],scriptIds:[]});
   const device=gateway.registry.live(deviceId)!;
-  return {directory,core,gateway,offer,connection,action,device,hooks,sends:()=>sends};
+  return {directory,core,gateway,offer,connection,action,device,hooks,sends:()=>sends,own};
 }
 class Client {
   ws:WebSocket;queue:any[]=[];waiters:((v:any)=>void)[]=[];welcome:any;events:any[]=[];binary:Buffer[]=[];
@@ -59,7 +64,7 @@ class Client {
 }
 async function connect(t:any,f:Awaited<ReturnType<typeof fixture>>) {
   const ws=new WebSocket(f.offer.endpoints[0],'cere.mobile.v1',{ca:f.gateway.identity.material().cert});
-  const client=new Client(ws);t.after(()=>ws.terminate());await new Promise<void>((resolve,reject)=>{ws.once('open',resolve);ws.once('error',reject);});
+  const client=new Client(ws);f.own(()=>ws.terminate());await new Promise<void>((resolve,reject)=>{ws.once('open',resolve);ws.once('error',reject);});
   const hello={v:1,type:'hello',protocolMin:0,protocolMax:0,desktopId:f.offer.desktopId,deviceId:f.device.id,keyVersion:1,clientNonce:randomBytes(32).toString('base64url'),appVersion:'test'};
   client.send(hello);const {v,type,...challenge}=await client.next();
   const transcript={domain:'cere.mobile.auth.v1',helloDigest:digest(hello),challenge,desktopId:f.offer.desktopId,deviceId:f.device.id,keyVersion:1,epoch:challenge.epoch};
@@ -482,7 +487,7 @@ test('trusted replacement is desktop-selected, retains scopes and ownership, and
   assert.equal(f.core.store.session(session.id).remote?.deviceId,f.device.id);
   assert.throws(()=>f.gateway.router.current(committed),/recovering/);
   await f.gateway.close();
-  f.gateway=new MobileGateway(f.core);t.after(()=>f.gateway.close());
+  const replacementGateway=new MobileGateway(f.core);f.gateway=replacementGateway;f.own(()=>replacementGateway.close());
   await f.gateway.start();
   assert.equal(f.gateway.registry.live(committed.id)?.replacementPending,false);
   assert.equal(f.gateway.registry.live(f.device.id),undefined);
