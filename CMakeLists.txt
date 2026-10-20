@@ -26,6 +26,13 @@ add_custom_command(
   COMMENT "Preparing Cere application icons"
   VERBATIM)
 add_custom_target(cere-icons ALL DEPENDS ${CERE_ICON_OUTPUTS})
+# The build's identity (package version, source commit, dirty), reported by the broker in
+# diagnostics and in the mobile welcome. Rewritten only when it changes.
+add_custom_target(cere-build-info ALL
+  COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/build-info.mjs ${CMAKE_CURRENT_BINARY_DIR}/build-info.json
+  BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/build-info.json
+  COMMENT "Recording the build identity"
+  VERBATIM)
 add_dependencies(cere cere-icons)
 find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
 find_path(NODE_INCLUDE_DIR node_api.h PATH_SUFFIXES node REQUIRED)
@@ -117,7 +124,7 @@ install(DIRECTORY shell DESTINATION ${CMAKE_INSTALL_DATADIR}/cere)
 install(TARGETS cere-report RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(PROGRAMS tools/cere-run tools/cere-telemetry-hooks DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/runtime/node_modules DESTINATION ${CMAKE_INSTALL_DATADIR}/cere)
-install(FILES package.json package-lock.json DESTINATION ${CMAKE_INSTALL_DATADIR}/cere)
+install(FILES package.json package-lock.json ${CMAKE_CURRENT_BINARY_DIR}/build-info.json DESTINATION ${CMAKE_INSTALL_DATADIR}/cere)
 install(FILES packaging/cere.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 foreach(CERE_ICON_SIZE IN LISTS CERE_ICON_SIZES)
   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/icons/hicolor/${CERE_ICON_SIZE}x${CERE_ICON_SIZE}/apps/cere.png

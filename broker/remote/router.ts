@@ -9,23 +9,31 @@ import type { RemoteExecution } from '../execution.ts';
 import { categoryEnabled } from '../permissions.ts';
 import { actionDefinitions, validateAction, applications, windows, audioStatus, mediaStatus, desktopAction } from '../desktop.ts';
 import { ollamaHost, ollamaModels } from '../ollama.ts';
+import { isApiProvider, providerTraits, type ProviderId } from '../provider-catalog.ts';
+import { endpointOrigin } from '../compatible-endpoint.ts';
 import { digest } from './crypto.ts';
 import type { Device, Project } from './store.ts';
 import { RemoteStore } from './store.ts';
 import { MediaStore } from './media.ts';
 import { readFile } from 'node:fs/promises';
 import { bytesDigest } from './crypto.ts';
-import { mobilePage, mobilePart } from './transcript.ts';
+import { mobileMessage, mobilePage, mobilePart } from './transcript.ts';
 import { Parity } from './parity.ts';
+import { Captures } from './captures.ts';
+import { dependencyReport } from '../dependencies.ts';
+import { portraitSheet } from './portrait.ts';
+/** The desktop category each external program serves, for the phone's desktop status. */
+const dependencyCategory:Record<string,string>={grim:'capture',satty:'capture',wpctl:'audio',busctl:'media','gtk-launch':'apps','xdg-open':'files',hyprctl:'windows'};
 
 export class Router {
   core:Core;registry:RemoteStore;revoke:(id:string)=>Promise<void>;
   actions=new Map<string,{deviceId:string;controller:AbortController;check:()=>void}>();
   media:MediaStore;
   parity:Parity;
+  captures:Captures;
   scopeReduced?:(id:string)=>void;
-  constructor(core:Core,registry:RemoteStore,revoke:(id:string)=>Promise<void>) {this.core=core;this.registry=registry;this.revoke=revoke;this.media=new MediaStore(this);this.parity=new Parity(this);}
-  abortActions(deviceId?:string) {for(const action of this.actions.values())if(!deviceId||action.deviceId===deviceId)action.controller.abort(remoteError('AUTH_REVOKED','Remote action authority revoked.'));}
+  constructor(core:Core,registry:RemoteStore,revoke:(id:string)=>Promise<void>) {this.core=core;this.registry=registry;this.revoke=revoke;this.media=new MediaStore(this);this.parity=new Parity(this);this.captures=new Captures(this);}
+  abortActions(deviceId?:string) {for(const action of this.actions.values())if(!deviceId||action.deviceId===deviceId)action.controller.abort(remoteError('AUTH_REVOKED','Remote action authority revoked.'));void this.captures.abort(deviceId);}
   recheckActions() {for(const action of this.actions.values())try{action.check();}catch(error){action.controller.abort(error);}}
   current(device:Device) {
     const current=this.registry.live(device.id);
@@ -37,8 +45,23 @@ export class Router {
   }
   require(device:Device,cap:string) {this.current(device);if(!device.caps.includes(cap))throw remoteError('SCOPE_DENIED','This device is not granted '+cap);}
   ollamaAllowed(device:Device,host:string) {let wanted:string;try{wanted=ollamaHost(host);}catch{return false;}return (device.ollamaHosts||[]).some(value=>{try{return ollamaHost(value)===wanted;}catch{return false;}});}
+  /**
+   * W08: a hosted API provider runs from this phone only with the providers.api grant naming it, a
+   * key configured on the desktop, and (compatible) the same endpoint origin as when it was granted.
+   */
+  apiAccess(device:Device,id:string):{remoteExecution:boolean;remoteUnavailableReason?:string} {
+    if(!device.caps.includes('providers.api'))return {remoteExecution:false,remoteUnavailableReason:'Hosted API use is not granted to this phone. It may be billed; grant it in the desktop’s Cere Mobile settings.'};
+    if(!(device.apiProviders||[]).includes(id))return {remoteExecution:false,remoteUnavailableReason:'This API provider is not granted to this phone. Update its access on the desktop.'};
+    if(id==='compatible') {
+      const endpoint=this.core.settings.compatible;
+      if(!endpoint?.baseUrl||endpointOrigin(endpoint.baseUrl)!==device.compatibleEndpoint)return {remoteExecution:false,remoteUnavailableReason:'The desktop’s compatible endpoint changed after it was granted. Grant the new endpoint on the desktop.'};
+      if(endpoint.requiresKey&&!this.core.apiAccess('compatible').key())return {remoteExecution:false,remoteUnavailableReason:'The compatible endpoint has no key on the desktop.'};
+    } else if(!this.core.credentials.key(id as any))return {remoteExecution:false,remoteUnavailableReason:'This API provider has no key on the desktop. Add it in Settings → Connections.'};
+    return {remoteExecution:true};
+  }
   providerAccess(device:Device,id:string,p:any) {
-    if(!['ollama','codex','claude'].includes(id))return {remoteExecution:false,remoteUnavailableReason:'This provider is currently available on the desktop only.'};
+    if(isApiProvider(id))return this.apiAccess(device,id);
+    if(!['ollama','codex','claude'].includes(id))return {remoteExecution:false,remoteUnavailableReason:providerTraits[id as ProviderId]?.remoteNote||'This provider is currently available on the desktop only.'};
     if(id==='ollama'&&!this.ollamaAllowed(device,this.core.settings.ollama.host))return {remoteExecution:false,remoteUnavailableReason:'This device is not granted the desktop Ollama server. Update device access on the desktop.'};
     if(id!=='ollama'&&!device.caps.includes('providers.execute'))return {remoteExecution:false,remoteUnavailableReason:'Native provider execution is not granted to this device.'};
     if(id==='claude'&&p.available!==true)return {remoteExecution:false,remoteUnavailableReason:'Claude Code is not available on the desktop.'};
@@ -48,26 +71,45 @@ export class Router {
   }
   project(device:Device,id:string):Project {this.current(device);const p=device.projects.find(p=>p.id===id);if(!p)throw remoteError('SCOPE_DENIED','Project is not granted to this device.');return p;}
   inScope(device:Device,s:Session) {return !s.temporary&&device.projects.some(p=>p.path===s.cwd)&&(s.provider!=='ollama'||this.ollamaAllowed(device,s.ollama?.host||''));}
+  draftAttachments(s:Session) {return (s.draftAttachments||[]).map(a=>({id:a.id,name:a.name.slice(0,120),kind:a.kind,mime:a.mime,size:a.size,sha256:a.sha256}));}
   session(device:Device,id:string) {
     this.require(device,'chat.read');
     const s=this.core.store.sessions().find(s=>s.id===id&&this.inScope(device,s));
     if(!s)throw remoteError('SCOPE_DENIED','Session is not available to this device.');return s;
   }
-  execution(device:Device,project?:Project):RemoteExecution {return {deviceId:device.id,projectId:project?.id||'',scopeVersion:device.scopeVersion,expiresAt:device.expiresAt,caps:[...device.caps],categories:[...device.categories],scriptIds:[...device.scriptIds],memoryHosts:[...device.ollamaHosts||[]]};}
+  execution(device:Device,project?:Project):RemoteExecution {return {deviceId:device.id,projectId:project?.id||'',scopeVersion:device.scopeVersion,expiresAt:device.expiresAt,caps:[...device.caps],categories:[...device.categories],scriptIds:[...device.scriptIds],memoryHosts:[...device.ollamaHosts||[]],apiProviders:[...device.apiProviders||[]]};}
+  /** Whether this phone may start or continue turns of this provider now, and the authority it needs. */
+  executes(device:Device,provider:string) {
+    if(isApiProvider(provider))return this.apiAccess(device,provider).remoteExecution;
+    if(provider==='claude')return this.core.capabilities.claude?.remoteRestricted===true&&device.caps.includes('providers.execute');
+    return provider==='ollama'||(provider==='codex'&&device.caps.includes('providers.execute'));
+  }
   sessionDto(device:Device,s:Session,includeDraft=true) {
     const p=device.projects.find(p=>p.path===s.cwd)!;
-    const restrictedProvider=['ollama','codex','claude'].includes(s.provider)&&(s.provider!=='claude'||this.core.capabilities.claude?.remoteRestricted===true);
+    const restrictedProvider=this.executes(device,s.provider);
     const folder=s.folderId?this.core.store.folders().find(folder=>folder.id===s.folderId):undefined,draftAttachmentCount=s.draftAttachments?.length||0;
     return {id:s.id,provider:s.provider,title:s.title.slice(0,100),projectId:p.id,project:p.path,mode:s.mode,status:s.status,model:s.model,effort:s.effort||'',draft:includeDraft?s.draft:'',draftIncluded:includeDraft,draftRevision:s.draftRevision||'0',configRevision:s.configRevision||'0',revision:s.revision||'0',turnId:s.turnId,remoteRestricted:!!s.remote,
-      canSend:restrictedProvider&&device.caps.includes('chat.write')&&(s.provider==='ollama'||device.caps.includes('providers.execute'))&&s.mode==='managed'&&(!s.remote||s.remote.deviceId===device.id),
-      queuedCount:s.queuedCount||0,canQueue:s.provider==='ollama'&&!!s.remote,canConfigure:this.canConfigure(device,s),pinned:!!s.pinned,archived:!!s.archived,unread:!!s.unread,readAt:s.readAt??0,folderId:s.folderId??null,folderName:folder?.name??null,draftAttachmentCount,draftAttachmentHint:draftAttachmentCount?`${draftAttachmentCount} desktop draft attachment${draftAttachmentCount===1?' is':'s are'} waiting. Review or send from the desktop.`:null,
-      updated:s.updated,activity:s.activity,agents:(s.agents || []).map(a=>({...a,task:a.task?.slice(0,1000),detail:a.detail?.slice(0,2000)})),parentId:s.parentId,tools:s.ollama?.tools||false,ollamaHost:s.provider==='ollama'?s.ollama?.host:undefined,error:s.error?'The desktop provider reported an error. Review Activity.':undefined};
+      canSend:restrictedProvider&&device.caps.includes('chat.write')&&s.mode==='managed'&&(!s.remote||s.remote.deviceId===device.id),
+      queuedCount:s.queuedCount||0,canQueue:s.provider==='ollama'&&!!s.remote,canConfigure:this.canConfigure(device,s),pinned:!!s.pinned,archived:!!s.archived,unread:!!s.unread,readAt:s.readAt??0,folderId:s.folderId??null,folderName:folder?.name??null,draftAttachmentCount,draftAttachmentHint:draftAttachmentCount?`${draftAttachmentCount} desktop draft attachment${draftAttachmentCount===1?' is':'s are'} waiting. Review ${draftAttachmentCount===1?'it':'them'} before editing or sending.`:null,
+      // W10: the desktop draft's attachments (name, kind, size and digest, never a path) travel with its text.
+      draftAttachments:includeDraft?this.draftAttachments(s):[],
+      updated:s.updated,activity:s.activity,agents:this.agentsDto(s),parentId:s.parentId,tools:s.ollama?.tools||false,ollamaHost:s.provider==='ollama'?s.ollama?.host:undefined,error:s.error?'The desktop provider reported an error. Review Activity.':undefined};
+  }
+  /**
+   * Native thread IDs never leave the desktop. Agents and the approvals they raise carry the same
+   * opaque reference instead: stable for this desktop, so a phone can link a request to its agent.
+   */
+  agentRef(sessionId:string,nativeId:string) {return createHmac('sha256',this.core.store.get('remoteCursorKey','')).update('agent\0'+sessionId+'\0'+nativeId).digest('base64url').slice(0,22);}
+  /** A delegated Cere conversation appears as an agent under its own session ID, which the phone can open. */
+  agentId(sessionId:string,id:string) {try{this.core.store.session(id);return id;}catch{return this.agentRef(sessionId,id);}}
+  agentsDto(s:Session) {
+    return (s.agents||[]).slice(-32).map(a=>({id:this.agentId(s.id,a.id),name:String(a.name||'').slice(0,200),...(a.task?{task:a.task.slice(0,1000)}:{}),status:a.status,...(a.detail?{detail:a.detail.slice(0,2000)}:{}),...(a.parentId?{parentId:this.agentId(s.id,a.parentId)}:{}),updated:a.updated}));
   }
   canConfigure(device:Device,s:Session) {
-    const supported=s.provider==='ollama'?this.ollamaAllowed(device,s.ollama?.host||''):s.provider==='codex'||s.provider==='claude'&&this.core.capabilities.claude?.remoteRestricted===true;
+    const supported=s.provider==='ollama'?this.ollamaAllowed(device,s.ollama?.host||''):providerTraits[s.provider as ProviderId]?.configure===true&&this.executes(device,s.provider);
     const activeAgents=s.agents?.some(agent=>['starting','running','waiting'].includes(agent.status));
     const awaitingApproval=[...this.core.approvals.values()].some(approval=>approval.value.sessionId===s.id);
-    return supported&&device.caps.includes('chat.write')&&(s.provider==='ollama'||device.caps.includes('providers.execute')&&!this.core.settings.paused)&&s.mode==='managed'&&!busy(s)&&!activeAgents&&!awaitingApproval&&s.remote?.deviceId===device.id;
+    return supported&&device.caps.includes('chat.write')&&(s.provider==='ollama'||!this.core.settings.paused)&&s.mode==='managed'&&!busy(s)&&!activeAgents&&!awaitingApproval&&s.remote?.deviceId===device.id;
   }
   approval(device:Device,id:string) {
     this.require(device,'approvals.answer');const a=this.core.approvals.get(id)?.value;
@@ -83,7 +125,7 @@ export class Router {
       const parent=this.core.store.sessions().find(s=>s.id===owner.parentId&&this.inScope(device,s));
       if(!parent)break;parentSessionIds.push(parent.id);owner=parent;
     }
-    const base={id:a.id,sessionId:a.sessionId,parentSessionIds,kind:a.kind,title:a.title,detail:a.detail,...(a.url?{url:a.url}:{}),...(a.nativeThreadId?{nativeThreadId:a.nativeThreadId}:{}),choices:a.choices,questions:a.questions||[],fields:a.fields||{},time:a.time,revision:'1',turnId:session.turnId||''};
+    const base={id:a.id,sessionId:a.sessionId,parentSessionIds,kind:a.kind,title:a.title,detail:a.detail,...(a.url?{url:a.url}:{}),...(a.nativeThreadId?{agentId:this.agentId(a.sessionId,a.nativeThreadId)}:{}),choices:a.choices,questions:a.questions||[],fields:a.fields||{},time:a.time,revision:'1',turnId:session.turnId||''};
     const large=Buffer.byteLength(JSON.stringify(base))>64000;
     return {...base,...(large?{title:a.title.slice(0,200),detail:'This proposal is too large for mobile review. Review it on the desktop.',questions:[],fields:{}}:{}),digest:digest(base),canAnswer:canAnswer&&!large};
   }
@@ -94,7 +136,7 @@ export class Router {
     return createHmac('sha256',this.core.store.get('remoteCursorKey','')).update(payload).digest('base64url');
   }
   permissions(device:Device) { const s=ordinarySettings(this.core.settings,this.execution(device,device.projects[0]));return {profile:s.profile,paused:s.paused,categories:s.categories,caps:device.caps,revision:this.core.store.get('settingsRevision','0'),restricted:true,grants:s.grants.filter(g=>device.projects.some(p=>p.path===g.cwd))}; }
-  settings(device:Device) {this.current(device);const ollamaAllowed=this.ollamaAllowed(device,this.core.settings.ollama.host);return {personality:this.core.settings.personality,revision:this.core.store.get('settingsRevision','0'),webSearch:{enabled:this.core.settings.webSearch.enabled&&device.caps.includes('web'),provider:this.core.settings.webSearch.provider},defaultModel:ollamaAllowed?this.core.settings.ollama.model:'',ollamaHost:ollamaAllowed?ollamaHost(this.core.settings.ollama.host):''};}
+  settings(device:Device) {this.current(device);const ollamaAllowed=this.ollamaAllowed(device,this.core.settings.ollama.host);return {assistantName:this.core.settings.assistantName,personality:this.core.settings.personality,revision:this.core.store.get('settingsRevision','0'),showMemoryCitations:this.core.settings.showMemoryCitations===true,webSearch:{enabled:this.core.settings.webSearch.enabled&&device.caps.includes('web'),provider:this.core.settings.webSearch.provider},defaultModel:ollamaAllowed?this.core.settings.ollama.model:'',ollamaHost:ollamaAllowed?ollamaHost(this.core.settings.ollama.host):''};}
   messages(device:Device,id:string,before?:string,limit=100) {
     this.session(device,id);return mobilePage(this.core.store,id,before,limit);
   }
@@ -107,7 +149,7 @@ export class Router {
     const messagePage=selectedSession?this.messages(device,selectedSession.id):{items:[],before:null};
     const snapshot={cursor:this.cursor(device),cacheEpoch:this.core.store.get('transcriptEpoch',this.registry.epoch),sessionIds:sessions.map(s=>s.id),nextSessionOffset:sessions.length>50?50:null,sessions:initial.map(s=>this.sessionDto(device,s,s.id===selected)),projects:device.projects,
       approvals:device.caps.includes('approvals.answer')?[...this.core.approvals.values()].filter(a=>ids.has(a.value.sessionId)).map(a=>this.approvalDto(device,a.value)):[],
-      providers:Object.fromEntries(Object.entries(this.core.capabilities).map(([id,p]:[string,any])=>{const access=this.providerAccess(device,id,p),allowed=id==='ollama'?this.ollamaAllowed(device,this.core.settings.ollama.host):device.caps.includes('providers.execute');return [id,{available:p.available===true,models:allowed?p.models||[]:[],modelsStatus:allowed?p.modelsStatus||'unknown':'unavailable',...access}];})),
+      providers:Object.fromEntries(Object.entries(this.core.capabilities).map(([id,p]:[string,any])=>{const access=this.providerAccess(device,id,p),allowed=id==='ollama'?this.ollamaAllowed(device,this.core.settings.ollama.host):isApiProvider(id)?access.remoteExecution:device.caps.includes('providers.execute');return [id,{available:p.available===true,models:allowed?p.models||[]:[],modelsStatus:allowed?p.modelsStatus||'unknown':'unavailable',...access,traits:this.mobileTraits(id)}];})),
       permissions:this.permissions(device),settings:this.settings(device),messages:messagePage.items,messagesBefore:messagePage.before};
     // Reserve room for request/event envelopes. Extra history remains pageable.
     const tooLarge=()=>Buffer.byteLength(JSON.stringify(snapshot))>1024*1024-4096;
@@ -116,6 +158,21 @@ export class Router {
     if(tooLarge())snapshot.approvals=snapshot.approvals.map(a=>({...a,detail:'Review this pending request on the desktop.',questions:[],fields:{},canAnswer:false}));
     if(tooLarge())throw remoteError('LIMIT_EXCEEDED','The desktop snapshot exceeds this protocol version’s limit.');
     return snapshot;
+  }
+  /** What the phone needs to build controls for a provider: no secrets, endpoints or local paths. */
+  mobileTraits(id:string) {
+    const t=providerTraits[id as ProviderId];if(!t)return undefined;
+    const images=id==='compatible'?(this.core.settings.compatible?.images===true?'yes':'no'):t.images;
+    return {label:id==='compatible'?(this.core.settings.compatible?.label||t.label):t.label,kind:t.kind,modelRequired:t.modelRequired,effort:t.effort,images,tools:t.tools,webSearch:t.webSearch,queue:t.queue,configure:t.configure,billed:t.billed,remoteNote:t.remoteNote};
+  }
+  /**
+   * W09: memory belongs to a conversation's project on its memory server, whatever the provider (the
+   * desktop's own resolver, Memory.host). A phone reaches it only when that server is granted to it.
+   */
+  memorySession(device:Device,sessionId:string) {
+    const session=this.session(device,sessionId);
+    if(!this.ollamaAllowed(device,this.core.memory.host(session)))throw remoteError('SCOPE_DENIED','This phone is not granted the memory server this conversation uses. Update its access on the desktop.');
+    return session;
   }
   category(device:Device,projectId:string,category:string) {
     this.require(device,'desktop.control');const project=this.project(device,projectId),settings=ordinarySettings(this.core.settings,this.execution(device,project));
@@ -134,24 +191,34 @@ export class Router {
       case 'projects.list':this.require(device,'chat.read');return device.projects;
       case 'sessions.list': {
         this.require(device,'chat.read');const sessions=this.core.store.sessions().filter(s=>this.inScope(device,s)&&(!p.filter||`${s.title} ${s.provider} ${s.cwd}`.toLowerCase().includes(p.filter.toLowerCase())));
-        return {items:sessions.slice(p.offset,p.offset+50).map(s=>this.sessionDto(device,s,false)),nextOffset:sessions.length>p.offset+50?p.offset+50:null};
+        // withIds: every match in order, read once, so paging a list whose order changes meanwhile
+        // (search) cannot skip a conversation; the phone fetches the rest with sessions.batch.
+        return {items:sessions.slice(p.offset,p.offset+50).map(s=>this.sessionDto(device,s,false)),nextOffset:sessions.length>p.offset+50?p.offset+50:null,total:sessions.length,...(p.withIds?{ids:sessions.slice(0,5000).map(s=>s.id),idsTruncated:sessions.length>5000}:{})};
+      }
+      case 'sessions.batch': {
+        // Summaries by ID: what a snapshot's sessionIds or a search named. Missing IDs left this device's scope.
+        this.require(device,'chat.read');const wanted=new Set<string>(p.sessionIds),found=this.core.store.sessions().filter(s=>wanted.has(s.id)&&this.inScope(device,s));
+        const present=new Set(found.map(s=>s.id));
+        return {items:found.map(s=>this.sessionDto(device,s,false)),missing:p.sessionIds.filter((id:string)=>!present.has(id))};
       }
       case 'sessions.get':return this.sessionDto(device,this.session(device,p.sessionId));
       case 'sessions.messages':return this.messages(device,p.sessionId,p.before,p.limit);
       case 'sessions.messagePart':this.session(device,p.sessionId);return mobilePart(this.core.store,p);
       case 'sessions.create': {
         this.require(device,'chat.write');const project=this.project(device,p.projectId);
-        if(p.provider!=='ollama')this.require(device,'providers.execute');
+        if(isApiProvider(p.provider)){const access=this.apiAccess(device,p.provider);if(!access.remoteExecution)throw remoteError('SCOPE_DENIED',access.remoteUnavailableReason!);}
+        else if(p.provider!=='ollama')this.require(device,'providers.execute');
         if(p.provider==='claude'&&this.core.capabilities.claude?.remoteRestricted!==true)throw remoteError('PROVIDER_POLICY_UNSAFE','This Claude Code version cannot enforce Cere restricted mode. Update Claude Code on the desktop.');
         const host=p.provider==='ollama'?ollamaHost(this.core.settings.ollama.host):'';
         const check=()=>{this.current(device);if(p.provider==='ollama'&&(!this.ollamaAllowed(device,host)||ollamaHost(this.core.settings.ollama.host)!==host))throw remoteError('SCOPE_DENIED','The desktop Ollama server changed. Update device scopes locally.');};check();
-        const session=await this.core.create({...p,cwd:project.path,trusted:true,...(host?{ollamaHost:host}:{})},check,{remote:this.execution(device,project),effectivePolicy:['ollama','claude'].includes(p.provider)?'restricted':'unknown',...(p.handoffDraft!==undefined?{draft:p.handoffDraft}:{})});
+        // Cere runs Ollama and API conversations itself under the phone's restrictions; restricted Claude enforces them natively.
+        const session=await this.core.create({...p,cwd:project.path,trusted:true,...(host?{ollamaHost:host}:{})},()=>{check();if(isApiProvider(p.provider)&&!this.apiAccess(device,p.provider).remoteExecution)throw remoteError('AUTH_REVOKED','Hosted API access changed.');},{remote:this.execution(device,project),effectivePolicy:p.provider==='ollama'||p.provider==='claude'||isApiProvider(p.provider)?'restricted':'unknown',...(p.handoffDraft!==undefined?{draft:p.handoffDraft}:{})});
         return this.sessionDto(device,session);
       }
       case 'sessions.send': {
         this.require(device,'chat.write');const session=this.session(device,p.sessionId);
         if(!this.sessionDto(device,session).canSend)throw remoteError('PROVIDER_POLICY_UNSAFE','Stop and attach a supported restricted session before sending.');
-        if(p.attachments.length)this.require(device,'attachments.write');
+        if(p.attachments.length||p.desktopAttachments?.length)this.require(device,'attachments.write');
         const images=this.media.resolve(device,session.id,p.attachments);
         if(busy(session)&&!this.core.sendQueue.shouldQueue(session))throw remoteError('SESSION_BUSY','This session is busy.');
         if(device.caps.includes('web')===false&&p.webSearch)throw remoteError('SCOPE_DENIED','Web search is not granted.');
@@ -159,7 +226,7 @@ export class Router {
         const turnId=randomUUID(),project=device.projects.find(pr=>pr.path===session.cwd)!;
         let accepting=false;
         try {
-          const outcome=await this.core.sendRemote({...p,id:session.id,turnId,images},this.execution(device,project),()=>this.current(device),()=>{accepting=true;},()=>{this.media.submitted(device,p.attachments);},()=>{accepting=false;});
+          const outcome=await this.core.sendRemote({...p,id:session.id,turnId,images,...(p.desktopAttachments?{attachmentIds:p.desktopAttachments.map((a:any)=>a.id)}:{})},this.execution(device,project),()=>this.current(device),()=>{accepting=true;},()=>{this.media.submitted(device,p.attachments);},()=>{accepting=false;});
           const result={commandId,status:typeof outcome==='object'&&outcome.queued?'queued':'accepted',turnId};this.registry.finish(device.id,commandId!,{status:'completed',result});return result;
         } catch(error:any) {
           if(accepting||error?.code==='OUTCOME_UNKNOWN')throw remoteError('OUTCOME_UNKNOWN','The provider may have accepted this turn. Reconcile its status before sending again.');
@@ -183,11 +250,95 @@ export class Router {
       // Opening a conversation on the phone clears Unread exactly as opening it on the desktop does.
       case 'sessions.read': {const s=this.session(device,p.sessionId);if(!s.unread)return this.sessionDto(device,s,false);return this.sessionDto(device,await this.core.rpc('session.read',{id:s.id}),false);}
       case 'drafts.get': {const s=this.session(device,p.sessionId);return {text:s.draft,revision:s.draftRevision||'0'};}
-      case 'drafts.put': {this.require(device,'chat.write');const current=this.session(device,p.sessionId);if(current.draftAttachments?.length&&p.text!==current.draft)throw remoteError('REVISION_CONFLICT','This desktop draft has attachments. Edit it from the desktop or remove those attachments first.');const s=this.core.draft(p.sessionId,p.text,p.expectedRevision);return {text:s.draft,revision:s.draftRevision||'0'};}
+      case 'drafts.put': {
+        this.require(device,'chat.write');const current=this.session(device,p.sessionId),desktop=current.draftAttachments||[];
+        // A phone that reviewed the desktop draft's attachments names the ones it keeps; one that cannot
+        // show them may not change a draft that has them.
+        let kept:string[]|undefined;
+        if(p.desktopAttachmentIds!==undefined) {
+          if(!p.desktopAttachmentIds.every((id:string)=>desktop.some(a=>a.id===id)))throw remoteError('REVISION_CONFLICT','The desktop draft attachments changed. Review them again.');
+          kept=desktop.filter(a=>p.desktopAttachmentIds.includes(a.id)).map(a=>a.id);
+        } else if(desktop.length&&p.text!==current.draft)throw remoteError('REVISION_CONFLICT','This desktop draft has attachments. Edit it from the desktop or remove those attachments first.');
+        const s=this.core.draft(p.sessionId,p.text,p.expectedRevision,undefined,kept);return {text:s.draft,revision:s.draftRevision||'0',draftAttachments:this.draftAttachments(s)};
+      }
+      case 'drafts.attachmentPreview':return this.media.previewDraft(device,p);
+      case 'messages.bookmark': {
+        this.require(device,'chat.write');const s=this.session(device,p.sessionId);
+        await this.core.rpc('message.bookmark',{sessionId:s.id,messageId:p.messageId,bookmarked:p.bookmarked});
+        return mobileMessage(this.core.store,s.id,p.messageId);
+      }
+      // Which style a conversation's next turn uses and where it is set: everywhere, the project or this conversation.
+      case 'sessions.behavior': {
+        const s=this.session(device,p.sessionId),resolved=this.core.resolvedBehavior(s.id);
+        return {source:resolved.source,profile:resolved.profile?{label:resolved.profile.label.slice(0,80)}:null,posture:resolved.posture?{label:resolved.posture.label.slice(0,80),pinned:resolved.posture.pinned}:null,
+          standingInstructions:!!s.behavior?.instructions,warnings:resolved.warnings.slice(0,5).map(warning=>String(warning).slice(0,200))};
+      }
+      // A conversation's results (what the provider reported against what Cere observed) and the schedules made from it.
+      case 'workflows.status': {
+        const s=this.session(device,p.sessionId),results=await this.core.workflows.dispatch('results.list',{sessionId:s.id,limit:p.limit});this.current(device);
+        return {
+          results:results.map((r:any)=>({id:r.id,time:r.time,providerOutcome:r.providerOutcome,verification:r.verification,gate:r.gate,editedSinceCheck:r.editedSinceCheck===true,uncertainty:typeof r.uncertainty==='string'?r.uncertainty.slice(0,400):null,
+            checks:(r.checklist||[]).slice(0,20).map((c:any)=>({label:String(c.label).slice(0,120),status:c.status,...(Number.isInteger(c.exitCode)?{exitCode:c.exitCode}:{})}))})),
+          schedules:this.core.schedules.list().filter(schedule=>schedule.sourceSessionId===s.id).slice(0,20).map(schedule=>({id:schedule.id,label:schedule.label.slice(0,120),enabled:schedule.enabled,revision:schedule.revision,next:schedule.next??null,
+            lastRun:schedule.lastRun?{at:schedule.lastRun.at,outcome:schedule.lastRun.outcome,...(schedule.lastRun.reason?{reason:schedule.lastRun.reason.slice(0,200)}:{})}:null})),
+        };
+      }
+      case 'workflows.pauseSchedule': {
+        this.require(device,'chat.write');const s=this.session(device,p.sessionId);
+        const schedule=this.core.schedules.list().find(row=>row.id===p.scheduleId&&row.sourceSessionId===s.id);
+        if(!schedule)throw remoteError('SCOPE_DENIED','This schedule is not available to this phone.');
+        if(schedule.revision!==p.expectedRevision)throw remoteError('REVISION_CONFLICT','The schedule changed. Review it again.');
+        const paused=await this.core.rpc('schedules.setEnabled',{id:schedule.id,enabled:false});
+        return {id:schedule.id,enabled:false,revision:paused?.revision??schedule.revision};
+      }
+      // A phone that names the sheet it already has gets only the metadata back.
+      case 'desktop.portrait': {this.require(device,'chat.read');const sheet=await portraitSheet(this.core.settings.avatar);if(p.known!==sheet.sha256)return sheet;const {data,...rest}=sheet;return {...rest,unchanged:true};}
+      // F11: brings a linked conversation's terminal forward on the desktop, as the desktop's own button does.
+      case 'sessions.focusTerminal': {
+        const s=this.session(device,p.sessionId),project=device.projects.find(pr=>pr.path===s.cwd)!;
+        const link=this.core.store.get<any>('link:'+s.id,null),address=link?.address;
+        if(s.mode!=='linked'||typeof address!=='string'||!/^0x[0-9a-f]+$/i.test(address))throw remoteError('DESKTOP_UNAVAILABLE','The desktop cannot identify this conversation’s terminal window. Switch to it on the desktop.');
+        const check=()=>{this.category(device,project.id,'windows');};check();
+        if(!(await windows()).some((w:any)=>w.address===address))throw remoteError('DESKTOP_UNAVAILABLE','That terminal window is no longer open.');
+        check();return {message:await desktopAction('windows.focus',{address},this.category(device,project.id,'windows').settings,undefined,check)};
+      }
+      // F80: whether the desktop is working in this project now, from fresh observations only. No window
+      // title, command or path outside the project leaves the desktop.
+      case 'desktop.workspace': {
+        this.require(device,'desktop.control');const project=this.project(device,p.projectId);
+        const unavailable={state:'unavailable',freshness:'unknown',reason:'Workspace awareness is off or unavailable on the desktop.'};
+        if(!this.core.telemetry.status.enabled||!this.core.settings.memory.enabled||this.core.settings.paused)return unavailable;
+        const snapshot=await this.core.memory.service.call('workspace').catch(()=>null);this.current(device);
+        const current=snapshot?.current;if(!current)return unavailable;
+        const unknown=(Array.isArray(snapshot.unknown)?snapshot.unknown:[]).filter((item:unknown)=>typeof item==='string'&&/^[a-z_]{1,40}$/.test(item)).slice(0,8);
+        if(current.freshness!=='fresh'||typeof current.cwd!=='string')return {state:'unknown',freshness:String(current.freshness||'unknown'),unknown};
+        const rel=relative(project.path,current.cwd),inside=rel===''||!rel.startsWith('..')&&!isAbsolute(rel);
+        return inside?{state:'in-project',freshness:'fresh',relativePath:(rel||'.').slice(0,300),verifiedCheckout:!!current.checkout,unknown}:{state:'elsewhere',freshness:'fresh',unknown:[]};
+      }
+      // F77: memory health without endpoints, model names, error text or other projects' counts.
+      case 'memory.health': {
+        this.require(device,'memory.read');this.memorySession(device,p.sessionId);
+        const status=this.core.memory.summary(),health=this.core.settings.memory.enabled?await this.core.memory.service.call('health').catch(()=>null):null;this.current(device);
+        return {enabled:this.core.settings.memory.enabled&&!this.core.settings.paused,state:String(status.state).slice(0,40),
+          degraded:!!(status.error||status.warning||health?.extraction_error||health?.embedding_error||health?.maintenance_error),
+          extraction:!health?'unknown':health.extraction_error?'failing':'ok',embedding:!health?'unknown':health.embedding_error?'failing':'ok',
+          projections:(Array.isArray(health?.projections)?health.projections:[]).slice(0,8).map((x:any)=>({backend:String(x.backend).slice(0,40),status:String(x.status).slice(0,40)}))};
+      }
+      case 'messages.bookmarks': {
+        const scoped=new Map(this.core.store.sessions().filter(s=>this.inScope(device,s)&&!s.temporary&&(!p.sessionId||s.id===p.sessionId)).map(s=>[s.id,s]));
+        if(p.sessionId&&!scoped.size)throw remoteError('SCOPE_DENIED','Session is not available to this device.');
+        const items=[];
+        for(const bookmark of this.core.store.bookmarks()) {
+          if(items.length>=p.limit)break;const s=scoped.get(bookmark.sessionId);if(!s)continue;
+          try{items.push({...mobileMessage(this.core.store,s.id,bookmark.messageId),sessionTitle:s.title.slice(0,100)});}catch{} // A pin can outlive a removed message.
+        }
+        return {items};
+      }
       case 'providers.models': {
         this.require(device,'chat.read');const session=p.sessionId?this.session(device,p.sessionId):undefined;
         if(session&&session.provider!==p.provider)throw remoteError('INVALID_ARGUMENT','Choose this session’s provider.');
-        if(p.provider!=='ollama')this.require(device,'providers.execute');
+        if(isApiProvider(p.provider)){const access=this.apiAccess(device,p.provider);if(!access.remoteExecution)throw remoteError('SCOPE_DENIED',access.remoteUnavailableReason!);}
+        else if(p.provider!=='ollama')this.require(device,'providers.execute');
         const host=session?.ollama?.host||this.core.settings.ollama.host;
         if(p.provider==='ollama'&&!this.ollamaAllowed(device,host))throw remoteError('SCOPE_DENIED','This Ollama server is not granted to the device.');
         const currentOllama=p.provider==='ollama'&&ollamaHost(this.core.settings.ollama.host)===ollamaHost(host);
@@ -228,6 +379,8 @@ export class Router {
       }
       case 'commands.status':return this.registry.status(device.id,p.commandId);
       case 'activity.list':this.session(device,p.sessionId);return mobilePage(this.core.store,p.sessionId,undefined,p.limit,true).items;
+      // Activity in pages, newest first: `before` continues past the oldest item returned.
+      case 'activity.page':this.session(device,p.sessionId);return mobilePage(this.core.store,p.sessionId,p.before,p.limit,true);
       case 'permissions.get':return this.permissions(device);
       case 'permissions.pause':await this.core.updateSettings({paused:true});return true;
       case 'devices.self':return {actionAuthentication:device.actionAuthentication||'biometric',id:device.id,name:device.name,expiresAt:device.expiresAt,scopeVersion:device.scopeVersion,caps:device.caps,categories:device.categories,scriptIds:device.scriptIds,projects:device.projects,ollamaHosts:device.ollamaHosts};
@@ -254,7 +407,9 @@ export class Router {
       case 'desktop.status': {
         this.require(device,'desktop.control');const project=this.project(device,p.projectId),settings=ordinarySettings(this.core.settings,this.execution(device,project)),has=(c:string)=>categoryEnabled(settings,c);
         const result={audio:has('audio')?await audioStatus():{available:false},media:has('media')?await mediaStatus().catch(()=>({available:false})):{available:false},
-          timers:has('timers')?this.core.store.timers().filter(t=>t.remoteProjectId===project.id):[],scripts:has('scripts')?settings.scripts.map(s=>({...s,definitionDigest:digest(s)})):[],actions:actionDefinitions.filter(d=>has(d.category)&&d.category!=='capture')};
+          timers:has('timers')?this.core.store.timers().filter(t=>t.remoteProjectId===project.id):[],capture:has('capture'),
+          // Programs the granted categories rely on that are missing on the desktop (names only).
+          missing:dependencyReport().filter(d=>!d.available&&!!dependencyCategory[d.name]&&has(dependencyCategory[d.name])).map(d=>({name:d.name,feature:d.feature})),scripts:has('scripts')?settings.scripts.map(s=>({...s,definitionDigest:digest(s)})):[],actions:actionDefinitions.filter(d=>has(d.category)&&d.category!=='capture')};
         for(const category of settings.categories)if(has(category))this.category(device,p.projectId,category);return result;
       }
       case 'desktop.execute': {
@@ -264,7 +419,7 @@ export class Router {
         const check=()=>{controller.signal.throwIfAborted();const current=this.category(device,p.projectId,def.category).settings;if(p.action==='script.run'&&digest(current.scripts.find(s=>s.id===p.args.id))!==p.definitionDigest)throw remoteError('REVISION_CONFLICT','The saved script changed.');if(p.action==='files.open'){const path=realpathSync(p.args.path),rel=relative(project.path,path);if(isAbsolute(rel)||rel==='..'||rel.startsWith('../'))throw remoteError('SCOPE_DENIED','File is outside the approved project.');p.args.path=path;}};
         this.actions.set(executionId,{deviceId:device.id,controller,check});
         try {
-        if(def.category==='capture')throw remoteError('SCOPE_DENIED','Capture preview has not been enabled by this gateway.');
+        if(def.category==='capture')throw remoteError('SCOPE_DENIED','Start captures with captures.start; the desktop action needs someone at the desktop.');
         if(p.action==='files.open') {const path=await realpath(p.args.path),rel=relative(project.path,path);if(isAbsolute(rel)||rel==='..'||rel.startsWith('../'))throw remoteError('SCOPE_DENIED','File is outside this approved project.');p.args={path};}
         if(p.action==='script.run') {const script=settings.scripts.find(s=>s.id===p.args.id);if(!script||digest(script)!==p.definitionDigest)throw remoteError('REVISION_CONFLICT','Saved script changed or is not granted.');}
         if(p.action==='media.control'&&!p.args.player)throw remoteError('INVALID_ARGUMENT','Choose the exact media player shown during review.');
@@ -275,9 +430,15 @@ export class Router {
         const result=await desktopAction(p.action,p.args,current,controller.signal,check);if(def.readOnly)check();return result;
         } finally {this.actions.delete(executionId);}
       }
+      // W10: captures the phone starts; see Captures. Attaching binds the exact reviewed image.
+      case 'captures.start':return this.captures.start(device,p);
+      case 'captures.status':return this.captures.dto(this.captures.owned(device,p.captureId));
+      case 'captures.preview':return this.media.previewCapture(device,p.captureId);
+      case 'captures.discard':return this.captures.discard(device,p.captureId);
+      case 'captures.attach':return this.media.fromCapture(device,p);
       case 'timers.cancel': {this.category(device,p.projectId,'timers');if(!this.core.store.timers().some(t=>t.id===p.timerId&&t.remoteProjectId===p.projectId))throw remoteError('SCOPE_DENIED','Timer is not available in this project.');this.core.store.removeTimer(p.timerId);this.core.changed();return true;}
       case 'memory.list':case 'memory.retrieve':case 'memory.save': {
-        this.require(device,method==='memory.save'?'memory.write':'memory.read');const session=this.session(device,p.sessionId);if(session.provider!=='ollama')throw remoteError('SCOPE_DENIED','Memory requires an Ollama session.');
+        this.require(device,method==='memory.save'?'memory.write':'memory.read');const session=this.memorySession(device,p.sessionId);
         if([...this.actions.values()].some(a=>a.deviceId===device.id))throw remoteError('SESSION_BUSY','Wait for this device’s active operation.');
         const controller=new AbortController(),check=()=>{this.current(device);if(this.core.settings.paused||!this.core.settings.memory.enabled)throw remoteError('POLICY_PAUSED','Memory is disabled or paused.');controller.signal.throwIfAborted();};
         check();const executionId=randomUUID();this.actions.set(executionId,{deviceId:device.id,controller,check});

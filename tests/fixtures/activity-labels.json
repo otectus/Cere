@@ -1,0 +1,13 @@
+{
+  "note": "The activity line of a working conversation. tests/activity-labels.test.ts checks it against activityStatus() in qml/Chat.qml; the Android ActivityLabelsTest checks the phone's copy.",
+  "labels": {
+    "recalling": "Recalling memory…",
+    "thinking": "Thinking…",
+    "speaking": "Writing a response…",
+    "working": "Using tools…",
+    "delegating": "Delegating work…",
+    "waitingForAgents": "Waiting for subagents…",
+    "compacting": "Compacting context…",
+    "planning": "Planning…"
+  }
+}

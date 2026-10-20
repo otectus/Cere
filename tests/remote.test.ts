@@ -28,8 +28,8 @@ test('shared mobile canonical JSON, hash and P-256 signature fixtures conform',a
 });
 async function port() {const server=net.createServer();await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const p=(server.address() as net.AddressInfo).port;await new Promise<void>(r=>server.close(()=>r()));return p;}
 async function fixture(t:any) {
-  const directory=await mkdtemp(join(tmpdir(),'cere-mobile-test-'));let sends=0;const hooks=new Map<string,Hooks>();
-  const core=new Core(new Store(directory),(session,h)=>{hooks.set(session.id,h);return {async send(_text,_images,options){sends++;h.policy?.(true);options?.beforeAccept?.();options?.onDispatched?.();options?.onAccepted?.();},async interrupt(){h.event({type:'interrupted'});},async close(){}};});
+  const directory=await mkdtemp(join(tmpdir(),'cere-mobile-test-'));let sends=0,sent:{text:string;images:string[]}|undefined;const hooks=new Map<string,Hooks>();
+  const core=new Core(new Store(directory),(session,h)=>{hooks.set(session.id,h);return {async send(text,images,options){sends++;sent={text,images:images||[]};h.policy?.(true);options?.beforeAccept?.();options?.onDispatched?.();options?.onAccepted?.();},async interrupt(){h.event({type:'interrupted'});},async close(){}};});
   // One cleanup owner, released in reverse order: client sockets, then every gateway (a replacement
   // included), then Core and its store, then the directory. No gateway callback can outlive the store.
   const resources:(()=>unknown)[]=[];
@@ -48,7 +48,7 @@ async function fixture(t:any) {
   assert.equal(review.sas.split(' ').length,6);
   await gateway.local('remote.confirmPair',{response,sas:review.sas,confirmed:true,projectPaths:[directory],caps:['chat.read','chat.write','providers.execute','approvals.answer','approvals.provider','desktop.control','settings.write'],categories:['audio','files','scripts'],scriptIds:[]});
   const device=gateway.registry.live(deviceId)!;
-  return {directory,core,gateway,offer,connection,action,device,hooks,sends:()=>sends,own};
+  return {directory,core,gateway,offer,connection,action,device,hooks,sends:()=>sends,sent:()=>sent,own};
 }
 class Client {
   ws:WebSocket;queue:any[]=[];waiters:((v:any)=>void)[]=[];welcome:any;events:any[]=[];binary:Buffer[]=[];
@@ -462,6 +462,403 @@ test('a transient bind failure retries without poisoning gateway lifecycle',asyn
   } finally {await new Promise<void>(resolve=>occupied.close(()=>resolve()));}
   await f.gateway.start();assert.equal(f.gateway.servers.length,1);
   await connect(t,f);
+});
+
+// W10: a capture started from the phone is an accepted job; its image is immutable once ready and
+// reaches a conversation only when the phone attaches that exact image (by digest) and sends it.
+test('a phone-started capture is previewed, attached by its exact digest, sent, and cancelled or discarded cleanly',async t=>{
+  const f=await fixture(t);
+  const bin=await mkdtemp(join(tmpdir(),'cere-capture-bin-')),png=join(bin,'display.png');t.after(()=>rm(bin,{recursive:true,force:true}));
+  await sharp({create:{width:320,height:200,channels:3,background:{r:40,g:90,b:160}}}).png().toFile(png);
+  const script=(name:string,body:string)=>writeFile(join(bin,name),'#!/bin/sh\n'+body+'\n',{mode:0o755});
+  await script('hyprctl',`echo '[{"name":"FAKE-1","focused":true,"disabled":false}]'`);
+  await script('grim',`cp "${png}" "$3"`);
+  // Satty saves only when told to: closing it without saving cancels the capture.
+  await script('satty',`[ "$1" = --version ] && { echo satty 0.0.0; exit 0; }; [ -f "${bin}/save" ] && cp "$2" "$4"; exit 0`);
+  const path=process.env.PATH;process.env.PATH=bin+':'+path;t.after(()=>{process.env.PATH=path;});
+  await f.core.updateSettings({categories:['capture']});
+  const closed=new Promise(r=>f.gateway.peers.size?[...f.gateway.peers][0].socket.once('close',r):r(null));
+  await f.gateway.local('remote.updateDevice',{id:f.device.id,projectPaths:[f.directory],caps:[...f.device.caps,'capture.preview','attachments.write'],categories:['capture'],scriptIds:[]});
+  await closed;
+  const device=f.gateway.registry.live(f.device.id)!,scoped={...f,device},client=await connect(t,scoped),projectId=device.projects[0].id;
+  await client.request('sync.open',{}); // subscribed: events reach this phone
+  const status=async(id:string,wanted:string)=>{for(let n=0;n<200;n++){const value=(await client.request('captures.status',{captureId:id})).result;if(value.state===wanted)return value;await new Promise(r=>setTimeout(r,20));}throw new Error('capture did not reach '+wanted);};
+  const started=(await client.action('captures.start',{projectId,edit:false},scoped)).result;assert.equal(started.state,'capturing');
+  const ready=await status(started.captureId,'ready');assert.equal(ready.width,320);assert.match(ready.imageDigest,/^[A-Za-z0-9_-]{43}$/);
+  assert.ok(client.events.some((event:any)=>event.name==='capture.updated'&&event.data.captureId===started.captureId),'the phone hears of the capture');
+  const preview=(await client.request('captures.preview',{captureId:started.captureId})).result;assert.equal(preview.imageDigest,ready.imageDigest);
+  const part=await client.request('attachments.read',{readId:preview.readId,offset:0,length:preview.size});assert.equal(part.result.bytes,preview.size);
+  await new Promise(r=>setTimeout(r,20));assert.equal(client.binary.at(-1)!.subarray(24,26).toString('hex'),'ffd8','a JPEG preview arrives');
+  const session=(await client.action('sessions.create',{provider:'codex',projectId,tools:false},scoped)).result;
+  assert.equal((await client.action('captures.attach',{captureId:started.captureId,sessionId:session.id,imageDigest:'A'.repeat(43)},scoped)).error.code,'REVISION_CONFLICT','only the reviewed image can be attached');
+  const attached=(await client.action('captures.attach',{captureId:started.captureId,sessionId:session.id,imageDigest:ready.imageDigest},scoped)).result;
+  assert.equal(attached.status,'ready');assert.equal((await client.request('captures.status',{captureId:started.captureId})).result.state,'attached');
+  const sent=await client.action('sessions.send',{sessionId:session.id,text:'What is on this screen?',attachments:[attached.attachmentId],webSearch:false,expectedDraftRevision:session.draftRevision,expectedConfigRevision:session.configRevision},scoped);
+  assert.equal(sent.result?.status,'accepted',JSON.stringify(sent.error));
+  // Editing on the desktop: closing Satty without saving cancels; a ready capture can be discarded.
+  const editing=(await client.action('captures.start',{projectId,edit:true},scoped)).result;
+  assert.match((await status(editing.captureId,'cancelled')).message,/without saving/);
+  await writeFile(join(bin,'save'),'');
+  const edited=(await client.action('captures.start',{projectId,edit:true},scoped)).result;await status(edited.captureId,'ready');
+  assert.equal((await client.request('captures.discard',{captureId:edited.captureId},randomUUID())).result,true);
+  assert.equal((await client.request('captures.status',{captureId:edited.captureId})).error.code,'INVALID_ARGUMENT');
+  // Without the capture category the phone cannot start one.
+  await f.core.updateSettings({categories:[]});
+  assert.equal((await client.action('captures.start',{projectId,edit:false},scoped)).error.code,'CATEGORY_DISABLED');
+});
+
+test('the phone reviews a desktop draft\'s attachments, keeps or removes them explicitly, and sends them by digest',async t=>{
+  const f=await fixture(t);
+  const closed=new Promise(r=>f.gateway.peers.size?[...f.gateway.peers][0].socket.once('close',r):r(null));
+  await f.gateway.local('remote.updateDevice',{id:f.device.id,projectPaths:[f.directory],caps:[...f.device.caps,'capture.preview','attachments.write'],categories:[],scriptIds:[]});
+  await closed;
+  const device=f.gateway.registry.live(f.device.id)!,scoped={...f,device},client=await connect(t,scoped),projectId=device.projects[0].id;
+  const session=(await client.action('sessions.create',{provider:'codex',projectId,tools:false},scoped)).result;
+  // The desktop attaches an image and a text file to the draft.
+  const files=await mkdtemp(join(tmpdir(),'cere-draft-files-'));t.after(()=>rm(files,{recursive:true,force:true}));
+  await sharp({create:{width:64,height:48,channels:3,background:{r:200,g:30,b:30}}}).png().toFile(join(files,'chart.png'));
+  await writeFile(join(files,'notes.txt'),'Quarterly notes\n');
+  f.core.draft(session.id,'Desktop draft');
+  const image=await f.core.attachments.import(session.id,join(files,'chart.png')),notes=await f.core.attachments.import(session.id,join(files,'notes.txt'));
+  let dto=(await client.request('sessions.get',{sessionId:session.id})).result;
+  assert.deepEqual(dto.draftAttachments.map((a:any)=>[a.name,a.kind,a.sha256]),[['chart.png','image',image.sha256],['notes.txt','text',notes.sha256]]);
+  assert.ok(dto.draftAttachments.every((a:any)=>!('path' in a)),'no desktop path reaches the phone');
+  assert.ok(!(await client.request('sessions.list',{})).result.items.find((s:any)=>s.id===session.id).draftAttachments.length,'only the open conversation carries them');
+  // Review: the text file's opening, and a reduced copy of the image bound to the original's digest.
+  const text=(await client.request('drafts.attachmentPreview',{sessionId:session.id,attachmentId:notes.id})).result;
+  assert.deepEqual([text.kind,text.text,text.truncated],['text','Quarterly notes\n',false]);
+  const preview=(await client.request('drafts.attachmentPreview',{sessionId:session.id,attachmentId:image.id})).result;
+  assert.equal(preview.imageDigest,image.sha256);
+  assert.equal((await client.request('attachments.read',{readId:preview.readId,offset:0,length:preview.size})).result.bytes,preview.size);
+  await new Promise(r=>setTimeout(r,20));assert.equal(client.binary.at(-1)!.subarray(24,26).toString('hex'),'ffd8','a JPEG preview arrives');
+  // A phone that names the attachments it keeps may edit the text; they stay in the draft.
+  const kept=(await client.request('drafts.put',{sessionId:session.id,text:'Compare these',expectedRevision:dto.draftRevision,desktopAttachmentIds:[image.id,notes.id]},randomUUID())).result;
+  assert.deepEqual(kept.draftAttachments.map((a:any)=>a.id),[image.id,notes.id]);assert.equal(f.core.store.session(session.id).draft,'Compare these');
+  assert.equal((await client.request('drafts.put',{sessionId:session.id,text:'x',expectedRevision:kept.revision,desktopAttachmentIds:[randomUUID()]},randomUUID())).error.code,'REVISION_CONFLICT','an unknown attachment is refused');
+  // Removing one is explicit; its private copy goes once nothing refers to it.
+  const removed=(await client.request('drafts.put',{sessionId:session.id,text:'Compare these',expectedRevision:kept.revision,desktopAttachmentIds:[image.id]},randomUUID())).result;
+  assert.deepEqual(removed.draftAttachments.map((a:any)=>a.id),[image.id]);
+  await assert.rejects(stat(notes.path),/ENOENT/);
+  dto=(await client.request('sessions.get',{sessionId:session.id})).result;
+  const send=(desktopAttachments?:unknown)=>client.action('sessions.send',{sessionId:session.id,text:'Compare these',attachments:[],...(desktopAttachments?{desktopAttachments}:{}),webSearch:false,expectedDraftRevision:dto.draftRevision,expectedConfigRevision:dto.configRevision},scoped);
+  assert.equal((await send()).error.code,'REVISION_CONFLICT','an unreviewed draft attachment is never dropped or sent');
+  assert.equal((await send([{id:image.id,sha256:'0'.repeat(64)}])).error.code,'REVISION_CONFLICT','only the reviewed content is sent');
+  assert.equal(f.sends(),0);
+  const sent=await send([{id:image.id,sha256:image.sha256}]);
+  assert.equal(sent.result?.status,'accepted',JSON.stringify(sent.error));
+  assert.deepEqual(f.sent()!.images,[image.path],'the provider receives the exact desktop file');
+  const after=f.core.store.session(session.id);assert.deepEqual([after.draft,after.draftAttachments],['',[]]);
+  assert.ok(f.core.store.messages(session.id).some(m=>m.role==='user'&&m.text.startsWith('Compare these')&&m.text.includes('Attached files: chart.png')));
+});
+
+// W11: pinned replies are the desktop's bookmarks, shared both ways and limited to the phone's conversations.
+test('the phone pins and unpins replies the desktop shows as bookmarks, within its own conversations',async t=>{
+  const f=await fixture(t),client=await connect(t,f),projectId=f.device.projects[0].id;
+  const session=(await client.action('sessions.create',{provider:'codex',projectId,title:'Pins',tools:false},f)).result;
+  const elsewhere=await mkdtemp(join(tmpdir(),'cere-pins-outside-'));t.after(()=>rm(elsewhere,{recursive:true,force:true}));
+  const outside=await f.core.create({provider:'codex',cwd:elsewhere,trusted:true});
+  const reply={id:randomUUID(),sessionId:session.id,role:'assistant',kind:'text',text:'Use Ruff for formatting.',time:Date.now()} as any;
+  const hidden={id:randomUUID(),sessionId:outside.id,role:'assistant',kind:'text',text:'Outside reply',time:Date.now()} as any;
+  f.core.putMessage(reply);f.core.putMessage(hidden);
+  await f.core.rpc('message.bookmark',{sessionId:outside.id,messageId:hidden.id,bookmarked:true});
+  const pinned=(await client.request('messages.bookmark',{sessionId:session.id,messageId:reply.id,bookmarked:true},randomUUID())).result;
+  assert.equal(pinned.bookmarked,true);assert.ok(f.core.store.bookmarks().some(b=>b.messageId===reply.id),'the desktop shows it as a bookmark');
+  assert.equal((await client.request('sessions.messages',{sessionId:session.id,limit:10})).result.items.find((m:any)=>m.id===reply.id).bookmarked,true);
+  const listed=(await client.request('messages.bookmarks',{})).result.items;
+  assert.deepEqual(listed.map((m:any)=>[m.id,m.sessionTitle]),[[reply.id,'Pins']],'only pins in the phone\'s conversations are listed');
+  assert.equal((await client.request('messages.bookmarks',{sessionId:outside.id})).error.code,'SCOPE_DENIED');
+  assert.equal((await client.request('messages.bookmark',{sessionId:outside.id,messageId:hidden.id,bookmarked:false},randomUUID())).error.code,'SCOPE_DENIED');
+  assert.equal((await client.request('messages.bookmark',{sessionId:session.id,messageId:hidden.id,bookmarked:true},randomUUID())).error!==undefined,true,'a message of another conversation is refused');
+  const unpinned=(await client.request('messages.bookmark',{sessionId:session.id,messageId:reply.id,bookmarked:false},randomUUID())).result;
+  assert.equal(unpinned.bookmarked,undefined);assert.ok(!f.core.store.bookmarks().some(b=>b.messageId===reply.id));
+  assert.ok(f.core.store.bookmarks().some(b=>b.messageId===hidden.id),'the desktop\'s other pins are untouched');
+});
+
+// W11: the phone sees where a conversation's style is set, and its results and schedules, read-only;
+// a schedule can be paused from the phone, never enabled or changed.
+test('the phone reads a conversation\'s style source, results and schedules and can only pause a schedule',async t=>{
+  const f=await fixture(t),client=await connect(t,f),projectId=f.device.projects[0].id;
+  const session=(await client.action('sessions.create',{provider:'codex',projectId,tools:false},f)).result;
+  assert.equal((await client.request('sessions.behavior',{sessionId:session.id})).result.source,'global','without a style the personality applies everywhere');
+  const style=await f.core.rpc('presets.save',{label:'Reviewer',text:'Review carefully.',expectedRevision:'0'});
+  await f.core.rpc('session.behavior',{id:session.id,profileId:style.id});
+  const behavior=(await client.request('sessions.behavior',{sessionId:session.id})).result;
+  assert.deepEqual([behavior.source,behavior.profile?.label,behavior.standingInstructions],['session','Reviewer',false]);
+  const cwd=f.core.store.session(session.id).cwd,now=Date.now();
+  f.core.store.set('workflow:results',[{id:session.id+':turn',sessionId:session.id,cwd,time:now,providerOutcome:'completed',verification:'not-run',observed:[]}]);
+  const schedule=(id:string,sourceSessionId:string)=>({id,label:'Nightly check',enabled:true,revision:'3',created:now,recipeId:'recipe',recipeVersion:1,recipeRevision:'1',authorizationRevision:'1',inputs:{},sourceSessionId,promptDigest:'digest',envelope:{},when:{kind:'daily',time:'08:00'},timeZone:'UTC',next:now+3600000});
+  const elsewhere=await mkdtemp(join(tmpdir(),'cere-schedules-outside-'));t.after(()=>rm(elsewhere,{recursive:true,force:true}));
+  const outside=await f.core.create({provider:'codex',cwd:elsewhere,trusted:true});
+  f.core.store.set('workflow:schedules',[schedule('mine',session.id),schedule('theirs',outside.id)]);
+  const status=(await client.request('workflows.status',{sessionId:session.id})).result;
+  assert.deepEqual(status.results.map((r:any)=>[r.providerOutcome,r.verification,r.gate]),[['completed','not-run','none']],'the provider\'s report and Cere\'s own verification stay distinct');
+  assert.match(status.results[0].uncertainty,/verification/i);
+  assert.deepEqual(status.schedules.map((x:any)=>[x.id,x.enabled]),[['mine',true]],'only this conversation\'s schedules');
+  assert.ok(!JSON.stringify(status).includes(elsewhere),'nothing of the other project is shown');
+  assert.equal((await client.request('workflows.pauseSchedule',{sessionId:session.id,scheduleId:'theirs',expectedRevision:'3'},randomUUID())).error.code,'SCOPE_DENIED');
+  assert.equal((await client.request('workflows.pauseSchedule',{sessionId:session.id,scheduleId:'mine',expectedRevision:'2'},randomUUID())).error.code,'REVISION_CONFLICT');
+  const paused=(await client.request('workflows.pauseSchedule',{sessionId:session.id,scheduleId:'mine',expectedRevision:'3'},randomUUID())).result;
+  assert.deepEqual([paused.enabled,paused.revision],[false,'4']);
+  assert.deepEqual(f.core.schedules.list().map(x=>[x.id,x.enabled]),[['mine',false],['theirs',true]]);
+  assert.equal((await client.request('settings.get',{})).result.assistantName,f.core.settings.assistantName,'the phone uses the desktop\'s assistant name');
+});
+
+// W11: the plan's remaining phone promises: the static status portrait (F93), Open on desktop for a linked
+// terminal (F11), the scoped workspace card (F80) and sanitized memory health (F77).
+test('the phone gets the desktop portrait, opens a linked terminal, and reads scoped workspace and memory health',async t=>{
+  const f=await fixture(t);
+  await f.core.updateSettings({memory:{enabled:true},categories:['windows']});await f.core.memory.ready;
+  const bin=await mkdtemp(join(tmpdir(),'cere-terminal-bin-'));t.after(()=>rm(bin,{recursive:true,force:true}));
+  const log=join(bin,'calls.log');
+  await writeFile(join(bin,'hyprctl'),`#!/bin/sh\necho "$*" >> '${log}'\ncase "$*" in\n  "-j clients") [ -f '${bin}/gone' ] && echo '[]' || echo '[{"address":"0xabc","title":"kitty","class":"kitty","workspace":{"id":1}}]';;\n  eval*) echo 'unsupported';;\n  dispatch*) echo ok;;\nesac\n`,{mode:0o755});
+  const path=process.env.PATH;process.env.PATH=bin+':'+path;t.after(()=>{process.env.PATH=path;});
+  const closed=new Promise(r=>f.gateway.peers.size?[...f.gateway.peers][0].socket.once('close',r):r(null));
+  await f.gateway.local('remote.updateDevice',{id:f.device.id,projectPaths:[f.directory],caps:[...f.device.caps,'memory.read'],categories:['windows'],scriptIds:[]});
+  await closed;
+  const device=f.gateway.registry.live(f.device.id)!,scoped={...f,device},client=await connect(t,scoped),projectId=device.projects[0].id;
+  // The portrait: a reduced sheet of expression cells and the desktop's colors for it.
+  const portrait=(await client.request('desktop.portrait',{})).result;
+  assert.deepEqual([portrait.avatarId,portrait.mime,portrait.cell,portrait.columns,portrait.frames.thinking],[f.core.settings.avatar,'image/webp',96,4,2]);
+  const image=Buffer.from(portrait.data,'base64');assert.equal(image.subarray(8,12).toString('ascii'),'WEBP');assert.ok(image.length<200*1024);
+  assert.match(portrait.palette.portraitAccent,/^#[0-9a-f]{6}/i);
+  const again=(await client.request('desktop.portrait',{known:portrait.sha256})).result;
+  assert.deepEqual([again.unchanged,'data' in again,again.sha256],[true,false,portrait.sha256],'a phone holding the sheet is not sent it again');
+  // Open on desktop: a linked conversation's terminal window, focused through the windows category.
+  const session=(await client.action('sessions.create',{provider:'codex',projectId,tools:false},scoped)).result;
+  assert.equal((await client.action('sessions.focusTerminal',{sessionId:session.id},scoped)).error.code,'DESKTOP_UNAVAILABLE','a managed conversation has no terminal');
+  f.core.updateSession(session.id,{mode:'linked'});f.core.store.set('link:'+session.id,{address:'0xabc'});
+  const focused=await client.action('sessions.focusTerminal',{sessionId:session.id},scoped);
+  assert.equal(focused.result?.message,'Window focused',JSON.stringify(focused.error));
+  assert.match(await readFile(log,'utf8'),/dispatch focuswindow address:0xabc/);
+  await writeFile(join(bin,'gone'),'');
+  assert.equal((await client.action('sessions.focusTerminal',{sessionId:session.id},scoped)).error.code,'DESKTOP_UNAVAILABLE','a closed terminal is reported, not focused');
+  await f.core.updateSettings({categories:[]});
+  assert.equal((await client.action('sessions.focusTerminal',{sessionId:session.id},scoped)).error.code,'CATEGORY_DISABLED');
+  // The workspace card: off until workspace awareness runs; then only this project's state.
+  assert.equal((await client.request('desktop.workspace',{projectId})).result.state,'unavailable');
+  f.core.telemetry.status.enabled=true;
+  const call=f.core.memory.service.call.bind(f.core.memory.service);let workspace:any;
+  f.core.memory.service.call=(async(method:string,params?:any,signal?:AbortSignal)=>method==='workspace'?workspace:call(method,params,signal)) as any;
+  workspace={current:{freshness:'fresh',cwd:join(device.projects[0].path,'src'),checkout:{source:'repository'},window:{properties:{title:'secret window'}}},unknown:[]};
+  assert.deepEqual((await client.request('desktop.workspace',{projectId})).result,{state:'in-project',freshness:'fresh',relativePath:'src',verifiedCheckout:true,unknown:[]});
+  workspace={current:{freshness:'fresh',cwd:'/home/someone/elsewhere',window:{properties:{title:'secret window'}}},unknown:[]};
+  const elsewhere=(await client.request('desktop.workspace',{projectId})).result;
+  assert.deepEqual(elsewhere,{state:'elsewhere',freshness:'fresh',unknown:[]});assert.ok(!JSON.stringify(elsewhere).includes('elsewhere/'),'no outside path');
+  workspace={current:{freshness:'unknown',cwd:null},unknown:['focused_window','working_directory']};
+  assert.deepEqual((await client.request('desktop.workspace',{projectId})).result,{state:'unknown',freshness:'unknown',unknown:['focused_window','working_directory']});
+  // Memory health, without endpoints or model names.
+  f.core.memory.service.call=call as any;
+  const health=(await client.request('memory.health',{sessionId:session.id})).result;
+  assert.equal(health.enabled,true);assert.equal(typeof health.state,'string');assert.ok(['ok','failing','unknown'].includes(health.extraction));
+  assert.ok(!/127\.0\.0\.1|11434|model/i.test(JSON.stringify(health)),'no endpoint or model name');
+});
+
+// W11: the phone operations the feature matrix found without a test of their own. Each works in the
+// phone's scope and is refused outside it; nothing reaches the working desktop (fake hyprctl, a private
+// applications directory, store-only timers).
+test('phone operations without a dedicated test work in scope and are refused outside it',async t=>{
+  const f=await fixture(t);
+  await f.core.updateSettings({memory:{enabled:true},categories:['apps','windows','timers']});await f.core.memory.ready;
+  const bin=await mkdtemp(join(tmpdir(),'cere-ops-bin-')),elsewhere=await mkdtemp(join(tmpdir(),'cere-ops-outside-'));
+  t.after(()=>Promise.all([rm(bin,{recursive:true,force:true}),rm(elsewhere,{recursive:true,force:true})]));
+  await writeFile(join(bin,'hyprctl'),`#!/bin/sh\necho '[{"address":"0x1","title":"Notes","class":"kitty","workspace":{"id":2},"pid":1}]'\n`,{mode:0o755});
+  await mkdir(join(bin,'share','applications'),{recursive:true});
+  await writeFile(join(bin,'share','applications','fixture.desktop'),'[Desktop Entry]\nType=Application\nName=Fixture app\n');
+  const env={PATH:process.env.PATH,XDG_DATA_HOME:process.env.XDG_DATA_HOME,XDG_DATA_DIRS:process.env.XDG_DATA_DIRS};
+  Object.assign(process.env,{PATH:bin+':'+env.PATH,XDG_DATA_HOME:join(bin,'share'),XDG_DATA_DIRS:join(bin,'none')});
+  t.after(()=>{for(const [key,value] of Object.entries(env)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  const closed=new Promise(r=>f.gateway.peers.size?[...f.gateway.peers][0].socket.once('close',r):r(null));
+  await f.gateway.local('remote.updateDevice',{id:f.device.id,projectPaths:[f.directory],caps:[...f.device.caps,'memory.read','memory.write','attachments.write'],categories:['apps','windows','timers'],scriptIds:[]});
+  await closed;
+  const device=f.gateway.registry.live(f.device.id)!,scoped={...f,device},client=await connect(t,scoped),projectId=device.projects[0].id;
+  const session=(await client.action('sessions.create',{provider:'codex',projectId,tools:false},scoped)).result;
+  const outside=await f.core.create({provider:'codex',cwd:elsewhere,trusted:true});
+  // Sync acknowledgement and the draft read.
+  assert.equal((await client.request('sync.ack',{cursor:'opaque'})).result,true);
+  f.core.draft(session.id,'Desktop words');
+  assert.deepEqual((await client.request('drafts.get',{sessionId:session.id})).result,{text:'Desktop words',revision:f.core.store.session(session.id).draftRevision});
+  assert.equal((await client.request('drafts.get',{sessionId:outside.id})).error.code,'SCOPE_DENIED');
+  // Disconnecting an idle conversation's adapter.
+  assert.equal((await client.request('sessions.disconnect',{sessionId:session.id},randomUUID())).result,true);
+  assert.equal((await client.request('sessions.disconnect',{sessionId:outside.id},randomUUID())).error.code,'SCOPE_DENIED');
+  // An upload's status, then its abort.
+  const begun=(await client.action('attachments.begin',{sessionId:session.id,size:68,mime:'image/png',sha256:'A'.repeat(43)},scoped)).result;
+  assert.equal((await client.request('attachments.status',{attachmentId:begun.attachmentId})).result.status,'uploading');
+  assert.equal((await client.request('attachments.abort',{attachmentId:begun.attachmentId},randomUUID())).result,true);
+  assert.equal((await client.request('attachments.status',{attachmentId:begun.attachmentId})).error.code,'ATTACHMENT_INVALID');
+  // The desktop status lists the granted categories' actions and any program they still need.
+  const status=(await client.request('desktop.status',{projectId})).result;
+  assert.deepEqual([...new Set(status.actions.map((a:any)=>a.category))].sort(),['apps','timers','windows']);
+  assert.ok(Array.isArray(status.missing),'missing programs are reported, possibly none');
+  // The desktop's applications and windows, for granted categories only.
+  assert.deepEqual((await client.request('desktop.apps',{projectId})).result.map((app:any)=>app.name),['Fixture app']);
+  assert.deepEqual((await client.request('desktop.windows',{projectId})).result,[{address:'0x1',title:'Notes',app:'kitty',workspace:2}]);
+  // A timer this project started can be cancelled; another one cannot.
+  const mine={id:randomUUID(),label:'Tea',due:Date.now()+60000,remoteProjectId:projectId},theirs={id:randomUUID(),label:'Other',due:Date.now()+60000};
+  f.core.store.timer(mine);f.core.store.timer(theirs);
+  assert.equal((await client.action('timers.cancel',{projectId,timerId:theirs.id},scoped)).error.code,'SCOPE_DENIED');
+  assert.equal((await client.action('timers.cancel',{projectId,timerId:mine.id},scoped)).result,true);
+  assert.deepEqual(f.core.store.timers().map(timer=>timer.id),[theirs.id]);
+  await f.core.updateSettings({categories:['apps','timers']});
+  assert.equal((await client.request('desktop.windows',{projectId})).error.code,'CATEGORY_DISABLED');
+  // Recall without the memory server address; clearing a project is confirmed and leaves a checkable job.
+  assert.ok((await client.action('memory.save',{sessionId:session.id,text:'Atlas deploys on Fridays.'},scoped)).result);
+  const recalled=(await client.request('memory.retrieve',{sessionId:session.id,query:'Atlas Fridays'})).result;
+  assert.ok(recalled&&typeof recalled==='object'&&!('host' in recalled),'the memory server address stays on the desktop');
+  // Forgetting one record: previewed, then bound to that preview's selection and revision.
+  const note=(await client.action('memory.save',{sessionId:session.id,text:'Atlas uses Kitty.'},scoped)).result;
+  const one=(await client.request('memory.forgetPreview',{sessionId:session.id,id:note.id})).result;
+  assert.equal((await client.action('memory.forget',{sessionId:session.id,id:note.id,selection:'0'.repeat(64),expectedRevision:one.revision},scoped)).error!==undefined,true,'a changed selection is refused');
+  assert.ok((await client.action('memory.forget',{sessionId:session.id,id:note.id,selection:one.selection,expectedRevision:one.revision},scoped)).result);
+  assert.doesNotMatch(JSON.stringify((await client.request('memory.list',{sessionId:session.id,kind:'saved',offset:0,filter:''})).result),/Kitty/,'the forgotten record is gone at once');
+  const preview=(await client.request('memory.forgetPreview',{sessionId:session.id})).result;
+  assert.equal((await client.action('memory.clear',{sessionId:session.id,confirmProjectId:randomUUID(),selection:preview.selection,expectedRevision:preview.revision},scoped)).error.code,'INVALID_ARGUMENT','the project must be confirmed');
+  const cleared=(await client.action('memory.clear',{sessionId:session.id,confirmProjectId:projectId,selection:preview.selection,expectedRevision:preview.revision},scoped));
+  const jobId=cleared.result?.job_id||cleared.result?.id;assert.ok(jobId,JSON.stringify(cleared));
+  const erasure=(await client.request('memory.erasureStatus',{sessionId:session.id,jobId})).result;
+  assert.equal(typeof erasure.state,'string');assert.equal(typeof erasure.purgeComplete,'boolean');
+  assert.equal((await client.request('memory.erasureStatus',{sessionId:session.id,jobId:randomUUID()})).error.code,'SCOPE_DENIED','another job is not visible');
+  assert.doesNotMatch(JSON.stringify((await client.request('memory.list',{sessionId:session.id,kind:'saved',offset:0,filter:''})).result),/Fridays/,'cleared memory is gone at once');
+  assert.ok((await client.action('memory.resolveConflict',{sessionId:session.id,id:randomUUID(),expectedRevision:'1',statement:'Keep the newer one.'},scoped)).error,'an unknown conflict is refused');
+  // Importing desktop CLI history: a single-use ticket for one listed conversation.
+  f.core.history=async()=>[{nativeId:'native-history-1',cwd:f.directory,title:'Earlier Codex work'}] as any;
+  const history=(await client.request('sessions.history',{projectId})).result;assert.equal(history.items.length,1);
+  const imported=await client.action('sessions.import',{historyId:history.items[0].id,externalWriterStopped:true},scoped);
+  assert.equal(imported.result?.title,'Earlier Codex work',JSON.stringify(imported.error));assert.equal(f.core.store.session(imported.result.id).nativeId,'native-history-1');
+  assert.equal((await client.action('sessions.import',{historyId:history.items[0].id,externalWriterStopped:true},scoped)).error.code,'REVISION_CONFLICT','a history ticket is single-use');
+  // Claude Code history, as the desktop lists it, only where Claude's restricted mode is available.
+  f.core.history=async(provider:string)=>provider==='claude'?[{nativeId:'claude-history-1',cwd:f.directory,title:'Earlier Claude work'}]:[] as any;
+  f.core.capabilities.claude={...f.core.capabilities.claude,remoteRestricted:false} as any;
+  assert.equal((await client.request('sessions.history',{projectId,provider:'claude'})).error.code,'PROVIDER_POLICY_UNSAFE');
+  f.core.capabilities.claude={...f.core.capabilities.claude,remoteRestricted:true} as any;
+  const claudeHistory=(await client.request('sessions.history',{projectId,provider:'claude'})).result;
+  assert.deepEqual(claudeHistory.items.map((item:any)=>[item.title,item.provider]),[['Earlier Claude work','claude']]);
+  const claude=(await client.action('sessions.import',{historyId:claudeHistory.items[0].id,externalWriterStopped:true},scoped)).result;
+  assert.deepEqual([claude.provider,f.core.store.session(claude.id).nativeId,f.core.store.session(claude.id).effectivePolicy],['claude','claude-history-1','restricted']);
+  // Pausing from the phone; then the phone revokes itself.
+  assert.equal((await client.request('permissions.pause',{},randomUUID())).result,true);assert.equal(f.core.settings.paused,true);
+  await f.core.updateSettings({paused:false});
+  const gone=new Promise(r=>client.ws.once('close',r));
+  assert.equal((await client.request('devices.selfRevoke',{},randomUUID())).result,true);
+  await gone;assert.equal(f.gateway.registry.live(f.device.id),undefined,'the pairing is gone');
+});
+
+// W09: memory belongs to the conversation's project on its memory server, whichever provider it uses;
+// the phone reaches it only while that server is granted to it.
+test('project memory is shared across provider conversations on the phone and follows the granted memory server',async t=>{
+  const f=await fixture(t);
+  await f.core.updateSettings({memory:{enabled:true}});await f.core.memory.ready;
+  let closed=new Promise(r=>f.gateway.peers.size?[...f.gateway.peers][0].socket.once('close',r):r(null));
+  await f.gateway.local('remote.updateDevice',{id:f.device.id,projectPaths:[f.directory],caps:[...f.device.caps,'memory.read','memory.write'],categories:f.device.categories,scriptIds:[]});
+  await closed;
+  const device=f.gateway.registry.live(f.device.id)!,scoped={...f,device},client=await connect(t,scoped),projectId=device.projects[0].id;
+  const codex=(await client.action('sessions.create',{provider:'codex',projectId,tools:false},scoped)).result;
+  const saved=await client.action('memory.save',{sessionId:codex.id,text:'Atlas formats with Ruff.'},scoped);
+  assert.ok(saved.result?.id,JSON.stringify(saved.error));
+  const listed=(await client.request('memory.list',{sessionId:codex.id,kind:'saved',offset:0,filter:''})).result;
+  assert.ok(JSON.stringify(listed).includes('Atlas formats with Ruff.'),'a Codex conversation reaches its project memory');
+  // The same project and memory server: a desktop conversation of another provider sees the same memory.
+  const other=await f.core.create({provider:'claude',cwd:f.directory,trusted:true});
+  assert.ok(JSON.stringify((await client.request('memory.list',{sessionId:other.id,kind:'saved',offset:0,filter:''})).result).includes('Atlas formats with Ruff.'));
+  // A memory server the phone was not granted is refused, with the reason.
+  await f.core.updateSettings({ollama:{...f.core.settings.ollama,host:'http://127.0.0.2:11434'}});
+  const refused=await client.request('memory.list',{sessionId:codex.id,kind:'saved',offset:0,filter:''});
+  assert.equal(refused.error.code,'SCOPE_DENIED');assert.match(refused.error.message,/memory server/);
+});
+
+// W09: history, corrections and identity decisions from the phone are typed, bound to the reviewed
+// revision and witnessed by the person's own statement.
+test('the phone reviews an assertion history, corrects it at its revision and records identity decisions',async t=>{
+  const f=await fixture(t);
+  await f.core.updateSettings({memory:{enabled:true}});await f.core.memory.ready;
+  const closed=new Promise(r=>f.gateway.peers.size?[...f.gateway.peers][0].socket.once('close',r):r(null));
+  await f.gateway.local('remote.updateDevice',{id:f.device.id,projectPaths:[f.directory],caps:[...f.device.caps,'memory.read','memory.write'],categories:f.device.categories,scriptIds:[]});
+  await closed;
+  const device=f.gateway.registry.live(f.device.id)!,scoped={...f,device},client=await connect(t,scoped);
+  const session=(await client.action('sessions.create',{provider:'codex',projectId:device.projects[0].id,tools:false},scoped)).result;
+  const scope_id=await f.core.memory.scope(f.core.store.session(session.id));
+  const observed=await f.core.memory.service.call('observe_text',{scope_id,text:'Atlas uses Kitty.',role:'user'});
+  await f.core.memory.service.call('remember',{scope_id,claim:{subject:{type:'Project',name:'Atlas'},predicate:'USES_TOOL',object:{type:'Tool',name:'Kitty'}},witness:{observation_id:observed.id,quote:'Atlas uses Kitty.'}});
+  const assertions=async()=>(await client.request('memory.list',{sessionId:session.id,kind:'assertions',offset:0,filter:''})).result.rows;
+  const [record]=await assertions();assert.match(record?.text,/Atlas USES_TOOL Kitty/);
+  const history=await client.request('memory.timeline',{sessionId:session.id,id:record.id});assert.ok(history.result,JSON.stringify(history.error));
+  const stale=await client.action('memory.correct',{sessionId:session.id,id:record.id,expectedRevision:String(Number(record.revision)+5),statement:'Atlas now uses Ghostty.',change:{objectName:'Ghostty'}},scoped);
+  assert.equal(stale.error.code,'REVISION_CONFLICT','a correction is bound to the revision the person reviewed');
+  const corrected=await client.action('memory.correct',{sessionId:session.id,id:record.id,expectedRevision:String(record.revision),statement:'Atlas now uses Ghostty.',change:{objectName:'Ghostty'}},scoped);
+  assert.ok(corrected.result,JSON.stringify(corrected.error));
+  assert.ok((await assertions()).some((row:any)=>/Atlas USES_TOOL Ghostty/.test(row.text)),'the corrected claim is current');
+  const entities=(await client.request('memory.list',{sessionId:session.id,kind:'entities',offset:0,filter:''})).result.rows;
+  const [kitty,ghostty]=['Kitty','Ghostty'].map(name=>entities.find((row:any)=>row.text===name));
+  const identity=await client.action('memory.identity',{sessionId:session.id,leftId:kitty.id,rightId:ghostty.id,decision:'not_same',statement:'Kitty and Ghostty are different terminals.'},scoped);
+  assert.equal(identity.result?.decision,'not_same',JSON.stringify(identity.error));
+  assert.equal((await client.action('memory.freezeEpisode',{sessionId:session.id,id:randomUUID()},scoped)).error?.code!==undefined,true,'an unknown episode is refused');
+});
+
+// W08: a hosted API provider may be billed, so a phone runs it only with the providers.api grant naming
+// it; the compatible endpoint is bound to the origin granted. Without it the phone gets the reason.
+test('hosted API providers run from a phone only with a per-provider grant bound to the granted endpoint',async t=>{
+  const f=await fixture(t);let client=await connect(t,f);
+  f.core.capabilities={...f.core.capabilities,openai:{available:true,modelsStatus:'ready',models:[]},compatible:{available:true,modelsStatus:'ready',models:[]},antigravity:{available:true,modelsStatus:'ready',models:[]}} as any;
+  let providers=(await client.request('sync.open',{})).result.providers;
+  assert.equal(providers.openai.remoteExecution,false);assert.match(providers.openai.remoteUnavailableReason,/not granted to this phone.*billed/);
+  assert.equal(providers.openai.traits.billed,true);assert.equal(providers.antigravity.remoteExecution,false);assert.match(providers.antigravity.remoteUnavailableReason,/restricted execution/);
+  const projectId=f.device.projects[0].id;
+  assert.equal((await client.action('sessions.create',{provider:'openai',projectId,model:'gpt-fixture',tools:false},f)).error.code,'SCOPE_DENIED');
+  // The owner grants OpenAI and the compatible endpoint on the desktop; the phone reconnects with the new scope.
+  await f.core.rpc('provider.credentials',{provider:'openai',key:'fixture-key'});
+  await f.core.updateSettings({compatible:{baseUrl:'http://127.0.0.1:9/v1',label:'Workstation',requiresKey:false}});
+  const closed=new Promise(r=>client.ws.once('close',r));
+  await f.gateway.local('remote.updateDevice',{id:f.device.id,projectPaths:[f.directory],caps:[...f.device.caps,'providers.api'],categories:f.device.categories,scriptIds:[],apiProviders:['openai','compatible']});
+  await closed;
+  const granted=f.gateway.registry.live(f.device.id)!;assert.deepEqual(granted.apiProviders,['openai','compatible']);assert.equal(granted.compatibleEndpoint,'http://127.0.0.1:9');
+  const scoped={...f,device:granted};client=await connect(t,scoped);
+  providers=(await client.request('sync.open',{})).result.providers;
+  assert.equal(providers.openai.remoteExecution,true);assert.equal(providers.compatible.remoteExecution,true);assert.equal(providers.compatible.traits.label,'Workstation');
+  const created=(await client.action('sessions.create',{provider:'openai',projectId,model:'gpt-fixture',tools:false},scoped)).result;
+  assert.equal(created.canSend,true);assert.equal(f.core.store.session(created.id).effectivePolicy,'restricted');assert.deepEqual(f.core.store.session(created.id).remote?.apiProviders,['openai','compatible']);
+  const sent=await client.action('sessions.send',{sessionId:created.id,text:'Hello API',attachments:[],webSearch:false,expectedDraftRevision:created.draftRevision,expectedConfigRevision:created.configRevision},scoped);
+  assert.equal(sent.result?.status,'accepted',JSON.stringify(sent.error));
+  // A changed endpoint is not the one the owner granted: the phone loses it until it is granted again.
+  await f.core.updateSettings({compatible:{baseUrl:'http://127.0.0.2:9/v1',label:'Elsewhere',requiresKey:false}});
+  providers=(await client.request('sync.open',{})).result.providers;
+  assert.equal(providers.compatible.remoteExecution,false);assert.match(providers.compatible.remoteUnavailableReason,/endpoint changed/);
+  assert.equal(providers.openai.remoteExecution,true,'other grants are unaffected');
+});
+
+// W05: one winner per request, and every other answer is told the authoritative outcome.
+test('approval answers retire exactly once across the phone, the desktop, withdrawal, digests, retries and reconnects',async t=>{
+  const f=await fixture(t);let client=await connect(t,f);
+  const session=(await client.action('sessions.create',{provider:'codex',projectId:f.device.projects[0].id,tools:false},f)).result;
+  f.core.updateSession(session.id,{effectivePolicy:'restricted'});
+  const answerParams=(approval:any,choice='allow')=>({approvalId:approval.id,revision:approval.revision,digest:approval.digest,choice,answers:{}});
+  const resolutions:any[]=[];
+  const raise=(title:string,kind='provider')=>{void f.core.approval(session.id,{kind,title,detail:'Exact proposal',choices:kind==='question'?['answer','cancel']:['allow','deny'],...(kind==='question'?{questions:[{id:'q',question:'Proceed?'}]}:{})} as any).then(value=>resolutions.push({title,...value}));};
+  const listed=async(title:string)=>(await client.request('approvals.list')).result.find((a:any)=>a.title===title);
+  // The desktop answers first: the phone's answer is refused as gone, and the provider hears once.
+  raise('Desktop wins');let approval=await listed('Desktop wins');
+  f.core.answer({id:approval.id,choice:'deny',answers:{}});
+  assert.equal((await client.action('approvals.answer',answerParams(approval),f)).error.code,'APPROVAL_GONE');
+  // The provider withdraws its request: answering it afterwards is refused as gone.
+  raise('Withdrawn');approval=await listed('Withdrawn');f.core.cancelApprovals(session.id);
+  assert.equal((await client.action('approvals.answer',answerParams(approval),f)).error.code,'APPROVAL_GONE');
+  // A digest that is not the reviewed proposal is a conflict, and the request stays answerable.
+  raise('Exact digest');approval=await listed('Exact digest');
+  assert.equal((await client.action('approvals.answer',{...answerParams(approval),digest:'A'.repeat(43)},f)).error.code,'REVISION_CONFLICT');
+  assert.ok(f.core.approvals.has(approval.id));
+  // A retried command returns its first outcome without answering twice.
+  const commandId=randomUUID(),first=await client.action('approvals.answer',answerParams(approval,'deny'),f,commandId);assert.equal(first.result,true);
+  const retried=await client.request('approvals.answer',answerParams(approval,'deny'),commandId);assert.equal(retried.result,true);
+  // A reconnecting phone's snapshot no longer lists any retired request.
+  client.ws.terminate();client=await connect(t,f);
+  assert.deepEqual((await client.request('sync.open',{selectedSessionId:session.id})).result.approvals.map((a:any)=>a.title),[]);
+  // With the CLI bypass on for this device, provider requests are allowed but a question is never answered for the user.
+  await f.core.updateSettings({bypassCliPermissions:true});f.core.updateSession(session.id,{remote:f.gateway.router.execution(f.device,f.device.projects[0])});
+  raise('Question for a person','question');
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.ok((await listed('Question for a person')),'the question waits for an answer');
+  await f.core.updateSettings({bypassCliPermissions:false});
+  assert.deepEqual(resolutions.map(r=>[r.title,r.choice]),[['Desktop wins','deny'],['Withdrawn','deny'],['Exact digest','deny']],'each request resolved exactly once');
+  f.core.cancelApprovals(session.id);
 });
 
 // The CI failure's order (Core closed while a gateway still has a connected phone): the phone's late

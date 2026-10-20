@@ -43,14 +43,22 @@ Item {
     readonly property var activeAgents: agents.filter(agent => ["starting", "running", "waiting"].indexOf(agent.status) >= 0)
     property var pendingApprovals: []
     readonly property var pendingQuestions: pendingApprovals.filter(approval => approval.kind === "question" || (approval.questions || []).length > 0)
+    // A request from a delegated conversation, however deep, belongs to the conversation that started it.
+    function descendsFromSelected(sessionId) {
+        const parents = {}
+        for (const s of App.state.sessions || []) parents[s.id] = s.parentId || ""
+        for (let id = sessionId, depth = 0; id && depth < 16; id = parents[id], depth++) if (id === App.selectedId) return true
+        return false
+    }
     function syncApprovals() {
-        const next = (App.state.approvals || []).filter(approval => approval.sessionId === App.selectedId || agents.some(agent => agent.id === approval.sessionId))
+        const next = (App.state.approvals || []).filter(approval => approval.sessionId === App.selectedId || agents.some(agent => agent.id === approval.sessionId) || descendsFromSelected(approval.sessionId))
         // Preserve focused editors during unrelated provider progress snapshots.
         if (JSON.stringify(next) !== JSON.stringify(pendingApprovals)) pendingApprovals = next
     }
     Component.onCompleted: syncApprovals()
     property bool busy: ["starting","working","waiting","stopping"].indexOf(App.session.status)>=0 || activeAgents.length>0 || pendingApprovals.length>0
-    readonly property bool canSendWhileBusy: App.session.provider === "ollama" && App.session.status !== "stopping"
+    // A provider whose follow-ups queue while a turn runs (the broker's provider description says which).
+    readonly property bool canSendWhileBusy: ((App.state.providerTraits || {})[App.session.provider]?.queue ?? App.session.provider === "ollama") && App.session.status !== "stopping"
     property bool linked: App.session.mode==="linked"
     readonly property var motionSettings: App.state.settings || ({})
     readonly property bool idleWhileReading: !!(((App.animations.idleProfiles || {})[motionSettings.idleEnergy || App.animations.defaultIdleProfile] || {}).idleWhileReading)
@@ -178,7 +186,8 @@ Item {
         case "waitingForAgents": return "Waiting for subagents…"
         case "compacting": return "Compacting context…"
         case "planning": return "Planning…"
-        default: return App.session.status === "waiting" ? "Waiting for your input…" : "Working on it…"
+        // "Your input" only with a request on screen (handled above); otherwise say what is known.
+        default: return App.session.status === "waiting" ? "Waiting for a decision…" : "Working on it…"
         }
     }
     function loadDraft(){loadingDraft=true;draftRevision=App.session.draftRevision||"0";draftBaseline=App.session.draft||"";if(composer.text!==draftBaseline)composer.text=draftBaseline;attachments=App.session.draftAttachments||[];attachmentBaseline=JSON.stringify(attachmentIds());draftConflict=false;unconfirmedSend=null;loadingDraft=false;draftTimer.stop();recoverable={};inspectRecovery();restoreOfflineDraft()}

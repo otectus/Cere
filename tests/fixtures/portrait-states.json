@@ -1,0 +1,20 @@
+{
+  "note": "Shared by tests/portrait-state.test.ts (qml/PortraitState.js) and the Android PortraitStateTest. The phone shows activity only: no mood, greeting, hover or listening.",
+  "cases": [
+    { "input": { "connected": false, "status": "error", "approvals": 1 }, "expected": { "expression": "concerned", "label": "Reconnecting", "tone": "attention" } },
+    { "input": { "status": "error", "approvals": 1 }, "expected": { "expression": "curious", "label": "Waiting for your input", "tone": "attention" } },
+    { "input": { "status": "waiting" }, "expected": { "expression": "curious", "label": "Waiting for a decision", "tone": "attention" } },
+    { "input": { "status": "error", "paused": true }, "expected": { "expression": "concerned", "label": "Something needs attention", "tone": "attention" } },
+    { "input": { "status": "interrupted" }, "expected": { "expression": "concerned", "label": "Interrupted", "tone": "attention" } },
+    { "input": { "status": "disconnected" }, "expected": { "expression": "concerned", "label": "Session disconnected", "tone": "attention" } },
+    { "input": { "status": "idle", "paused": true }, "expected": { "expression": "sleepy", "label": "Taking a pause", "tone": "calm" } },
+    { "input": { "status": "stopping" }, "expected": { "expression": "focused", "label": "Stopping", "tone": "active" } },
+    { "input": { "status": "working", "activity": "thinking" }, "expected": { "expression": "thinking", "label": "Thinking it through", "tone": "active" } },
+    { "input": { "status": "starting", "activity": "recalling" }, "expected": { "expression": "thinking", "label": "Thinking it through", "tone": "active" } },
+    { "input": { "status": "working" }, "expected": { "expression": "thinking", "label": "Thinking it through", "tone": "active" } },
+    { "input": { "status": "working", "activity": "working" }, "expected": { "expression": "focused", "label": "Working on it", "tone": "active" } },
+    { "input": { "status": "working", "activity": "speaking" }, "expected": { "expression": "neutral", "label": "Replying", "tone": "active" } },
+    { "input": { "status": "idle" }, "expected": { "expression": "neutral", "label": "Right here", "tone": "calm" } },
+    { "input": { "status": "future-status" }, "expected": { "expression": "neutral", "label": "Right here", "tone": "calm" } }
+  ]
+}

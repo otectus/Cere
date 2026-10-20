@@ -8,11 +8,14 @@ const projection=`rowid AS cursor,json_remove(data,'$.text','$.sources') AS meta
  substr(json_extract(data,'$.text'),1,${previewChars}) AS text,
  length(json_extract(data,'$.text')) AS chars,
  length(CAST(json_extract(data,'$.text') AS BLOB)) AS bytes,
- json_extract(data,'$.sources') AS sources`;
+ json_extract(data,'$.sources') AS sources,
+ EXISTS(SELECT 1 FROM message_bookmarks b WHERE b.message_id=messages.id) AS bookmarked`;
 function dto(row:any) {
   const m=JSON.parse(row.metadata);
   const sources=row.sources?JSON.parse(row.sources).slice(0,20).map((s:any)=>({title:String(s.title||'').slice(0,256),url:String(s.url||'').slice(0,4096)})):undefined;
   return {id:m.id,sessionId:m.sessionId,role:m.role,kind:m.kind,text:row.text||'',time:m.time,revision:m.revision||'0',turnId:m.turnId,sources,
+    // W11: a pinned reply (a desktop bookmark); absent when not pinned.
+    ...(row.bookmarked?{bookmarked:true}:{}),
     ...(row.chars>previewChars?{contentTruncated:true,contentBytes:row.bytes,contentChars:row.chars,textParts:{count:Math.ceil(row.chars/partChars),partChars,encoding:'unicode-scalar'}}:{})};
 }
 export function mobileMessage(store:Store,sessionId:string,messageId:string) {

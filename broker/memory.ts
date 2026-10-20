@@ -477,5 +477,36 @@ export class Memory {
     const result=await this.service.call(method,{scope_id,claim:p.claim,witness:{observation_id:packet.observation_id,quote:p.quote},model_proposal:true,...(p.id?{id:p.id,expected_revision:p.expected_revision}:{})},signal);
     await this.refreshAfterCommit();return result;
   }
+  /**
+   * W09: graph changes a person makes from a paired phone. Each is witnessed by that person's own
+   * statement, recorded first as their observation in the conversation's scope, and bound to the
+   * revision they reviewed; the canonical store re-validates the claim. Corrections and conflict
+   * resolutions start from the current claim (inspect), changing only what the person changed.
+   */
+  async userGraph(session: Session, operation: 'correct'|'resolve_conflict'|'identity'|'freeze_episode'|'timeline', p: Record<string, any>, signal?: AbortSignal, authorize?: () => void) {
+    const scope_id = await this.scope(session, signal); authorize?.(); signal?.throwIfAborted();
+    if (operation === 'timeline' || operation === 'freeze_episode') {
+      const result = await this.service.call(operation, { scope_id, id: p.id }, signal);
+      if (operation === 'freeze_episode') await this.refreshAfterCommit();
+      return result;
+    }
+    let claim: Record<string, unknown> | undefined;
+    if (operation !== 'identity') {
+      const current = (await this.service.call('inspect', { scope_id, id: p.id }, signal))?.record?.claim_data;
+      if (!current) throw Object.assign(new Error('Only an assertion can be corrected or chosen in a conflict.'), { code: 'INVALID_ARGUMENT', remote: true });
+      const next: Record<string, unknown> = { ...current, ...(p.change || {}) };
+      if (p.change?.object) { next.object = { type: current.object?.type, name: p.change.object.name }; delete next.value; }
+      else if (p.change && 'value' in p.change) delete next.object;
+      claim = next;
+    }
+    authorize?.(); signal?.throwIfAborted();
+    const observed = await this.service.call('observe_text', { scope_id, text: p.statement, role: 'user', session_id: session.id }, signal);
+    const witness = { observation_id: observed.id, quote: p.statement };
+    authorize?.(); signal?.throwIfAborted();
+    const result = operation === 'identity'
+      ? await this.service.call('identity', { scope_id, left_id: p.left_id, right_id: p.right_id, decision: p.decision, witness, ...(p.expected_revision !== undefined ? { expected_revision: p.expected_revision } : {}) }, signal)
+      : await this.service.call(operation, { scope_id, id: p.id, expected_revision: p.expected_revision, claim, witness }, signal);
+    await this.refreshAfterCommit(); return result;
+  }
   async close() { await this.ready.catch(() => {}); this.controller.abort(new Error('Memory closed')); await this.service.close(); }
 }

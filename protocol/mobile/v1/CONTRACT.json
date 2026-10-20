@@ -1,7 +1,7 @@
 {
   "protocol": {
     "major": 1,
-    "minor": 0
+    "minor": 1
   },
   "path": "/mobile/v1",
   "subprotocol": "cere.mobile.v1",
@@ -98,15 +98,28 @@
       "scopeVersion": "1",
       "protocol": {
         "major": 1,
-        "minor": 0
+        "minor": 1
       },
       "sendAuthentication": "connection-key (optional; absence means legacy action-key send proofs)",
       "operations": [],
       "limits": {
         "maxFrameBytes": 1048576
       },
-      "brokerBuild": "0.1.0/mobile-v1",
-      "actionAuthentication": "biometric | trusted-device (optional; absent means biometric)"
+      "brokerBuild": "<version>[+<12-hex commit>[.dirty]]/mobile-v1 (for people and diagnostics; compare features, not this string)",
+      "actionAuthentication": "biometric | trusted-device (optional; absent means biometric)",
+      "build": {
+        "version": "0.1.0",
+        "commit": "40-hex source commit or null when unknown",
+        "dirty": "true when built from modified tracked files; null when unknown"
+      },
+      "features": [
+        "activity.page",
+        "sessions.batch",
+        "search.ids",
+        "message.sources",
+        "citations.display",
+        "agent.refs"
+      ]
     }
   },
   "actions": {
@@ -218,11 +231,15 @@
     "sessions.list": {
       "params": {
         "filter": "optional",
-        "offset": 0
+        "offset": 0,
+        "withIds": "optional false; requires feature search.ids"
       },
       "result": {
         "items": [],
-        "nextOffset": null
+        "nextOffset": null,
+        "total": 0,
+        "ids": "only with withIds: every matching session uuid in order, at most 5000",
+        "idsTruncated": "only with withIds"
       }
     },
     "sessions.get": {
@@ -270,7 +287,8 @@
         "attachments": [],
         "webSearch": false,
         "expectedDraftRevision": "0",
-        "expectedConfigRevision": "0"
+        "expectedConfigRevision": "0",
+        "desktopAttachments": "optional [{id, sha256}] — the desktop draft's attachments exactly as reviewed (feature drafts.desktopAttachments); refused if unreviewed or changed, and for queued sends"
       },
       "result": {
         "commandId": "uuid",
@@ -326,11 +344,13 @@
       "params": {
         "sessionId": "uuid",
         "text": "draft",
-        "expectedRevision": "0"
+        "expectedRevision": "0",
+        "desktopAttachmentIds": "optional uuid[] — the desktop draft attachments this phone shows and keeps; omitted, a draft with attachments cannot change"
       },
       "result": {
         "text": "draft",
-        "revision": "1"
+        "revision": "1",
+        "draftAttachments": "[{id,name,kind,mime,size,sha256}] kept in the draft"
       }
     },
     "providers.models": {
@@ -392,7 +412,8 @@
         "sessionId": "uuid",
         "limit": 100
       },
-      "result": []
+      "result": [],
+      "note": "Legacy: the newest page only, as an array. Use activity.page when feature activity.page is negotiated."
     },
     "permissions.get": {
       "params": {},
@@ -548,16 +569,17 @@
     },
     "sessions.history": {
       "params": {
-        "projectId": "uuid"
+        "projectId": "uuid",
+        "provider": "optional 'codex' (default) | 'claude' (feature history.claude; Claude needs restricted mode)"
       },
-      "result": "sanitized stopped Codex thread tickets; no raw native IDs"
+      "result": "sanitized stopped Codex threads or Claude Code conversations in the project, as single-use tickets {id,title,provider,projectId}; no raw native IDs"
     },
     "sessions.import": {
       "params": {
         "historyId": "uuid",
         "externalWriterStopped": true
       },
-      "result": "new restrictive session DTO"
+      "result": "new restrictive session DTO of the ticket's provider"
     },
     "memory.inspect": {
       "params": {
@@ -627,6 +649,220 @@
         "ollamaHosts": [],
         "expiresAt": 1
       }
+    },
+    "sessions.batch": {
+      "params": {
+        "sessionIds": "1-50 uuids"
+      },
+      "result": {
+        "items": "session summaries still in scope (draftIncluded:false)",
+        "missing": "requested uuids no longer in this device’s scope"
+      }
+    },
+    "activity.page": {
+      "params": {
+        "sessionId": "uuid",
+        "before": "optional message id from a previous page",
+        "limit": 100
+      },
+      "result": {
+        "items": "tool, reasoning and status records, oldest first",
+        "before": "message id to continue with, or null"
+      }
+    },
+    "drafts.attachmentPreview": {
+      "params": {
+        "sessionId": "uuid",
+        "attachmentId": "uuid"
+      },
+      "result": "text: {attachmentId,kind:'text',name,sha256,text (first 32768 chars),truncated}; image (needs capture.preview): {attachmentId,kind:'image',name,readId,size,mime:'image/jpeg',sha256,imageDigest,expiresAt}, read with attachments.read"
+    },
+    "messages.bookmark": {
+      "params": {
+        "sessionId": "uuid",
+        "messageId": "string",
+        "bookmarked": "boolean"
+      },
+      "result": "the message DTO with bookmarked:true when pinned (absent otherwise); shared with desktop bookmarks"
+    },
+    "messages.bookmarks": {
+      "params": {
+        "sessionId": "optional uuid",
+        "limit": "default 50, at most 50"
+      },
+      "result": "{items:[message DTO + sessionTitle]} newest pin first, in-scope conversations only"
+    },
+    "sessions.behavior": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": "{source:'session'|'project'|'global', profile:{label}|null, posture:{label,pinned}|null, standingInstructions:boolean, warnings:string[]}"
+    },
+    "workflows.status": {
+      "params": {
+        "sessionId": "uuid",
+        "limit": "default 10, at most 20"
+      },
+      "result": "{results:[{id,time,providerOutcome,verification,gate,editedSinceCheck,uncertainty,checks:[{label,status,exitCode?}]}], schedules:[{id,label,enabled,revision,next,lastRun}]} — the provider's report is kept apart from Cere's verification"
+    },
+    "workflows.pauseSchedule": {
+      "params": {
+        "sessionId": "uuid",
+        "scheduleId": "string",
+        "expectedRevision": "decimal"
+      },
+      "result": "{id,enabled:false,revision}; only this conversation's schedules; turning one on again is a desktop review"
+    },
+    "desktop.portrait": {
+      "params": {
+        "known": "optional sha256 of the sheet the phone holds"
+      },
+      "result": "{avatarId,label,columns:4,rows:3,cell:96,frames:{expression:index},palette:{portraitTop,...},mime:'image/webp',sha256,data:base64} — the still status portrait; without data and with unchanged:true when known matches"
+    },
+    "sessions.focusTerminal": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": "{message:'Window focused'}; linked conversations only, windows category, window revalidated (DESKTOP_UNAVAILABLE when gone)"
+    },
+    "desktop.workspace": {
+      "params": {
+        "projectId": "uuid"
+      },
+      "result": "{state:'in-project'|'elsewhere'|'unknown'|'unavailable', freshness, relativePath? (in-project only), verifiedCheckout?, unknown:string[], reason?} — fresh observations only; no titles, commands or outside paths"
+    },
+    "memory.health": {
+      "params": {
+        "sessionId": "uuid"
+      },
+      "result": "{enabled,state,degraded,extraction:'ok'|'failing'|'unknown',embedding:'ok'|'failing'|'unknown',projections:[{backend,status}]} — no endpoints, model names or error text"
+    },
+    "approvals.preview": {
+      "params": {
+        "approvalId": "uuid",
+        "revision": "decimal",
+        "digest": "hash"
+      },
+      "result": "{readId,size,mime,sha256,imageDigest,expiresAt}; see media.preview"
+    },
+    "attachments.begin": {
+      "params": {
+        "sessionId": "uuid",
+        "size": "1..10485760",
+        "mime": "image/png|image/jpeg|image/webp",
+        "sha256": "hash"
+      },
+      "result": "upload DTO {attachmentId,uploadId,size,offset,mime,sha256,status,expiresAt}; see media.upload"
+    },
+    "attachments.status": {
+      "params": {
+        "attachmentId": "uuid"
+      },
+      "result": "upload DTO"
+    },
+    "attachments.commit": {
+      "params": {
+        "attachmentId": "uuid"
+      },
+      "result": "upload DTO with status ready"
+    },
+    "attachments.abort": {
+      "params": {
+        "attachmentId": "uuid"
+      },
+      "result": "true; a submitted image stays with its session (ATTACHMENT_INVALID)"
+    },
+    "attachments.read": {
+      "params": {
+        "readId": "uuid",
+        "offset": "integer",
+        "length": "integer"
+      },
+      "result": "{bytes} after a binary read frame; see media.preview"
+    },
+    "commands.challenge": {
+      "params": {
+        "method": "string",
+        "paramsDigest": "hash",
+        "commandId": "uuid"
+      },
+      "result": "{challengeId,nonce,expiresAt} for the signed action transcript"
+    },
+    "captures.start": {
+      "params": {
+        "projectId": "uuid",
+        "edit": "default false (true opens Satty on the desktop)"
+      },
+      "result": "capture DTO {captureId,projectId,edit,state:'capturing'|'editing'|'ready'|'attached'|'cancelled'|'failed'|'expired',message,startedAt,updatedAt,expiresAt, imageDigest/size/width/height when ready}; capture.updated events follow"
+    },
+    "captures.status": {
+      "params": {
+        "captureId": "uuid"
+      },
+      "result": "capture DTO"
+    },
+    "captures.preview": {
+      "params": {
+        "captureId": "uuid"
+      },
+      "result": "{readId,size,mime:'image/jpeg',sha256,imageDigest,width,height,expiresAt}"
+    },
+    "captures.discard": {
+      "params": {
+        "captureId": "uuid"
+      },
+      "result": "true"
+    },
+    "captures.attach": {
+      "params": {
+        "captureId": "uuid",
+        "sessionId": "uuid",
+        "imageDigest": "hash of the reviewed original"
+      },
+      "result": "ready upload DTO for the conversation; only the reviewed image (REVISION_CONFLICT otherwise)"
+    },
+    "memory.timeline": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "result": "the assertion's bounded history and evidence (LIMIT_EXCEEDED past 256 KiB)"
+    },
+    "memory.correct": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid",
+        "expectedRevision": "decimal",
+        "statement": "the person's words, kept as evidence",
+        "change": "{objectName?,value?,polarity?,validMode?,validFromUs?,validToUs?}"
+      },
+      "result": "the committed correction"
+    },
+    "memory.resolveConflict": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid",
+        "expectedRevision": "decimal",
+        "statement": "string"
+      },
+      "result": "the committed resolution"
+    },
+    "memory.identity": {
+      "params": {
+        "sessionId": "uuid",
+        "leftId": "uuid",
+        "rightId": "uuid",
+        "decision": "'same'|'not_same'|'possible'",
+        "statement": "string"
+      },
+      "result": "the recorded decision"
+    },
+    "memory.freezeEpisode": {
+      "params": {
+        "sessionId": "uuid",
+        "id": "uuid"
+      },
+      "result": "the frozen episode"
     }
   },
   "dto": {
@@ -660,7 +896,19 @@
       "draftAttachmentHint": "optional desktop draft attachment warning or null",
       "updated": 0,
       "draftIncluded": true,
-      "ollamaHost": "optional approved Ollama server"
+      "ollamaHost": "optional approved Ollama server",
+      "agents": [
+        {
+          "id": "opaque agent reference (feature agent.refs); never a native thread id",
+          "name": "name",
+          "task": "optional",
+          "status": "starting | running | waiting | completed | failed | interrupted | closed",
+          "detail": "optional",
+          "parentId": "optional opaque reference of the parent agent",
+          "updated": 0
+        }
+      ],
+      "draftAttachments": "open conversation only: [{id,name,kind:'image'|'text',mime,size,sha256}], never a path"
     },
     "message": {
       "id": "opaque",
@@ -671,13 +919,17 @@
       "text": "whole accumulated text",
       "time": 0,
       "revision": "1",
-      "sources": [],
-      "contentTruncated": "optional true; contentChars/contentBytes and textParts describe omitted text"
+      "sources": "up to 20 {title, url} pairs; feature message.sources. Show only http(s) URLs as actions.",
+      "contentTruncated": "optional true; contentChars/contentBytes and textParts describe omitted text",
+      "bookmarked": "true when pinned (feature messages.bookmarks); absent otherwise",
+      "sessionTitle": "only in messages.bookmarks items"
     },
     "approval": {
       "id": "uuid",
       "sessionId": "uuid",
-      "parentSessionIds": ["ancestor session uuid"],
+      "parentSessionIds": [
+        "ancestor session uuid"
+      ],
       "kind": "question",
       "title": "Question",
       "detail": "exact proposal",
@@ -690,7 +942,8 @@
       "revision": "1",
       "digest": "SHA256 proposal",
       "turnId": "uuid",
-      "canAnswer": true
+      "canAnswer": true,
+      "agentId": "optional opaque reference of the session agent that raised this request (feature agent.refs)"
     },
     "permissions": {
       "profile": "scoped",
@@ -699,6 +952,17 @@
       "caps": [],
       "revision": "0",
       "restricted": true
+    },
+    "settings": {
+      "personality": "text",
+      "revision": "0",
+      "showMemoryCitations": "false: hide [evidence:...] markers when showing or copying (feature citations.display)",
+      "webSearch": {
+        "enabled": false,
+        "provider": "auto"
+      },
+      "defaultModel": "",
+      "ollamaHost": ""
     }
   },
   "events": [
@@ -707,9 +971,10 @@
     "device.revoked",
     "remote.disabled",
     "attachment.progress (data is upload DTO; cursor is opaque like other events)",
-    "notice (data {kind:'complete'|'error'|'interrupted', sessionId, title} for in-scope sessions, or {kind:'timer', projectId, timerId, label} for timers set from this device's projects; text is generic and never carries provider error detail)"
+    "notice (data {kind:'complete'|'error'|'interrupted', sessionId, title} for in-scope sessions, or {kind:'timer', projectId, timerId, label} for timers set from this device's projects; text is generic and never carries provider error detail)",
+    "capture.updated (data is the capture DTO of a capture this phone started)"
   ],
-  "notes": "All operations are capability negotiated. Absent operation must have no enabled control. Unsupported forms/unsafe active providers expose deny/Stop only. All mutation failures preserve drafts. Connection loss never queues a new action. On ambiguous mutation query commands.status with original ID. All snapshot arrays replace cached scope; removed resources must be purged. Reconnect always supports full scoped snapshot even without retained replay. No command retry with a new ID without review. TLS trust exactly paired SPKI and valid certificate/SAN. No network pairing endpoint. Session summaries set draftIncluded:false; fetch sessions.get before enabling Send. A positive draftAttachmentCount means the desktop draft must be reviewed there; mobile draft edits and sends do not discard those attachments. sync.open sessionIds is authoritative for cache removal; use sessions.list with nextSessionOffset to hydrate omitted summaries. Submitted Ollama image files can be removed after a completed turn because full image context is persisted. Native path inputs remain until session removal, local clear, or device revocation. Command outcomes are redacted across device scopeVersion changes. Memory invalidation clears retained result payloads. cacheEpoch changes clear phone transcript and transient memory views. Memory CAS revisions above 9007199254740991 are rejected.",
+  "notes": "All operations are capability negotiated. Absent operation must have no enabled control. Unsupported forms/unsafe active providers expose deny/Stop only. All mutation failures preserve drafts. Connection loss never queues a new action. On ambiguous mutation query commands.status with original ID. All snapshot arrays replace cached scope; removed resources must be purged. Reconnect always supports full scoped snapshot even without retained replay. No command retry with a new ID without review. TLS trust exactly paired SPKI and valid certificate/SAN. No network pairing endpoint. Session summaries set draftIncluded:false; fetch sessions.get before enabling Send. A positive draftAttachmentCount means the desktop draft must be reviewed there; mobile draft edits and sends do not discard those attachments. sync.open sessionIds is authoritative for cache removal; hydrate omitted summaries by ID with sessions.batch (feature sessions.batch), or with sessions.list and nextSessionOffset on an older desktop. Submitted Ollama image files can be removed after a completed turn because full image context is persisted. Native path inputs remain until session removal, local clear, or device revocation. Command outcomes are redacted across device scopeVersion changes. Memory invalidation clears retained result payloads. cacheEpoch changes clear phone transcript and transient memory views. Memory CAS revisions above 9007199254740991 are rejected.",
   "media": {
     "binaryFrame": "16-byte UUID, 8-byte unsigned big endian offset, up to 262144 payload bytes; single outstanding chunk per upload; wait attachment.progress before next chunk",
     "upload": "attachments.begin signed; binary chunks; attachments.status after reconnect; attachments.commit signed; session-specific opaque IDs in signed sessions.send",
@@ -777,5 +1042,31 @@
         }
       }
     }
+  },
+  "compatibility": {
+    "versioning": "Major changes are incompatible and close the hello with 4010 INCOMPATIBLE_CLIENT_NEWER or INCOMPATIBLE_CLIENT_OLDER, naming the side to update. Minor versions only add: an operation is used only when negotiated in operations, other new behaviour only when named in features.",
+    "forwardCompatibleFields": "Clients ignore unknown fields in responses and events, unknown event names, and unknown status/kind strings. Revisions are decimal strings of any length.",
+    "strictInput": "The desktop rejects unknown request fields, methods and enum values; a client sends a new parameter only when its feature is negotiated.",
+    "failClosedEnums": "actionAuthentication is security-relevant: an unknown value fails the welcome instead of being guessed.",
+    "signing": "Canonical JSON (RFC 8785), digests and signature transcripts are unchanged by minor versions.",
+    "fixtures": "conformance.json holds normalized frames recorded from a real gateway (tests/mobile-conformance.test.ts) and hand-written forward-compatible frames; Android ConformanceTest decodes all of them."
+  },
+  "features": {
+    "activity.page": "activity.page pages Activity with a continuation cursor",
+    "sessions.batch": "sessions.batch hydrates named sessions; missing ones are reported",
+    "search.ids": "sessions.list withIds names every match",
+    "message.sources": "messages carry bounded source titles and URLs",
+    "citations.display": "settings.showMemoryCitations says whether memory citations are shown and copied",
+    "agent.refs": "agents and approvals name agents by opaque references, never native thread IDs",
+    "captures": "captures.* and capture.updated: phone-started screen captures",
+    "drafts.desktopAttachments": "session draftAttachments, drafts.attachmentPreview, drafts.put desktopAttachmentIds and sessions.send desktopAttachments",
+    "messages.bookmarks": "pinned replies: message bookmarked, messages.bookmark, messages.bookmarks",
+    "workflows.status": "workflows.status and workflows.pauseSchedule",
+    "sessions.behavior": "sessions.behavior names a conversation's effective style and where it is set",
+    "desktop.portrait": "desktop.portrait serves the still status portrait",
+    "desktop.workspace": "desktop.workspace serves the scoped workspace card",
+    "memory.health": "memory.health serves sanitized memory health",
+    "sessions.focusTerminal": "sessions.focusTerminal brings a linked conversation's terminal forward on the desktop",
+    "history.claude": "sessions.history accepts provider claude"
   }
 }

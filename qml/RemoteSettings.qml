@@ -13,6 +13,8 @@ CSection {
     property string operation:""
     property var selectedCaps:["chat.read","chat.write","approvals.answer"]
     property var selectedCategories:[]
+    // Hosted API providers this phone may run with the providers.api grant.
+    property var selectedApiProviders:[]
     property string editingDevice:""
     property string replacingDevice:""
     function call(method,params){if(requestId>=0)return;error="";operation=method;requestId=App.rpc(method,params||{})}
@@ -56,12 +58,22 @@ CSection {
     GridLayout {
         Layout.fillWidth:true;columns:width>=460?2:1
         Repeater {
-            model:["chat.read","chat.write","approvals.answer","providers.execute","approvals.provider","desktop.control","settings.write","memory.read","memory.write","web","attachments.write","capture.preview"]
+            model:["chat.read","chat.write","approvals.answer","providers.execute","providers.api","approvals.provider","desktop.control","settings.write","memory.read","memory.write","web","attachments.write","capture.preview"]
             CCheckBox { required property string modelData;text:modelData;checked:remote.selectedCaps.indexOf(modelData)>=0;onClicked:remote.selectedCaps=checked?remote.selectedCaps.concat([modelData]):remote.selectedCaps.filter(c=>c!==modelData) }
         }
     }
     CText { text:"Native provider execution and provider approvals grant substantial project access. Claude execution stays unavailable while native restrictions cannot be verified.";color:Theme.amber;font.pixelSize:12 }
     CText { text:"Attachments lets this phone send images to providers. Capture preview lets it view saved screen captures awaiting your sharing decision.";color:Theme.amber;font.pixelSize:12 }
+    // W08: hosted API use from the phone is billed to this desktop's keys, so each provider is chosen here.
+    CText { visible:remote.selectedCaps.indexOf("providers.api")>=0;text:"Hosted API providers this phone may use. Requests use this desktop’s keys and may be billed; the compatible endpoint is granted as currently configured.";color:Theme.amber;font.pixelSize:12;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    GridLayout {
+        visible:remote.selectedCaps.indexOf("providers.api")>=0
+        Layout.fillWidth:true;columns:width>=460?4:2
+        Repeater {
+            model:[{id:"openai",label:"OpenAI API"},{id:"anthropic",label:"Claude API"},{id:"google",label:"Google AI API"},{id:"compatible",label:App.state.settings?.compatible?.label||"Compatible endpoint"}]
+            CCheckBox { required property var modelData;objectName:"apiGrant_"+modelData.id;text:modelData.label;checked:remote.selectedApiProviders.indexOf(modelData.id)>=0;onClicked:remote.selectedApiProviders=checked?remote.selectedApiProviders.concat([modelData.id]):remote.selectedApiProviders.filter(p=>p!==modelData.id) }
+        }
+    }
     GridLayout {
         Layout.fillWidth:true;columns:width>=460?3:2
         Repeater {
@@ -72,9 +84,9 @@ CSection {
     CText { text:"Categories also need ordinary desktop permission. All bypass toggles are ignored for remote work. Saved scripts need an explicit ID allowlist.";color:Theme.muted;font.pixelSize:12 }
     CField { id:scripts;Layout.fillWidth:true;placeholderText:"Allowed saved script IDs, comma separated (optional)";Accessible.name:"Allowed script IDs" }
     CText { visible:!!remote.editingDevice;text:"Editing this phone’s grants. Saving stops its current work and reconnects it with the reviewed projects, categories, and current desktop Ollama server.";color:Theme.amber;font.pixelSize:12 }
-    CButton { visible:!!remote.editingDevice;text:"Save device grants";enabled:remote.requestId<0;onClicked:remote.call("remote.updateDevice",{id:remote.editingDevice,projectPaths:projects.text.split(";").map(p=>p.trim()).filter(p=>p.length),caps:remote.selectedCaps,categories:remote.selectedCategories,scriptIds:scripts.text.split(",").map(s=>s.trim()).filter(s=>s.length)}) }
+    CButton { visible:!!remote.editingDevice;text:"Save device grants";enabled:remote.requestId<0;onClicked:remote.call("remote.updateDevice",{id:remote.editingDevice,projectPaths:projects.text.split(";").map(p=>p.trim()).filter(p=>p.length),caps:remote.selectedCaps,categories:remote.selectedCategories,scriptIds:scripts.text.split(",").map(s=>s.trim()).filter(s=>s.length),apiProviders:remote.selectedCaps.indexOf("providers.api")>=0?remote.selectedApiProviders:[]}) }
     CCheckBox { id:compare;text:"All six words match the phone";enabled:!!remote.review.sas }
-    CButton { text:"Confirm pairing and enable gateway";primary:true;enabled:remote.requestId<0&&compare.checked&&!!remote.review.sas&&projects.text.trim().length>0;onClicked:remote.call("remote.confirmPair",{response:response.text.trim(),sas:remote.review.sas,confirmed:true,projectPaths:projects.text.split(";").map(p=>p.trim()).filter(p=>p.length),caps:remote.selectedCaps,categories:remote.selectedCategories,scriptIds:scripts.text.split(",").map(s=>s.trim()).filter(s=>s.length)}) }
+    CButton { text:"Confirm pairing and enable gateway";primary:true;enabled:remote.requestId<0&&compare.checked&&!!remote.review.sas&&projects.text.trim().length>0;onClicked:remote.call("remote.confirmPair",{response:response.text.trim(),sas:remote.review.sas,confirmed:true,projectPaths:projects.text.split(";").map(p=>p.trim()).filter(p=>p.length),caps:remote.selectedCaps,categories:remote.selectedCategories,scriptIds:scripts.text.split(",").map(s=>s.trim()).filter(s=>s.length),apiProviders:remote.selectedCaps.indexOf("providers.api")>=0?remote.selectedApiProviders:[]}) }
     Repeater {
         model:remote.status.devices||[]
         ColumnLayout {
@@ -82,8 +94,8 @@ CSection {
             CText { Layout.fillWidth:true;text:modelData.name+" · "+(modelData.revokedAt?"Revoked":"Expires "+new Date(modelData.expiresAt).toLocaleDateString())+" · "+(modelData.actionAuthentication==="trusted-device"?"Trusted phone":"Biometric actions")+"\n"+(modelData.caps||[]).join(", ");font.pixelSize:12 }
             Flow { Layout.fillWidth:true;spacing:8;Layout.preferredHeight:childrenRect.height
             CButton { text:"Revoke";danger:true;enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:remote.call("remote.revoke",{id:modelData.id}) }
-            CButton { text:"Edit grants";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.editingDevice=modelData.id;remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ")} }
-            CButton { text:"Replace pairing";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.replacingDevice=modelData.id;remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ");trustedPhone.checked=modelData.actionAuthentication==="trusted-device";remote.offer=({});remote.review=({});response.text=""} }
+            CButton { text:"Edit grants";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.editingDevice=modelData.id;remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;remote.selectedApiProviders=modelData.apiProviders||[];projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ")} }
+            CButton { text:"Replace pairing";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:{remote.replacingDevice=modelData.id;remote.selectedCaps=modelData.caps;remote.selectedCategories=modelData.categories;remote.selectedApiProviders=modelData.apiProviders||[];projects.text=modelData.projects.map(p=>p.path).join("; ");scripts.text=modelData.scriptIds.join(", ");trustedPhone.checked=modelData.actionAuthentication==="trusted-device";remote.offer=({});remote.review=({});response.text=""} }
             CButton { text:"Renew 90 days";enabled:!modelData.revokedAt&&remote.requestId<0;onClicked:remote.call("remote.renewDevice",{id:modelData.id,confirmed:true}) }
             CButton { text:"Clear retained images";enabled:remote.requestId<0;onClicked:remote.call("remote.purgeMedia",{id:modelData.id,confirmed:true}) }
             }

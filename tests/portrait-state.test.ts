@@ -14,6 +14,8 @@ function resolve(input: Record<string, unknown> = {}) {
 test('portrait state gives connection, approvals, and failures precedence', () => {
   assert.equal(resolve({ connected: false, approvals: [{}], session: { status: 'error' } }).expression, 'concerned');
   assert.equal(resolve({ approvals: [{}], session: { status: 'error' } }).label, 'Waiting for your input');
+  // Without a request to answer, a waiting session is not asking for the user's input.
+  assert.equal(resolve({ session: { status: 'waiting' } }).label, 'Waiting for a decision');
   assert.equal(resolve({ session: { status: 'error' }, paused: true }).expression, 'concerned');
   assert.equal(resolve({ session: { status: 'interrupted' } }).label, 'Interrupted');
   assert.equal(resolve({ session: { status: 'disconnected' } }).label, 'Session disconnected');
@@ -45,4 +47,12 @@ test('pause is an idle state but approvals and failures still take priority', ()
   assert.equal(resolve({ paused: true }).expression, 'sleepy');
   assert.equal(resolve({ paused: true, session: { status: 'waiting' } }).expression, 'curious');
   assert.equal(resolve({ paused: true, session: { status: 'working', activity: 'thinking' } }).expression, 'sleepy');
+});
+
+test('the phone status portrait follows the same rule, from the shared cases', () => {
+  const { cases } = JSON.parse(readFileSync(new URL('./fixtures/portrait-states.json', import.meta.url), 'utf8'));
+  for (const { input, expected } of cases) {
+    const resolved = resolve({ connected: input.connected ?? true, session: { status: input.status, activity: input.activity }, approvals: Array.from({ length: input.approvals ?? 0 }, () => ({})), paused: input.paused === true, mood: 'neutral' });
+    assert.deepEqual({ ...resolved }, expected, JSON.stringify(input));
+  }
 });

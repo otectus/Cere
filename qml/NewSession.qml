@@ -38,12 +38,18 @@ CDialog {
         open()
     }
     property var modelRequests: ({})
-    property string providerName:["codex","claude","ollama","antigravity","openai","anthropic","google","compatible"][provider.currentIndex]||"codex"
+    // W08: the broker describes every provider (label, kind, tools) and the order to offer them in. The
+    // state reaches QML as a map with sorted keys, so the order comes as a list; an older broker gets the
+    // same defaults.
+    readonly property var traits:App.state.providerTraits||({})
+    readonly property var providerOrder:(App.state.providerOrder||[]).length?App.state.providerOrder:["codex","claude","ollama","antigravity","openai","anthropic","google","compatible"]
+    property string providerName:providerOrder[provider.currentIndex]||"codex"
+    readonly property var providerTrait:traits[providerName]||({})
     property bool isOllama:providerName==="ollama"
-    property bool isApi:["openai","anthropic","google","compatible"].includes(providerName)
+    property bool isApi:providerTrait.kind?providerTrait.kind==="api":["openai","anthropic","google","compatible"].includes(providerName)
     // M13: a compatible endpoint takes tools only when they are declared in Settings › Connections.
     readonly property bool apiTools:providerName!=="compatible"||App.state.settings?.compatible?.tools===true
-    property bool isConversation:isOllama||isApi
+    property bool isConversation:providerTrait.tools?providerTrait.tools==="cere":isOllama||isApi
     property string savedDefault:App.state.settings?.ollama?.model||""
     property var capability:(App.state.capabilities||{})[providerName]||({})
     property var modelOptions:[{id:"",displayName:isApi?"Choose a model":isOllama?(savedDefault?"Default · "+savedDefault:"Choose a model"):"CLI default",description:isApi?"Select from the catalog or enter a model ID below":isOllama?"Choose a default in Settings → Connections":"Use the model configured by the CLI",efforts:[],defaultEffort:"",isDefault:true}].concat(capability.models||[]).concat((projectSettings||prefilled)&&desiredModel&&!(capability.models||[]).some(m=>m.id===desiredModel)?[{id:desiredModel,displayName:desiredModel+" · saved",description:"Saved selection. Availability is checked when you open a session.",efforts:[],defaultEffort:""}]:[])
@@ -80,7 +86,7 @@ CDialog {
         const start=saved||imported
         sessionTitle.text=imported.title||""
         folder.text=imported.cwd||""
-        provider.currentIndex=Math.max(0,["codex","claude","ollama","antigravity","openai","anthropic","google","compatible"].indexOf(start.provider||"codex"))
+        provider.currentIndex=Math.max(0,providerOrder.indexOf(start.provider||"codex"))
         desiredModel=start.model||"";desiredEffort=start.effort||""
         chooseModel(desiredModel);refreshModels()
         customModel.text="";temporary.checked=(projectSettings||prefilled)&&!!start.temporary;tools.checked=(projectSettings||prefilled)&&!!start.tools;trust.checked=projectSettings&&!!imported.trusted;favorite.checked=!!project.favorite;conventions.checked=projectSettings&&!!project.conventions;projectStage="";if(projectSettings)stylesRequest=App.rpc("presets.list",{});handoff.checked=false;saveDefaults.checked=false;error="";modelError=""
@@ -97,7 +103,7 @@ CDialog {
     CCheckBox { id:favorite;objectName:"projectFavorite";visible:popup.projectSettings;text:"Keep this project at the top" }
     CText { text:"Provider";color:Theme.muted;font.pixelSize:Theme.secondary }
     CComboBox {
-        id:provider;objectName:"sessionProvider";Layout.fillWidth:true;model:["Codex","Claude Code","Ollama","AntiGravity","OpenAI API","Claude API","Google AI API",App.state.settings?.compatible?.label||"Compatible endpoint"];enabled:!popup.imported.nativeId;Accessible.name:"Session provider"
+        id:provider;objectName:"sessionProvider";Layout.fillWidth:true;model:popup.providerOrder.map(id=>id==="compatible"?(App.state.settings?.compatible?.label||popup.traits[id]?.label||"Compatible endpoint"):(popup.traits[id]?.label||({codex:"Codex",claude:"Claude Code",ollama:"Ollama",antigravity:"AntiGravity",openai:"OpenAI API",anthropic:"Claude API",google:"Google AI API"})[id]||id));enabled:!popup.imported.nativeId;Accessible.name:"Session provider"
         onActivated:{customModel.text="";tools.checked=false;if(popup.projectSettings)trust.checked=false;popup.desiredModel="";popup.desiredEffort="";popup.chooseModel("");popup.refreshModels()}
     }
     CText { text:!popup.projectSettings&&popup.isConversation&&!tools.checked?"Project folder (optional)":"Project folder";color:Theme.muted;font.pixelSize:Theme.secondary }

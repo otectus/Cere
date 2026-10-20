@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { randomUUID,createHash } from 'node:crypto';
 import { privateDir } from './paths.ts';
 import type { Core } from './core.ts';
+import { buildIdentity } from './build-info.ts';
+import { dependencyReport } from './dependencies.ts';
 
 /** Diagnostic exports use an allowlist. Transcripts, paths, argv and raw errors never enter it. */
 export function healthReport(core:Core) {
@@ -17,7 +19,7 @@ export function healthReport(core:Core) {
   // Written by the broker as it exits: whether every owned operation was confirmed finished.
   let previousShutdown:{at:number;confirmed:boolean;problems:string[]}|null=null;
   try{const value=JSON.parse(readFileSync(join(core.store.directory,'last-shutdown.json'),'utf8'));previousShutdown={at:Number(value.at)||0,confirmed:value.confirmed===true,problems:(Array.isArray(value.problems)?value.problems:[]).map(String).slice(0,5)};}catch{}
-  return {schema:1,time:new Date().toISOString(),node:process.version,providers,
+  return {schema:1,time:new Date().toISOString(),node:process.version,build:buildIdentity(),providers,
     memory:{enabled:core.settings.memory.enabled,state:core.memory.status.state,pending:core.memory.status.pending,coverage:core.memory.status.warning?'degraded':'not-measured',error:core.memory.status.error,backups:core.memory.status.backups},
     speech:{enabled:core.settings.speechEnabled,state:speech.state,backend:speech.backend,problem:speech.error?'speech':null},
     sessions:{count:core.store.sessionCount(),active:core.store.sessions().filter(s=>['starting','working','waiting','stopping'].includes(s.status)).length},
@@ -25,6 +27,8 @@ export function healthReport(core:Core) {
     // M16: aggregate durations only, and only while the user measures them.
     responsiveness:core.spans.summary(),
     previousShutdown,
+    // Which desktop features have the programs they need; a missing one disables only its feature.
+    dependencies:dependencyReport(),
     privacy:'Excludes conversation text, drafts, project paths, saved commands, credentials, device identities and raw provider errors.'};
 }
 export class Diagnostics {

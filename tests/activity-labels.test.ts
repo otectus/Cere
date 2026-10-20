@@ -19,3 +19,13 @@ test('every session activity has a label in each desktop view and in Cere Mobile
   const missing = views.flatMap(([path, label]) => { const source = read(path); return activities.filter(a => !source.includes(label(a))).map(a => `${path}: ${a}`); });
   assert.deepEqual(missing, []);
 });
+
+// W05: the phone's conversation timeline names a working turn's activity with the desktop chat's words.
+test('the shared activity labels are the ones the desktop chat shows', () => {
+  const chat = read('qml/Chat.qml');
+  const body = chat.slice(chat.indexOf('function activityStatus()'), chat.indexOf('default:', chat.indexOf('function activityStatus()')));
+  const desktop = Object.fromEntries([...body.matchAll(/case "(\w+)": return "([^"]+)"/g)].map(match => [match[1], match[2]]));
+  const { labels } = JSON.parse(read('tests/fixtures/activity-labels.json'));
+  assert.deepEqual(desktop, labels);
+  assert.deepEqual(Object.keys(labels).sort(), [...activities].sort(), 'every activity has a timeline label');
+});

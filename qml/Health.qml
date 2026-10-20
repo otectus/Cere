@@ -26,6 +26,10 @@ CDialog {
         objectName:"healthPreviousShutdown";visible:health.report.previousShutdown?.confirmed===false;color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
         text:"The last time Cere stopped, it could not confirm that everything it was running had finished: "+(health.report.previousShutdown?.problems||[]).join(" ")
     }
+    CText {
+        objectName:"healthMissingDependencies";visible:(health.report.dependencies||[]).some(d=>!d.available);color:Theme.muted;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true
+        text:"Unavailable until installed: "+(health.report.dependencies||[]).filter(d=>!d.available).map(d=>d.name+" ("+d.feature.toLowerCase()+")").join(", ")+". Chat is not affected."
+    }
     CText { text:"Memory: "+(health.report.memory?.state||"unknown")+" · "+(health.report.memory?.coverage||"") }
     CText { objectName:"healthMemoryError";visible:!!health.report.memory?.error;text:health.report.memory?.error||"";color:Theme.amber;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CText {

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { open, readFile, unlink, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -9,7 +9,8 @@ import type { Router } from './router.ts';
 import type { Device } from './store.ts';
 
 type Media={id:string;uploadId:string;deviceId:string;sessionId:string;size:number;offset:number;mime:string;sha256:string;status:'uploading'|'ready'|'submitted';expiresAt:number;submittedAt?:number;path:string;width?:number;height?:number};
-type Preview={id:string;deviceId:string;approvalId:string;revision:string;digest:string;imageDigest:string;expiresAt:number;bytes:Buffer};
+// A preview is of an approval's capture (approvalId) or of a capture the phone started (captureId).
+type Preview={id:string;deviceId:string;approvalId?:string;captureId?:string;draft?:{sessionId:string;attachmentId:string};revision:string;digest:string;imageDigest:string;expiresAt:number;bytes:Buffer};
 export class MediaStore {
   router:Router;directory:string;busy=new Set<string>();previews=new Map<string,Preview>();
   decoding=false;
@@ -83,17 +84,79 @@ export class MediaStore {
     return {readId:id,size:bytes.length,mime:'image/jpeg',sha256:bytesDigest(bytes),imageDigest,expiresAt};
     } finally {this.decoding=false;}
   }
+  /** A reduced copy of a ready capture the phone started, bound to the original's digest. */
+  async previewCapture(device:Device,captureId:string) {
+    this.router.require(device,'capture.preview');
+    if(this.decoding)throw remoteError('SESSION_BUSY','Another image is being validated.');
+    if([...this.previews.values()].filter(v=>v.deviceId===device.id&&v.expiresAt>Date.now()).length>=4)throw remoteError('LIMIT_EXCEEDED','Close old previews before opening another.');
+    this.decoding=true;
+    try {
+      const {job,bytes:original}=await this.router.captures.image(device,captureId);
+      const bytes=await sharp(original,{limitInputPixels:40_000_000}).resize({width:1400,height:1400,fit:'inside',withoutEnlargement:true}).jpeg({quality:80}).toBuffer();
+      if(bytes.length>1024*1024)throw remoteError('LIMIT_EXCEEDED','Capture preview is too large.');
+      this.router.current(device);
+      const id=randomUUID(),expiresAt=Date.now()+300000;
+      this.previews.set(id,{id,deviceId:device.id,captureId:job.id,revision:'1',digest:job.imageDigest!,imageDigest:job.imageDigest!,expiresAt,bytes});
+      return {readId:id,size:bytes.length,mime:'image/jpeg',sha256:bytesDigest(bytes),imageDigest:job.imageDigest,width:job.width,height:job.height,expiresAt};
+    } finally {this.decoding=false;}
+  }
+  /**
+   * W10: what an attachment of a conversation's desktop draft contains, so the phone can review it before
+   * editing or sending that draft. An image is a reduced copy bound to the original's digest (read in
+   * parts like any preview); a text file is its opening. A changed or missing file is refused.
+   */
+  async previewDraft(device:Device,p:{sessionId:string;attachmentId:string}) {
+    const asset=(this.router.session(device,p.sessionId).draftAttachments||[]).find(a=>a.id===p.attachmentId);
+    if(!asset)throw remoteError('REVISION_CONFLICT','This attachment is no longer in the desktop draft.');
+    if(asset.kind==='image') {
+      this.router.require(device,'capture.preview');
+      if(this.decoding)throw remoteError('SESSION_BUSY','Another image is being validated.');
+      if([...this.previews.values()].filter(v=>v.deviceId===device.id&&v.expiresAt>Date.now()).length>=4)throw remoteError('LIMIT_EXCEEDED','Close old previews before opening another.');
+    }
+    if(asset.kind==='image')this.decoding=true;
+    try {
+      const original=await readFile(asset.path).catch(()=>{throw remoteError('ATTACHMENT_INVALID','The desktop no longer has this attachment. Remove it from the draft.');});
+      if(createHash('sha256').update(original).digest('hex')!==asset.sha256)throw remoteError('ATTACHMENT_INVALID','This attachment changed on the desktop. Remove it there and attach it again.');
+      if(asset.kind==='text') {
+        const text=original.toString('utf8');this.router.current(device);
+        return {attachmentId:asset.id,kind:'text',name:asset.name.slice(0,120),sha256:asset.sha256,text:text.slice(0,32768),truncated:text.length>32768};
+      }
+      const bytes=await sharp(original,{limitInputPixels:40_000_000}).resize({width:1400,height:1400,fit:'inside',withoutEnlargement:true}).jpeg({quality:80}).toBuffer();
+      if(bytes.length>1024*1024)throw remoteError('LIMIT_EXCEEDED','The attachment preview is too large.');
+      this.router.current(device);
+      const id=randomUUID(),expiresAt=Date.now()+300000;
+      this.previews.set(id,{id,deviceId:device.id,draft:{sessionId:p.sessionId,attachmentId:asset.id},revision:'1',digest:asset.sha256,imageDigest:asset.sha256,expiresAt,bytes});
+      return {attachmentId:asset.id,kind:'image',name:asset.name.slice(0,120),readId:id,size:bytes.length,mime:'image/jpeg',sha256:bytesDigest(bytes),imageDigest:asset.sha256,expiresAt};
+    } finally {if(asset.kind==='image')this.decoding=false;}
+  }
+  /**
+   * Turns a reviewed capture into a ready attachment of one conversation: the original bytes whose
+   * digest the phone reviewed, under the same quotas and expiry as an uploaded image.
+   */
+  async fromCapture(device:Device,p:{captureId:string;sessionId:string;imageDigest:string}) {
+    this.router.require(device,'attachments.write');this.router.session(device,p.sessionId);
+    const {job,bytes}=await this.router.captures.image(device,p.captureId,p.imageDigest);
+    const all=this.all(),owned=all.filter(m=>m.deviceId===device.id);
+    if(owned.length>=256||owned.reduce((n,m)=>n+m.size,0)+bytes.length>512*1024*1024||all.reduce((n,m)=>n+m.size,0)+bytes.length>2*1024*1024*1024)throw remoteError('LIMIT_EXCEEDED','Retained image quota exceeded. Clear this device’s retained images on the desktop.');
+    const directory=join(this.directory,device.id);privateDir(directory);
+    const m:Media={id:randomUUID(),uploadId:randomUUID(),deviceId:device.id,sessionId:p.sessionId,size:bytes.length,offset:bytes.length,mime:'image/png',sha256:bytesDigest(bytes),status:'ready',expiresAt:Date.now()+3600000,path:join(directory,randomUUID()+'.image'),width:job.width,height:job.height};
+    const file=await open(m.path,'wx',0o600);try{await file.write(bytes);await file.sync();}finally{await file.close();}
+    this.router.current(device);this.save(m);this.router.captures.attached(job);
+    return this.dto(m);
+  }
   previewReviewed(device:Device,approvalId:string,imageDigest:string) {return [...this.previews.values()].some(p=>p.deviceId===device.id&&p.approvalId===approvalId&&p.imageDigest===imageDigest&&p.expiresAt>Date.now());}
   read(device:Device,p:any):Buffer {
     this.router.require(device,'capture.preview');const preview=this.previews.get(p.readId);
     if(!preview||preview.deviceId!==device.id||preview.expiresAt<Date.now())throw remoteError('ATTACHMENT_INVALID','Preview expired.');
-    const current=this.router.approval(device,preview.approvalId);if(this.router.approvalDto(device,current.a).digest!==preview.digest)throw remoteError('REVISION_CONFLICT','Capture request changed.');
+    if(preview.approvalId){const current=this.router.approval(device,preview.approvalId);if(this.router.approvalDto(device,current.a).digest!==preview.digest)throw remoteError('REVISION_CONFLICT','Capture request changed.');}
+    else if(preview.captureId){const job=this.router.captures.owned(device,preview.captureId);if(job.state!=='ready'||job.imageDigest!==preview.imageDigest)throw remoteError('REVISION_CONFLICT','This capture changed or ended.');}
+    else if(preview.draft){const {sessionId,attachmentId}=preview.draft;if(!(this.router.session(device,sessionId).draftAttachments||[]).some(a=>a.id===attachmentId&&a.sha256===preview.imageDigest))throw remoteError('REVISION_CONFLICT','This attachment left the desktop draft.');}
     if(p.offset>=preview.bytes.length)throw remoteError('INVALID_ARGUMENT','Preview offset is outside the image.');
     const header=Buffer.alloc(24);Buffer.from(p.readId.replaceAll('-',''),'hex').copy(header);header.writeBigUInt64BE(BigInt(p.offset),16);
     return Buffer.concat([header,preview.bytes.subarray(p.offset,p.offset+p.length)]);
   }
   async purge(deviceId?:string) {
-    for(const [id,p]of this.previews)if(p.expiresAt<Date.now()||p.deviceId===deviceId||!this.router.core.approvals.has(p.approvalId))this.previews.delete(id);
+    for(const [id,p]of this.previews)if(p.expiresAt<Date.now()||p.deviceId===deviceId||(p.approvalId&&!this.router.core.approvals.has(p.approvalId))||(p.captureId&&!this.router.captures.jobs.has(p.captureId)))this.previews.delete(id);
     const sessions=new Map(this.router.core.store.sessions().map(s=>[s.id,s]));
     for(const m of this.all()) {
       const session=sessions.get(m.sessionId);

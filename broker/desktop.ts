@@ -92,7 +92,12 @@ async function dispatch(lua: string, legacy: string[], signal?: AbortSignal, aut
     .then(r=>r.stdout.trim()==='ok', ()=>false);
   const supported=await luaDispatch;
   authorize?.();signal?.throwIfAborted();
-  return effect(exec('hyprctl', supported ? ['dispatch', lua] : ['dispatch', ...legacy], {timeout:5000,signal}));
+  const result=await effect(exec('hyprctl', supported ? ['dispatch', lua] : ['dispatch', ...legacy], {timeout:5000,signal}));
+  // hyprctl prints "ok" for a dispatch it performed, and a warning or error (with exit status 0) for
+  // one it did not, such as a window that closed since it was chosen: that is never a success.
+  const output=String(result.stdout||'').trim();
+  if(output!=='ok')throw new Error(/window not found/i.test(output)?'That window no longer exists. Refresh and try again.':`Hyprland did not do this: ${output.replace(/^(warning|error):\s*/i,'').slice(0,200)||'no confirmation'}`);
+  return result;
 }
 /** A started process can act before its acknowledgement is lost or it exits. */
 async function effect<T>(operation:Promise<T>):Promise<T> {
@@ -132,10 +137,31 @@ export async function mediaStatus(preferred?:string) {
 }
 let capturing=false;
 /**
+ * W10: the focused display as an immutable PNG, without an editor (a capture started from a phone
+ * when nobody may be at the desktop). Shares the capture lock with Satty captures.
+ */
+export async function captureDisplay(signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  if(capturing)throw new Error('A capture is already open in Satty. Save it or close it before starting another.');
+  capturing=true;
+  const directory=join(paths().state,'captures'), id=randomUUID(), path=join(directory,`${id}.png`);
+  try {
+    await mkdir(directory,{recursive:true,mode:0o700});
+    const monitors=JSON.parse((await exec('hyprctl',['-j','monitors'],{timeout:3000,signal})).stdout);
+    const monitor=monitors.find((m:any)=>m.focused&&!m.disabled)||monitors.find((m:any)=>!m.disabled);
+    if(!monitor)throw new Error('No active display is available to capture.');
+    await exec('grim',['-o',monitor.name,path],{timeout:10000,signal}).catch(error=>{signal?.throwIfAborted();throw new Error(/ENOENT/.test(String(error?.code||error?.message))?'Screen capture needs grim. Install the grim package and try again.':'The display could not be captured.');});
+    signal?.throwIfAborted();
+    if(!(await stat(path).catch(()=>null))?.size)throw new Error('The display could not be captured.');
+    return {path,message:'Display captured'};
+  } catch(error) { await unlink(path).catch(()=>{}); throw error; }
+  finally { capturing=false; }
+}
+/**
  * Every step honors cancellation, including the open Satty editor: Stop or shutdown
  * terminates it, removes the raw image and releases the capture lock.
  */
-async function captureInSatty(signal?: AbortSignal) {
+export async function captureInSatty(signal?: AbortSignal) {
   signal?.throwIfAborted();
   if(capturing)throw new Error('A capture is already open in Satty. Save it or close it before starting another.');
   capturing=true;

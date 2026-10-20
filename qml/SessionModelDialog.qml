@@ -8,7 +8,8 @@ CDialog {
     property var original:({})
     property var models:[]
     property bool isOllama:original.provider==="ollama"
-    property bool isApi:["openai","anthropic","google","compatible"].includes(original.provider)
+    readonly property var providerTrait:(App.state.providerTraits||{})[original.provider]||({})
+    property bool isApi:providerTrait.kind?providerTrait.kind==="api":["openai","anthropic","google","compatible"].includes(original.provider)
     property bool isNative:!isOllama&&!isApi
     property var labels:({codex:"Codex",claude:"Claude Code",ollama:"Ollama",antigravity:"AntiGravity",openai:"OpenAI API",anthropic:"Claude API",google:"Google AI API",compatible:App.state.settings?.compatible?.label||"Compatible endpoint"})
     property var defaultEfforts:(models.find(m=>m.isDefault)||{}).efforts||(!original.model&&original.effort?[{id:original.effort,displayName:original.effort}]:[])

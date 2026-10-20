@@ -4,6 +4,7 @@ import {mkdtemp,writeFile,readFile,readdir,rm,symlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {desktopAction,mediaStatus,validateAction} from '../broker/desktop.ts';
+import {dependencyReport} from '../broker/dependencies.ts';
 import type {Settings} from '../broker/types.ts';
 
 // Exercise the actual process arguments and output parsing without touching
@@ -88,4 +89,11 @@ test('missing Satty is actionable and duplicate capture requests cannot open com
   const first=desktopAction('screenshot.capture',{},{} as Settings);
   await assert.rejects(desktopAction('screenshot.capture',{},{} as Settings),/already open/);
   const result=await first;assert.ok(typeof result==='object'&&'path' in result&&result.path);
+});
+
+test('W10 dependency diagnostics name each missing program and the feature it disables', () => {
+  const report = dependencyReport('/nonexistent-cere-path');
+  assert.ok(report.length >= 10);
+  for (const name of ['grim', 'satty', 'wpctl', 'busctl']) assert.equal(report.find(entry => entry.name === name)?.available, false, name + ' is reported missing on an empty PATH');
+  assert.match(report.find(entry => entry.name === 'satty')!.feature, /capture/i);
 });

@@ -14,7 +14,9 @@ import { Identity, addresses } from './identity.ts';
 import { Pairing } from './pairing.ts';
 import { Router, safeError } from './router.ts';
 import { digest, verified } from './crypto.ts';
-import { helloSchema, requestSchema, methods, mutations, needsProof, availableOperations } from './schemas.ts';
+import { helloSchema, requestSchema, methods, mutations, needsProof, availableOperations, protocolFeatures } from './schemas.ts';
+import { buildIdentity, brokerBuildLabel } from '../build-info.ts';
+import { isApiProvider } from '../provider-catalog.ts';
 import { mobileMessage } from './transcript.ts';
 
 type Peer = {socket:WebSocket;device?:Device;hello?:any;challenge?:any;authSessionId?:string;expiresAt:number;subscribed:boolean;selected?:string;
@@ -36,11 +38,13 @@ export class MobileGateway {
 
   constructor(core:Core) {
     this.core=core;this.registry=new RemoteStore(core.store);this.identity=new Identity(this.registry);this.pairing=new Pairing(this.registry,this.identity);
-    this.router=new Router(core,this.registry,id=>this.revoke(id));
-    this.router.scopeReduced=id=>{void this.reduced(id).catch(()=>{});};
+    this.router=new Router(core,this.registry,id=>this.track(this.revoke(id)));
+    this.router.scopeReduced=id=>{void this.track(this.reduced(id)).catch(()=>{});};
+    // A capture's progress goes to the phones of the device that started it.
+    this.router.captures.changed=(deviceId,dto)=>{for(const peer of this.peers)if(peer.subscribed&&peer.device?.id===deviceId)this.event(peer,'capture.updated',dto);};
     core.remoteAuthority=(execution,session)=> {
       const device=this.registry.live(execution.deviceId);
-      return !!device&&this.registry.config().enabled&&device.scopeVersion===execution.scopeVersion&&device.projects.some(p=>p.id===execution.projectId&&p.path===session.cwd)&&this.router.inScope(device,session);
+      return !!device&&this.registry.config().enabled&&device.scopeVersion===execution.scopeVersion&&device.projects.some(p=>p.id===execution.projectId&&p.path===session.cwd)&&this.router.inScope(device,session)&&(!isApiProvider(session.provider)||this.router.apiAccess(device,session.provider).remoteExecution);
     };
     core.on('changed',this.onChanged);core.on('state',this.onState);core.on('message',this.onMessage);core.on('notice',this.onNotice);
     this.heartbeat=setInterval(()=>{void this.track(this.maintain()).catch(()=>{});},20000);this.heartbeat.unref();this.presence();
@@ -163,7 +167,10 @@ export class MobileGateway {
     if(!peer.device) {
       if(frame.type==='hello'&&!peer.hello) {
         const hello=helloSchema.parse(frame),device=this.registry.live(hello.deviceId);
-        if(!device||device.replacementPending||hello.desktopId!==this.identity.id||hello.protocolMin>0||hello.protocolMax<0||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
+        // An incompatible hello says which side needs updating; it reveals nothing about the device.
+        if(hello.protocolMin>0){peer.socket.close(4010,'INCOMPATIBLE_CLIENT_NEWER');return;}
+        if(hello.protocolMax<0){peer.socket.close(4010,'INCOMPATIBLE_CLIENT_OLDER');return;}
+        if(!device||device.replacementPending||hello.desktopId!==this.identity.id||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
         peer.hello=hello;peer.challenge={challengeId:randomUUID(),serverNonce:randomBytes(32).toString('base64url'),epoch:this.registry.epoch,audience:this.identity.id,expiresAt:Date.now()+30000};
         this.send(peer,{v:1,type:'auth.challenge',...peer.challenge});return;
       }
@@ -174,7 +181,8 @@ export class MobileGateway {
       if(!device||device.replacementPending||!challenge||challenge.expiresAt<Date.now()||reply.challengeId!==challenge.challengeId||!verified(device.connectionKey,transcript,reply.signature)||!this.registry.config().enabled||[...this.peers].filter(p=>p.device?.id===device.id).length>=2)throw remoteError('UNAUTHENTICATED','Authentication failed.');
       peer.device=device;peer.authSessionId=randomUUID();peer.expiresAt=Date.now()+15*60000;clearTimeout(peer.timer);
       device.lastSeen=Date.now();this.registry.saveDevice(device);
-      this.send(peer,{v:1,type:'welcome',desktopId:this.identity.id,brokerBuild:'0.1.0/mobile-v1',authSessionId:peer.authSessionId,expiresAt:peer.expiresAt,epoch:this.registry.epoch,scopeVersion:device.scopeVersion,protocol:{major:1,minor:0},operations:availableOperations(device.caps),sendAuthentication:'connection-key',actionAuthentication:device.actionAuthentication||'biometric',limits:{maxFrameBytes:1024*1024,maxMessageLength:100000,maxAttachments:4}});
+      const build=buildIdentity();
+      this.send(peer,{v:1,type:'welcome',desktopId:this.identity.id,brokerBuild:brokerBuildLabel(build),build:{version:build.version,commit:build.commit,dirty:build.dirty},authSessionId:peer.authSessionId,expiresAt:peer.expiresAt,epoch:this.registry.epoch,scopeVersion:device.scopeVersion,protocol:{major:1,minor:1},features:[...protocolFeatures],operations:availableOperations(device.caps),sendAuthentication:'connection-key',actionAuthentication:device.actionAuthentication||'biometric',limits:{maxFrameBytes:1024*1024,maxMessageLength:100000,maxAttachments:4}});
       this.registry.audit({deviceId:device.id,operation:'auth',decision:'connected'});this.presence();return;
     }
     const request=requestSchema.parse(frame),device=this.router.current(peer.device);

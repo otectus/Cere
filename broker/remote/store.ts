@@ -6,7 +6,9 @@ import { remoteError } from '../execution.ts';
 export type Project = {id:string;name:string;path:string};
 export type Device = {id:string;name:string;connectionKey:string;actionKey:string;keyVersion:number;scopeVersion:string;
   actionAuthentication?:'biometric'|'trusted-device';replacesDeviceId?:string;replacementPending?:boolean;
-  createdAt:number;expiresAt:number;revokedAt?:number;lastSeen?:number;projects:Project[];caps:string[];categories:string[];scriptIds:string[];ollamaHosts:string[]};
+  createdAt:number;expiresAt:number;revokedAt?:number;lastSeen?:number;projects:Project[];caps:string[];categories:string[];scriptIds:string[];ollamaHosts:string[];
+  /** Hosted API providers this phone may run (with the providers.api grant); the compatible endpoint is bound to the origin granted. */
+  apiProviders?:string[];compatibleEndpoint?:string};
 export type RemoteConfig = {enabled:boolean;addresses:string[];port:number;name:string};
 export class RemoteStore {
   store: Store; epoch=randomUUID();

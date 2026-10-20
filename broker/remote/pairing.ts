@@ -8,8 +8,21 @@ import { Identity, addresses, endpoints } from './identity.ts';
 import { RemoteStore } from './store.ts';
 import type { Device, Project } from './store.ts';
 import { remoteError } from '../execution.ts';
+import { apiProviders } from '../provider-catalog.ts';
+import { endpointOrigin } from '../compatible-endpoint.ts';
+/**
+ * W08: hosted API use from a phone is its own grant (it may be billed), per provider; the compatible
+ * endpoint is bound to the origin configured when the owner granted it.
+ */
+function apiGrant(registry:RemoteStore,granted:string[],requested:string[]) {
+  if(!granted.includes('providers.api'))return {apiProviders:[] as string[]};
+  const providers=[...new Set(requested)].filter(id=>(apiProviders as string[]).includes(id));
+  const origin=providers.includes('compatible')?endpointOrigin(registry.store.settings().compatible?.baseUrl||''):'';
+  if(providers.includes('compatible')&&!origin)throw new Error('Set the compatible endpoint before granting it to a phone.');
+  return {apiProviders:providers,...(origin?{compatibleEndpoint:origin}:{})};
+}
 
-export const caps = ['chat.read','chat.write','approvals.answer','providers.execute','approvals.provider','desktop.control','settings.write','memory.read','memory.write','web','capture.preview','attachments.write'] as const;
+export const caps = ['chat.read','chat.write','approvals.answer','providers.execute','providers.api','approvals.provider','desktop.control','settings.write','memory.read','memory.write','web','capture.preview','attachments.write'] as const;
 export const categories = ['apps','files','windows','audio','media','capture','timers','scripts','providers'] as const;
 const b64=z.string().regex(/^[A-Za-z0-9_-]+$/), uuid=z.uuid();
 const responseSchema=z.strictObject({type:z.literal('response'),v:z.literal(1),desktopId:uuid,pairingId:uuid,offerDigest:b64,nonce:b64.length(43),deviceId:uuid,name:z.string().min(1).max(48),keyVersion:z.literal(1),connectionKey:b64,actionKey:b64,deviceNonce:b64.length(43),connectionProof:b64,actionProof:b64});
@@ -18,11 +31,12 @@ export class Pairing {
   registry:RemoteStore; identity:Identity;
   constructor(registry:RemoteStore,identity:Identity) {this.registry=registry;this.identity=identity;}
   updateScopes(params:unknown):Device {
-    const p=z.strictObject({id:uuid,projectPaths:z.array(z.string()).min(1).max(32),caps:z.array(z.enum(caps)),categories:z.array(z.enum(categories)),scriptIds:z.array(z.string()).max(100).default([])}).parse(params);
+    const p=z.strictObject({id:uuid,projectPaths:z.array(z.string()).min(1).max(32),caps:z.array(z.enum(caps)),categories:z.array(z.enum(categories)),scriptIds:z.array(z.string()).max(100).default([]),apiProviders:z.array(z.enum(apiProviders as [string,...string[]])).max(4).default([])}).parse(params);
     const device=this.registry.live(p.id);if(!device)throw new Error('Re-pair an expired or revoked device.');
     const projects:Project[]=[...new Set(p.projectPaths.map(path=>realpathSync(path)))].map(path=>{if(!statSync(path).isDirectory())throw new Error('Choose a project directory');return device.projects.find(pr=>pr.path===path)||{id:randomUUID(),name:basename(path)||path,path};});
-    const next={...device,projects,caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,ollamaHosts:[this.registry.store.settings().ollama.host],scopeVersion:String(BigInt(device.scopeVersion)+1n)};
-    this.registry.saveDevice(next);this.registry.audit({deviceId:device.id,operation:'device.scopes',decision:'updated',scopeVersion:next.scopeVersion,argsDigest:digest({projects:projects.map(p=>p.id),caps:p.caps,categories:p.categories,scriptIds:p.scriptIds})});return next;
+    const {compatibleEndpoint:_previousEndpoint,...rest}=device;
+    const next={...rest,projects,caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,ollamaHosts:[this.registry.store.settings().ollama.host],...apiGrant(this.registry,p.caps,p.apiProviders),scopeVersion:String(BigInt(device.scopeVersion)+1n)};
+    this.registry.saveDevice(next);this.registry.audit({deviceId:device.id,operation:'device.scopes',decision:'updated',scopeVersion:next.scopeVersion,argsDigest:digest({projects:projects.map(p=>p.id),caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,apiProviders:next.apiProviders})});return next;
   }
   async prepare(params:unknown) {
     const p=z.strictObject({addresses:z.array(z.string()),name:z.string().min(1).max(48).default('Cere'),port:z.number().int().min(1024).max(65535).default(8443),actionAuthentication:z.enum(['biometric','trusted-device']).default('biometric'),replacesDeviceId:uuid.optional()}).parse(params);
@@ -53,7 +67,7 @@ export class Pairing {
     return {response,sas,offer,fingerprint:digest({connectionKey:response.connectionKey,actionKey:response.actionKey})};
   }
   confirm(params:unknown):Device {
-    const p=z.strictObject({response:z.string(),sas:z.string(),confirmed:z.literal(true),projectPaths:z.array(z.string()).min(1).max(32),caps:z.array(z.enum(caps)).default(['chat.read','chat.write','approvals.answer']),categories:z.array(z.enum(categories)).default([]),scriptIds:z.array(z.string()).max(100).default([])}).parse(params);
+    const p=z.strictObject({response:z.string(),sas:z.string(),confirmed:z.literal(true),projectPaths:z.array(z.string()).min(1).max(32),caps:z.array(z.enum(caps)).default(['chat.read','chat.write','approvals.answer']),categories:z.array(z.enum(categories)).default([]),scriptIds:z.array(z.string()).max(100).default([]),apiProviders:z.array(z.enum(apiProviders as [string,...string[]])).max(4).default([])}).parse(params);
     const review=this.review(p.response);
     if(p.sas!==review.sas)throw remoteError('UNAUTHENTICATED','Compare the six words on both devices.');
     const previous=review.offer.replacesDeviceId?this.registry.live(review.offer.replacesDeviceId):undefined;
@@ -62,7 +76,7 @@ export class Pairing {
     if(this.registry.devices().filter(d=>this.registry.live(d.id)).length>=5&&!previous)throw new Error('At most five devices may be paired.');
     if(this.registry.device(review.response.deviceId))throw new Error('This device identity already exists; generate fresh phone keys.');
     const projects:Project[]=[...new Set(p.projectPaths.map(path=>realpathSync(path)))].map(path=>{if(!statSync(path).isDirectory())throw new Error('Choose a project directory');return previous?.projects.find(project=>project.path===path)||{id:randomUUID(),name:basename(path)||path,path};});
-    const device:Device={id:review.response.deviceId,name:review.response.name,connectionKey:review.response.connectionKey,actionKey:review.response.actionKey,keyVersion:1,scopeVersion:'1',actionAuthentication:review.offer.actionAuthentication||'biometric',...(previous?{replacesDeviceId:previous.id,replacementPending:true}:{}),createdAt:Date.now(),expiresAt:Date.now()+90*86400000,projects,caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,ollamaHosts:[this.registry.store.settings().ollama.host]};
+    const device:Device={id:review.response.deviceId,name:review.response.name,connectionKey:review.response.connectionKey,actionKey:review.response.actionKey,keyVersion:1,scopeVersion:'1',actionAuthentication:review.offer.actionAuthentication||'biometric',...(previous?{replacesDeviceId:previous.id,replacementPending:true}:{}),createdAt:Date.now(),expiresAt:Date.now()+90*86400000,projects,caps:p.caps,categories:p.categories,scriptIds:p.scriptIds,ollamaHosts:[this.registry.store.settings().ollama.host],...apiGrant(this.registry,p.caps,p.apiProviders)};
     const db=this.registry.store.db;
     db.exec('BEGIN IMMEDIATE');
     try {

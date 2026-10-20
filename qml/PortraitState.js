@@ -5,8 +5,9 @@ function resolve(input) {
     var session = input.session || {}, status = session.status || "idle"
     var approvals = input.approvals || [], mood = input.mood || "neutral"
     if (!input.connected) return { expression: "concerned", label: "Reconnecting", tone: "attention" }
-    if (approvals.length || status === "waiting")
-        return { expression: "curious", label: "Waiting for your input", tone: "attention" }
+    // "Your input" only when a request is there to answer; a waiting session without one is waiting on a decision elsewhere.
+    if (approvals.length) return { expression: "curious", label: "Waiting for your input", tone: "attention" }
+    if (status === "waiting") return { expression: "curious", label: "Waiting for a decision", tone: "attention" }
     if (status === "error") return { expression: "concerned", label: "Something needs attention", tone: "attention" }
     if (status === "interrupted" || status === "disconnected")
         return { expression: "concerned", label: status === "interrupted" ? "Interrupted" : "Session disconnected", tone: "attention" }

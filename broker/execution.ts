@@ -5,6 +5,8 @@ export type RemoteExecution = {
   deviceId: string; projectId: string; scopeVersion: string; expiresAt: number;
   caps: string[]; categories: string[]; scriptIds: string[];
   memoryHosts?: string[];
+  /** Hosted API providers the device was granted when this execution was authorized. */
+  apiProviders?: string[];
 };
 export function ordinarySettings(settings: Settings, execution?: RemoteExecution): Settings {
   if (!execution) return settings;

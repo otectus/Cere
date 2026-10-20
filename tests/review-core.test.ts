@@ -84,6 +84,17 @@ test('F-001 revoking automatic authority while an action awaits bookkeeping prev
   assert.equal(await f.executions(), 2);
 });
 
+test('W10 a saved script changed or stopped after review never runs; the reviewed one runs once', async t => {
+  const f = await heldAction(t);
+  const grant = () => [{ category: 'scripts', cwd: f.dir, expires: Date.now() + 3600000 }];
+  const changed = () => { const [script] = f.core.settings.scripts; return f.core.updateSettings({ scripts: [{ ...script, args: ['-c', 'printf changed >> "$0"', ...script.args.slice(2)] }] }); };
+  await assert.rejects(f.run({ profile: 'broad', categories: ['scripts'], grants: grant() }, changed), /saved script changed/);
+  await assert.rejects(f.run({ profile: 'broad', categories: ['scripts'], grants: grant() }, async () => f.core.abortActions(f.session.id, new Error('Stopped by the user'))), /Stopped by the user/);
+  assert.equal(await f.executions(), 0, 'neither the changed definition nor the stopped request ran');
+  await f.run({ profile: 'broad', categories: ['scripts'], grants: grant() });
+  assert.equal(await f.executions(), 1);
+});
+
 test('F-002 private directories reject foreign owners, shared-directory symlinks and writable ancestors', async t => {
   const dir = await directory(t), created = join(dir, 'a', 'b', 'cere');
   privateDir(created);

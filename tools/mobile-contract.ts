@@ -1,6 +1,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { z } from 'zod';
-import { helloSchema, requestSchema, methods, mutations, needsProof } from '../broker/remote/schemas.ts';
+import { helloSchema, requestSchema, methods, mutations, needsProof, protocolFeatures } from '../broker/remote/schemas.ts';
+
+// The hand-written contract documents every operation and negotiated feature the gateway accepts.
+const contract=JSON.parse(readFileSync(new URL('../protocol/mobile/v1/CONTRACT.json',import.meta.url),'utf8'));
+const drift={undocumented:Object.keys(methods).filter(m=>!(m in contract.operations)),removed:Object.keys(contract.operations).filter(m=>!(m in methods)),
+  undocumentedFeatures:protocolFeatures.filter(f=>!(f in (contract.features||{}))),removedFeatures:Object.keys(contract.features||{}).filter(f=>!(protocolFeatures as readonly string[]).includes(f))};
+if(Object.values(drift).some(list=>list.length))throw new Error('protocol/mobile/v1/CONTRACT.json is out of date: '+JSON.stringify(drift));
 
 const requests=Object.entries(methods).map(([method,params])=>{
   const schema:any=z.toJSONSchema(requestSchema.extend({method:z.literal(method),params,...(mutations.has(method)?{commandId:z.uuid()}:{} )}));

@@ -8,7 +8,7 @@ import { join, isAbsolute, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { Store } from './store.ts';
 import { autoApprove, bypassCategory, categoryEnabled } from './permissions.ts';
-import type { Session, Settings, Message, Approval, Adapter, ProviderEvent, Provider, ModelOption, AgentActivity, RunCompletion, DraftView } from './types.ts';
+import type { Session, Settings, Message, Approval, Adapter, ProviderEvent, Provider, ModelOption, AgentActivity, RunCompletion, DraftView, Attachment } from './types.ts';
 import { CodexAdapter, ClaudeAdapter, CliCompatibilityError, claudeRestrictedHelp, claudeTranscriptTitle, cliStartError, cliVersionCheck, providerExecutable } from './providers.ts';
 import type { Hooks } from './providers.ts';
 import { transportMessage, messagePage, messageChunk } from './transcript.ts';
@@ -52,7 +52,7 @@ import { Transcription } from './transcription.ts';
 import { forkCodex } from './branching.ts';
 import { Workflows } from './workflows.ts';
 import { Projects } from './projects.ts';
-import { providerIds, isApiProvider, providerLabels } from './provider-catalog.ts';
+import { providerIds, isApiProvider, providerLabels, providerTraits } from './provider-catalog.ts';
 import { ProviderCredentials } from './credentials.ts';
 import { ApiAdapter, apiLabel, apiModels, portableApiHistory, type ApiAccess } from './api-providers.ts';
 import { declared, endpointOrigin, validEndpoint } from './compatible-endpoint.ts';
@@ -268,7 +268,7 @@ export class Core extends EventEmitter {
     if ((event==='notice'||event==='ui') && this.stateDirty && !this.closed) this.emitState();
     return super.emit(event, ...args);
   }
-  snapshot() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), jobs:this.jobs.snapshot(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
+  snapshot() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), jobs:this.jobs.snapshot(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, providerTraits, providerOrder: [...providerIds], actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
   settingsFor(id: string): Settings {
     const session = this.store.session(id), execution = session.remote;
     if (execution && (!this.remoteAuthority?.(execution, session) || execution.expiresAt <= Date.now())) throw remoteError('AUTH_REVOKED', 'Remote authority expired or was revoked. Detach locally to continue.');
@@ -286,16 +286,22 @@ export class Core extends EventEmitter {
   }
   async sendRemote(p: any, execution: RemoteExecution, beforeAccept?:()=>void, onDispatched?:()=>void, onAccepted?:()=>void, onRejected?:()=>void) {
     const initial=this.store.session(p.id);
-    if(!p.queuedMessageId && initial.draftAttachments?.length)throw remoteError('REVISION_CONFLICT','This desktop draft has attachments. Review or send it from the desktop before sending from mobile.');
-    if (!p.queuedMessageId && this.sendQueue.shouldQueue(initial)) return this.sendQueue.add(p, execution, beforeAccept, onAccepted);
+    // W10: a phone sends the desktop draft's attachments only as it reviewed them (IDs and content digests).
+    const reviewed=(attachments:Attachment[]|undefined)=>JSON.stringify((attachments||[]).map(a=>[a.id,a.sha256]))===JSON.stringify((p.desktopAttachments||[]).map((a:any)=>[a.id,a.sha256]));
+    if(!p.queuedMessageId && (initial.draftAttachments?.length||p.desktopAttachments?.length) && !reviewed(initial.draftAttachments))throw remoteError('REVISION_CONFLICT',p.desktopAttachments===undefined?'This desktop draft has attachments. Review or send it from the desktop before sending from mobile.':'The desktop draft attachments changed. Review them again before sending.');
+    if (!p.queuedMessageId && this.sendQueue.shouldQueue(initial)) {
+      if(p.desktopAttachments?.length)throw remoteError('SESSION_BUSY','Queued messages carry text only. Send this draft with its desktop attachments when the current turn ends, or remove them.');
+      return this.sendQueue.add(p, execution, beforeAccept, onAccepted);
+    }
     if (this.sending.has(p.id) || this.stopping.has(p.id) || busy(initial)) throw remoteError('SESSION_BUSY', 'This session is busy.');
     this.sending.add(p.id);
     try {
       await this.disconnect(p.id);
       const session = this.store.session(p.id);
       if ((!p.queuedMessageId && (session.draftRevision || '0') !== p.expectedDraftRevision) || (session.configRevision || '0') !== p.expectedConfigRevision) throw remoteError('REVISION_CONFLICT', 'The desktop draft or configuration changed.');
+      if (!p.queuedMessageId && !reviewed(session.draftAttachments)) throw remoteError('REVISION_CONFLICT', 'The desktop draft attachments changed. Review them again before sending.');
       if (!this.remoteAuthority?.(execution, session)) throw remoteError('AUTH_REVOKED','Remote authority changed.');
-      this.updateSession(p.id, { remote:structuredClone(execution), effectivePolicy:['ollama','claude'].includes(session.provider)?'restricted':'unknown', turnId:p.turnId });
+      this.updateSession(p.id, { remote:structuredClone(execution), effectivePolicy:['ollama','claude'].includes(session.provider)||isApiProvider(session.provider)?'restricted':'unknown', turnId:p.turnId });
       return await this.sendTurn(p,beforeAccept,onDispatched,onAccepted,onRejected);
     } finally { this.sending.delete(p.id); this.sendQueue.kick(p.id); }
   }
@@ -406,7 +412,8 @@ export class Core extends EventEmitter {
     const ollamaConfig = {...this.settings.ollama,...(p.provider==='ollama'&&p.ollamaHost?{host:ollamaHost(p.ollamaHost)}:{})};
     let ollamaCatalog: ModelOption[] | undefined = this.capabilities.ollama?.modelsStatus === 'ready' ? this.capabilities.ollama.models : undefined;
     if (!(providerIds as readonly string[]).includes(p.provider)) throw new Error('Choose a supported provider');
-    if(initial?.remote && (isApiProvider(p.provider)||p.provider==='antigravity'))throw new Error('This provider is currently available on the desktop only');
+    // A phone runs a hosted API provider only when its authorized execution carries that provider's grant.
+    if(initial?.remote && (p.provider==='antigravity'||isApiProvider(p.provider)&&!(initial.remote.caps.includes('providers.api')&&initial.remote.apiProviders?.includes(p.provider))))throw new Error('This provider is currently available on the desktop only');
     if(p.temporary!==undefined&&typeof p.temporary!=='boolean')throw new Error('Invalid temporary-conversation choice');
     if(p.temporary&&(p.nativeId||initial?.remote||p.tools))throw new Error('Temporary conversations start fresh without Cere tools or mobile sharing');
     if(p.temporary&&this.store.sessions().filter(s=>s.temporary).length>=10)throw new Error('Close a temporary conversation before opening another');
@@ -502,7 +509,8 @@ export class Core extends EventEmitter {
         this.companionReplies = this.companionReplies.slice(index+1); break;
       }
     }
-    if(this.settings.speechProviders[session.provider]!==false)this.speech.speak(this.speechText(message.text), false, session.id, replyId, undefined, session.provider);
+    // A reply to a phone-started turn is shown, not read aloud: the person who asked may not be at the desktop.
+    if(this.settings.speechProviders[session.provider]!==false&&!session.remote)this.speech.speak(this.speechText(message.text), false, session.id, replyId, undefined, session.provider);
     this.changed();
   }
   clearCompanion(sessionId: string) {
@@ -681,10 +689,12 @@ export class Core extends EventEmitter {
     const authorizeDispatch=()=>{this.settingsFor(s.id);if(powerAtStart.leaseId&&this.power.effective(this.store.session(s.id)).leaseId!==powerAtStart.leaseId)throw new Error('Power authorization expired before the provider accepted this turn');beforeAccept?.();};
     if (p.expectedDraftRevision !== undefined && !p.turnId && !p.queuedMessageId && p.expectedDraftRevision !== (s.draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed on another client. Review before sending.');
     const effective = this.settingsFor(p.id);
-    if(s.remote&&(isApiProvider(s.provider)||s.provider==='antigravity'))throw new Error('This provider is currently available on the desktop only');
-    if(s.remote&&s.provider!=='ollama'&&effective.paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
+    // A phone's turn runs only for a provider its authorized execution carries: never AntiGravity, and a
+    // hosted API only with that provider's grant. Cere runs Ollama and API conversations itself.
+    if(s.remote&&(s.provider==='antigravity'||isApiProvider(s.provider)&&!(s.remote.caps.includes('providers.api')&&s.remote.apiProviders?.includes(s.provider))))throw remoteError('SCOPE_DENIED','This provider is not available to this phone. Check its access on the desktop.');
+    if(s.remote&&s.provider!=='ollama'&&!isApiProvider(s.provider)&&effective.paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
     if (s.remote && s.provider === 'claude' && s.effectivePolicy !== 'restricted') throw remoteError('PROVIDER_POLICY_UNSAFE', 'Claude restricted mode is not established; read, Stop and Deny remain available.');
-    if (s.remote && s.provider !== 'ollama' && !s.remote.caps.includes('providers.execute')) throw remoteError('SCOPE_DENIED', 'Native provider execution is not granted.');
+    if (s.remote && s.provider !== 'ollama' && !isApiProvider(s.provider) && !s.remote.caps.includes('providers.execute')) throw remoteError('SCOPE_DENIED', 'Native provider execution is not granted.');
     if (s.remote && !p.turnId) { await this.disconnect(s.id); s = this.store.session(s.id); }
     if (p.webSearch !== undefined && typeof p.webSearch !== 'boolean') throw new Error('Invalid web search choice');
     if (p.posture !== undefined) this.posture(p.posture);
@@ -738,7 +748,11 @@ export class Core extends EventEmitter {
     if(tracked)this.unacknowledged.set(s.id,{turnId:s.turnId!,messageId:userMessageId,text:userText,attachmentIds:attached.assets.map(a=>a.id)});
     const acknowledged=()=>{const turn=this.unacknowledged.get(s.id);if(!turn||turn.turnId!==s.turnId||turn.returned)return;this.unacknowledged.delete(s.id);this.store.set('submission:'+s.id,{turnId:s.turnId,time:Date.now(),state:'accepted'});this.attachments.prune(s.id);};
     let accepted=!remoteAcceptance;
-    const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;if(p.queuedMessageId)return;s=this.updateSession(s.id,{draft:'',view:undefined});this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
+    // The desktop draft's attachments a phone sent leave the draft with its text, as on the desktop.
+    const sentAttachments=JSON.stringify(attached.assets.map(a=>a.id));
+    const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;if(p.queuedMessageId)return;
+      s=this.updateSession(s.id,{draft:'',view:undefined,...(attached.assets.length&&JSON.stringify((this.store.session(s.id).draftAttachments||[]).map(a=>a.id))===sentAttachments?{draftAttachments:[]}:{})});
+      this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(attached.assets.length?'\n\nAttached files: '+attached.assets.map(a=>a.name).join(', '):'')+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
     try {
       let memorySignal: AbortSignal | undefined, memoryText = '', documents: { text: string; detail?: Record<string, any> } = { text: '' };
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && !(effective.memory.enabled && this.memory.active())) this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: this.memoryOffReason(s.id), route: 'cloud' });

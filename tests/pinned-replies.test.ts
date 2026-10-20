@@ -152,3 +152,12 @@ test('provider speech switches suppress pinned and ordinary speech while retaini
   await core.updateSettings({speechProviders:{codex:true}});await core.send({id:session.id,text:'Enabled again'});
   core.event(session.id,{type:'message',id:'reenabled',text:'New speech.'});core.event(session.id,{type:'complete'});assert.equal(spoken.at(-1)?.text,'New speech.');
 });
+
+test('a pinned conversation shows replies to phone-started turns without reading them aloud on the desktop', async t => {
+  const {core,session,spoken} = await setup(t);
+  await core.send({id:session.id,text:'Work'});
+  core.updateSession(session.id,{remote:{deviceId:'phone',projectId:'p',scopeVersion:'1',expiresAt:Date.now()+60000,caps:['chat.read','chat.write'],categories:[],scriptIds:[],memoryHosts:[],apiProviders:[]}});
+  core.event(session.id,{type:'message',id:'answer',text:'Done from the phone.'});
+  assert.deepEqual(core.companionReplies.map(r=>r.message.text),['Done from the phone.'],'the desktop still shows the reply');
+  assert.equal(spoken.length,0,'the desktop does not read a phone turn aloud');
+});
