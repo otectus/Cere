@@ -22,6 +22,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import dev.otectus.cere.mobile.data.CereRepository
@@ -63,6 +64,7 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
     var timerMinutes by rememberSaveable { mutableStateOf("10") }
     var timerLabel by rememberSaveable { mutableStateOf("") }
     var filePath by rememberSaveable { mutableStateOf("") }
+    var workspaceCard by remember { mutableStateOf<JsonObject?>(null) }
     val project = state.projects.firstOrNull { it.id == projectId }
     val actions = status?.get("actions")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }
     val actionNames = actions.mapNotNull { it.text("name") }.toSet()
@@ -74,10 +76,11 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
             loading = true; error = null
             val errors = mutableMapOf<String, String>()
             suspend fun load(section: String, method: String, apply: (JsonElement) -> Unit) {
-                try { apply(repository.request(method, buildJsonObject { put("projectId", projectId) })) }
+                try { apply(repository.read(method, buildJsonObject { put("projectId", projectId) })) }
                 catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { errors[section] = failure.message ?: "Could not load" }
             }
             if (state.supports("desktop.status")) load("status", "desktop.status") { status = it.jsonObject; volume = null }
+            if (state.supports("desktop.workspace")) load("workspace", "desktop.workspace") { workspaceCard = it.jsonObject }
             val loaded = status?.get("actions")?.jsonArray.orEmpty().mapNotNull { (it as? JsonObject)?.text("category") }.toSet()
             if ("apps" in loaded && state.supports("desktop.apps")) load("apps", "desktop.apps") { apps = it.jsonArray.mapNotNull { row -> row as? JsonObject } } else apps = emptyList()
             if ("windows" in loaded && state.supports("desktop.windows")) load("windows", "desktop.windows") { windows = it.jsonArray.mapNotNull { row -> row as? JsonObject } } else windows = emptyList()
@@ -120,6 +123,20 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
         } }
         item { FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { state.projects.forEach { option -> FilterChip(projectId == option.id, { projectId = option.id }, { Column { Text(option.name); Text(option.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall) } }) } } }
         project?.let { selected -> item { Panel("Action scope") { Text(state.desktop?.desktopName ?: "Paired desktop", color = MaterialTheme.colorScheme.primary); SelectionContainer { Text(selected.path ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) } } } }
+        // F80: whether the desktop is working in this project now, from fresh observations only.
+        workspaceCard?.let { card -> item { Panel("Desktop workspace") {
+            val unknown = card["unknown"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull?.replace('_', ' ') }
+            Text(when (card.text("state")) {
+                "in-project" -> "Working in this project now · ${card.text("relativePath") ?: "."}" + if (card.flag("verifiedCheckout")) " · verified checkout" else ""
+                "elsewhere" -> "Working outside this project right now."
+                "unknown" -> "Not known right now" + if (unknown.isNotEmpty()) ": no fresh ${unknown.joinToString(", ")}." else "."
+                else -> card.text("reason") ?: "Workspace awareness is unavailable on the desktop."
+            })
+        } } }
+        // W10: features that need a program the desktop does not have; chat is not affected.
+        status?.get("missing")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }.takeIf { it.isNotEmpty() }?.let { missing -> item { Panel("Unavailable on the desktop") {
+            missing.forEach { Text("${it.text("feature") ?: ""} needs ${it.text("name") ?: "a program"} installed on the desktop.", style = MaterialTheme.typography.bodySmall) }
+        } } }
         item { OutlinedTextField(query, { query = it }, leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Search apps, windows or scripts") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         feedback?.let { item { Surface(color = MaterialTheme.colorScheme.primaryContainer, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(8.dp)) { Text(it, Modifier.padding(12.dp)) } } }
         error?.let { item { Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(8.dp)) { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) } } }
@@ -144,6 +161,7 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
             }
         } }
 
+        if (status?.flag("capture") == true && state.supports("captures.start") && project != null) item { CapturePanel(repository, state, activity, project) }
         if ("timers" in categories) item { Panel("Timers") {
             if (timers.isEmpty()) Text("No timers set from this phone in this project.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             timers.forEach { timer -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -233,5 +251,60 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
     Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp)); Spacer(Modifier.height(14.dp))
         Text(title, style = MaterialTheme.typography.titleLarge); Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * W10: capture the desktop's focused display from the phone. The capture is an accepted job on the
+ * desktop; with editing, Satty opens there and waits for whoever is at the desktop. The phone shows
+ * the exact image it will share (a reduced copy bound to the original's digest), and nothing goes to
+ * a conversation until it is attached here and sent from that conversation.
+ */
+@Composable
+private fun CapturePanel(repository: CereRepository, state: MobileState, activity: FragmentActivity, project: Project) {
+    val scope = rememberCoroutineScope()
+    val captures by repository.captures.collectAsState()
+    val latest = captures.values.firstOrNull { it.text("projectId") == project.id }
+    val captureId = latest?.text("captureId"); val captureState = latest?.text("state")
+    var preview by remember(captureId) { mutableStateOf<dev.otectus.cere.mobile.data.ApprovalPreview?>(null) }
+    var bitmap by remember(captureId) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var busy by remember { mutableStateOf(false) }; var error by remember { mutableStateOf<String?>(null) }
+    var target by rememberSaveable(captureId) { mutableStateOf<String?>(null) }
+    val targets = state.sessions.filter { it.projectId == project.id && it.canSend && it.mode == "managed" }
+    // Satty may stay open for minutes: the phone checks in while it waits, as well as hearing events.
+    LaunchedEffect(captureId, captureState) {
+        if (captureId != null && captureState in setOf("capturing", "editing")) { kotlinx.coroutines.delay(3_000); runCatching { repository.captureStatus(captureId) } }
+        if (captureId != null && captureState == "ready" && preview == null && state.supports("captures.preview")) runCatching { repository.capturePreview(captureId) }
+            .onSuccess { value -> preview = value; bitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { decodeForDisplay(value.bytes, 2048) } }.onFailure { error = it.message }
+    }
+    fun start(edit: Boolean) { busy = true; error = null
+        signedReview(activity, repository, "captures.start", buildJsonObject { put("projectId", project.id); put("edit", edit) }, if (edit) "Capture and edit on the desktop" else "Capture the desktop display",
+            { result -> repository.captureStarted(result); busy = false }, { error = it; busy = false }, boundProjectId = project.id) }
+    Panel("Screen capture") {
+        Text("Captures the desktop's focused display. Nothing is shared with a conversation until you attach it and send.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button({ start(false) }, enabled = !busy && captureState !in setOf("capturing", "editing")) { Text("Capture now") }
+            OutlinedButton({ start(true) }, enabled = !busy && captureState !in setOf("capturing", "editing")) { Text("Capture and edit on the desktop") }
+        }
+        latest?.let { capture ->
+            Text(when (captureState) {
+                "capturing" -> "Capturing…"; "editing" -> "Waiting for the capture to be saved in Satty on the desktop…"
+                "ready" -> "Ready to review"; "attached" -> "Attached to a conversation draft. Send it from that conversation."
+                else -> capture.text("message") ?: (captureState ?: "")
+            }, color = if (captureState in setOf("failed", "expired")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+            bitmap?.let { androidx.compose.foundation.Image(it.asImageBitmap(), "The exact capture that will be attached", Modifier.fillMaxWidth().heightIn(max = 360.dp)) }
+            if (captureState == "ready" && preview != null && state.supports("captures.attach")) {
+                Text("Attach to", fontWeight = FontWeight.Medium)
+                if (targets.isEmpty()) Text("No conversation in this project can send from this phone.", style = MaterialTheme.typography.bodySmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { targets.forEach { session -> FilterChip(target == session.id, { target = session.id }, { Text(session.title, maxLines = 1) }) } }
+                Button({ val chosen = target ?: return@Button; val reviewed = preview ?: return@Button; busy = true; error = null
+                    signedReview(activity, repository, "captures.attach", buildJsonObject { put("captureId", captureId!!); put("sessionId", chosen); put("imageDigest", reviewed.imageDigest) }, "Attach this capture",
+                        { result -> scope.launch { runCatching { repository.adoptCapture(chosen, result.jsonObject, reviewed) }.onFailure { error = it.message }; captureId?.let { runCatching { repository.captureStatus(it) } }; busy = false } }, { error = it; busy = false }, boundProjectId = project.id)
+                }, enabled = !busy && target != null) { Text("Review & attach") }
+            }
+            if (captureId != null && captureState in setOf("capturing", "editing", "ready")) TextButton({ scope.launch { busy = true; runCatching { repository.discardCapture(captureId) }.onFailure { error = it.message }; busy = false } }, enabled = !busy) { Text(if (captureState == "ready") "Discard" else "Cancel") }
+        }
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }

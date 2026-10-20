@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import dev.otectus.cere.mobile.data.CereRepository
 import dev.otectus.cere.mobile.data.MobileState
+import dev.otectus.cere.mobile.data.traits
 import dev.otectus.cere.mobile.protocol.Agent
 import dev.otectus.cere.mobile.protocol.ModelOption
 import dev.otectus.cere.mobile.protocol.Session
@@ -105,7 +106,7 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
                         FilterChip(effort == option.id, { effort = option.id }, { Text(option.displayName) }, enabled = !submitting)
                     } }
                 }
-                if (session.provider == "ollama") ListItem(headlineContent = { Text("Desktop tools") },
+                if (state.traits(session.provider).cereTools) ListItem(headlineContent = { Text("Desktop tools") },
                     supportingContent = { Text("Uses the desktop's existing permission checks") },
                     trailingContent = { Switch(tools, { tools = it }, enabled = !submitting && selected?.capabilities?.contains("tools") == true) })
                 if (conflict) {
@@ -113,7 +114,10 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
                     TextButton({ model = session.model.orEmpty(); effort = session.effort.orEmpty(); tools = session.tools; baseline = session.configRevision; refresh++ }) { Text("Reload desktop settings") }
                 }
             } else Text("Model changes are unavailable while busy or outside this phone's provider access.")
-            if ((session.draftAttachmentCount ?: 0) > 0) Text("This draft includes ${session.draftAttachmentCount} desktop attachment(s). Review them on the PC before sending.")
+            if ((session.draftAttachmentCount ?: 0) > 0) Text("This draft includes ${session.draftAttachmentCount} desktop attachment(s). " +
+                if (state.draftEditable(session)) "Review them under the message field before sending." else "Review them on the PC before sending.")
+            if (state.supports("sessions.behavior")) ConversationStyle(repository, session.id)
+            if (state.supports("workflows.status")) ConversationWork(repository, state, session.id)
             feedback?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
@@ -128,4 +132,72 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
             }, { error = it; submitting = false }, label = session.title)
         }, enabled = !submitting && !loading && !conflict && changed && selected != null) { Text("Review & apply") }
     }, dismissButton = { TextButton(close, enabled = !submitting) { Text("Close") } })
+}
+
+/** W11: which style the conversation's next turn uses and where it is set. Styles are chosen on the desktop. */
+@Composable
+private fun ConversationStyle(repository: CereRepository, sessionId: String) {
+    var value by remember(sessionId) { mutableStateOf<JsonObject?>(null) }
+    LaunchedEffect(sessionId) { value = runCatching { repository.read("sessions.behavior", buildJsonObject { put("sessionId", sessionId) }).jsonObject }.getOrNull() }
+    val behavior = value ?: return
+    HorizontalDivider()
+    Text("Style", style = MaterialTheme.typography.titleMedium)
+    val where = when (behavior["source"]?.jsonPrimitive?.contentOrNull) { "session" -> "set for this conversation"; "project" -> "set for this project"; else -> "the personality, for every conversation" }
+    val profile = behavior["profile"]?.jsonObject?.get("label")?.jsonPrimitive?.contentOrNull
+    Text(if (profile != null) "$profile · $where" else "No style · $where")
+    behavior["posture"]?.jsonObject?.let { posture ->
+        Text("Posture: ${posture["label"]?.jsonPrimitive?.contentOrNull.orEmpty()}" + if (posture["pinned"]?.jsonPrimitive?.booleanOrNull == true) " · pinned to this conversation" else "", style = MaterialTheme.typography.bodySmall)
+    }
+    if (behavior["standingInstructions"]?.jsonPrimitive?.booleanOrNull == true) Text("This conversation also has standing instructions.", style = MaterialTheme.typography.bodySmall)
+    behavior["warnings"]?.jsonArray?.forEach { Text(it.jsonPrimitive.content, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
+    Text("Styles and postures are chosen on the desktop.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/**
+ * W11: the conversation's results, with the provider's report kept apart from what Cere itself
+ * verified, and the schedules made from it. A schedule can be paused here; turning it on again is a
+ * desktop review.
+ */
+@Composable
+private fun ConversationWork(repository: CereRepository, state: MobileState, sessionId: String) {
+    val scope = rememberCoroutineScope()
+    var value by remember(sessionId) { mutableStateOf<JsonObject?>(null) }
+    var open by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var refresh by remember { mutableIntStateOf(0) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(sessionId, open, refresh) {
+        if (open) runCatching { repository.read("workflows.status", buildJsonObject { put("sessionId", sessionId) }).jsonObject }
+            .onSuccess { value = it; error = null }.onFailure { if (it is CancellationException) throw it; error = it.message }
+    }
+    HorizontalDivider()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("Results and schedules", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        TextButton({ if (open) refresh++ else open = true }) { Text(if (open) "Refresh" else "Show") }
+    }
+    if (!open) return
+    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    val results = value?.get("results")?.jsonArray.orEmpty(); val schedules = value?.get("schedules")?.jsonArray.orEmpty()
+    if (value != null && results.isEmpty() && schedules.isEmpty()) Text("No results or schedules for this conversation yet.", style = MaterialTheme.typography.bodySmall)
+    results.map(JsonElement::jsonObject).forEach { result ->
+        val provider = result["providerOutcome"]?.jsonPrimitive?.contentOrNull.orEmpty(); val verification = result["verification"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val gate = when (result["gate"]?.jsonPrimitive?.contentOrNull) { "passed" -> "required checks passed"; "failed" -> "a required check failed"; "incomplete" -> "required checks incomplete"; else -> "no required checks" }
+        Text("Provider reported: $provider · Cere verified: ${verification.replace('-', ' ')} · $gate", style = MaterialTheme.typography.bodySmall)
+        if (result["editedSinceCheck"]?.jsonPrimitive?.booleanOrNull == true) Text("Files changed after the last passing check.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+        result["uncertainty"]?.jsonPrimitive?.contentOrNull?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+    val time = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+    schedules.map(JsonElement::jsonObject).forEach { schedule ->
+        val enabled = schedule["enabled"]?.jsonPrimitive?.booleanOrNull == true
+        val next = schedule["next"]?.jsonPrimitive?.longOrNull
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(schedule["label"]?.jsonPrimitive?.contentOrNull.orEmpty())
+                Text(if (!enabled) "Paused · turn it on again from the desktop" else if (next != null) "Next run ${time.format(java.util.Date(next))}" else "On", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (enabled && state.supports("workflows.pauseSchedule")) TextButton({ scope.launch {
+                runCatching { repository.mutate("workflows.pauseSchedule", buildJsonObject { put("sessionId", sessionId); put("scheduleId", schedule.getValue("id").jsonPrimitive.content); put("expectedRevision", schedule.getValue("revision").jsonPrimitive.content) }) }
+                    .onSuccess { refresh++ }.onFailure { if (it is CancellationException) throw it; error = it.message; refresh++ }
+            } }) { Text("Pause") }
+        }
+    }
 }

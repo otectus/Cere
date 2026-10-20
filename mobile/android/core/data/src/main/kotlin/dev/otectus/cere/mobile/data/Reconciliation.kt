@@ -54,7 +54,7 @@ object CacheReconciler {
         val draft = if (older(incoming.draftRevision, current.draftRevision) ||
             (incoming.draftRevision == current.draftRevision && !incoming.draftIncluded && current.draftIncluded)) current else incoming
         return latest.copy(draft = draft.draft, draftRevision = draft.draftRevision, draftIncluded = draft.draftIncluded,
-            draftAttachmentCount = draft.draftAttachmentCount)
+            draftAttachmentCount = draft.draftAttachmentCount, draftAttachments = draft.draftAttachments)
     }
 
     fun mergeDraft(local: LocalDraft?, remote: Session): LocalDraft = when {

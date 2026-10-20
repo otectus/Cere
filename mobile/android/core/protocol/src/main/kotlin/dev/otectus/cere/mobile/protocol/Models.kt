@@ -49,6 +49,8 @@ data class Auth(
 
 @Serializable data class ProtocolVersion(val major: Int, val minor: Int)
 @Serializable data class Limits(val maxFrameBytes: Int = 1_048_576)
+/** The desktop build: package version and source commit; null parts are unknown, never guessed. */
+@Serializable data class BuildIdentity(val version: String = "unknown", val commit: String? = null, val dirty: Boolean? = null)
 
 @Serializable
 data class Welcome(
@@ -63,8 +65,11 @@ data class Welcome(
     val operations: Set<String>,
     val limits: Limits = Limits(),
     val brokerBuild: String? = null,
+    val build: BuildIdentity? = null,
     val sendAuthentication: String = "action-key",
     val actionAuthentication: ActionAuthentication = ActionAuthentication.BIOMETRIC,
+    /** Behaviour beyond the operation list (protocol 1.1); an older desktop sends none. */
+    val features: Set<String> = emptySet(),
 )
 
 @Serializable
@@ -137,6 +142,8 @@ data class Session(
     val readAt: Long = 0,
     val folderName: String? = null,
     val draftAttachmentCount: Int? = null,
+    /** The open conversation's desktop draft attachments (protocol feature drafts.desktopAttachments). */
+    val draftAttachments: List<DraftAttachment> = emptyList(),
     val updated: Long = 0,
     val activity: String? = null,
     val parentId: String? = null,
@@ -144,6 +151,17 @@ data class Session(
     val error: String? = null,
     val ollamaHost: String = "",
     val agents: List<Agent> = emptyList(),
+)
+
+/** W10: an attachment of a conversation's desktop draft: its name, kind and content digest, never a path. */
+@Serializable
+data class DraftAttachment(
+    val id: String,
+    val name: String,
+    val kind: String,
+    val mime: String = "",
+    val size: Long = 0,
+    val sha256: String,
 )
 
 @Serializable
@@ -179,6 +197,10 @@ data class Message(
     val contentBytes: Long? = null,
     val contentChars: Long? = null,
     val textParts: TextParts? = null,
+    /** A pinned reply: the desktop's bookmark of this message (protocol feature messages.bookmarks). */
+    val bookmarked: Boolean = false,
+    /** Set only on pinned replies listed across conversations. */
+    val sessionTitle: String? = null,
 )
 
 @Serializable data class ApprovalOption(val label: String, val description: String? = null)
@@ -210,6 +232,8 @@ data class Approval(
     val digest: String,
     val turnId: String? = null,
     val canAnswer: Boolean,
+    /** The opaque reference of the session's agent that raised this request, when one did. */
+    val agentId: String? = null,
 )
 
 @Serializable data class Project(val id: String, val name: String, val path: String? = null)

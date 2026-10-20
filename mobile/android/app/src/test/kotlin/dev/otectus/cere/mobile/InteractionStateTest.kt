@@ -48,4 +48,15 @@ class InteractionStateTest {
         assertEquals("Choose or enter an answer.", questionError(ApprovalQuestion("q", "Required?"), emptyList()))
         assertEquals("Select at least one answer.", questionError(ApprovalQuestion("q", "Many?", multiSelect = true), emptyList()))
     }
+
+    @Test fun approvalOriginNamesTheConversationItsAgentAndTheDelegatingParent() {
+        val parent = Session(id = "parent", provider = "ollama", title = "Plan the release", status = "working")
+        val child = Session(id = "child", provider = "codex", title = "Run the checks", status = "waiting", parentId = "parent",
+            agents = listOf(dev.otectus.cere.mobile.protocol.Agent(id = "ref-1", name = "Scout", status = "waiting")))
+        val approval = dev.otectus.cere.mobile.protocol.Approval(id = "a", sessionId = "child", parentSessionIds = listOf("parent"), kind = "provider",
+            title = "Run npm test", choices = listOf("allow", "deny"), revision = "1", digest = "d", canAnswer = true, agentId = "ref-1")
+        val state = dev.otectus.cere.mobile.data.MobileState(sessions = listOf(parent, child))
+        assertEquals("Run the checks · agent Scout · delegated from Plan the release", approvalOrigin(state, approval))
+        assertEquals("A conversation not loaded on this phone", approvalOrigin(dev.otectus.cere.mobile.data.MobileState(), approval.copy(agentId = null, parentSessionIds = emptyList())))
+    }
 }

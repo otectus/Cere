@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -45,25 +46,29 @@ fun SessionTransferSheet(repository: CereRepository, state: MobileState, activit
     var preview by remember { mutableStateOf<JsonObject?>(null) }; var draft by rememberSaveable(source?.id) { mutableStateOf("") }
     var history by remember { mutableStateOf(emptyList<JsonObject>()) }; var historyId by rememberSaveable(source?.id) { mutableStateOf("") }
     var stopped by rememberSaveable(source?.id) { mutableStateOf(false) }; var busy by remember { mutableStateOf(false) }; var error by remember { mutableStateOf<String?>(null) }
+    // Desktop history can come from Codex or, with a desktop that offers it, Claude Code.
+    val historyProviders = if (state.has("history.claude")) listOf("codex" to "Codex", "claude" to "Claude Code") else listOf("codex" to "Codex")
+    var historyProvider by rememberSaveable(source?.id) { mutableStateOf("codex") }
     val projectIds = state.projects.map(Project::id); val sessionIds = state.sessions.map(Session::id)
     LaunchedEffect(state.cacheEpoch) { preview = null; draft = ""; history = emptyList(); historyId = ""; stopped = false; error = null }
     LaunchedEffect(sessionIds) { if (source != null && source.id !in sessionIds) { preview = null; draft = ""; onDismiss() } }
     LaunchedEffect(projectIds) { if (projectId !in projectIds) projectId = projectIds.firstOrNull().orEmpty() }
-    LaunchedEffect(source?.id, if (source == null) projectId else null, state.cacheEpoch) {
+    LaunchedEffect(source?.id, if (source == null) projectId else null, if (source == null) historyProvider else null, state.cacheEpoch) {
         busy = true; error = null
         runCatching {
-            if (source != null) repository.request("sessions.handoffPreview", buildJsonObject { put("sessionId", source.id) }).jsonObject.let { preview = it; if (draft.isBlank()) draft = it.getValue("draft").jsonPrimitive.content }
-            else repository.request("sessions.history", buildJsonObject { put("projectId", projectId) }).jsonObject.let { value -> history = value["items"]?.jsonArray.orEmpty().map { row -> row.jsonObject }; if (history.none { it["id"]?.jsonPrimitive?.contentOrNull == historyId }) historyId = "" }
+            if (source != null) repository.read("sessions.handoffPreview", buildJsonObject { put("sessionId", source.id) }).jsonObject.let { preview = it; if (draft.isBlank()) draft = it.getValue("draft").jsonPrimitive.content }
+            else repository.read("sessions.history", buildJsonObject { put("projectId", projectId); if (historyProvider != "codex") put("provider", historyProvider) }).jsonObject.let { value -> history = value["items"]?.jsonArray.orEmpty().map { row -> row.jsonObject }; if (history.none { it["id"]?.jsonPrimitive?.contentOrNull == historyId }) historyId = "" }
         }.onFailure { error = it.message }; busy = false
     }
     LaunchedEffect(provider) {
-        if (source != null && provider.isNotEmpty()) runCatching { repository.request("providers.models", buildJsonObject { put("provider", provider) }) }
+        if (source != null && provider.isNotEmpty()) runCatching { repository.read("providers.models", buildJsonObject { put("provider", provider) }) }
             .onSuccess { models = WireCodec.json.decodeFromJsonElement<List<ModelOption>>(it); if (models.none { option -> option.id == model }) model = if (provider == "ollama") models.firstOrNull { option -> option.isDefault }?.id ?: models.firstOrNull()?.id.orEmpty() else "" }
             .onFailure { error = it.message }
     }
     AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text(if (source == null) "Desktop history" else "Hand off conversation") },
         text = { Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(if (source == null) "Import a stopped Codex thread from an approved project. Its historical transcript remains with the provider." else "Review the last eight conversation messages. This creates a draft; Send is a separate action.")
+            Text(if (source == null) "Import a stopped conversation from an approved project. Its historical transcript remains with the provider; a Claude Code conversation continues in Claude's restricted mode." else "Review the last eight conversation messages. This creates a draft; Send is a separate action.")
+            if (source == null && historyProviders.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { historyProviders.forEach { (id, label) -> FilterChip(historyProvider == id, { historyProvider = id; historyId = "" }, { Text(label) }, enabled = !busy) } }
             source?.let { original -> val project = state.projects.firstOrNull { it.id == original.projectId }; Text("Source · ${project?.name ?: original.title}", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold); Text(project?.path ?: original.project ?: "Path unavailable", style = MaterialTheme.typography.bodySmall); if (original.provider == "ollama") Text("Ollama · ${original.ollamaHost.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Text("Destination project"); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { state.projects.forEach { project -> FilterChip(projectId == project.id, { projectId = project.id }, { Column { Text(project.name); Text(project.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall) } }) } }
             state.projects.firstOrNull { it.id == projectId }?.let { project -> SelectionContainer { Text(project.path ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) } }
@@ -92,7 +97,7 @@ fun SessionTransferSheet(repository: CereRepository, state: MobileState, activit
 
 /** record=null previews clearing the selected project. Editing always uses a reviewed revision. */
 @Composable
-fun MemoryRecordSheet(repository: CereRepository, state: MobileState, activity: FragmentActivity, sessionId: String, record: JsonObject?, onDismiss: () -> Unit, onChanged: () -> Unit) {
+fun MemoryRecordSheet(repository: CereRepository, state: MobileState, activity: FragmentActivity, sessionId: String, record: JsonObject?, onDismiss: () -> Unit, onChanged: () -> Unit, kind: String = "saved", rows: List<JsonObject> = emptyList()) {
     val session = state.sessions.find { it.id == sessionId }; val project = state.projects.find { it.id == session?.projectId }
     val scope = rememberCoroutineScope(); val id = record?.get("id")?.jsonPrimitive?.contentOrNull
     var text by rememberSaveable(id) { mutableStateOf(record?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()) }
@@ -108,7 +113,8 @@ fun MemoryRecordSheet(repository: CereRepository, state: MobileState, activity: 
             if (record != null && text.isNotBlank()) OutlinedTextField(text, { if (editable) text = it.take(MEMORY_FACT_LIMIT) }, readOnly = !editable, minLines = 4, maxLines = 10, label = { Text(if (editable) "Saved fact" else "Memory content") },
                 supportingText = { if (editable) Text("${text.length} / $MEMORY_FACT_LIMIT characters") }, modifier = Modifier.fillMaxWidth())
             if (record != null && text.isBlank()) Text("This graph record can be inspected on the desktop. Forget below removes it and dependent evidence in this project.")
-            if (preview == null) OutlinedButton(onClick = { scope.launch { busy = true; runCatching { repository.request("memory.forgetPreview", buildJsonObject { put("sessionId", sessionId); id?.let { put("id", it) } }).jsonObject }.onSuccess { preview = it }.onFailure { error = it.message }; busy = false } }, enabled = !busy && state.supports("memory.forgetPreview")) { Text("Preview what will be forgotten") }
+            if (record != null) MemoryGraphActions(repository, state, activity, sessionId, kind, record, rows, onChanged)
+            if (preview == null) OutlinedButton(onClick = { scope.launch { busy = true; runCatching { repository.read("memory.forgetPreview", buildJsonObject { put("sessionId", sessionId); id?.let { put("id", it) } }).jsonObject }.onSuccess { preview = it }.onFailure { error = it.message }; busy = false } }, enabled = !busy && state.supports("memory.forgetPreview")) { Text("Preview what will be forgotten") }
             preview?.let { value ->
                 Text("${value["count"]?.jsonPrimitive?.content ?: "0"} records will be suppressed, including dependent evidence. Source occurrences may also be removed from saved conversations.", color = MaterialTheme.colorScheme.tertiary)
                 OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Type ${project?.name ?: "FORGET"} to confirm") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -116,7 +122,7 @@ fun MemoryRecordSheet(repository: CereRepository, state: MobileState, activity: 
                     busy = true
                     val method = if (record == null) "memory.clear" else "memory.forget"
                     val params = buildJsonObject { put("sessionId", sessionId); if (record == null) put("confirmProjectId", project!!.id) else put("id", id!!); put("selection", value.getValue("selection")); put("expectedRevision", value.getValue("revision")) }
-                    signedReview(activity, repository, method, params, "Forget reviewed memory", { busy = false; onChanged(); onDismiss() }, { error = it; busy = false })
+                    signedReview(activity, repository, method, params, "Forget reviewed memory", { result -> busy = false; scope.launch { runCatching { repository.recordErasure(result, sessionId, if (record == null) "Cleared ${project?.name ?: "project"} memory" else (text.ifBlank { "A memory record" }).take(80)) } }; onChanged(); onDismiss() }, { error = it; busy = false })
                 }, enabled = !busy && project != null && confirmation == project.name && state.supports(if (record == null) "memory.clear" else "memory.forget"), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(if (record == null) "Clear this project" else "Forget this record") }
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth()); error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -124,6 +130,55 @@ fun MemoryRecordSheet(repository: CereRepository, state: MobileState, activity: 
     }, confirmButton = { if (editable && id != null && text.isNotBlank() && revision != null && state.supports("memory.save")) Button({
         busy = true; signedReview(activity, repository, "memory.save", buildJsonObject { put("sessionId", sessionId); put("id", id); put("text", text); put("expectedRevision", revision) }, "Save this edited fact", { busy = false; onChanged(); onDismiss() }, { error = it; busy = false })
     }, enabled = !busy && preview == null) { Text("Review & save") } }, dismissButton = { TextButton(onDismiss, enabled = !busy) { Text("Close") } })
+}
+
+/**
+ * W09: the graph workflows a person can do from the phone, each typed, bound to the revision on screen
+ * and witnessed by their own statement: an assertion's history and correction, choosing the right
+ * assertion in a conflict, an identity decision between two entities, and freezing an episode.
+ */
+@Composable
+internal fun MemoryGraphActions(repository: CereRepository, state: MobileState, activity: FragmentActivity, sessionId: String, kind: String, record: JsonObject, rows: List<JsonObject>, onChanged: () -> Unit) {
+    val scope = rememberCoroutineScope(); val id = record["id"]?.jsonPrimitive?.contentOrNull ?: return
+    val revision = record["revision"]?.jsonPrimitive?.contentOrNull
+    var history by remember(id) { mutableStateOf<JsonObject?>(null) }; var busy by remember(id) { mutableStateOf(false) }
+    var error by remember(id) { mutableStateOf<String?>(null) }; var done by remember(id) { mutableStateOf<String?>(null) }
+    var statement by rememberSaveable(id) { mutableStateOf("") }; var replacement by rememberSaveable(id) { mutableStateOf("") }
+    var other by rememberSaveable(id) { mutableStateOf<String?>(null) }; var decision by rememberSaveable(id) { mutableStateOf("not_same") }
+    fun review(method: String, params: JsonObject, title: String) { busy = true; error = null; done = null
+        signedReview(activity, repository, method, params, title, { busy = false; done = "Saved on the desktop."; onChanged() }, { error = it; busy = false }) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (kind == "assertions" && state.supports("memory.timeline")) {
+            OutlinedButton({ scope.launch { busy = true; error = null; runCatching { repository.read("memory.timeline", buildJsonObject { put("sessionId", sessionId); put("id", id) }).jsonObject }.onSuccess { history = it }.onFailure { error = it.message }; busy = false } }, enabled = !busy) { Text("Show history and evidence") }
+            history?.let { StructuredObject(it) }
+        }
+        val statementField: @Composable (String) -> Unit = { label -> OutlinedTextField(statement, { statement = it.take(2000) }, label = { Text(label) }, minLines = 2, modifier = Modifier.fillMaxWidth(), supportingText = { Text("Your own words are kept as the evidence for this change.") }) }
+        if (kind == "assertions" && revision != null && state.supports("memory.correct")) {
+            Text("Correct this", fontWeight = FontWeight.Medium)
+            OutlinedTextField(replacement, { replacement = it.take(200) }, label = { Text("What it should be") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            statementField("Your correction, as you would say it")
+            Button({ review("memory.correct", buildJsonObject { put("sessionId", sessionId); put("id", id); put("expectedRevision", revision); put("statement", statement.trim()); put("change", buildJsonObject { put("objectName", replacement.trim()) }) }, "Correct this memory") },
+                enabled = !busy && replacement.isNotBlank() && statement.isNotBlank()) { Text("Review & correct") }
+            if (record["status"]?.jsonPrimitive?.contentOrNull in setOf("conflict", "contested", "disputed") && state.supports("memory.resolveConflict"))
+                OutlinedButton({ review("memory.resolveConflict", buildJsonObject { put("sessionId", sessionId); put("id", id); put("expectedRevision", revision); put("statement", statement.trim()) }, "Keep this one in the conflict") }, enabled = !busy && statement.isNotBlank()) { Text("This one is right") }
+        }
+        if (kind == "entities" && state.supports("memory.identity")) {
+            val type = record["type"]?.jsonPrimitive?.contentOrNull
+            val candidates = rows.filter { it["id"]?.jsonPrimitive?.contentOrNull != id && it["type"]?.jsonPrimitive?.contentOrNull == type }
+            if (candidates.isNotEmpty()) {
+                Text("Compare with another ${type ?: "entity"} on this page", fontWeight = FontWeight.Medium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { candidates.forEach { row -> val rowId = row["id"]?.jsonPrimitive?.contentOrNull; FilterChip(other == rowId, { other = rowId }, { Text(row["text"]?.jsonPrimitive?.contentOrNull ?: "Entity") }) } }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("same" to "The same", "not_same" to "Not the same", "possible" to "Possibly the same").forEach { (value, label) -> FilterChip(decision == value, { decision = value }, { Text(label) }) } }
+                statementField("Why, in your words")
+                Button({ review("memory.identity", buildJsonObject { put("sessionId", sessionId); put("leftId", id); put("rightId", other!!); put("decision", decision); put("statement", statement.trim()) }, "Record this identity decision") },
+                    enabled = !busy && other != null && statement.isNotBlank()) { Text("Review & record") }
+            }
+        }
+        if (kind == "episodes" && state.supports("memory.freezeEpisode"))
+            OutlinedButton({ review("memory.freezeEpisode", buildJsonObject { put("sessionId", sessionId); put("id", id) }, "Freeze this episode") }, enabled = !busy) { Text("Freeze this episode") }
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        done?.let { Text(it, color = MaterialTheme.colorScheme.primary) }; error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
 }
 
 /** Saved facts are limited to 2,000 characters on the desktop; adding and editing use the same limit. */

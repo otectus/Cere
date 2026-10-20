@@ -85,7 +85,8 @@ private fun MarkdownTable(table: TableBlock) {
     }
 }
 
-private fun safeLink(value: String): String? = runCatching { URI(value) }.getOrNull()?.takeIf { it.scheme in listOf("https", "http") && !it.host.isNullOrBlank() && it.userInfo == null }?.toASCIIString()
+/** An address the app may open on tap: http(s) with a host and no embedded credentials. */
+internal fun safeLink(value: String): String? = runCatching { URI(value) }.getOrNull()?.takeIf { it.scheme in listOf("https", "http") && !it.host.isNullOrBlank() && it.userInfo == null }?.toASCIIString()
 private fun Node.inlineText(): AnnotatedString = buildAnnotatedString { appendInline(this@inlineText, 0) }
 private fun AnnotatedString.Builder.appendInline(node: Node, depth: Int) {
     if (depth > 64) return

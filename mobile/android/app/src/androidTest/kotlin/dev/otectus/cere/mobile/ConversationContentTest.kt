@@ -13,6 +13,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performScrollTo
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import dev.otectus.cere.mobile.protocol.Message
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Rule
@@ -203,6 +209,63 @@ class ConversationContentTest {
             check(refreshes.get() == 1)
             check(dismissals.get() == 1)
         }
+    }
+
+    @Test
+    fun activityPanelOffersOlderRecordsInsteadOfEndingTheList() {
+        val older = AtomicInteger()
+        compose.setContent {
+            MaterialTheme {
+                ActivityPanel(items = listOf(message("tool", role = "assistant", kind = "tool", text = "Newest tool step", time = 2)), loading = false, error = null,
+                    onRefresh = {}, onDismiss = {}, hasOlder = true, onLoadOlder = { older.incrementAndGet() }, itemContent = { Text(it.text) })
+            }
+        }
+        compose.onNodeWithText("Newest tool step").assertIsDisplayed()
+        compose.onNodeWithTag("olderActivity").performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle { check(older.get() == 1) }
+    }
+
+    @Test
+    fun waitingWithoutAVisibleRequestDoesNotAskForTheUsersInput() {
+        compose.setContent { MaterialTheme { ConversationTimeline(listOf(message("u", "user", "text", "Run it")), true, "waiting") { Text(it.text) } } }
+        compose.onNodeWithText("Waiting for a decision on the desktop…").assertIsDisplayed()
+        compose.onNodeWithText("Waiting for your input…").assertDoesNotExist()
+    }
+
+    @Test
+    fun sourcesOpenOnlyWebAddressesOnTap() {
+        val opened = mutableListOf<String>()
+        val sources = listOf(
+            buildJsonObject { put("title", "Ruff docs"); put("url", "https://docs.astral.sh/ruff/") },
+            buildJsonObject { put("title", "Script"); put("url", "javascript:alert(1)") },
+            buildJsonObject { put("url", "https://example.com/untitled") },
+            buildJsonObject { put("title", "No address") },
+        )
+        compose.setContent { MaterialTheme { MessageSources(sources) { opened += it } } }
+        compose.onNodeWithTag("messageSources").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Open source Ruff docs").performClick()
+        compose.onNodeWithText("Script · this address is not opened on the phone").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Open source https://example.com/untitled").assertIsDisplayed()
+        compose.onNodeWithText("No address", substring = true).assertDoesNotExist()
+        compose.runOnIdle { check(opened == listOf("https://docs.astral.sh/ruff/")) { opened.toString() } }
+    }
+
+    @Test
+    fun markdownEdgeCasesRenderWithoutLosingText() {
+        val token = "x".repeat(600)
+        val samples = listOf(
+            "| Name | Value |\n|---|---|\n| fox | 🦊 |\n| 漢字 | ✓ |",
+            "```kotlin\nval answer = 42\n```",
+            "- outer\n  - inner\n    - deepest",
+            "Long $token end",
+            "```\nunterminated fence keeps its text",
+            "[broken link](javascript:alert(1)) and [ok](https://example.com)",
+            "Text with <b>literal html</b> & entities",
+        )
+        compose.setContent { MaterialTheme { androidx.compose.foundation.layout.Column { samples.forEach { CereMarkdown(it) } } } }
+        for (text in listOf("fox", "🦊", "漢字", "val answer = 42", "deepest", "unterminated fence keeps its text", "literal html", "Copy code"))
+            compose.onAllNodesWithText(text, substring = true).onFirst().assertExists()
+        compose.onNodeWithText("Long ", substring = true).assertExists()
     }
 
     private fun message(id: String, role: String, kind: String, text: String, time: Long = 0) = Message(

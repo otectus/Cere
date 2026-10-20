@@ -20,7 +20,7 @@ class CereApp : Application() {
         // Network changes reach the connection while the app is open, with or without background monitoring.
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) { repository.networkAvailable() }
-            override fun onLost(network: Network) { repository.networkLost() }
+            override fun onLost(network: Network) { repository.networkLost(network) }
         })
     }
 }

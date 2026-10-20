@@ -130,7 +130,7 @@ private fun CereRoot(repository: CereRepository, activity: FragmentActivity, lau
     when {
         !state.restoreReady && state.connection !is ConnectionState.Blocked -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         state.stagedPairing != null -> PairingScreen(repository, state, activity, state.desktop)
-        state.desktop == null && state.connection is ConnectionState.Blocked -> Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Icon(Icons.Default.Lock, null, modifier = Modifier.size(48.dp)); Spacer(Modifier.height(14.dp)); Text("Unlock private cache", style = MaterialTheme.typography.titleLarge); Text((state.connection as ConnectionState.Blocked).reason, color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(16.dp)); Button(repository::retry) { Text("Retry") } }
+        state.desktop == null && state.connection is ConnectionState.Blocked -> UnreadableCacheScreen(repository, activity, state.connection as ConnectionState.Blocked)
         state.desktop == null -> PairingScreen(repository, state, activity)
         state.connection is ConnectionState.Blocked -> BlockedScreen(repository, state, activity, state.connection as ConnectionState.Blocked)
         else -> AppShell(repository, state, activity, launch, consumeLaunch)
@@ -138,6 +138,23 @@ private fun CereRoot(repository: CereRepository, activity: FragmentActivity, lau
 }
 
 /** A connection that stopped retrying. Only a broken pairing offers re-pairing, and replacement keeps drafts. */
+/** The private cache could not be read: locked (retry after unlock), or damaged or keyless (remove and pair again). */
+@Composable
+private fun UnreadableCacheScreen(repository: CereRepository, activity: FragmentActivity, blocked: ConnectionState.Blocked) {
+    var confirm by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Icon(Icons.Default.Lock, null, modifier = Modifier.size(48.dp)); Spacer(Modifier.height(14.dp))
+        Text(if (blocked.repair) "Private data can't be read" else "Unlock private cache", style = MaterialTheme.typography.titleLarge)
+        Text(blocked.reason, color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(16.dp))
+        if (blocked.repair) Button({ confirm = true }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Remove and pair again") }
+        else Button(repository::retry) { Text("Retry") }
+    }
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Remove unreadable data?") },
+        text = { Text("Cere Mobile cannot read its private data on this phone. Removing it lets you pair again; anything in it, including unsent drafts, is already unreadable. On the desktop, revoke the old pairing for this phone.") },
+        confirmButton = { Button({ confirm = false; activity.lifecycleScope.launch { runCatching { repository.discardUnreadableCache() } } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Remove") } },
+        dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } })
+}
+
 @Composable
 private fun BlockedScreen(repository: CereRepository, state: MobileState, activity: FragmentActivity, blocked: ConnectionState.Blocked) {
     val scope = rememberCoroutineScope()
@@ -438,6 +455,19 @@ private fun SessionsScreen(repository: CereRepository, state: MobileState, selec
         OutlinedTextField(query, { query = it.take(200) }, leadingIcon = { Icon(Icons.Default.Search, null) }, trailingIcon = { if (searching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) }, placeholder = { Text("Search conversations") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(16.dp))
         FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilterChip(!showArchived, { showArchived = false }, { Text("Conversations") }); FilterChip(showArchived, { showArchived = true }, { Text("Archived") }) }
         if (state.supports("sessions.history") && state.supports("sessions.import")) OutlinedButton({ showHistory = true }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Import desktop history") }
+        // Nothing is hidden silently: conversations or matches the phone has not loaded are counted, and load on request.
+        val loadedIds = state.sessions.mapTo(HashSet(), Session::id)
+        val search = state.search?.takeIf { query.trim().length >= 2 && it.query == query.trim().take(200) }
+        val unloadedMatches = search?.remaining(loadedIds) ?: 0
+        var loadingMore by remember { mutableStateOf(false) }
+        val scope = rememberCoroutineScope()
+        if (search != null && unloadedMatches > 0) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("${search.total} matches on the desktop · ${unloadedMatches} not loaded yet${if (search.truncated) " (showing the first 5000)" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            TextButton({ loadingMore = true; scope.launch { try { repository.loadMoreSearchResults() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {} finally { loadingMore = false } } }, enabled = !loadingMore && state.connection is ConnectionState.Online) { Text(if (loadingMore) "Loading…" else "Load more") }
+        } else if (query.isBlank() && state.sessionsNotLoaded > 0) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("${state.sessionsNotLoaded} more conversations on the desktop are not on this phone yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            TextButton({ loadingMore = true; scope.launch { try { repository.loadMoreSessions() } finally { loadingMore = false } } }, enabled = !loadingMore && state.connection is ConnectionState.Online) { Text("Load more") }
+        }
         if (sessions.isEmpty()) EmptyState(Icons.Default.List, when { query.isNotBlank() -> "No matching conversations"; state.connection is ConnectionState.Online -> "No sessions in your approved scope"; else -> "No cached sessions" }, if (query.isNotBlank()) "Cere also searched the desktop." else "Create or connect to the desktop to begin.")
         // Bottom padding keeps the last card clear of the New session button.
         else LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -493,16 +523,20 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
     }
     val selectedModel = models.firstOrNull { it.id == model }
     val selectedProject = state.projects.firstOrNull { it.id == project }
-    fun chooseModel(option: ModelOption) { model = option.id; effort = option.defaultEffort; if ("tools" !in option.capabilities) tools = false }
+    fun chooseModel(option: ModelOption) { model = option.id; effort = option.defaultEffort; if ("tools" !in option.capabilities && state.traits(provider).kind != "api") tools = false }
     AlertDialog(onDismissRequest = { if (!submitting) close() }, title = { Text("New conversation") }, text = {
         Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(title, { title = it.take(100) }, label = { Text("Title (optional)") }, enabled = !submitting)
             Text("Provider", fontWeight = FontWeight.Medium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { supportedProviders.keys.forEach { id ->
-                FilterChip(provider == id, { provider = id }, { Text(id.replaceFirstChar(Char::uppercase)) }, enabled = !submitting)
+                FilterChip(provider == id, { provider = id }, { Text(state.traits(id).label) }, enabled = !submitting)
             } }
+            // What the desktop says about running this provider from a phone (billing, restrictions).
+            if (provider.isNotBlank()) state.traits(provider).remoteNote.takeIf(String::isNotBlank)?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = if (state.traits(provider).billed) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             state.providers.filterKeys { it !in supportedProviders }.forEach { (id, value) ->
-                Text("${id.replaceFirstChar(Char::uppercase)} · ${value.jsonObject["remoteUnavailableReason"]?.jsonPrimitive?.contentOrNull ?: "Enable access on the desktop"}",
+                Text("${state.traits(id).label} · ${value.jsonObject["remoteUnavailableReason"]?.jsonPrimitive?.contentOrNull ?: "Enable access on the desktop"}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text("Desktop project", fontWeight = FontWeight.Medium)
@@ -526,9 +560,12 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
                 Text("Effort", fontWeight = FontWeight.Medium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { efforts.forEach { option -> FilterChip(effort == option.id, { effort = option.id }, { Text(option.displayName) }, enabled = !submitting) } }
             }
-            if (provider == "ollama") ListItem(headlineContent = { Text("Desktop tools") }, supportingContent = {
-                Text(if (selectedModel?.capabilities?.contains("tools") == true) "Use ordinary desktop permission checks" else "Conversation only · this model does not advertise tools")
-            }, trailingContent = { Switch(tools, { tools = it }, enabled = !submitting && selectedModel?.capabilities?.contains("tools") == true) })
+            // Cere's desktop tools, for providers whose conversation Cere runs; a local model must advertise tools.
+            val providerTraits = state.traits(provider)
+            val toolCapable = providerTraits.kind == "api" || selectedModel?.capabilities?.contains("tools") == true
+            if (providerTraits.cereTools) ListItem(headlineContent = { Text("Desktop tools") }, supportingContent = {
+                Text(if (toolCapable) "Use ordinary desktop permission checks" else "Conversation only · this model does not advertise tools")
+            }, trailingContent = { Switch(tools, { tools = it }, enabled = !submitting && toolCapable) })
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }, confirmButton = { Button(onClick = {
@@ -537,7 +574,7 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
             try {
                 val params = buildJsonObject { put("provider", provider); put("projectId", project); if (title.isNotBlank()) put("title", title); put("model", model); if (effort.isNotBlank()) put("effort", effort); put("tools", tools) }
                 val action = repository.prepareAction("sessions.create", params, label = title.ifBlank { null })
-                authenticate(activity, "Create $provider conversation", action, repository, { result ->
+                authenticate(activity, "Create ${state.traits(provider).label} conversation", action, repository, { result ->
                     scope.launch { try { created(repository.openCreatedSession(result)) } catch (failure: Exception) { error = failure.message; submitting = false } }
                 }, { error = it; submitting = false })
             } catch (failure: Exception) { error = failure.message; submitting = false }
@@ -553,9 +590,16 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
     if (session == null) return EmptyState(Icons.Default.Warning, "Session unavailable", "It may no longer be in this device's scope.")
     val context = LocalContext.current
     val scope = rememberCoroutineScope(); val storedDraft = state.draft(session); var draft by rememberSaveable(session.id) { mutableStateOf(storedDraft.text) }; var activityOpen by rememberSaveable(session.id) { mutableStateOf(false) }; var error by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
-    var activityLoading by remember(session.id) { mutableStateOf(false) }; var activityError by remember(session.id) { mutableStateOf<String?>(null) }; var activityRefresh by remember(session.id) { mutableIntStateOf(0) }
+    var activityLoading by remember(session.id) { mutableStateOf(false) }; var activityError by remember(session.id) { mutableStateOf<String?>(null) }; var activityOlderLoading by remember(session.id) { mutableStateOf(false) }; var activityRefresh by remember(session.id) { mutableIntStateOf(0) }
     var reviewOpen by rememberSaveable(session.id) { mutableStateOf(false) }; var sending by remember(session.id) { mutableStateOf(false) }; var loadingOlder by remember(session.id) { mutableStateOf(false) }
     var attachmentReviewId by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
+    var desktopReviewId by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
+    var pinnedOpen by rememberSaveable(session.id) { mutableStateOf(false) }
+    var portraitSheet by remember { mutableStateOf<PortraitSheet?>(null) }
+    LaunchedEffect(state.connection is ConnectionState.Online) {
+        if (state.connection is ConnectionState.Online && state.supports("desktop.portrait")) portraitSheet = runCatching { repository.portrait() }.getOrNull() ?: portraitSheet
+    }
+    var desktopRemoveId by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
     var showConversationSettings by rememberSaveable(session.id) { mutableStateOf(false) }
     var webSearch by rememberSaveable(session.id) { mutableStateOf(false) }
     var attachMenu by remember { mutableStateOf(false) }
@@ -569,8 +613,12 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
     val waitingApprovals = state.approvals.filter { it.sessionId == session.id || session.id in it.parentSessionIds || activeAgents.any { agent -> agent.id == it.sessionId } }
     val busy = session.status in setOf("starting", "working", "waiting", "stopping") || activeAgents.isNotEmpty() || waitingApprovals.isNotEmpty()
     val attachmentsReady = attachments.all { it.reviewedAt != null && it.readyAt(now) }
-    val canCompose = session.draftAttachmentCount == 0 && session.canSend && session.mode == "managed" && session.draftIncluded && (!busy || session.canQueue && session.status != "stopping") && !sending && attachmentsReady && state.supports("sessions.send") && state.pendingCommands.none { it.sessionId == session.id && it.method == "sessions.send" }
-    val canAttach = state.supports("attachments.begin") && attachments.size < 4 && session.mode == "managed"
+    // A desktop draft's attachments are part of the draft: shown, reviewable and sent with it, never queued.
+    val desktopAttachments = session.draftAttachments
+    val draftEditable = state.draftEditable(session)
+    val canCompose = draftEditable && session.canSend && session.mode == "managed" && session.draftIncluded && (!busy || session.canQueue && session.status != "stopping" && desktopAttachments.isEmpty()) && !sending && attachmentsReady &&
+        (desktopAttachments.isEmpty() || state.supports("attachments.commit")) && state.supports("sessions.send") && state.pendingCommands.none { it.sessionId == session.id && it.method == "sessions.send" }
+    val canAttach = state.supports("attachments.begin") && attachments.size + desktopAttachments.count { it.kind == "image" } < 4 && session.mode == "managed"
     fun imported(uri: android.net.Uri?) { if (uri != null) scope.launch { runCatching { repository.importImage(session.id, uri) }.onSuccess { attachmentReviewId = it.id }.onFailure { error = it.message } } }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia(), ::imported)
     val files = rememberLauncherForActivityResult(ActivityResultContracts.GetContent(), ::imported)
@@ -651,7 +699,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         }
     }
     LaunchedEffect(draft, sending) {
-        if (sending || session.draftAttachmentCount != 0 || !session.draftIncluded || session.mode != "managed") return@LaunchedEffect
+        if (sending || !draftEditable || !session.draftIncluded || session.mode != "managed") return@LaunchedEffect
         try {
             repository.saveLocalDraft(session.id, draft)
             delay(700)
@@ -671,29 +719,48 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         !session.canSend -> "Sending is unavailable for this session. Check provider access on your PC."
         !session.draftIncluded -> "Loading desktop draft…"
         session.draftAttachmentCount == null -> "Restart the updated Cere broker on your PC to sync desktop attachments. Your draft stays on this phone."
-        (session.draftAttachmentCount ?: 0) > 0 -> "${session.draftAttachmentCount} attachment(s) are in this desktop draft. Review and send or remove them on the PC first."
+        !draftEditable -> "${session.draftAttachmentCount} attachment(s) are in this desktop draft. Update Cere on your PC to review them here, or send it from the PC."
+        desktopAttachments.isNotEmpty() && !state.supports("attachments.commit") -> "Sending this draft's desktop attachments needs the attachment permission. Remove them here, or send from the PC."
         storedDraft.conflict -> "Resolve the draft conflict before sending."
         sending -> "Sending your message…"
         !attachmentsReady -> "Upload or remove the images before sending."
         state.pendingCommands.any { it.sessionId == session.id && it.method == "sessions.send" } -> "Checking the previous send with your desktop…"
+        busy && session.canQueue && desktopAttachments.isNotEmpty() -> "Queued messages carry text only. Send this draft with its desktop attachments after this turn, or remove them."
         session.queuedCount > 0 -> "${session.queuedCount} message(s) queued · will send after this turn"
         busy && session.canQueue -> "You can send another message; it will run after this turn."
+        // Busy and not queueable from here: say why, and what can be done instead.
+        busy && session.canSend && session.status != "stopping" -> if (session.provider == "ollama") "This turn was started on the desktop, where its follow-ups queue. Wait for it to finish, or Stop it, then send from here."
+            else "${session.provider.replaceFirstChar(Char::uppercase)} takes one message at a time. Wait for this turn to finish, or Stop it, then send."
         else -> null
     }
     BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
         val room = maxHeight
         Column(Modifier.fillMaxSize()) {
             if (state.connection !is ConnectionState.Online) AssistChip({}, { Text("Cached · actions unavailable", maxLines = 1) }, leadingIcon = { Icon(Icons.Default.Warning, null) }, modifier = Modifier.padding(horizontal = 16.dp))
-            Text(listOfNotNull(session.provider.replaceFirstChar(Char::uppercase), session.model, session.project).joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // F93: the desktop's portrait, still, showing this conversation's state, which is also written out.
+            val portraitShown by UiPreferences.portrait(context).collectAsState()
+            val portraitState = PortraitState.resolve(state.connection is ConnectionState.Online, session.status, session.activity, waitingApprovals.size,
+                state.permissions["paused"]?.jsonPrimitive?.booleanOrNull == true)
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (portraitShown) portraitSheet?.let { StatusPortrait(it, portraitState); Spacer(Modifier.width(10.dp)) }
+                Column(Modifier.weight(1f)) {
+                    if (portraitShown && portraitSheet != null) Text(portraitState.label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(listOfNotNull(session.provider.replaceFirstChar(Char::uppercase), session.model, session.project).joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             key(session.id) {
                 ConversationTimeline(messages, busy, session.status, Modifier.weight(1f), state.messagesBefore[session.id] != null, loadingOlder, {
                     loadingOlder = true
                     scope.launch { try { repository.loadOlderMessages(session.id) } catch (failure: Exception) { error = failure.message } finally { loadingOlder = false } }
                 }, statusText = when {
                     waitingApprovals.isNotEmpty() -> if (waitingApprovals.size == 1) "Input needed: ${waitingApprovals.first().title}" else "${waitingApprovals.size} requests need input · Review below"
+                    // Waiting on something this phone cannot answer or see: say where it is.
+                    session.status == "waiting" && !state.supports("approvals.answer") -> "Waiting for a decision on the desktop · this phone cannot answer requests"
                     activeAgents.size == 1 -> "1 subagent is working…"
                     activeAgents.size > 1 -> "${activeAgents.size} subagents are working…"
+                    // What the turn is doing, in the desktop's words; unknown activities keep the general line.
+                    session.status == "starting" || session.status == "working" -> activityLabel(session.activity)
                     else -> null
                 }, sessionId = session.id, restoredPosition = state.scrollPositions[session.id],
                     onPositionChanged = repository::recordScrollPosition) { message -> MessageBubble(repository, state, message) }
@@ -713,6 +780,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                 FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.Center) {
                     TextButton({ activityOpen = true }, enabled = state.supports("activity.list") || activityItems.isNotEmpty() || session.agents.isNotEmpty()) { Icon(Icons.Default.List, null); Text(buildList { add("Activity"); if (activeAgents.isNotEmpty()) add("${activeAgents.size} agent${if (activeAgents.size == 1) "" else "s"} active"); else if (activityItems.isNotEmpty()) add(activityItems.size.toString()) }.joinToString(" · ")) }
                     if (!busy) TextButton({ showConversationSettings = true }) { Text("Conversation settings") }
+                    if (state.supports("messages.bookmarks")) TextButton({ pinnedOpen = true }) { Icon(Icons.Default.Star, null); Text("Pinned") }
                     if (busy) OutlinedButton(onClick = { scope.launch { runCatching { repository.mutate("sessions.stop", buildJsonObject { put("sessionId", session.id) }, session.title) }.onFailure { error = it.message } } }, enabled = state.supports("sessions.stop") && session.status != "stopping") { Icon(Icons.Default.Clear, null); Text(if (session.status == "stopping") "Stopping…" else "Stop") }
                     if (canSearchWeb) FilterChip(webSearch, { webSearch = !webSearch }, { Text("Search the web") }, enabled = !sending && (!busy || session.canQueue))
                 }
@@ -733,11 +801,28 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                         }
                     } }
                 } }
+                if (desktopAttachments.isNotEmpty() && draftEditable) {
+                    Text("From the desktop draft · sent with this message", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(desktopAttachments, key = { it.id }) { attachment ->
+                        Surface(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(8.dp)) { Column(Modifier.widthIn(min = 150.dp, max = 280.dp).padding(10.dp)) {
+                            Text(attachment.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${if (attachment.kind == "image") "Image" else "Text file"} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton({ desktopReviewId = attachment.id }) { Text("Review") }
+                                IconButton({ desktopRemoveId = attachment.id }, enabled = !sending && !storedDraft.conflict && state.supports("drafts.put")) { Icon(Icons.Default.Delete, "Remove ${attachment.name} from the draft") }
+                            }
+                        } }
+                    } }
+                }
                 sendHint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp)) }
+                // F11: a linked conversation continues in its terminal on the desktop; this brings that window forward there.
+                if (session.mode == "linked" && state.supports("sessions.focusTerminal")) OutlinedButton({
+                    signedReview(activity, repository, "sessions.focusTerminal", buildJsonObject { put("sessionId", session.id) }, "Open the terminal on the desktop", { error = null }, { error = it }, label = session.title)
+                }, modifier = Modifier.padding(horizontal = 12.dp)) { Text("Open on desktop") }
                 if (unknownSend != null) TextButton({ reviewingOutcome = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Review uncertain send") }
             }
-            OutlinedTextField(draft, { if (it.length <= 100_000) { draft = it; repository.editDraft(session.id, it) } }, enabled = session.mode == "managed" && session.draftIncluded && (session.draftAttachmentCount ?: 0) == 0 && !sending,
-                placeholder = { Text(if (busy && session.canQueue) "Queue a message for Cere" else "Message Cere", maxLines = 1, overflow = TextOverflow.Ellipsis) }, minLines = 1, maxLines = 6,
+            OutlinedTextField(draft, { if (it.length <= 100_000) { draft = it; repository.editDraft(session.id, it) } }, enabled = session.mode == "managed" && session.draftIncluded && draftEditable && !sending,
+                placeholder = { Text(if (busy && session.canQueue) "Queue a message for ${state.assistantName}" else "Message ${state.assistantName}", maxLines = 1, overflow = TextOverflow.Ellipsis) }, minLines = 1, maxLines = 6,
                 modifier = Modifier.fillMaxWidth().heightIn(max = room * 0.35f).padding(12.dp),
                 leadingIcon = if (canAttach) { {
                     Box {
@@ -753,9 +838,12 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         }
     }
     if (showConversationSettings) ConversationSettingsSheet(repository, state, session, activity) { showConversationSettings = false }
+    if (pinnedOpen) PinnedReplies(repository, state, session.id) { pinnedOpen = false }
     if (activityOpen) ActivityPanel(activityItems, activityLoading, activityError, { activityRefresh++ }, { activityOpen = false },
         agents = session.agents, canOpenAgent = { agent -> state.sessions.any { it.id == agent.id } },
-        onOpenAgent = { agent -> activityOpen = false; selectSession(agent.id) }) { item -> ActivityRow(repository, state, item) }
+        onOpenAgent = { agent -> activityOpen = false; selectSession(agent.id) },
+        hasOlder = state.activityBefore[session.id] != null, loadingOlder = activityOlderLoading,
+        onLoadOlder = { activityOlderLoading = true; scope.launch { try { repository.loadOlderActivity(session.id) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { activityError = failure.message } finally { activityOlderLoading = false } } }) { item -> ActivityRow(repository, state, item) }
     if (reviewingOutcome && unknownSend != null) AlertDialog(onDismissRequest = { reviewingOutcome = false }, title = { Text("Check the previous send") },
         text = { Text("The provider may have received your previous message. Review this conversation and the provider on your PC before trying again. Your draft is kept; nothing will be sent automatically.") },
         confirmButton = { TextButton({ scope.launch { repository.acknowledgeUnknownCommand(unknownSend.commandId); reviewingOutcome = false; error = null } }) { Text("I've reviewed it on the PC") } },
@@ -767,6 +855,17 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
             if (waitingApprovals.isEmpty()) item { Text("All requests have been answered.") }
         }
     }
+    desktopAttachments.firstOrNull { it.id == desktopReviewId }?.let { attachment ->
+        DesktopAttachmentDialog(repository, state, session.id, attachment, onRemove = { desktopReviewId = null; desktopRemoveId = attachment.id }, onDismiss = { desktopReviewId = null })
+    }
+    desktopAttachments.firstOrNull { it.id == desktopRemoveId }?.let { attachment ->
+        AlertDialog(onDismissRequest = { desktopRemoveId = null }, title = { Text("Remove ${attachment.name}?") },
+            text = { Text("It leaves this conversation's draft on the desktop too, and is not sent. The original file on the PC is not changed.") },
+            confirmButton = { TextButton({ desktopRemoveId = null; scope.launch { runCatching { repository.removeDesktopAttachment(session.id, attachment.id) }.onFailure { failure ->
+                error = failure.message; if ((failure as? RemoteRequestException)?.code == "REVISION_CONFLICT") repository.selectSession(session.id) } } },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove") } },
+            dismissButton = { TextButton({ desktopRemoveId = null }) { Text("Keep") } })
+    }
     val reviewingAttachment = attachments.firstOrNull { it.id == attachmentReviewId }
     if (reviewingAttachment != null) AttachmentReviewDialog(repository, reviewingAttachment,
         onKeep = { scope.launch { repository.markAttachmentReviewed(reviewingAttachment.id); attachmentReviewId = null } },
@@ -775,7 +874,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
 }
 
 /** Decodes an image for display with its longer side at most [maxSide] pixels. */
-private fun decodeForDisplay(bytes: ByteArray, maxSide: Int): android.graphics.Bitmap? {
+internal fun decodeForDisplay(bytes: ByteArray, maxSide: Int): android.graphics.Bitmap? {
     val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
     android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     var sample = 1
@@ -806,6 +905,40 @@ private fun AttachmentReviewDialog(repository: CereRepository, attachment: Local
     })
 }
 
+/** W10: what a desktop draft attachment contains, as the desktop will send it. */
+@Composable
+private fun DesktopAttachmentDialog(repository: CereRepository, state: MobileState, sessionId: String, attachment: DraftAttachment, onRemove: () -> Unit, onDismiss: () -> Unit) {
+    val previewable = attachment.kind != "image" || state.supports("attachments.read")
+    var bitmap by remember(attachment.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var text by remember(attachment.id) { mutableStateOf<DesktopAttachmentPreview.Text?>(null) }
+    var error by remember(attachment.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(attachment.id, previewable) {
+        if (!previewable) return@LaunchedEffect
+        try {
+            when (val preview = repository.desktopAttachmentPreview(sessionId, attachment.id)) {
+                is DesktopAttachmentPreview.Image -> bitmap = withContext(Dispatchers.Default) { decodeForDisplay(preview.preview.bytes, 2048) } ?: error("The preview could not be decoded")
+                is DesktopAttachmentPreview.Text -> text = preview
+            }
+        } catch (cancelled: CancellationException) { throw cancelled } catch (_: StaleResultException) {} catch (failure: Exception) { error = failure.message }
+    }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(attachment.name, maxLines = 2, overflow = TextOverflow.Ellipsis) }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Attached on the desktop. Sending this draft from the phone sends this file exactly as shown.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            bitmap?.let { Image(it.asImageBitmap(), contentDescription = "Preview of ${attachment.name}", modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
+            text?.let { preview ->
+                SelectionContainer { Text(preview.text, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
+                if (preview.truncated) Text("Only the beginning is shown here. The whole file is sent.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+            }
+            if (!previewable) Text("Viewing images from the desktop needs the preview permission for this phone.", style = MaterialTheme.typography.bodySmall)
+            else if (bitmap == null && text == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Text("${if (attachment.kind == "image") "Image" else "Text file"} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall)
+        }
+    }, confirmButton = { TextButton(onDismiss) { Text("Done") } }, dismissButton = {
+        TextButton(onRemove, enabled = state.supports("drafts.put"), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove from draft") }
+    })
+}
+
 @Composable private fun ActivityRow(repository: CereRepository, state: MobileState, item: Message) {
     val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
     val scope = rememberCoroutineScope()
@@ -832,10 +965,70 @@ private fun AttachmentReviewDialog(repository: CereRepository, attachment: Local
 
 @Composable private fun MessageBubble(repository: CereRepository, state: MobileState, message: Message) {
     val scope = rememberCoroutineScope(); var content by remember(message.id, message.revision) { mutableStateOf(message.text) }; var loading by remember(message.id, message.revision) { mutableStateOf(false) }; var error by remember(message.id, message.revision) { mutableStateOf<String?>(null) }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.role == "user") Arrangement.End else Arrangement.Start) { Surface(color = if (message.role == "user") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(18.dp), modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(0.88f)) { Column(Modifier.padding(14.dp)) { Text(message.role.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(5.dp)); Markdown(content)
-        if (message.contentTruncated && content == message.text) { Spacer(Modifier.height(8.dp)); Text("Message preview · ${message.contentChars ?: "many"} characters", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary); OutlinedButton({ scope.launch { loading = true; error = null; runCatching { repository.fullMessage(message) }.onSuccess { content = it }.onFailure { error = it.message }; loading = false } }, enabled = !loading && state.supports("sessions.messagePart")) { Text(if (loading) "Loading…" else "Load full message") } }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
+    val uriHandler = LocalUriHandler.current
+    val mine = message.role == "user"
+    // The stored Markdown keeps its memory citations; they are left out of what is shown and copied
+    // unless the desktop shows them, including a marker that is still streaming in.
+    val shown = Citations.shown(content, state.showMemoryCitations)
+    val preview = message.contentTruncated && content == message.text
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) { Surface(color = if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(18.dp), modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(0.88f)) { Column(Modifier.padding(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(message.role.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            // A pinned reply is the desktop's bookmark of it.
+            if (message.bookmarked || state.supports("messages.bookmark") && message.isConversationMessage())
+                IconButton({ scope.launch { runCatching { repository.setBookmark(message, !message.bookmarked) }.onFailure { error = it.message } } }, Modifier.size(32.dp), enabled = state.supports("messages.bookmark")) {
+                    Icon(Icons.Default.Star, if (message.bookmarked) "Unpin reply" else "Pin reply", Modifier.size(18.dp), tint = if (message.bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+                }
+            // Copies the Markdown as written; a preview says so.
+            IconButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere message", shown)) }, Modifier.size(32.dp)) { Icon(painterResource(R.drawable.ic_copy), if (preview) "Copy message preview" else "Copy message", Modifier.size(18.dp)) }
+        }
+        Spacer(Modifier.height(5.dp)); Markdown(shown)
+        MessageSources(message.sources) { url -> uriHandler.openUri(url) }
+        if (preview) { Spacer(Modifier.height(8.dp)); Text("Message preview · ${message.contentChars ?: "many"} characters", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary); OutlinedButton({ scope.launch { loading = true; error = null; runCatching { repository.fullMessage(message) }.onSuccess { content = it }.onFailure { error = it.message }; loading = false } }, enabled = !loading && state.supports("sessions.messagePart")) { Text(if (loading) "Loading…" else "Load full message") } }
+        error?.let { Text("$it. Open the full message on the desktop.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     } } }
+}
+
+/** F77: the desktop's memory health in plain words; details stay in desktop Health. */
+@Composable
+private fun MemoryHealthLine(health: JsonObject) {
+    val enabled = health["enabled"]?.jsonPrimitive?.booleanOrNull == true
+    val failing = listOfNotNull("extraction".takeIf { health["extraction"]?.jsonPrimitive?.contentOrNull == "failing" }, "embeddings".takeIf { health["embedding"]?.jsonPrimitive?.contentOrNull == "failing" })
+    val projections = health["projections"]?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }.filter { it["status"]?.jsonPrimitive?.contentOrNull == "degraded" }
+    val text = when {
+        !enabled -> "Memory is off or paused on the desktop. Chat still works."
+        failing.isNotEmpty() || projections.isNotEmpty() || health["degraded"]?.jsonPrimitive?.booleanOrNull == true ->
+            "Memory is degraded" + (if (failing.isNotEmpty()) ": ${failing.joinToString(" and ")} failing" else "") + ". Recall may be incomplete; chat still works. Details are in desktop Health."
+        else -> "Memory is working."
+    }
+    Text(text, style = MaterialTheme.typography.bodySmall, color = if (enabled && text != "Memory is working.") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** W11: the conversation's pinned replies, the same ones the desktop lists as bookmarks. */
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun PinnedReplies(repository: CereRepository, state: MobileState, sessionId: String, onDismiss: () -> Unit) {
+    var items by remember(sessionId) { mutableStateOf<List<Message>?>(null) }
+    var error by remember(sessionId) { mutableStateOf<String?>(null) }
+    var refresh by remember { mutableIntStateOf(0) }
+    LaunchedEffect(sessionId, refresh) {
+        try { items = repository.pinnedReplies(sessionId) }
+        catch (cancelled: CancellationException) { throw cancelled } catch (_: StaleResultException) {} catch (failure: Exception) { error = failure.message }
+    }
+    ModalBottomSheet(onDismiss) {
+        Text("Pinned replies", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 20.dp))
+        Text("Pins are shared with the desktop's bookmarks.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 20.dp))
+        LazyColumn(Modifier.heightIn(max = 560.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            when {
+                error != null -> item { Text(error!!, color = MaterialTheme.colorScheme.error) }
+                items == null -> item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                items!!.isEmpty() -> item { Text("No pinned replies yet. Pin a reply with its star.") }
+                else -> items(items!!, key = { it.id }) { message -> MessageBubble(repository, state, message.copy(bookmarked = true)) }
+            }
+            item { TextButton({ refresh++ }) { Text("Refresh") } }
+        }
+    }
 }
 
 @Composable
@@ -902,7 +1095,9 @@ private fun ApprovalCard(repository: CereRepository, state: MobileState, activit
     val pending = approval.id in mutations || CommandOutcomes.answering(state.pendingCommands, approval.id, approval.digest)
     val bitmap by produceState<android.graphics.Bitmap?>(null, preview) { value = preview?.bytes?.let { bytes -> withContext(Dispatchers.Default) { decodeForDisplay(bytes, 2048) } } }
     ElevatedCard(Modifier.fillMaxWidth().then(if (highlighted) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CardDefaults.elevatedShape) else Modifier)) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { Icon(if (approval.kind == "question" || approval.questions.isNotEmpty()) Icons.Default.Info else Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.tertiary); Spacer(Modifier.width(10.dp)); Column { Text(approval.title, fontWeight = FontWeight.SemiBold); Text(if (approval.kind == "question" || approval.questions.isNotEmpty()) "QUESTION" else "PERMISSION · ${approval.kind.uppercase()}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary) } }
+        Row(verticalAlignment = Alignment.CenterVertically) { Icon(if (approval.kind == "question" || approval.questions.isNotEmpty()) Icons.Default.Info else Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.tertiary); Spacer(Modifier.width(10.dp)); Column { Text(approval.title, fontWeight = FontWeight.SemiBold); Text(if (approval.kind == "question" || approval.questions.isNotEmpty()) "QUESTION" else "PERMISSION · ${approval.kind.uppercase()}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+            // Where the request comes from: the conversation, the agent inside it, and the conversation that delegated it.
+            Text(approvalOrigin(state, approval), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         approval.detail?.let { TextButton({ expanded = !expanded }) { Text(if (expanded) "Hide exact request" else "Review exact request") }; if (expanded) SelectionContainer { Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) } }
         approval.url?.let { url ->
             OutlinedButton({ runCatching { uriHandler.openUri(url) }.onFailure { error = it.message ?: "Could not open the link." } }, modifier = Modifier.fillMaxWidth()) {
@@ -1019,7 +1214,9 @@ private fun approvalParams(value: Approval, choice: String, answers: Map<String,
 private fun MemoryScreen(repository: CereRepository, state: MobileState, activity: FragmentActivity) {
     val readable = state.supports("memory.list") || state.supports("memory.retrieve")
     if (!readable) return EmptyState(Icons.Default.Lock, "Memory is not granted", "Enable scoped memory access from Desktop Settings.")
-    val scope = rememberCoroutineScope(); val sessions = state.sessions.filter { it.provider == "ollama" }
+    // Memory belongs to a conversation's project on its memory server, whichever provider it uses; the
+    // desktop refuses a conversation whose memory server is not granted to this phone.
+    val scope = rememberCoroutineScope(); val sessions = state.sessions.filter { it.mode != "linked" }
     var sessionId by rememberSaveable { mutableStateOf(sessions.firstOrNull()?.id.orEmpty()) }; var kind by rememberSaveable { mutableStateOf("saved") }
     var filter by rememberSaveable { mutableStateOf("") }; var query by rememberSaveable { mutableStateOf("") }; var offset by rememberSaveable { mutableIntStateOf(0) }
     var result by remember { mutableStateOf<JsonObject?>(null) }; var loading by remember { mutableStateOf(false) }; var error by remember { mutableStateOf<String?>(null) }; var adding by rememberSaveable { mutableStateOf(false) }
@@ -1029,29 +1226,47 @@ private fun MemoryScreen(repository: CereRepository, state: MobileState, activit
     LaunchedEffect(state.cacheEpoch) { clearVisibleMemory(); filter = ""; query = "" }
     LaunchedEffect(sessionIds) { if (sessionId !in sessionIds) { clearVisibleMemory(); filter = ""; query = ""; sessionId = sessionIds.firstOrNull().orEmpty() } }
     LaunchedEffect(sessionId) { result = null; managedRecord = null; managing = false; clearProject = false; adding = false; error = null }
-    fun list() { if (sessionId.isBlank() || !state.supports("memory.list")) return; scope.launch { loading = true; error = null; runCatching { repository.request("memory.list", buildJsonObject { put("sessionId", sessionId); put("kind", kind); put("offset", offset); put("filter", filter.trim()) }).jsonObject }.onSuccess { result = it }.onFailure { error = it.message }; loading = false } }
-    fun retrieve() { if (sessionId.isBlank() || query.isBlank() || !state.supports("memory.retrieve")) return; scope.launch { loading = true; error = null; runCatching { repository.request("memory.retrieve", buildJsonObject { put("sessionId", sessionId); put("query", query.trim()) }).jsonObject }.onSuccess { result = it }.onFailure { error = it.message }; loading = false } }
+    // A result is shown only for the conversation and view it was asked for, and never after the
+    // desktop's memory changed meanwhile (read() refuses it): erased text cannot come back.
+    fun list() { if (sessionId.isBlank() || !state.supports("memory.list")) return; val asked = Triple(sessionId, kind, offset); scope.launch { loading = true; error = null; runCatching { repository.read("memory.list", buildJsonObject { put("sessionId", asked.first); put("kind", asked.second); put("offset", asked.third); put("filter", filter.trim()) }).jsonObject }.onSuccess { if (Triple(sessionId, kind, offset) == asked) result = it }.onFailure { error = it.message }; loading = false } }
+    fun retrieve() { if (sessionId.isBlank() || query.isBlank() || !state.supports("memory.retrieve")) return; val asked = sessionId; scope.launch { loading = true; error = null; runCatching { repository.read("memory.retrieve", buildJsonObject { put("sessionId", asked); put("query", query.trim()) }).jsonObject }.onSuccess { if (sessionId == asked) result = it }.onFailure { error = it.message }; loading = false } }
     LaunchedEffect(sessionId, kind, offset, state.cacheEpoch) { if (sessionId.isNotBlank() && state.supports("memory.list")) list() }
+    // F77: memory health without endpoints or error text; degraded memory never blocks chat.
+    var health by remember { mutableStateOf<JsonObject?>(null) }
+    LaunchedEffect(sessionId, state.cacheEpoch) { health = if (sessionId.isNotBlank() && state.supports("memory.health")) runCatching { repository.read("memory.health", buildJsonObject { put("sessionId", sessionId) }).jsonObject }.getOrNull() else null }
     val rows = result?.get("rows")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }; val total = result?.get("total")?.jsonPrimitive?.intOrNull ?: rows.size
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("Project memory", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }); Text("Review memory within the selected Ollama session's approved project.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        if (sessions.isEmpty()) item { OutlinedPanel("No Ollama sessions") { Text("Create an Ollama session in an approved project before opening memory.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+        item { Text("Project memory", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }); Text("Review memory within the selected conversation's approved project and memory server.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        health?.let { value -> item { MemoryHealthLine(value) } }
+        if (sessions.isEmpty()) item { OutlinedPanel("No conversations") { Text("Create or open a conversation in an approved project before opening memory.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         else item { Text("Session", fontWeight = FontWeight.Medium); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { sessions.forEach { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; FilterChip(sessionId == session.id, { sessionId = session.id; offset = 0 }, { Column { Text(session.title); Text(project?.name ?: session.project.orEmpty(), style = MaterialTheme.typography.labelSmall) } }) } }; sessions.firstOrNull { it.id == sessionId }?.let { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; OutlinedPanel(project?.name ?: "Approved project") { SelectionContainer { Text(project?.path ?: session.project ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) }; Text("Ollama · ${session.ollamaHost.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
         if (state.supports("memory.list")) item { Text("Browse", style = MaterialTheme.typography.titleMedium); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("saved" to "Saved", "conversation" to "Conversation", "assertions" to "Assertions", "episodes" to "Episodes", "entities" to "Entities").forEach { (id,label) -> FilterChip(kind == id, { kind = id; offset = 0 }, { Text(label) }) } }; Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(filter, { filter = it }, placeholder = { Text("Find text in memory") }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(8.dp)); OutlinedButton({ offset = 0; list() }, enabled = !loading) { Text("Find") } } }
         if (state.supports("memory.retrieve")) item { Text("Recall", style = MaterialTheme.typography.titleMedium); Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(query, { query = it.take(1000) }, placeholder = { Text("Ask what Cere remembers") }, singleLine = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(8.dp)); OutlinedButton(::retrieve, enabled = query.isNotBlank() && !loading) { Text("Recall") } } }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         items(rows, key = { it["id"]?.jsonPrimitive?.contentOrNull ?: it.toString() }) { row ->
-            MemoryRow(row, if (state.supports("memory.forgetPreview")) ({ managedRecord = row; managing = true }) else null)
+            MemoryRow(row, if (state.supports("memory.forgetPreview") || state.supports("memory.timeline")) ({ managedRecord = row; managing = true }) else null)
         }
         if (!loading && result != null && rows.isEmpty()) item { Text("No matching memory records.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         result?.takeIf { "rows" !in it }?.let { value -> item { StructuredObject(value) } }
         if (result?.containsKey("rows") == true) item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { OutlinedButton({ offset = (offset - 25).coerceAtLeast(0) }, enabled = offset > 0 && !loading) { Text("Previous") }; Text("$total total", color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ offset += 25 }, enabled = offset + 25 < total && !loading) { Text("Next") } } }
         if (state.supports("memory.save") && sessions.isNotEmpty()) item { Button({ adding = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Remember a fact") } }
+        // Forgetting is two steps: gone from recall at once, physically removed later. Receipts keep both visible.
+        if (state.erasures.isNotEmpty()) item { OutlinedPanel("Forget receipts") {
+            state.erasures.forEach { receipt -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(receipt.label, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(when { receipt.purgeComplete -> "Hidden from recall · physically removed"; receipt.checkedAt != null -> "Hidden from recall · physical removal ${receipt.state?.lowercase() ?: "in progress"}"; else -> "Hidden from recall · physical removal not checked yet" },
+                        style = MaterialTheme.typography.bodySmall, color = if (receipt.purgeComplete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (!receipt.purgeComplete && state.supports("memory.erasureStatus")) TextButton({ scope.launch { runCatching { repository.checkErasure(receipt.jobId) }.onFailure { error = it.message } } }) { Text("Check") }
+                else TextButton({ scope.launch { repository.dismissErasure(receipt.jobId) } }) { Text("Dismiss") }
+            } }
+        } }
         if (state.supports("memory.forgetPreview") && state.supports("memory.clear") && sessions.isNotEmpty()) item { OutlinedButton({ clearProject = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.fillMaxWidth()) { Text("Clear this project's memory") } }
     }
     if (adding) { var text by rememberSaveable { mutableStateOf("") }; var saveError by remember { mutableStateOf<String?>(null) }; AlertDialog(onDismissRequest = { adding = false }, title = { Text("Remember a fact") }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(text, { text = it.take(MEMORY_FACT_LIMIT) }, minLines = 5, label = { Text("Fact") }, modifier = Modifier.fillMaxWidth()); Text("${text.length} / $MEMORY_FACT_LIMIT characters", color = MaterialTheme.colorScheme.onSurfaceVariant); saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) } } }, confirmButton = { Button({ scope.launch { runCatching { val action = repository.prepareAction("memory.save", buildJsonObject { put("sessionId", sessionId); put("text", text.trim()) }); authenticate(activity, "Save this memory", action, repository, { adding = false; offset = 0; list() }, { saveError = it }) }.onFailure { saveError = it.message } } }, enabled = text.isNotBlank()) { Text("Review & save") } }, dismissButton = { TextButton({ adding = false }) { Text("Cancel") } }) }
-    if (managing) managedRecord?.let { record -> MemoryRecordSheet(repository, state, activity, sessionId, record, { managing = false; managedRecord = null }, { list() }) }
+    if (managing) managedRecord?.let { record -> MemoryRecordSheet(repository, state, activity, sessionId, record, { managing = false; managedRecord = null }, { list() }, kind, rows) }
     if (clearProject) MemoryRecordSheet(repository, state, activity, sessionId, null, { clearProject = false }, { list() })
 }
 
@@ -1068,7 +1283,7 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
     val permissions = state.permissions; val paused = permissions["paused"]?.jsonPrimitive?.booleanOrNull == true; val categories = permissions["categories"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }; val caps = permissions["caps"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
     fun applySettings(value: JsonObject) { remoteSettings = value; personality = value["personality"]?.jsonPrimitive?.contentOrNull.orEmpty(); defaultModel = value["defaultModel"]?.jsonPrimitive?.contentOrNull.orEmpty(); searchProvider = value["webSearch"]?.jsonObject?.get("provider")?.jsonPrimitive?.contentOrNull ?: "auto"; baselineRevision = value["revision"]?.jsonPrimitive?.contentOrNull ?: "0"; settingsDirty = false; settingsConflict = false }
     fun receiveSettings(value: JsonObject) { val revision = value["revision"]?.jsonPrimitive?.contentOrNull ?: "0"; if (settingsDirty && revision != baselineRevision) { remoteSettings = value; settingsConflict = true } else if (!settingsDirty) applySettings(value) }
-    LaunchedEffect(state.settings, state.connection is ConnectionState.Online) { if (state.supports("settings.get")) { loading = true; runCatching { repository.request("settings.get", buildJsonObject {}).jsonObject }.onSuccess(::receiveSettings).onFailure { error = it.message }; loading = false } else receiveSettings(state.settings) }
+    LaunchedEffect(state.settings, state.connection is ConnectionState.Online) { if (state.supports("settings.get")) { loading = true; runCatching { repository.read("settings.get", buildJsonObject {}).jsonObject }.onSuccess(::receiveSettings).onFailure { error = it.message }; loading = false } else receiveSettings(state.settings) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         alertsOn = CereNotifications.requestAlertsEnabled(context)
         if (!granted && Build.VERSION.SDK_INT >= 33 && !activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) feedback = "Android didn't ask again. Turn on notifications for Cere in Notification settings."
@@ -1092,11 +1307,18 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
             PermissionReductionPanel(repository, state, { feedback = it }, { error = it })
         }
         if (state.supports("settings.get")) item { Spacer(Modifier.height(4.dp)); Text("Assistant", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
-        if (state.supports("settings.get")) item { OutlinedPanel("Defaults") { if (settingsConflict) { Text("Desktop settings changed while you were editing. Your values are preserved.", color = MaterialTheme.colorScheme.tertiary); FlowRow { TextButton({ applySettings(remoteSettings) }) { Text("Reload desktop") }; TextButton({ baselineRevision = remoteSettings["revision"]?.jsonPrimitive?.contentOrNull ?: baselineRevision; settingsConflict = false }) { Text("Keep mine") } } }; OutlinedTextField(personality, { personality = it.take(8000); settingsDirty = true }, label = { Text("Personality") }, minLines = 3, modifier = Modifier.fillMaxWidth()); if (!remoteSettings["ollamaHost"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) OutlinedTextField(defaultModel, { defaultModel = it.take(512); settingsDirty = true }, label = { Text("Default Ollama model") }, singleLine = true, modifier = Modifier.fillMaxWidth()); Text("Web search provider", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("auto","duckduckgo","brave","mojeek","searxng").forEach { provider -> FilterChip(searchProvider == provider, { searchProvider = provider; settingsDirty = true }, { Text(provider) }) } }; if (state.supports("settings.patch")) Button({ scope.launch { runCatching { val action = repository.prepareAction("settings.patch", assistantSettingsPatch(remoteSettings, baselineRevision, personality, defaultModel, searchProvider)); authenticate(activity, "Update assistant settings", action, repository, { value -> applySettings(value.jsonObject); feedback = "Settings updated" }, { error = it }) }.onFailure { error = it.message } } }, enabled = !loading && !settingsConflict && settingsDirty, modifier = Modifier.fillMaxWidth()) { Text("Review & save") } else Text("This device has read-only settings access.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-        if (state.supports("memory.list") || state.supports("memory.retrieve")) item { OutlinedPanel("Project memory") { Text("Browse saved facts, conversation passages, assertions, episodes, and entities for an approved Ollama session.", color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ showMemory = true }) { Icon(Icons.Default.Star, null); Spacer(Modifier.width(8.dp)); Text("Open memory") } } }
+        if (state.supports("settings.get")) item { OutlinedPanel("Defaults") { if (settingsConflict) { Text("Desktop settings changed while you were editing. Your values are preserved.", color = MaterialTheme.colorScheme.tertiary); FlowRow { TextButton({ applySettings(remoteSettings) }) { Text("Reload desktop") }; TextButton({ baselineRevision = remoteSettings["revision"]?.jsonPrimitive?.contentOrNull ?: baselineRevision; settingsConflict = false }) { Text("Keep mine") } } }; OutlinedTextField(personality, { personality = it.take(8000); settingsDirty = true }, label = { Text("Personality") }, minLines = 3, modifier = Modifier.fillMaxWidth(), supportingText = { Text("Applies to every conversation unless a project or conversation style on the desktop replaces it.") }); if (!remoteSettings["ollamaHost"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) OutlinedTextField(defaultModel, { defaultModel = it.take(512); settingsDirty = true }, label = { Text("Default Ollama model") }, singleLine = true, modifier = Modifier.fillMaxWidth()); Text("Web search provider", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("auto","duckduckgo","brave","mojeek","searxng").forEach { provider -> FilterChip(searchProvider == provider, { searchProvider = provider; settingsDirty = true }, { Text(provider) }) } }; if (state.supports("settings.patch")) Button({ scope.launch { runCatching { val action = repository.prepareAction("settings.patch", assistantSettingsPatch(remoteSettings, baselineRevision, personality, defaultModel, searchProvider)); authenticate(activity, "Update assistant settings", action, repository, { value -> applySettings(value.jsonObject); feedback = "Settings updated" }, { error = it }) }.onFailure { error = it.message } } }, enabled = !loading && !settingsConflict && settingsDirty, modifier = Modifier.fillMaxWidth()) { Text("Review & save") } else Text("This device has read-only settings access.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+        if (state.supports("memory.list") || state.supports("memory.retrieve")) item { OutlinedPanel("Project memory") { Text("Browse saved facts, conversation passages, assertions, episodes, and entities for an approved conversation.", color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ showMemory = true }) { Icon(Icons.Default.Star, null); Spacer(Modifier.width(8.dp)); Text("Open memory") } } }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         feedback?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }; error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         item { HorizontalDivider(); Spacer(Modifier.height(8.dp)); Text("Phone", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
+        item { OutlinedPanel("On this phone") {
+            val portraitShown by UiPreferences.portrait(context).collectAsState()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text("Show the assistant's portrait"); Text("A still portrait beside each conversation, showing its state. It never moves; the state is also written out.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                Switch(portraitShown, { UiPreferences.setPortrait(context, it) })
+            }
+        } }
         item { OutlinedPanel("Desktop connection") {
             when (val connection = state.connection) {
                 is ConnectionState.Online -> Text("Connected to ${connection.desktopName}", color = MaterialTheme.colorScheme.primary)
@@ -1156,7 +1378,7 @@ private fun PermissionReductionPanel(repository: CereRepository, state: MobileSt
     LaunchedEffect(state.connection is ConnectionState.Online, pending) {
         if (!state.supports("devices.self")) return@LaunchedEffect
         loading = true
-        runCatching { repository.request("devices.self", buildJsonObject {}).jsonObject }
+        runCatching { repository.read("devices.self", buildJsonObject {}).jsonObject }
             .onSuccess { value ->
                 device = value
                 selectedCaps = value["caps"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }.toSet()
@@ -1208,7 +1430,7 @@ private fun PermissionReductionPanel(repository: CereRepository, state: MobileSt
 
 @Composable private fun MemoryRow(row: JsonObject, manage: (() -> Unit)? = null) { OutlinedPanel(row["text"]?.jsonPrimitive?.contentOrNull ?: row["name"]?.jsonPrimitive?.contentOrNull ?: "Memory record") { val detail = listOfNotNull(row["kind"]?.jsonPrimitive?.contentOrNull, row["status"]?.jsonPrimitive?.contentOrNull, row["state"]?.jsonPrimitive?.contentOrNull, row["updated"]?.jsonPrimitive?.contentOrNull).joinToString(" · "); if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); val remaining = JsonObject(row.filterKeys { it !in setOf("id","text","name","kind","status","state","updated","revision") }); if (remaining.isNotEmpty()) StructuredObject(remaining); manage?.let { OutlinedButton(it) { Text("Inspect or forget") } } } }
 
-@Composable private fun StructuredObject(value: JsonObject) { Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { value.forEach { (key, item) -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text(key.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.widthIn(min = 88.dp)); SelectionContainer { Text(if (item is JsonPrimitive) item.content else item.toString(), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)) } } } } }
+@Composable internal fun StructuredObject(value: JsonObject) { Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { value.forEach { (key, item) -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text(key.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.widthIn(min = 88.dp)); SelectionContainer { Text(if (item is JsonPrimitive) item.content else item.toString(), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)) } } } } }
 
 @Composable private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, detail: String) = EmptyState(androidx.compose.ui.graphics.vector.rememberVectorPainter(icon), title, detail)
 @Composable private fun EmptyState(icon: androidx.compose.ui.graphics.painter.Painter, title: String, detail: String) { Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Icon(icon, null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp)); Spacer(Modifier.height(14.dp)); Text(title, style = MaterialTheme.typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center); Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center) } }
@@ -1226,3 +1448,11 @@ private fun PermissionReductionPanel(repository: CereRepository, state: MobileSt
 }
 
 @Composable private fun Markdown(value: String) = CereMarkdown(value)
+
+/** "Conversation · agent Scout · delegated from Parent", from the scoped session list and the request's opaque agent reference. */
+internal fun approvalOrigin(state: MobileState, approval: Approval): String {
+    val session = state.sessions.firstOrNull { it.id == approval.sessionId }
+    val agent = approval.agentId?.let { id -> session?.agents?.firstOrNull { it.id == id } }
+    val parent = approval.parentSessionIds.firstNotNullOfOrNull { id -> state.sessions.firstOrNull { it.id == id } }
+    return listOfNotNull(session?.title ?: "A conversation not loaded on this phone", agent?.let { "agent ${it.name}" }, parent?.let { "delegated from ${it.title}" }).joinToString(" · ")
+}

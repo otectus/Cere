@@ -37,6 +37,19 @@ internal object ConnectionPolicy {
     }
 
     /**
+     * A lost network ends the connection only when it is the one carrying it. With the carrying
+     * network unknown (an older connection, or none was active), any loss is treated as relevant.
+     */
+    fun dropsConnection(lost: Any?, carrying: Any?): Boolean = carrying == null || lost == null || lost == carrying
+
+    /** Which side needs updating, from the desktop's close reason or the welcome's protocol version. */
+    fun incompatibleText(reason: String): String = when {
+        reason.contains("INCOMPATIBLE_CLIENT_NEWER") -> "This Cere Mobile is newer than the desktop's Cere supports. Update Cere on the desktop. Your drafts stay on this phone."
+        reason.contains("INCOMPATIBLE_CLIENT_OLDER") -> "This desktop needs a newer Cere Mobile. Update the app on this phone. Your drafts stay on this phone."
+        else -> "This desktop runs an incompatible Cere version. Update Cere on both devices. Your drafts stay on this phone."
+    }
+
+    /**
      * Full-jitter backoff ceiling: 1 s doubling to 60 s, then one attempt every five
      * minutes once the desktop has been unreachable for ten minutes.
      */

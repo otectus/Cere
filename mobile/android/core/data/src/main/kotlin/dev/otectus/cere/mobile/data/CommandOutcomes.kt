@@ -14,7 +14,7 @@ object CommandOutcomes {
     private val selfHealing = setOf(
         "drafts.put", "sessions.rename", "sessions.organize", "sessions.read", "sessions.stop",
         "sessions.disconnect", "attachments.begin", "attachments.commit", "attachments.abort",
-        "permissions.pause", "devices.selfRevoke",
+        "permissions.pause", "devices.selfRevoke", "messages.bookmark", "captures.discard", "workflows.pauseSchedule",
     )
 
     /** Unknown outcomes the next snapshot makes irrelevant; drop them instead of waiting for review. */
@@ -46,6 +46,12 @@ object CommandOutcomes {
         "memory.forget" -> "Forget a memory record"
         "memory.clear" -> "Clear project memory"
         "permissions.reduce" -> "Reduce this phone's access"
+        "captures.start" -> "Capture the desktop display"
+        "captures.attach" -> "Attach a desktop capture"
+        "memory.correct" -> "Correct a memory claim"
+        "memory.resolveConflict" -> "Resolve a memory conflict"
+        "memory.identity" -> "Record an identity decision"
+        "memory.freezeEpisode" -> "Freeze a memory episode"
         else -> command.method
     } + (command.label?.let { " · $it" } ?: "")
 }

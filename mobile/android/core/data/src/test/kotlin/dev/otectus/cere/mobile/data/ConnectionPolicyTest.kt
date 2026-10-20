@@ -57,3 +57,13 @@ class ConnectionPolicyTest {
         assertFalse(sparse.record(0)); assertFalse(sparse.record(400_000))
     }
 }
+
+class NetworkLossTest {
+    @org.junit.Test fun onlyLosingTheCarryingNetworkEndsTheConnection() {
+        val wifi = Any(); val cellular = Any()
+        org.junit.Assert.assertTrue(ConnectionPolicy.dropsConnection(wifi, wifi))
+        org.junit.Assert.assertFalse("an unrelated network went away", ConnectionPolicy.dropsConnection(cellular, wifi))
+        org.junit.Assert.assertTrue("carrying network unknown", ConnectionPolicy.dropsConnection(cellular, null))
+        org.junit.Assert.assertTrue("lost network unknown", ConnectionPolicy.dropsConnection(null, wifi))
+    }
+}

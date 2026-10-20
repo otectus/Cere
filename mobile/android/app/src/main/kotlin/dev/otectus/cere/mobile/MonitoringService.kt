@@ -24,7 +24,7 @@ class MonitoringService : Service() {
     private val repository get() = (application as CereApp).repository
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { repository.networkAvailable() }
-        override fun onLost(network: Network) { repository.networkLost() }
+        override fun onLost(network: Network) { repository.networkLost(network) }
     }
     // Approval ID → digest already announced. A request alerts once; a changed request alerts again.
     private var announced = mapOf<String, String>()

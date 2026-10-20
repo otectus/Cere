@@ -10,6 +10,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.otectus.cere.mobile.data.SessionScrollPosition
 import dev.otectus.cere.mobile.protocol.Agent
@@ -86,8 +88,9 @@ internal fun ConversationTimeline(
             }
             items(conversation, key = { it.id }) { messageContent(it) }
             item(key = "status") {
+                // "Your input" only when a request is on screen (the caller passes it as statusText).
                 if (busy) Text(statusText ?: when (status) {
-                    "waiting" -> "Waiting for your input…"
+                    "waiting" -> "Waiting for a decision on the desktop…"
                     "starting" -> "Starting the provider…"
                     "stopping" -> "Stopping…"
                     else -> "Working on it…"
@@ -107,6 +110,7 @@ internal fun ActivityPanel(
     items: List<Message>, loading: Boolean, error: String?, onRefresh: () -> Unit,
     onDismiss: () -> Unit, agents: List<Agent> = emptyList(),
     canOpenAgent: (Agent) -> Boolean = { false }, onOpenAgent: (Agent) -> Unit = {},
+    hasOlder: Boolean = false, loadingOlder: Boolean = false, onLoadOlder: () -> Unit = {},
     itemContent: @Composable (Message) -> Unit,
 ) {
     val activity = items.filterNot(Message::isConversationMessage).sortedByDescending(Message::time)
@@ -128,6 +132,8 @@ internal fun ActivityPanel(
                 if (activity.isNotEmpty()) item { HorizontalDivider(Modifier.padding(vertical = 8.dp)); Text("Tool activity", style = MaterialTheme.typography.titleSmall) }
             }
             items(activity, key = { it.id }) { itemContent(it) }
+            // Older records stay on the desktop until asked for; the list says so instead of ending.
+            if (hasOlder) item(key = "olderActivity") { OutlinedButton(onLoadOlder, enabled = !loadingOlder, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).testTag("olderActivity")) { Text(if (loadingOlder) "Loading older activity…" else "Load older activity") } }
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -162,6 +168,29 @@ private fun AgentActivityRow(agent: Agent, canOpen: Boolean, onOpen: (Agent) -> 
                 agent.parentId?.let { Text("Parent · ${it.take(8)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 if (canOpen) TextButton({ onOpen(agent) }, modifier = Modifier.align(Alignment.End)) { Text("Open conversation") }
             }
+        }
+    }
+}
+
+/**
+ * The sources a reply drew on, from its metadata, so each is reachable even when the text names none.
+ * Only http(s) addresses open, on tap; anything else is listed without a link.
+ */
+@Composable
+internal fun MessageSources(sources: List<kotlinx.serialization.json.JsonObject>, onOpen: (String) -> Unit) {
+    val entries = sources.mapNotNull { source ->
+        val url = (source["url"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        ((source["title"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf(String::isNotBlank) ?: url) to url
+    }
+    if (entries.isEmpty()) return
+    Column(Modifier.padding(top = 8.dp).testTag("messageSources")) {
+        Text("Sources", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        entries.forEach { (title, url) ->
+            val safe = safeLink(url)
+            if (safe != null) TextButton({ onOpen(safe) }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp),
+                modifier = Modifier.semantics { contentDescription = "Open source $title" }) {
+                Text("$title · ${java.net.URI(safe).host}", maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            } else Text("$title · this address is not opened on the phone", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
