@@ -8,7 +8,7 @@ const record = () => ({
   schema: 1, tag: 'mobile-v0.1.5', commit: 'a'.repeat(40), date: '2026-10-18', tester: 'owner',
   desktopBuild: { version: '0.1.5', commit: 'a'.repeat(40), dirty: false },
   apk: { unsignedSha256: 'b'.repeat(64), packageId: 'dev.otectus.cere.mobile', versionName: '0.1.5', versionCode: 1005 },
-  signerSha256: 'c'.repeat(64), device: { model: 'Pixel 10 Pro', os: 'GrapheneOS 2026101500', sdk: 37 },
+  signerSha256: 'c'.repeat(64), device: { model: 'Pixel 10 Pro', os: 'GrapheneOS', sdk: 37 },
   gates: Object.fromEntries(Object.keys(requiredGates).map(gate => [gate, { result: 'passed', notes: '' }])) as any,
 });
 const expected = { tag: 'mobile-v0.1.5', commit: 'a'.repeat(40), unsignedSha256: 'B'.repeat(64), signer: 'c'.repeat(64), now };

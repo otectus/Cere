@@ -8,7 +8,7 @@ Implements the desktop and mobile review (W01–W16). [`docs/REVIEW-VALIDATION.m
 
 Validation from the final source (`7f14fe4`):
 
-- `/home/otectus/Projects/.mcmod-tools/gradlew-quiet.sh mobile/android :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:lintDev :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:assembleDev`: passed. **76 unit tests** (22 protocol, 48 data, 6 app), 0 failures; lint reported 0 errors on all three variants (29, 30 and 30 warnings); four APKs, each 16 KiB aligned. The CycloneDX 1.5 inventory lists 154 components.
+- `gradlew-quiet.sh mobile/android :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:lintDev :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:assembleDev`: passed. **76 unit tests** (22 protocol, 48 data, 6 app), 0 failures; lint reported 0 errors on all three variants (29, 30 and 30 warnings); four APKs, each 16 KiB aligned. The CycloneDX 1.5 inventory lists 154 components.
 - `:app:connectedDebugAndroidTest` on API 37 and API 36 emulators: 30 tests each, 0 failures, 8 skipped (the paired tests, which need explicit arguments).
 - `node tools/mobile-paired-check.ts` on both emulators, against an isolated broker with fixture providers: passed, 5 of 5 checkpoints (six-word match, USB pairing and `ConnectedDesktopTest`).
 - The R8 development APK installed and launched on API 36 without a fatal exception: not debuggable, versionCode 1004, minSdk 30, targetSdk 37.
