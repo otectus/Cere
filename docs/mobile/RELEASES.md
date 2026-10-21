@@ -24,4 +24,4 @@ The app's manual and at-most-daily foreground Settings check queries up to ten G
 
 For Obtainium, use `https://github.com/otectus/Cere`, filter release tags with `^mobile-v[0-9]+\.[0-9]+\.[0-9]+$`, and APK assets with `^cere-mobile-v[0-9]+\.[0-9]+\.[0-9]+\.apk$`. Exclude prereleases. Verify the first install's signing fingerprint against the owner's separately retained value. Android requires the same signer for future in-place updates. Test those filters against an actual draft/staged release before recommending unattended updates.
 
-Maintain release notes with protocol/minimum-desktop compatibility and measured device/VPN/battery behavior. Complete [TESTING.md](TESTING.md) gates before making the GitHub draft public.
+Maintain release notes with protocol/minimum-desktop compatibility and measured device/VPN/battery behavior. Notable changes are recorded under **Unreleased** in the repository's [CHANGELOG.md](../../CHANGELOG.md); before tagging, bring the phone-facing part into [RELEASE-NOTES.md](RELEASE-NOTES.md), which the release job uses as the draft's notes. Complete [TESTING.md](TESTING.md) gates before making the GitHub draft public.

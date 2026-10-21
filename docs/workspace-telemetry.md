@@ -5,11 +5,18 @@ Git HEAD metadata and the five newest edited files in memory. Select workspaces
 under **Settings → Workspace telemetry**, enable it, then install shell hooks.
 Command text and stderr capture each require their own opt-in.
 
-Ollama and direct OpenAI, Anthropic and Google API conversations receive a
-request-only situation report beside retrieved context, never in system
-instructions. The active workspace is resolved from the destination conversation's
-cwd, not the focused terminal or compositor. Internal memory/extraction/embedding
-requests and remote conversations do not receive telemetry.
+Ollama and API conversations (OpenAI, Anthropic, Google and the compatible
+endpoint) receive a request-only situation report beside retrieved context, never
+in system instructions. The active workspace is resolved from the destination
+conversation's cwd, not the focused terminal or compositor. Internal
+memory/extraction/embedding requests and remote conversations do not receive
+telemetry.
+
+A paired phone with Desktop control can show a workspace card for one of its
+granted projects: whether the desktop's fresh workspace state is inside that
+project (with the folder relative to it), elsewhere, or unknown. While telemetry or
+memory is off, or Cere actions are paused, the card says awareness is unavailable.
+No window title, command or path outside the project reaches the phone.
 
 **CLI injection is withheld.** Cere's Codex, Claude Code and AntiGravity adapters
 use persistent provider conversations. No verified ephemeral input channel is

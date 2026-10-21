@@ -2,6 +2,20 @@
 
 This is a development implementation of the mobile plan, not a claim that every roadmap phase or external-release gate is complete. Unsupported operations are omitted from capability negotiation. Use the matching broker; a desktop without this gateway cannot pair.
 
+## Protocol 1.1 and desktop parity (0.1.4 / 1004, 2026-10-20)
+
+Implements the desktop and mobile review (W01–W16). [`docs/REVIEW-VALIDATION.md`](../REVIEW-VALIDATION.md) has the full record, and [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md) the current disposition of every desktop feature and plan row, superseding the plan inventory table below. The phone negotiates protocol 1.1 features and shows only what the desktop offers. New: desktop screen captures attached by digest; desktop draft attachments reviewed and sent as reviewed; project memory for every provider, with typed history, corrections, conflicts, identity decisions, episodes and a health line; pinned replies; conversation style, results and schedule pausing; the still status portrait; a workspace card and a panel of programs missing on the desktop; **Open on desktop** for linked terminals; Claude Code history import; and API providers under per-provider grants. Inbound frames are bounded before they are kept, screen reads are fenced to their desktop connection and transcript, saves are durable and image writes atomic, and losing a network that does not carry the connection no longer ends it.
+
+Validation from the final source (`7f14fe4`):
+
+- `/home/otectus/Projects/.mcmod-tools/gradlew-quiet.sh mobile/android :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:lintDev :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:assembleDev`: passed. **76 unit tests** (22 protocol, 48 data, 6 app), 0 failures; lint reported 0 errors on all three variants (29, 30 and 30 warnings); four APKs, each 16 KiB aligned. The CycloneDX 1.5 inventory lists 154 components.
+- `:app:connectedDebugAndroidTest` on API 37 and API 36 emulators: 30 tests each, 0 failures, 8 skipped (the paired tests, which need explicit arguments).
+- `node tools/mobile-paired-check.ts` on both emulators, against an isolated broker with fixture providers: passed, 5 of 5 checkpoints (six-word match, USB pairing and `ConnectedDesktopTest`).
+- The R8 development APK installed and launched on API 36 without a fatal exception: not debuggable, versionCode 1004, minSdk 30, targetSdk 37.
+- Broker: `npm test` passed 783 tests (23 skipped, 0 failed) on Node 26.11.1, 24.22.0 and 26.8.2; `node tools/mobile-contract.ts --check` passed.
+
+APK hashes are listed in `docs/REVIEW-VALIDATION.md`; logs are in `build/review-impl/artifacts/logs/` of the working checkout (not committed). CI runs the paired job on API 30 and 35. Not covered: physical devices, biometrics, network moves, desktop sleep and Doze, notifications, TalkBack and large text on hardware, camera and picker uploads, behavior without Google Play services, the upgrade from 0.1.3 and process-death fault injection.
+
 ## Review remediation (0.1.4 / 1004, 2026-10-09)
 
 Addresses the 2026-10-09 completeness review. A request timeout no longer ends snapshot reconciliation; a 30-second WebSocket ping detects a stalled desktop; only certificate/pin mismatches, revocation, incompatible versions and persistent refusals stop reconnection, and clock skew no longer fails sign-in. Unknown outcomes are listed in Settings for review; an uncertain answer blocks only its own request and is dropped after the next snapshot. Camera access is requested in context and captures are full size; discarded uploads return to Upload; shares ask for a conversation. The app shows full desktop history, searches the desktop, and clears Unread on open. Notification permission is requested at pairing; request alerts post once; replies, problems and timers have their own channels; a request notification opens that request. Cache writes are batched and I/O moved off the main thread. The `dev` build type produces a non-debuggable R8 development snapshot, the update check is channel-aware, and CI gains an emulator job. Desktop controls, provider disconnect and readable errors complete the phone surface; the broker adds `sessions.read`, `notice` forwarding and a pairing-response file loader.
@@ -142,7 +156,7 @@ Superseded by [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md), reconciled again
 
 IDs refer to [`MOBILE_PLAN.md`](../../mobile/MOBILE_PLAN.md). “Implemented” here describes source behavior, not a substitute for hardware/provider validation.
 
-| Plan rows | Current disposition |
+| Plan rows | Disposition on 2026-10-09 |
 | --- | --- |
 | F01–F03 | Native desktop-colored navigation, connection banners and searchable sessions implemented. |
 | F04–F08 | Scoped create/catalog/model/effort/Ollama tools controls implemented. Claude creation is gated on detected restricted-mode, strict MCP configuration, and manual permission support. |

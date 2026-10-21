@@ -1,6 +1,6 @@
 # Desktop and mobile review: implementation and validation record
 
-Implementation of `Cere_Desktop_Mobile_Review_and_Implementation_Instructions.md` (W01–W16) on branch `ui-overhaul`, starting from the reviewed commit `6ea5ce3`, recorded 2026-10-20. Nothing was pushed or published, no repository setting was changed, and the installed Cere application and broker were not touched. The owner's uncommitted work in the same checkout (delegation completion ping, Alia avatar and related edits) stays uncommitted and is not part of these commits or artifacts.
+Implementation of `Cere_Desktop_Mobile_Review_and_Implementation_Instructions.md` (W01–W16) on branch `ui-overhaul`, starting from the reviewed commit `6ea5ce3`, recorded 2026-10-20, before any of it was pushed. Nothing was published, no repository setting was changed, and the installed Cere application and broker were not touched. The owner's uncommitted work in the same checkout (delegation completion ping, Alia avatar and related edits) stays uncommitted and is not part of these commits or artifacts.
 
 **Machine.** CachyOS rolling, Linux 7.2.11, x86_64, Qt 6.12.0, Hyprland 0.56.2; Node 26.11.1 (system), 24.22.0 and 26.8.2 (official builds, SHA-256 verified); Codex CLI 0.163.0, Claude Code 2.1.303, Ollama 0.34.4, `agy` 1.4.3; Android emulators API 37 and API 36. Desktop checks ran in `tools/test-virtual-desktop.sh` (private Hyprland under Cage on the Intel GPU; no access to the working desktop). The session ran at `SCHED_IDLE` while a game, a JVM and `llama-server` held much of the CPU, and the machine rebooted once at 16:49; timing-sensitive checks were judged against unmodified HEAD under the same conditions.
 
@@ -168,7 +168,7 @@ Each was reproduced, fixed and covered by a test that fails without the fix, unl
 
 ## Owner steps
 
-1. **Review and push** `ui-overhaul` (`6637073`..`7f14fe4`, plus this record) when satisfied; CI then shows whether both workflows pass on one commit (W01) and runs the paired emulator job on API 30 and 35, the minimum and an intermediate level this machine had no image for.
+1. **CI on GitHub:** once these commits (`6637073`..`7f14fe4`, plus this record) are on `main`, CI shows whether both workflows pass on one commit (W01) and runs the paired emulator job on API 30 and 35, the minimum and an intermediate level this machine had no image for. Notable changes are summarized in [CHANGELOG.md](../CHANGELOG.md).
 2. **Install on the desktop** when no reply is running: quit the interface (`node broker/cli.ts ui.quit`), `python3 tools/install-user.py`, `systemctl --user restart cere-broker.service`, then start the interface. The working tree also contains your uncommitted delegation-ping and Alia work; installing from the working tree includes it, installing from a checkout of `7f14fe4` does not.
 3. **Phone:** install the dev or debug APK on the target phone and run the hardware gates in `docs/mobile/TESTING.md` (biometrics, LAN/WireGuard/cellular moves, sleep/wake, Doze and notifications, TalkBack and large fonts, camera and picker uploads, no-Play behavior, upgrade from 0.1.3). Record them in `docs/mobile/release-evidence/mobile-vX.Y.Z.json` from the template; the release job signs nothing without it.
 4. **Release:** configure the protected `mobile-release` environment and signing secrets, then tag. Publication stays your decision.
