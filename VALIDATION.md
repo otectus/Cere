@@ -1,5 +1,9 @@
 # Validation record
 
+## Desktop and mobile review implementation — October 20, 2026
+
+Implemented `Cere_Desktop_Mobile_Review_and_Implementation_Instructions.md` (W01–W16) in commits `6637073`..`7f14fe4`; the full record, with every finding, scenario, check, artifact hash and remaining owner step, is [docs/REVIEW-VALIDATION.md](docs/REVIEW-VALIDATION.md). On the final tree, inside `tools/test-virtual-desktop.sh`: `npm test` passed 783 tests with 23 skips and no failures on Node 26.11.1, 24.22.0 and 26.8.2; `ctest` passed 4 of 5 (the GPU `avatar` test fails identically on unmodified HEAD); the offscreen `cere-ui-check` passed 100 with 9 skips and one failure (`reviewTransitions`, which fails identically on HEAD under the same load). Android: 76 unit tests, lint without errors on all three variants, four APKs, instrumentation on API 37 and 36 (30 tests each, no failures) and the paired phone-to-broker check passing 5 of 5 checkpoints on both. A staged install and the Arch package matched their source with build identity `7f14fe4`, and the installed broker started, reported that build and shut down confirmed. Two full-suite runs stalled under heavy foreground load and one of them reported a failure of the new W10 script test; neither reproduced alone, and both are recorded there as unresolved. Nothing was pushed, published or installed.
+
 Publication check — October 15, 2026: `npm test` passed **577 tests**, with **1 optional skip** and no failures; `npm run typecheck` and `git diff --check` passed. Editor recovery files and machine-specific validation JSON/service/geometry snapshots remain local and are excluded from Git, as are runtime logs. References to those local records below document the verification performed. The seam comparisons and twenty route storyboards are included in the repository; authoring sheets and other raw validation captures remain local.
 
 ## Shared avatar scale and seam repair — October 16, 2026
