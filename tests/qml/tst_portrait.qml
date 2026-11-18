@@ -8,9 +8,7 @@ Item {
     height: 180
     visible: true
     property var moodConfig: ({})
-    readonly property var avatarIds: ["cere", "daemona", "jade", "nova", "soap",
-                                     "brandy", "archy", "ghost", "violet", "leafy", "cachy", "usagi",
-                                     "cynthia", "genga", "kippy", "pomni", "rem", "sarah", "sylva", "witty"]
+    readonly property var avatarIds: Cere.AvatarCatalog.entries.map(function(entry) { return entry.id })
     Component.onCompleted: {
         var request=new XMLHttpRequest()
         request.open("GET",Qt.resolvedUrl("../../assets/motions.json"),false);request.send()
@@ -47,22 +45,36 @@ Item {
         var portrait = make({settings:({assistantName:"Étoile", reducedMotion:true}), mood:"concerned"})
         compare(portrait.face, 7)
         var originalColor = portrait.color.toString()
-        for (var id of scene.avatarIds.slice(1)) {
+        for (var id of scene.avatarIds.filter(function(id) { return id !== Cere.AvatarCatalog.defaultId })) {
             portrait.blinking = false
-            portrait.avatar = ({id:id,portrait:id+"-portraits.png"})
+            portrait.avatar = Cere.AvatarCatalog.avatarFor(id)
             tryVerify(function() { return portrait.artworkReady }, 10000)
             compare(portrait.loadedFaces, 12)
             compare(portrait.face, 7)
             compare(portrait.color, Cere.Theme.paletteFor(id).portraitSurface)
-            verify(portrait.color.toString() !== originalColor)
             verify(portrait.description.indexOf("Étoile · ") === 0)
             portrait.blinking = true
-            compare(portrait.face, 11)
+            compare(portrait.face, 7) // The neutral blink must not erase concern.
         }
-        portrait.avatar = ({id:"cere",portrait:"cere-portraits.png"})
+        portrait.avatar = ({id:"cere_default",portrait:"cere_default-portraits.png"})
         tryVerify(function() { return portrait.artworkReady }, 10000)
         compare(portrait.loadedFaces, 12)
         compare(portrait.color, originalColor)
+    }
+
+    function test_neutral_blink_preserves_other_expressions_including_witty() {
+        var portrait = make({avatar:({id:"witty",portrait:"witty-portraits.png"}), mood:"neutral"})
+        portrait.blinking = true
+        compare(portrait.face, 11)
+        for (var expression of Object.keys(portrait.frames)) {
+            if (expression === "neutral") continue
+            portrait.mood = expression
+            compare(portrait.face, portrait.frames[expression])
+        }
+        portrait.mood = "neutral"
+        compare(portrait.face, 11)
+        portrait.blinking = false
+        compare(portrait.face, 0)
     }
 
     function test_activity_precedes_mood_and_speech_is_an_overlay() {
@@ -160,7 +172,7 @@ Item {
         return scene.avatarIds.map(function(id) { return {tag:id,id:id} })
     }
     function test_hover_click_and_every_expression_texture_is_ready(data) {
-        var portrait = make({avatar:({id:data.id,portrait:data.id+"-portraits.png"})})
+        var portrait = make({avatar:Cere.AvatarCatalog.avatarFor(data.id)})
         var expected = ["neutral", "curious", "thinking", "happy", "cheeky", "skeptical", "tender", "concerned", "surprised", "focused", "sleepy"]
         for (var frame = 0; frame < expected.length; ++frame) {
             portrait.mood = expected[frame]

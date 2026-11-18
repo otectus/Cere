@@ -8,6 +8,20 @@ const drift={undocumented:Object.keys(methods).filter(m=>!(m in contract.operati
   undocumentedFeatures:protocolFeatures.filter(f=>!(f in (contract.features||{}))),removedFeatures:Object.keys(contract.features||{}).filter(f=>!(protocolFeatures as readonly string[]).includes(f))};
 if(Object.values(drift).some(list=>list.length))throw new Error('protocol/mobile/v1/CONTRACT.json is out of date: '+JSON.stringify(drift));
 
+const proofs = Object.keys(methods).filter(method => needsProof(method, {})).map(method => {
+  if (method !== 'approvals.answer') return method;
+  const exemptions = ['allow', 'deny', 'answer', 'cancel'].filter(choice => !needsProof(method, { choice }));
+  return method + ' except ' + exemptions.join('/');
+});
+if (JSON.stringify(proofs.sort()) !== JSON.stringify([...contract.actions.signedMethods].sort()))
+  throw new Error('The documented mobile proof requirements differ from the gateway');
+for (const method of ['sessions.create', 'providers.models', 'sessions.handoffCreate']) {
+  const params = z.toJSONSchema(methods[method]);
+  const actual = (params.properties?.provider as { enum: string[] }).enum;
+  if (JSON.stringify([...actual].sort()) !== JSON.stringify(contract.operations[method].params.provider.split('|').sort()))
+    throw new Error('The documented providers differ for ' + method);
+}
+
 const requests=Object.entries(methods).map(([method,params])=>{
   const schema:any=z.toJSONSchema(requestSchema.extend({method:z.literal(method),params,...(mutations.has(method)?{commandId:z.uuid()}:{} )}));
   if(needsProof(method,{}))schema.required=[...new Set([...schema.required,'proof'])];

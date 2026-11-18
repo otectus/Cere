@@ -1,3 +1,4 @@
+import { terminateProcessGroup } from './process-group.ts';
 /**
  * M23: declarative custom tools. A template is one HTTP operation or one program run with an argument
  * list, with typed inputs the model fills in. The model's values can only fill the template's slots:
@@ -15,7 +16,7 @@ import { request as httpsRequest } from 'node:https';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { isIP } from 'node:net';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { publicAddress } from './web.ts';
 import { ExtensionSecrets, minimalEnvironment, printable } from './extensions.ts';
 import type { Core } from './core.ts';
@@ -26,12 +27,13 @@ export type ToolInput = { name: string; type: 'string' | 'number' | 'integer' | 
 export type HttpTemplate = { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; url: string; headers: Record<string, string>; body: 'none' | 'json'; credential: 'none' | 'bearer' | 'header'; credentialHeader: string; allowPrivate: boolean };
 export type CommandTemplate = { executable: string; args: string[]; cwd: string };
 export type CustomTool = { id: string; name: string; description: string; kind: 'http' | 'command'; enabled: boolean; allowed: boolean; timeoutSeconds: number; inputs: ToolInput[]; http?: HttpTemplate; command?: CommandTemplate };
-export const customLimits = { tools: 20, inputs: 12, headers: 10, args: 32, valueChars: 2000, outputChars: 64_000, responseBytes: 1024 * 1024, stderrChars: 4000 };
+export const customLimits = { tools: 20, inputs: 12, headers: 10, args: 32, valueChars: 2000, reviewBytes: 48 * 1024, outputChars: 64_000, responseBytes: 1024 * 1024, stderrChars: 4000 };
 const slot = /\{([a-z][a-z0-9_]{0,39})\}/g;
 const slots = (text: string) => [...text.matchAll(slot)].map(match => match[1]);
 const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const forbiddenHeaders = /^(host|authorization|cookie|content-length|transfer-encoding|connection|proxy-.*)$/i;
 const local = (host: string) => host === 'localhost' || host.endsWith('.localhost') || (!!isIP(host) && !publicAddress(host));
+const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 /** The fixed origin of a URL template; slots may appear only in its path and query. */
 export function templateOrigin(template: string) {
@@ -154,13 +156,13 @@ export function buildRequest(tool: CustomTool, args: Record<string, string | num
   const used = slots(h.url), rest = Object.fromEntries(Object.entries(args).filter(([name]) => !used.includes(name)));
   return { url, method: h.method, headers: { ...h.headers }, body: h.body === 'json' ? JSON.stringify(rest) : undefined };
 }
-/** The program's argument list for these arguments; a value never starts an option. */
+/** The program's argument list for these arguments; variable-led arguments may not become options. Negative numbers follow the same rule. */
 export function buildCommand(tool: CustomTool, args: Record<string, string | number | boolean>) {
-  return tool.command!.args.map(template => template.replace(slot, (match, name: string, offset: number) => {
-    const value = name in args ? String(args[name]) : '';
-    if (offset === 0 && value.startsWith('-')) throw new Error(`${name} cannot start with "-" here`);
-    return value;
-  }));
+  return tool.command!.args.map(template => {
+    const expanded = template.replace(slot, (_match, name: string) => name in args ? String(args[name]) : '');
+    if (/^\{[a-z][a-z0-9_]{0,39}\}/.test(template) && expanded.startsWith('-')) throw new Error('An input argument cannot start with "-" here');
+    return expanded;
+  });
 }
 
 type Reply = { status: number; headers: IncomingHttpHeaders; body: Buffer; truncated: boolean };
@@ -188,16 +190,20 @@ async function send(url: URL, method: string, headers: Record<string, string>, b
 }
 function run(tool: CustomTool, argv: string[], signal: AbortSignal): Promise<{ exitCode: number | null; stdout: string; stderr: string; truncated: boolean }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(tool.command!.executable, argv, { cwd: tool.command!.cwd, env: minimalEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(tool.command!.executable, argv, { cwd: tool.command!.cwd, env: minimalEnvironment(), detached:true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', truncated = false;
     child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');
     child.stdout!.on('data', (chunk: string) => { if (stdout.length < customLimits.outputChars) stdout += chunk; else truncated = true; });
     child.stderr!.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-customLimits.stderrChars); });
-    const kill = () => child.kill('SIGKILL');
+    let cleanup:Promise<void>|undefined;
+    const stop = () => cleanup ??= terminateProcessGroup(child.pid,1000);
+    const kill = () => {void stop().catch(reject);};
     signal.addEventListener('abort', kill, { once: true });
+    if(signal.aborted)kill();
     child.on('error', error => { signal.removeEventListener('abort', kill); reject(error); });
-    child.on('close', code => {
+    child.on('close', async code => {
       signal.removeEventListener('abort', kill);
+      try { await stop(); } catch(error) { reject(error);return; }
       if (signal.aborted) { reject(signal.reason instanceof Error ? signal.reason : new Error('Stopped')); return; }
       resolve({ exitCode: code, stdout: stdout.slice(0, customLimits.outputChars), stderr, truncated: truncated || stdout.length > customLimits.outputChars });
     });
@@ -213,6 +219,9 @@ export class CustomTools {
   private credential(tool: CustomTool) {
     if (!tool.http || tool.http.credential === 'none') return undefined;
     try { return this.secrets.values(tool.id)['CREDENTIAL ' + templateOrigin(tool.http.url)]; } catch { return undefined; }
+  }
+  private binding(tool: CustomTool, values: Record<string, string | number | boolean>, operation: string) {
+    return digest({ tool, values, operation, credentialRevision: this.secrets.revision(tool.id) });
   }
   toolsFor(sessionId: string): OllamaTool[] {
     const session = this.core.store.session(sessionId);
@@ -233,16 +242,18 @@ export class CustomTools {
     if (tool.kind === 'http') {
       const built = buildRequest(tool, values);
       if (tool.http!.credential !== 'none' && !this.credential(tool)) throw new Error(`Save the credential for ${tool.name} in Settings › AI assistance before using it`);
-      operation = `${built.method} ${built.url.href}${Object.keys(built.headers).length ? '\nHeaders: ' + Object.keys(built.headers).join(', ') : ''}${tool.http!.credential !== 'none' ? '\nCredential: the key saved for ' + built.url.origin : ''}${built.body !== undefined ? '\nBody: ' + built.body.slice(0, 3000) : ''}`;
+      operation = `${built.method} ${built.url.href}${Object.keys(built.headers).length ? '\nHeaders: ' + Object.entries(built.headers).map(([key, value]) => `${key}: ${value}`).join(', ') : ''}${tool.http!.credential !== 'none' ? '\nCredential: the key saved for ' + built.url.origin : ''}${built.body !== undefined ? '\nBody: ' + built.body : ''}`;
     } else operation = `${tool.command!.executable} ${buildCommand(tool, values).map(arg => JSON.stringify(arg)).join(' ')}\nIn ${tool.command!.cwd}`;
+    if (Buffer.byteLength(operation) > customLimits.reviewBytes) throw new Error('This custom tool operation is too large to review completely (limit: 48 KB)');
+    const reviewedBinding = this.binding(tool, values, operation), definition = digest(tool);
     if (!tool.allowed) {
-      const answer = await this.core.approval(sessionId, { kind: 'custom-tool', title: `Run the custom tool ${tool.name}?`, detail: operation, choices: ['allow', 'deny'], fields: { tool: tool.id } });
+      const answer = await this.core.approval(sessionId, { kind: 'custom-tool', title: `Run the custom tool ${tool.name}?`, detail: operation, choices: ['allow', 'deny'], fields: { tool: tool.id, definition, digest: reviewedBinding, reviewComplete: true } });
       if (answer.choice !== 'allow') return { ran: false, message: 'The user declined this custom tool call.' };
       signal.throwIfAborted();
     }
     // The template is read again: a change made while the question was open is not run with old approval.
     const current = find();
-    if (JSON.stringify(current) !== JSON.stringify(tool)) throw new Error('The custom tool changed while waiting for approval. Ask again.');
+    if (JSON.stringify(current) !== JSON.stringify(tool) || this.binding(current, values, operation) !== reviewedBinding) throw new Error('The custom tool or its credential changed while waiting for approval. Ask again.');
     const timeout = AbortSignal.any([signal, AbortSignal.timeout(tool.timeoutSeconds * 1000)]), started = Date.now();
     const record = (status: string) => this.core.store.activity({ action: 'custom-tool.call', sessionId, tool: tool.name, kind: tool.kind, status, durationMs: Date.now() - started });
     try {
@@ -272,13 +283,18 @@ export class CustomTools {
     if (!tool?.http || tool.http.credential === 'none') throw new Error('This custom tool takes no credential');
     // Saved for the template's current origin; a different origin needs the credential again.
     this.secrets.set(tool.id, 'CREDENTIAL ' + templateOrigin(tool.http.url), typeof p.value === 'string' ? p.value : '');
+    for (const { value } of [...this.core.approvals.values()]) if (value.kind === 'custom-tool' && value.fields?.tool === tool.id) this.core.answer({ id: value.id, choice: 'deny' }, true);
     this.core.changed();
     return this.snapshot().find(item => item.id === tool.id);
   }
   /** Turned-off or removed templates: their open questions are refused and their credentials dropped. */
   reconfigure() {
     const tools = this.templates();
-    for (const { value } of [...this.core.approvals.values()]) if (value.kind === 'custom-tool' && !tools.find(tool => tool.id === value.fields?.tool)?.enabled) this.core.answer({ id: value.id, choice: 'deny' }, true);
+    for (const { value } of [...this.core.approvals.values()]) {
+      if (value.kind !== 'custom-tool') continue;
+      const tool = tools.find(item => item.id === value.fields?.tool);
+      if (!tool?.enabled || digest(tool) !== value.fields?.definition) this.core.answer({ id: value.id, choice: 'deny' }, true);
+    }
     this.secrets.keep(tools.map(tool => tool.id));
   }
   snapshot() { return this.templates().map(tool => ({ id: tool.id, name: tool.name, credential: tool.http?.credential || 'none', credentialSet: !!this.credential(tool) })); }

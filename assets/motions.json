@@ -575,7 +575,7 @@
       "entryMs": 560
     },
     "stretch": {
-      "label": "A proper little stretch",
+      "label": "A slow upward sway",
       "priority": 35,
       "entryMs": 560,
       "keys": [
@@ -2898,7 +2898,7 @@
       "entryMs": 560
     },
     "glassesAdjust": {
-      "label": "A tiny glasses adjustment",
+      "label": "A small head tilt",
       "priority": 35,
       "entryMs": 560,
       "keys": [
@@ -2971,7 +2971,7 @@
       }
     },
     "hairTuck": {
-      "label": "That lock of hair again",
+      "label": "A playful head tilt",
       "priority": 35,
       "entryMs": 560,
       "keys": [
@@ -3245,7 +3245,7 @@
       }
     },
     "paceInPlace": {
-      "label": "A few restless steps",
+      "label": "A restless sway",
       "priority": 5,
       "entryMs": 560,
       "keys": [
@@ -3452,7 +3452,7 @@
       }
     },
     "heelRock": {
-      "label": "Rocking on her heels",
+      "label": "Rocking gently",
       "priority": 5,
       "entryMs": 560,
       "keys": [
@@ -3648,7 +3648,7 @@
       }
     },
     "fullStretch": {
-      "label": "A long luxurious stretch",
+      "label": "A long, easy sway",
       "priority": 5,
       "entryMs": 560,
       "keys": [
@@ -4096,7 +4096,7 @@
         {
           "motion": "glassesAdjust",
           "ms": 3400,
-          "caption": "One tiny adjustment"
+          "caption": "A curious glance"
         },
         {
           "motion": "thinking",
@@ -4111,7 +4111,7 @@
         {
           "motion": "hairTuck",
           "ms": 3300,
-          "caption": "That lock of hair again"
+          "caption": "A little tilt"
         },
         {
           "motion": "idle",
@@ -4177,7 +4177,7 @@
         {
           "motion": "paceInPlace",
           "ms": 5000,
-          "caption": "A few steps, right here"
+          "caption": "A little restless sway"
         },
         {
           "motion": "explainOpen",
@@ -4197,7 +4197,7 @@
         {
           "motion": "fullStretch",
           "ms": 6500,
-          "caption": "A proper stretch"
+          "caption": "A long, easy sway"
         },
         {
           "motion": "idle",

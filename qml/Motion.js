@@ -178,9 +178,9 @@ function blink(state, enabled, still, authored) {
     var config = state.catalog.blink || {}
     // Finish an eyelid motion already in progress when a gesture interrupts it.
     // Eligibility controls starting new blinks, not abruptly opening the eyes.
-    if (still || authored) { state.blink = 0; state.blinkAt = -10; return }
+    if (still) { state.blink = 0; state.blinkAt = -10; return }
     var now=state.blinkTime
-    if (enabled && now >= Math.min(state.nextBlink,state.lastBlink+config.maxGapMs/1000)) {
+    if (enabled && !authored && now >= Math.min(state.nextBlink,state.lastBlink+config.maxGapMs/1000)) {
         state.blinkAt = now; state.lastBlink=now
         if (!state.blinkDouble && random(state, 0, 1) < (config.doubleChance === undefined ? .16 : config.doubleChance)) {
             state.nextBlink = now+config.doubleGapMs/1000; state.blinkDouble = true

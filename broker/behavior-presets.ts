@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Store } from './store.ts';
 import { validatePersonality } from './personality.ts';
 import { validCeiling, validTraits, type BehaviorProfile } from './behavior.ts';
-import { validConstraints } from './style-checks.ts';
+import { isStyleConstraint, validConstraints } from './style-checks.ts';
 
 /**
  * Saved styles (Q01), evolved into behavior profiles (M01, schema 2): personality text plus optional
@@ -20,7 +20,7 @@ export type BehaviorPresetCatalog = { schema: 2; revision: string; items: Behavi
 
 const emptyCatalog = (): BehaviorPresetCatalog => ({ schema: 2, revision: '0', items: [] });
 /** A schema 1 saved style becomes a profile with neutral traits and no limits. */
-const upgraded = (item: any): BehaviorPreset => ({ traits: {}, instructions: '', ceiling: {}, posture: false, ...item });
+const upgraded = (item: any): BehaviorPreset => ({ traits: {}, instructions: '', ceiling: {}, posture: false, ...item, ...(Array.isArray(item.constraints) ? { constraints: item.constraints.filter(isStyleConstraint) } : {}) });
 const next = (revision: string) => String(BigInt(revision || '0') + 1n);
 
 export function presetLabel(value: unknown): string {
@@ -60,9 +60,15 @@ export class BehaviorPresets {
    * A06: one style from a package, through the same validators as an edit. The same id is updated in
    * place when it differs; checkpoints and local history are never imported or overwritten.
    */
-  importProfile(input: any, dryRun: boolean): { id: string; label: string; action: 'new' | 'changed' | 'unchanged' } {
+  planImport(inputs: any[]) {
+    const catalog = this.catalog();
+    const items = inputs.map(input => this.importProfile(input, catalog));
+    if (new Set(items.map(item => item.id)).size !== items.length) throw new Error('A package contains the same style more than once');
+    return { items, save: () => this.store.set(presetStoreKey, catalog) };
+  }
+  private importProfile(input: any, catalog: BehaviorPresetCatalog) {
     if (!input || typeof input !== 'object') throw new Error('Invalid style in package');
-    const catalog = this.catalog(), label = presetLabel(input.label), text = validatePersonality(typeof input.text === 'string' ? input.text : null);
+    const label = presetLabel(input.label), text = validatePersonality(typeof input.text === 'string' ? input.text : null);
     if (typeof input.text !== 'string') throw new Error(`The style ${label} has no text`);
     const fields = { label, text, traits: validTraits(input.traits), instructions: typeof input.instructions === 'string' ? input.instructions.slice(0, 4000).trim() : '',
       ceiling: validCeiling(input.ceiling), posture: input.posture === true, constraints: validConstraints(input.constraints) };
@@ -71,14 +77,18 @@ export class BehaviorPresets {
     const same = (item: BehaviorPreset) => JSON.stringify([item.label, item.text, item.traits, item.instructions, item.ceiling, item.posture, item.constraints || []]) === JSON.stringify([fields.label, fields.text, fields.traits, fields.instructions, fields.ceiling, fields.posture, fields.constraints]);
     const action = !existing ? 'new' : same(existing) ? 'unchanged' : 'changed';
     const id = existing?.id || (typeof input.id === 'string' && /^[0-9a-f-]{36}$/.test(input.id) ? input.id : randomUUID());
-    if (!existing && catalog.items.some(item => item.label.toLowerCase() === label.toLowerCase())) throw new Error(`A saved style already has the name ${label}`);
-    if (!dryRun && action !== 'unchanged') {
+    if (catalog.items.some(item => item.id !== id && item.label.toLocaleLowerCase('en-US') === label.toLocaleLowerCase('en-US'))) throw new Error(`A saved style already has the name ${label}`);
+    if (action !== 'unchanged') {
       const time = Date.now(), items = [...catalog.items];
       if (existing) items[index] = { ...existing, ...fields, revision: next(existing.revision), updated: time };
       else { if (items.length >= presetLimit) throw new Error(`Keep at most ${presetLimit} saved styles`); items.push({ id, ...fields, revision: '1', created: time, updated: time }); }
-      this.write({ schema: 2, revision: next(catalog.revision), items });
+      catalog.items = items;
+      catalog.revision = next(catalog.revision);
     }
-    return { id, label, action };
+    // An imported ID can be deleted and recreated at revision 1. Bind the preview to
+    // the actual saved record so a reused revision cannot authorize a stale overwrite.
+    const previousRevision = existing ? createHash('sha256').update(JSON.stringify(existing)).digest('hex') : null;
+    return { id, label, action, previousRevision };
   }
   /** Styles for resolution; an unreadable (newer) catalog resolves as if empty, with the global personality. */
   profiles(): BehaviorPreset[] { try { return this.catalog().items; } catch { return []; } }

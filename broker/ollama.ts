@@ -39,7 +39,11 @@ export type OllamaContext = {
   /** A06: the project's convention files, when the project opted in; read fresh for each turn. */
   conventions?(): Promise<{ text: string; files: { name: string; sha256: string; bytes: number; truncated: boolean }[]; redactions?: number }>;
   /** M06: excerpts from the conversation's bound document collections, within a token budget. */
-  documents?(text: string, signal: AbortSignal, budget: number): Promise<{ text: string; detail?: Record<string, any> }>;
+  authorizePrivate?(signal: AbortSignal): Promise<void>;
+  privateValid?(): void;
+  documents?(text: string, signal: AbortSignal, budget: number): Promise<{ text: string; detail?: Record<string, any>; authorize?(): Promise<void>; assert?(): void }>;
+  /** Whether finished delegated sessions report back by themselves, which the operating rules then say. */
+  delegationUpdates?(): boolean;
 };
 
 export function ollamaHost(value: unknown): string {
@@ -369,10 +373,13 @@ export class OllamaAdapter implements Adapter {
       const progress = new ToolProgress();
       for (let round = 0; round < 24; round++) {
         signal.throwIfAborted();
+        await this.context.authorizePrivate?.(signal);
+        await documents.authorize?.();
+        signal.throwIfAborted();
         const tools = capabilities.includes('tools') ? this.context.tools() : [];
         const hasWeb = tools.some(t => t.function.name === 'web_search');
         const system: OllamaMessage = { role: 'system', content: personality + operatingRules({ date: new Date().toISOString().slice(0,10), cwd: this.session.cwd, hasWeb,
-          tools: !!(this.session.ollama?.tools || this.session.api?.tools), memory: !!this.context.memoryActive?.() }) };
+          tools: !!(this.session.ollama?.tools || this.session.api?.tools), memory: !!this.context.memoryActive?.(), delegationUpdates: this.context.delegationUpdates?.() === true }) };
         let withheld = false;
         if (memory && route === 'local' && (await modelRoute(host, this.session.model, signal)).route !== 'local') {
           // A local-only recall packet never follows the model onto a newly cloud-backed route.
@@ -395,6 +402,8 @@ export class OllamaAdapter implements Adapter {
         this.hooks.event({ type: 'activity', text: 'thinking' });
         const acceptance={...(providerAccepted?{}:{onDispatched:options.onDispatched,onAccepted:()=>{providerAccepted=true;options.onAccepted?.();options.acknowledged?.();},onRejected:options.onRejected}),beforeAccept:()=>{
           if(telemetry&&this.context.telemetryValid&&!this.context.telemetryValid())throw new Error('Workspace telemetry changed before dispatch. Retry the message.');
+          documents.assert?.();
+          this.context.privateValid?.();
           options.beforeAccept?.();
         }};
         // Per-turn data goes just before the turn it serves. Earlier history then stays an unchanged

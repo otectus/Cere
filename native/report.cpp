@@ -14,7 +14,11 @@ int main(int argc,char** argv){
   if(argc!=8)return 0;
   for(int i:{2,3,5}){char* end=nullptr;strtoull(argv[i],&end,10);if(!*argv[i]||*end)return 0;}
   if(strlen(argv[1])>36||strlen(argv[4])>4096)return 0;
-  const char* runtime=getenv("XDG_RUNTIME_DIR");std::string path=runtime?std::string(runtime)+"/cere/telemetry.sock":"/tmp/cere-"+std::to_string(getuid())+"/telemetry.sock";
+  const char* selected = getenv("CERE_RUNTIME_DIR");
+  const char* runtime = getenv("XDG_RUNTIME_DIR");
+  std::string directory = selected && *selected ? selected :
+    runtime && *runtime ? std::string(runtime) + "/cere" : "/tmp/cere-" + std::to_string(getuid());
+  std::string path = directory + "/telemetry.sock";
   sockaddr_un address{};address.sun_family=AF_UNIX;if(path.size()>=sizeof address.sun_path)return 0;strcpy(address.sun_path,path.c_str());
   int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);if(fd<0)return 0;
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(200);

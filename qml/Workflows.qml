@@ -10,6 +10,10 @@ CDialog {
     PackageDialog { id:recipePackages;onClosed:if(workflow.opened)workflow.loadRecipes() }
     property int tab:0
     property int requestId:-1
+    property string requestOwner:""
+    property string capsuleOwner:""
+    property bool refreshPending:false
+    readonly property string activeSession:App.selectedId||""
     property string action:""
     property string error:""
     property string feedback:""
@@ -37,7 +41,7 @@ CDialog {
         font.family:Theme.font;font.pixelSize:Theme.secondary;padding:10
     }
     function failure(value){return typeof value?.error==="string"?value.error:value?.error?.message||value?.message||"The workflow request failed."}
-    function call(method,params){if(requestId>=0)return;error="";feedback="";action=method;requestId=App.rpc(method,params||{})}
+    function call(method,params){if(requestId>=0)return;error="";feedback="";action=method;requestOwner=params?.sessionId||"";requestId=App.rpc(method,params||{})}
     // Saved scripts for this project; the list changes only when its content does, not on every snapshot.
     readonly property string projectScriptsKey:JSON.stringify((App.state.settings?.scripts||[]).filter(script=>script.cwd===capsule.cwd))
     property var projectScripts:JSON.parse(projectScriptsKey)
@@ -66,10 +70,10 @@ CDialog {
     function changeTask(params){call("capsules.task",Object.assign({sessionId:App.selectedId,expectedRevision:capsule.revision||"0"},params))}
     function transition(task,state,completion){changeTask({op:"transition",taskId:task.id,expectedTaskRevision:task.revision,state:state,completion:completion})}
     function openDone(task){doneTask=task;passingResults=[];doneNote.text="";doneDialog.open();passingRequest=App.rpc("results.list",{cwd:capsule.cwd||App.session.cwd,limit:50})}
-    function loadProject(){if(App.selectedId){call("capsules.get",{sessionId:App.selectedId});relatedRequest=App.rpc("sessions.list",{cwd:App.session.cwd,limit:100})}}
+    function loadProject(){capsuleOwner="";if(App.selectedId){call("capsules.get",{sessionId:App.selectedId});relatedRequest=App.rpc("sessions.list",{cwd:App.session.cwd,limit:100})}}
     function loadRecipes(){call("recipes.list",{})}
     function loadResults(){call("results.list",{limit:100})}
-    function refresh(){if(tab===0)loadProject();else if(tab===1){loadRecipes();loadSchedules()}else loadResults()}
+    function refresh(){if(requestId>=0){refreshPending=true;return}if(tab===0)loadProject();else if(tab===1){loadRecipes();loadSchedules()}else loadResults()}
     function chooseRecipe(){
         newDefinition=false
         preview=null;error="";feedback="";recipeValues={}
@@ -92,6 +96,9 @@ CDialog {
     // every other opening starts on Project. Changing the tab refreshes it; one request at a time.
     property int requestedTab:0
     function openRecipes(){requestedTab=1;open()}
+    onActiveSessionChanged:{capsuleOwner="";relatedRequest=-1;relatedSessions=[];if(opened){syncCapsule(null);if(tab===0)refresh()}}
+    onAboutToShow:{capsuleOwner="";syncCapsule(null);relatedSessions=[]}
+    onClosed:{capsuleOwner="";refreshPending=false}
     onOpened:{const next=requestedTab;requestedTab=0;if(tab!==next)tab=next;else refresh()}
     onTabChanged:if(opened)refresh()
 
@@ -111,6 +118,7 @@ CDialog {
 
     ColumnLayout {
         visible:workflow.tab===0;Layout.fillWidth:true;spacing:10
+        enabled:workflow.requestId<0&&workflow.capsuleOwner!==""&&workflow.capsuleOwner===workflow.activeSession
         CText { text:"Project capsule";font.weight:Font.DemiBold }
         CText { text:"Scoped to the selected session’s exact working folder. Worktree grouping never merges capsules or changes permissions, memory, or the working directory.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CText { text:"Goal";color:Theme.muted;font.pixelSize:Theme.caption }
@@ -451,8 +459,10 @@ CDialog {
             if(id===workflow.passingRequest){workflow.passingRequest=-1;if(!value?.error)workflow.passingResults=(value||[]).filter(result=>result.verification==="passed"&&!result.editedSinceCheck&&(!result.gate||result.gate==="none"||result.gate==="passed"));return}
             if(id!==workflow.requestId)return
             workflow.requestId=-1
+            if(workflow.refreshPending){workflow.refreshPending=false;Qt.callLater(()=>{if(workflow.opened)workflow.refresh()})}
+            if(workflow.action.startsWith("capsules.")&&(!workflow.opened||workflow.requestOwner!==workflow.activeSession))return
             if(value?.error){workflow.error=workflow.failure(value);return}
-            if(workflow.action==="capsules.get"||workflow.action==="capsules.save"){workflow.syncCapsule(value);workflow.feedback=workflow.action==="capsules.save"?"Capsule saved.":""}
+            if(workflow.action==="capsules.get"||workflow.action==="capsules.save"){workflow.syncCapsule(value);workflow.capsuleOwner=workflow.requestOwner;workflow.feedback=workflow.action==="capsules.save"?"Capsule saved.":""}
             else if(workflow.action==="capsules.task")workflow.capsule=value.capsule
             else if(workflow.action==="capsules.setRequiredChecks"){workflow.capsule=value;workflow.feedback="Required checks saved."}
             else if(workflow.action==="capsules.resume"){workflow.close();workflow.sessionRequested(value.session.id)}

@@ -16,7 +16,7 @@ test('identity migrates old profiles, persists independently, and rejects invali
   const core = new Core(store);
   t.after(async () => { await core.close(); await rm(directory, { recursive: true, force: true }); });
   assert.equal(core.settings.assistantName, 'Cere');
-  assert.equal(core.settings.avatar, 'cere');
+  assert.equal(core.settings.avatar, 'cere_default');
   const before = structuredClone(core.settings);
   await core.updateSettings({ avatar: 'daemona' });
   assert.deepEqual(core.settings, { ...before, avatar: 'daemona' });
@@ -32,7 +32,7 @@ test('identity migrates old profiles, persists independently, and rejects invali
   assert.equal(core.settings.avatar, 'daemona');
   const saved = structuredClone(core.settings), revision = core.store.get('settingsRevision', '0');
   for (const assistantName of [12, false, {}, [], 'a'.repeat(65), 'bad\nname', '\tName', '\0Name', 'Name\u202e', 'Name\u200b', '\ud800']) {
-    await assert.rejects(core.updateSettings({ assistantName, personality: 'Must not save', avatar: 'cere' }), /name/);
+    await assert.rejects(core.updateSettings({ assistantName, personality: 'Must not save', avatar: 'cere_default' }), /name/);
     assert.deepEqual(core.settings, saved);
     assert.equal(core.store.get('settingsRevision', '0'), revision);
   }
@@ -40,18 +40,39 @@ test('identity migrates old profiles, persists independently, and rejects invali
     await assert.rejects(core.updateSettings({ avatar, assistantName: 'Must not save' }), /avatar/);
     assert.deepEqual(core.settings, saved);
   }
-  await assert.rejects(core.updateSettings({ avatar: 'cere', assistantName: 'Lost update', expectedRevision: '0' }), /changed on another client/);
+  await assert.rejects(core.updateSettings({ avatar: 'cere_default', assistantName: 'Lost update', expectedRevision: '0' }), /changed on another client/);
   const reopened = new Store(directory);
   try { assert.deepEqual(reopened.settings(), saved); } finally { reopened.close(); }
   await core.updateSettings({ assistantName: '   ' });
   assert.equal(core.settings.assistantName, 'Cere');
   assert.equal(core.settings.avatar, 'daemona');
   await core.updateSettings({ assistantName: null, avatar: null });
-  assert.equal(core.settings.avatar, 'cere');
+  assert.equal(core.settings.avatar, 'cere_default');
   assert.equal(core.settings.personality, 'Keep my voice');
   store.set('settings', { ...saved, avatar: 'unavailable', assistantName: 'bad\nname' });
-  assert.equal(store.settings().avatar, 'cere');
+  assert.equal(store.settings().avatar, 'cere_default');
   assert.equal(store.settings().assistantName, 'Cere');
+});
+
+test('legacy Cere avatar ids are normalized before persistence and identity conflict checks', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'cere-avatar-migration-'));
+  const store = new Store(directory);
+  store.db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('settings', JSON.stringify({
+    avatar: 'cere', assistantName: 'Independent name', personality: 'Independent personality', voice: 'en_US-lessac-medium', quiet: true,
+  }));
+  const core = new Core(store);
+  t.after(async () => { await core.close(); await rm(directory, {recursive:true, force:true}); });
+  assert.equal(core.settings.avatar, 'cere_default');
+  assert.equal(core.settings.assistantName, 'Independent name');
+  assert.equal(core.settings.personality, 'Independent personality');
+  assert.equal(core.settings.voice, 'en_US-lessac-medium');
+  assert.equal(store.get<any>('settings', {}).avatar, 'cere_default');
+
+  await core.updateSettings({ avatar: 'cere', expectedIdentity: {
+    avatar: 'cere', assistantName: core.settings.assistantName, personality: core.settings.personality,
+  }});
+  assert.equal(core.settings.avatar, 'cere_default');
+  assert.equal(store.get<any>('settings', {}).avatar, 'cere_default');
 });
 
 test('names remain literal data in instructions and voice previews without rewriting custom personality', () => {
@@ -94,7 +115,7 @@ test('every selectable avatar ships transparent artwork, usable cutouts, and a c
   const entries = JSON.parse(await readFile('assets/avatars.json', 'utf8'));
   const base = JSON.parse(await readFile('assets/cere-rig.json', 'utf8'));
   assert.deepEqual(entries.map((entry: any) => entry.id), [...avatarIds]);
-  assert.deepEqual(entries.map((entry: any) => entry.label), ['Cere', 'Daemona', 'Jade', 'Nova', 'Soap', 'Brandy', 'Archy', 'Ghost', 'Violet', 'Leafy', 'Cachy', 'Usagi', 'Cynthia', 'Genga', 'Kippy', 'Pomni', 'Rem', 'Sarah', 'Sylva', 'Witty']);
+  assert.equal(new Set(entries.map((entry: any) => entry.label)).size, entries.length, 'every avatar has a distinct label');
   for (const entry of entries) {
     const rig = { ...base, ...(entry.rig ? JSON.parse(await readFile(join('assets', entry.rig), 'utf8')) : {}) };
     const { data, info } = await sharp(join('assets', rig.texture)).raw().toBuffer({ resolveWithObject: true });
@@ -121,15 +142,15 @@ test('every selectable avatar ships transparent artwork, usable cutouts, and a c
         if (alpha > 12 && (y === 0 || x === 0 || x === size - 1)) clipped++;
       }
       assert.ok(visible > size * size * .3 && transparent > size * size * .03, `${entry.id}: portrait ${face} has artwork and transparency`);
-      if (['cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty'].includes(entry.id))
+      if (['cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty', 'alia'].includes(entry.id))
         assert.equal(clipped, 0, `${entry.id}: portrait ${face} preserves the head silhouette without gutter bleed`);
     }
   }
 });
 
-test('Cere canonical surface preserves source pixels and confines neutral blinking to the eyes', async () => {
-  const source = await sharp('reference/cere.png').extract({ left: 0, top: 170, width: 430, height: 760 }).ensureAlpha().raw().toBuffer();
-  const rig = JSON.parse(await readFile('assets/cere-surface-rig.json', 'utf8'));
+test('Cere punk preserves the former masked Cere source pixels and neutral blink registration', async () => {
+  const source = await sharp('reference/cere_punk.png').extract({ left: 0, top: 170, width: 430, height: 760 }).ensureAlpha().raw().toBuffer();
+  const rig = JSON.parse(await readFile('assets/cere_punk-surface-rig.json', 'utf8'));
   const part = rig.parts.find((candidate: any) => candidate.surfaceMotion);
   assert.ok(part, 'Cere has a connected surface part');
   const [openX, openY, width, height] = part.sourceRect;
@@ -139,7 +160,7 @@ test('Cere canonical surface preserves source pixels and confines neutral blinki
   assert.deepEqual([closedWidth, closedHeight], [width, height]);
   assert.ok(width >= 430 && (width - 430) % 2 === 0, 'neutral surface symmetrically pads the original reference crop');
   const inset = (width - 430) / 2;
-  const { data, info } = await sharp('assets/cere-surface.png').raw().toBuffer({ resolveWithObject: true });
+  const { data, info } = await sharp('assets/cere_punk-surface.png').raw().toBuffer({ resolveWithObject: true });
   assert.equal(info.channels, 4);
   assert.ok(openX >= 0 && openY >= 0 && openX + width <= info.width && openY + height <= info.height);
   assert.ok(closedX >= 0 && closedY >= 0 && closedX + width <= info.width && closedY + height <= info.height);

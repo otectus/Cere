@@ -11,6 +11,7 @@
  * The template fills what can be computed and leaves every gate "not-run"; only a person who ran
  * the gate on the device changes it to "passed" (or "not-applicable" with a reason).
  */
+import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -79,7 +80,7 @@ export function problems(evidence: any, expected: { tag: string; commit: string;
 
 function option(args: string[], name: string) { const at = args.indexOf(name); return at >= 0 ? args[at + 1] : undefined; }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'template') {
     const [apk, tag, out] = args;

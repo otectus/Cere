@@ -132,6 +132,8 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 export class Memory {
+  /** Installed by Core: delegation records are managed working copies too. */
+  eraseDelegations?: (sessions: Set<string>, matches: import('./working-erasure.ts').ErasureMatcher) => () => void;
   store: Store; settings: () => Settings; notify: () => void; service: MemoryService; ready: Promise<void>;
   controller = new AbortController(); revision = 0; scopes = new Map<string, string>(); packets = new Map<string, any>();
   /**
@@ -173,6 +175,8 @@ export class Memory {
   async configure() {
     const s = this.settings();
     await this.service.call('configure', { enabled: s.memory.enabled, paused: s.paused, host: s.ollama.host,
+      extraction_provider: s.memory.extractionProvider || 'ollama',
+      embedding_provider: s.memory.embeddingProvider || 'ollama', allow_cloud_embedding: s.memory.allowCloudEmbedding ?? false,
       embedding_model: s.memory.model, extraction_model: s.memory.extractionModel || defaultExtractionModel,
       allow_cloud_extraction: s.memory.allowCloudExtraction ?? true, allow_cloud_memory: s.memory.allowCloudMemory ?? false });
   }
@@ -281,20 +285,24 @@ export class Memory {
     // matching turns when safe substring redaction cannot preserve provenance.
     const matches=erasureMatcher(sources);
     const scrub=(value:any):any=>typeof value==='string'?(matches(value)?'[Content removed by memory erasure]':value):Array.isArray(value)?value.map(scrub):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scrub(v)])):value;
-    const intentId=randomUUID();
+    const intentId=randomUUID(), scopedSessions = new Set<string>();
+    let publishDelegations: (() => void) | undefined;
     this.store.db.exec('BEGIN');
     try { this.invalidateTranscript();for(const other of this.store.sessions()) {
       if(other.temporary)continue;
       if(memoryScope(other,this.host(other))!==memoryScope(session,this.host(session)))continue;
+      scopedSessions.add(other.id);
       eraseWorkingCopies(this.store,other,matches);
       for(const message of this.store.messages(other.id))if(matches(message.text)||matches.identifies(message.id)||matches.identifies(message.turnId)){message.text='[Content removed by memory erasure]';this.store.message(message);}
       if(other.provider==='ollama'){const history=this.store.get<any[]>('ollama:'+other.id,[]);this.store.set('ollama:'+other.id,scrub(history));}
     }
+    publishDelegations = this.eraseDelegations?.(scopedSessions, matches);
     // Commit transcript scrubbing before canonical deletion. A crash leaves an
     // opaque retry intent, so startup finishes deletion before memory can serve.
     const {expected_revision: _expected,selection: _token,...retryParams}=params;
     this.store.set('memory-pending-erasure',[...this.store.get<any[]>('memory-pending-erasure',[]),{intentId,scope_id,...retryParams,...(!params.id?{to_us:params.to_us??Date.now()*1000}:{})}]);
     this.store.db.exec('COMMIT'); } catch(error){this.store.db.exec('ROLLBACK');throw error;}
+    publishDelegations?.();
     let result:any;
     try { authorize?.();signal?.throwIfAborted();result=await this.service.call(mobileBounded?'mobile_forget':'forget',{scope_id,...params},signal); }
     catch { throw Object.assign(new Error('Erasure was accepted; its final outcome must be reconciled before retrying.'),{code:'OUTCOME_UNKNOWN'}); }
@@ -312,13 +320,13 @@ export class Memory {
   }
   /** M09: the effect of switching the embedding model, measured with that model before anything changes. */
   async embeddingImpact(model: unknown, signal = AbortSignal.timeout(60_000)) {
-    if (typeof model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(model)) throw new Error('Enter an Ollama embedding model name');
+    if (typeof model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(model)) throw new Error('Enter an embedding model name');
     await this.ready;
     return this.service.call('embedding_impact_check', { host: this.settings().ollama.host, model }, signal);
   }
   async check(signal = new AbortController().signal) {
     await this.ready; const { ollama, memory } = this.settings();
-    try { const identity = await this.service.identity(ollama.host, signal); const [vector] = await embed(ollama.host, memory.model, ['Cere memory connection check'], 'query', signal); this.setStatus('ready'); return { model: memory.model, dimensions: vector.length, digest: identity.digest }; }
+    try { const identity = await this.service.identity(ollama.host, signal); const [vector] = await this.service.embed(ollama.host, ['Cere memory connection check'], 'query', signal); this.setStatus('ready'); return { model: memory.model, dimensions: vector.length, digest: identity.digest }; }
     catch (error: any) { this.setStatus('degraded', error.message); throw error; }
   }
   /**

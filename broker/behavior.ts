@@ -9,7 +9,7 @@
  * voice, model and memory scope stay independent of all of it.
  */
 import { personalityInstructions } from './personality.ts';
-import { constraintInstructions, type StyleConstraint } from './style-checks.ts';
+import { constraintInstructions, isStyleConstraint, type StyleConstraint } from './style-checks.ts';
 
 export const traitNames = ['verbosity', 'formality', 'warmth', 'humor', 'directness'] as const;
 export type TraitName = typeof traitNames[number];
@@ -110,7 +110,7 @@ export function resolveBehavior(p: { personality: string; profiles: BehaviorProf
     profile: base ? { id: base.id, label: base.label, revision: base.revision } : null,
     posture: posture ? { id: posture.id, label: posture.label, revision: posture.revision, pinned: !!p.pinned, instructions: posture.instructions || posture.text } : null,
     traits, instructions: [base?.instructions || '', (p.instructions || '').trim()].filter(Boolean).join('\n\n'), ceiling,
-    constraints: [...new Set([...(base?.constraints || []), ...(posture?.constraints || [])])] as StyleConstraint[], warnings, conflicts: traitConflicts(traits),
+    constraints: [...new Set([...(base?.constraints || []), ...(posture?.constraints || [])])].filter(isStyleConstraint), warnings, conflicts: traitConflicts(traits),
   };
 }
 

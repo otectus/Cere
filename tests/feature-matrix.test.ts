@@ -3,13 +3,14 @@
  * accepts is in its operation index with the permission and kind the schemas give it; every
  * F01–F98 row of the mobile plan appears exactly once; every test file it names exists.
  */
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { availableOperations, methods, mutations, needsProof } from '../broker/remote/schemas.ts';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const matrix = readFileSync(join(root, 'docs/FEATURE-MATRIX.md'), 'utf8');
 const always = ['devices.self', 'devices.selfRevoke', 'permissions.pause', 'permissions.reduce', 'commands.status', 'commands.challenge'];
 const caps = ['chat.read', 'chat.write', 'providers.execute', 'approvals.answer', 'attachments.write', 'capture.preview', 'desktop.control', 'settings.write', 'memory.read', 'memory.write'];

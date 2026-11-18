@@ -98,7 +98,10 @@ export class SendQueue {
   }
   private async drain(id:string) {
     const core=this.core;
-    if(core.closed||this.draining.has(id)||this.admissions.has(id)||core.sending.has(id)||core.stopping.has(id))return;
+    if(core.closed||core.deleting.has(id)||this.draining.has(id)||this.admissions.has(id)||core.sending.has(id)||core.stopping.has(id))return;
+    // A delegation update about to go out goes first; its delivery kicks the queue again. Updates
+    // held by the automatic-turn limit never block a queued message, which is what releases them.
+    if(core.pings.announcing(id))return;
     const session=core.store.session(id),queue=this.entries(id);
     if(!queue.length||busy(session))return;
     if(session.status!=='idle'){this.cancel(id,'The previous turn did not finish; copy this message to send it again');return;}

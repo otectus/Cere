@@ -1,3 +1,4 @@
+import { terminateProcessGroup } from './process-group.ts';
 /**
  * A02: outbound tool servers. A server is a program the user configured that speaks the Model Context
  * Protocol over stdio. Cere starts it on first use, with a minimal environment that never includes the
@@ -12,7 +13,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { constants, closeSync, fstatSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join, sep } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { privateDir } from './paths.ts';
 import { isApiProvider } from './provider-catalog.ts';
 import type { Core } from './core.ts';
@@ -34,9 +35,11 @@ export type ExtensionServer = {
 type RemoteTool = { name: string; title: string; description: string; schema: Record<string, unknown>; readOnlyHint: boolean; destructiveHint: boolean; usable: boolean; problem?: string };
 type State = 'stopped' | 'starting' | 'ready' | 'failed' | 'quarantined';
 export const extensionLimits = { servers: 8, tools: 128, args: 32, secrets: 16, projects: 20, outputChars: 64_000, argumentBytes: 64 * 1024, schemaBytes: 16 * 1024,
-  descriptionChars: 1024, lineChars: 4 * 1024 * 1024, startMs: 15_000, idleMs: 10 * 60_000, crashes: 3, crashWindowMs: 10 * 60_000 };
+  reviewBytes: 48 * 1024, descriptionChars: 1024, lineChars: 4 * 1024 * 1024, startMs: 15_000, idleMs: 10 * 60_000, crashes: 3, crashWindowMs: 10 * 60_000 };
+export const secretStoreLimits = { bytes: 256 * 1024, recoveryBytes: 2 * 1024 * 1024 };
 const protocols = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const reservedVariables = /^(PATH|HOME|USER|LANG|TERM|SHELL|NODE_OPTIONS|PYTHONPATH|PYTHONHOME|LD_.*|DYLD_.*)$/;
+const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 /** A minimal environment for programs Cere starts for tools: never the broker's API keys or other variables. */
 export function minimalEnvironment(): Record<string, string> {
   const env: Record<string, string> = { PATH: process.env.PATH || '/usr/bin:/bin', HOME: process.env.HOME || '/', LANG: process.env.LANG || 'C.UTF-8', TERM: 'dumb' };
@@ -86,44 +89,67 @@ export async function validServers(value: unknown): Promise<ExtensionServer[]> {
 export class ExtensionSecrets {
   readonly file: string;
   constructor(directory: string, name = 'extension-secrets.json') { this.file = join(directory, name); }
-  private read(): Record<string, Record<string, string>> {
+  private capacity(message = `Tool server secrets exceed the ${secretStoreLimits.bytes / 1024} KB store limit`) {
+    return Object.assign(new Error(message), { code: 'SECRET_STORE_CAPACITY' });
+  }
+  private read(recovery = false): { value: Record<string, Record<string, string>>; bytes: number } {
     let fd: number;
     try { fd = openSync(this.file, constants.O_RDONLY | constants.O_NOFOLLOW); }
-    catch (error: any) { if (error.code === 'ENOENT') return {}; throw new Error('Cannot read the private tool server secrets file'); }
+    catch (error: any) { if (error.code === 'ENOENT') return { value: {}, bytes: 0 }; throw new Error('Cannot read the private tool server secrets file'); }
     try {
       const info = fstatSync(fd);
-      if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077) || info.size > 256 * 1024) throw new Error();
+      if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077)) throw new Error('Tool server secrets must be a private, owner-only JSON file');
+      if (info.size > secretStoreLimits.recoveryBytes) throw this.capacity(`Tool server secrets exceed the ${secretStoreLimits.recoveryBytes / 1024 / 1024} MB recovery limit`);
+      if (info.size > secretStoreLimits.bytes && !recovery) throw this.capacity();
       const value = JSON.parse(readFileSync(fd, 'utf8'));
-      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
-      return value;
-    } catch { throw new Error('Tool server secrets must be a private, owner-only JSON file'); }
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.values(value).some(entry => !entry || typeof entry !== 'object' || Array.isArray(entry) || Object.values(entry).some(secret => typeof secret !== 'string'))) {
+        throw new Error('Tool server secrets contain invalid JSON data');
+      }
+      return { value: value as Record<string, Record<string, string>>, bytes: info.size };
+    } catch (error: any) {
+      if (error?.code === 'SECRET_STORE_CAPACITY' || /^Tool server secrets/.test(error?.message || '')) throw error;
+      throw new Error('Tool server secrets contain invalid JSON data');
+    }
     finally { closeSync(fd); }
   }
-  private write(value: Record<string, Record<string, string>>) {
+  private write(value: Record<string, Record<string, string>>, shrinkingFrom = 0) {
+    const serialized = JSON.stringify(value), bytes = Buffer.byteLength(serialized);
+    if (bytes > secretStoreLimits.bytes && !(shrinkingFrom > bytes && bytes <= secretStoreLimits.recoveryBytes)) throw this.capacity();
     privateDir(join(this.file, '..'));
     const temporary = this.file + `.${randomUUID()}`;
-    try { writeFileSync(temporary, JSON.stringify(value), { mode: 0o600, flag: 'wx' }); renameSync(temporary, this.file); }
+    try { writeFileSync(temporary, serialized, { mode: 0o600, flag: 'wx' }); renameSync(temporary, this.file); }
     finally { try { unlinkSync(temporary); } catch {} }
   }
-  values(serverId: string) { return { ...(this.read()[serverId] || {}) }; }
+  values(serverId: string) { return { ...(this.read().value[serverId] || {}) }; }
+  /** Changes when a server's secret values change, without exposing those values. */
+  revision(serverId: string) { return digest(this.values(serverId)); }
   set(serverId: string, name: string, secret: string) {
     if (typeof secret !== 'string' || secret.length > 8192 || /[\x00\r\n]/.test(secret)) throw new Error('Enter a secret of up to 8,192 characters on one line');
-    const all = this.read(), values = { ...(all[serverId] || {}) };
+    const stored = this.read(!secret), all = stored.value, values = { ...(all[serverId] || {}) };
     if (secret) values[name] = secret; else delete values[name];
     if (Object.keys(values).length) all[serverId] = values; else delete all[serverId];
-    this.write(all);
+    this.write(all, !secret ? stored.bytes : 0);
   }
-  keep(serverIds: string[]) { const all = this.read(); let changed = false; for (const id of Object.keys(all)) if (!serverIds.includes(id)) { delete all[id]; changed = true; } if (changed) this.write(all); }
+  keep(serverIds: string[]) {
+    const stored = this.read(true), all = stored.value; let changed = false;
+    for (const id of Object.keys(all)) if (!serverIds.includes(id)) { delete all[id]; changed = true; }
+    if (changed) this.write(all, stored.bytes);
+  }
 }
 
 /** One running server: newline-delimited JSON-RPC over the child's stdin and stdout. */
+const ownedTeardowns = new Set<Promise<void>>();
 class Connection {
-  server: ExtensionServer; secrets: Record<string, string>; changed: () => void;
+  server: ExtensionServer; secrets: Record<string, string>; changed: () => void; definitionChanged: () => void;
+  processGeneration = ''; readonly secretRevision: string;
   child?: ChildProcess; state: State = 'stopped'; error = ''; tools: RemoteTool[] = []; crashes: number[] = [];
   private starting?: Promise<void>; private buffer = ''; private nextId = 1; private stopping = false;
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private idle?: NodeJS.Timeout; private stderr = '';
-  constructor(server: ExtensionServer, secrets: Record<string, string>, changed: () => void) { this.server = server; this.secrets = secrets; this.changed = changed; }
+  constructor(server: ExtensionServer, secrets: Record<string, string>, changed: () => void, definitionChanged: () => void) {
+    this.server = server; this.secrets = secrets; this.changed = changed; this.definitionChanged = definitionChanged; this.secretRevision = digest(secrets);
+  }
   /** Error text with any secret value removed; servers may echo their environment. */
   private clean(text: string) {
     let value = String(text);
@@ -138,10 +164,10 @@ class Connection {
     return this.starting;
   }
   private async launch() {
-    this.state = 'starting'; this.error = ''; this.stopping = false; this.buffer = ''; this.stderr = ''; this.changed();
+    this.state = 'starting'; this.error = ''; this.stopping = false; this.buffer = ''; this.stderr = ''; this.processGeneration = randomUUID(); this.changed();
     const env = minimalEnvironment();
     for (const name of this.server.secrets) if (this.secrets[name] !== undefined) env[name] = this.secrets[name];
-    const child = this.child = spawn(this.server.command, this.server.args, { cwd: this.server.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = this.child = spawn(this.server.command, this.server.args, { cwd: this.server.cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');
     child.stdout!.on('data', (chunk: string) => this.receive(chunk));
     child.stderr!.on('data', (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-2000); });
@@ -176,9 +202,12 @@ class Connection {
     for (const [, waiting] of this.pending) waiting.reject(new Error(reason));
     this.pending.clear();
     const child = this.child; this.child = undefined;
-    if (child && child.exitCode === null) { child.kill('SIGTERM'); setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, 2000).unref(); }
+    const cleanup = terminateProcessGroup(child?.pid,2000);
+    ownedTeardowns.add(cleanup);
+    void cleanup.then(()=>ownedTeardowns.delete(cleanup),error=>{ownedTeardowns.delete(cleanup);this.error='Process cleanup unconfirmed: '+this.clean(error.message);this.changed();});
     if (state !== 'stopped' || this.state !== 'quarantined') this.state = state;
     this.changed();
+    return cleanup;
   }
   private touch() { clearTimeout(this.idle); this.idle = setTimeout(() => this.stop('Stopped after ten idle minutes'), extensionLimits.idleMs); this.idle.unref(); }
   private send(message: unknown) { if (this.child?.stdin?.writable) this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message as object }) + '\n'); }
@@ -215,11 +244,11 @@ class Connection {
       } else if (typeof message?.method === 'string') {
         // Cere answers pings and offers no sampling, roots or elicitation.
         if (message.id !== undefined) this.send(message.method === 'ping' ? { id: message.id, result: {} } : { id: message.id, error: { code: -32601, message: 'Cere does not offer this to tool servers' } });
-        else if (message.method === 'notifications/tools/list_changed' && this.state === 'ready') void this.listTools().then(() => this.changed(), () => {});
+        else if (message.method === 'notifications/tools/list_changed' && this.state === 'ready') void this.listTools(true).then(() => this.changed(), () => {});
       }
     }
   }
-  private async listTools() {
+  private async listTools(invalidate = false) {
     const tools: RemoteTool[] = []; let cursor: string | undefined;
     for (let page = 0; page < 10; page++) {
       const result = await this.request('tools/list', cursor ? { cursor } : {}, extensionLimits.startMs);
@@ -237,6 +266,7 @@ class Connection {
       if (!cursor) break;
     }
     this.tools = tools;
+    if (invalidate) this.definitionChanged();
   }
   async call(tool: string, args: Record<string, unknown>, signal: AbortSignal) {
     await this.start(); this.touch();
@@ -266,10 +296,21 @@ export class Extensions {
   private secretFlags?: Map<string, Set<string>>;
   constructor(core: Core) { this.core = core; this.secrets = new ExtensionSecrets(join(core.store.directory, 'credentials')); }
   servers(): ExtensionServer[] { return this.core.settings.extensions || []; }
+  private invalidateServerApprovals(serverId: string) {
+    for (const { value } of [...this.core.approvals.values()]) {
+      if (value.kind === 'extension' && value.fields?.server === serverId) this.core.answer({ id: value.id, choice: 'deny' }, true);
+    }
+  }
   private connection(server: ExtensionServer) {
     let connection = this.connections.get(server.id);
-    if (!connection) { connection = new Connection(server, this.secrets.values(server.id), () => { if (!this.core.closed) this.core.changed(); }); this.connections.set(server.id, connection); }
+    if (!connection) { connection = new Connection(server, this.secrets.values(server.id), () => { if (!this.core.closed) this.core.changed(); }, () => this.invalidateServerApprovals(server.id)); this.connections.set(server.id, connection); }
     return connection;
+  }
+  private binding(server: ExtensionServer, connection: Connection, tool: RemoteTool, args: unknown) {
+    return digest({
+      server: { id: server.id, command: server.command, args: server.args, cwd: server.cwd, enabled: server.enabled, secrets: server.secrets, projects: server.projects, hidden: server.hidden || [], timeoutSeconds: server.timeoutSeconds },
+      secretRevision: connection.secretRevision, processGeneration: connection.processGeneration, tool, args,
+    });
   }
   /** Conversations that may see extension tools: Cere-managed, on this desktop, with tools turned on. */
   eligible(session: Session) {
@@ -316,21 +357,28 @@ export class Extensions {
       const server = this.servers().find(item => item.id === target?.serverId);
       if (!target || !server || !this.inScope(server, this.core.store.session(sessionId)) || !this.eligible(this.core.store.session(sessionId))) throw new Error('This extension tool is turned off');
       if (server.hidden?.includes(target.tool)) throw new Error('This extension tool is hidden in Settings');
-      const tool = this.connections.get(server.id)?.tools.find(item => item.name === target.tool && item.usable);
+      const connection = this.connections.get(server.id);
+      if (connection?.state !== 'ready') throw new Error('This extension changed or stopped while waiting for approval. Ask again.');
+      const tool = connection.tools.find(item => item.name === target.tool && item.usable);
       if (!tool) throw new Error('This extension no longer offers that tool');
-      return { server, tool };
+      return { server, tool, connection };
     };
-    const { server, tool } = current();
-    if (!args || typeof args !== 'object' || Array.isArray(args) || JSON.stringify(args).length > extensionLimits.argumentBytes) throw new Error('Extension tool arguments must be an object of up to 64 KB');
+    const { server, tool, connection } = current();
+    const compact = JSON.stringify(args);
+    if (!args || typeof args !== 'object' || Array.isArray(args) || Buffer.byteLength(compact || '') > extensionLimits.argumentBytes) throw new Error('Extension tool arguments must be an object of up to 64 KB');
+    const reviewedBinding = this.binding(server, connection, tool, args);
     // Only the user's own allowance skips the question; a server's hints never do.
     if (!server.allowed.includes(tool.name)) {
       const shown = JSON.stringify(args, null, 2);
-      const answer = await this.core.approval(session.id, { kind: 'extension', title: `Run ${tool.title} from ${server.name}?`, choices: ['allow', 'deny'], fields: { server: server.id, tool: tool.name },
-        detail: `${server.name} would run its tool “${tool.name}” with:\n${shown.length > 4000 ? shown.slice(0, 4000) + '\n…' : shown}\n\n${tool.description ? 'The server describes it as: ' + tool.description.slice(0, 500) + '\n' : ''}${tool.readOnlyHint ? 'The server says this tool only reads; Cere has not verified that.\n' : ''}${tool.destructiveHint ? 'The server says this tool can change or delete things.\n' : ''}` });
+      const command = [server.command, ...server.args].map(value => JSON.stringify(value)).join(' ');
+      const detail = `${server.name} would run its tool “${tool.name}” with:\n${shown}\n\nProgram: ${command}\nWorking folder: ${server.cwd}\nProject scope: ${server.projects.length ? server.projects.join(', ') : 'all projects'}\nCredentials: ${server.secrets.length ? server.secrets.join(', ') + ' (saved values hidden)' : 'none'}\n\n${tool.description ? 'The server describes it as: ' + tool.description.slice(0, 500) + '\n' : ''}${tool.readOnlyHint ? 'The server says this tool only reads; Cere has not verified that.\n' : ''}${tool.destructiveHint ? 'The server says this tool can change or delete things.\n' : ''}`;
+      if (Buffer.byteLength(detail) > extensionLimits.reviewBytes) throw new Error('Extension tool arguments are too large to review completely (limit: 48 KB)');
+      const answer = await this.core.approval(session.id, { kind: 'extension', title: `Run ${tool.title} from ${server.name}?`, choices: ['allow', 'deny'], fields: { server: server.id, tool: tool.name, digest: reviewedBinding, reviewComplete: true }, detail });
       if (answer.choice !== 'allow') return { ran: false, message: 'The user declined this extension call.' };
       signal.throwIfAborted();
     }
     const checked = current();
+    if (this.binding(checked.server, checked.connection, checked.tool, args) !== reviewedBinding) throw new Error('This extension or its tool definition changed while waiting for approval. Ask again.');
     const started = Date.now();
     try {
       const result = await this.connection(checked.server).call(checked.tool.name, args as Record<string, unknown>, signal);
@@ -355,7 +403,8 @@ export class Extensions {
     for (const { value } of [...this.core.approvals.values()]) {
       if (value.kind !== 'extension') continue;
       const server = servers.find(item => item.id === value.fields?.server);
-      if (!server?.enabled || server.hidden?.includes(value.fields?.tool)) this.core.answer({ id: value.id, choice: 'deny' }, true);
+      const before = previous.find(item => item.id === value.fields?.server);
+      if (!server?.enabled || !before || JSON.stringify(server) !== JSON.stringify(before)) this.core.answer({ id: value.id, choice: 'deny' }, true);
     }
     this.secrets.keep(servers.map(server => server.id)); this.secretFlags = undefined;
   }
@@ -364,7 +413,8 @@ export class Extensions {
     const server = this.servers().find(item => item.id === id);
     if (!server) throw new Error('This tool server no longer exists');
     if (!server.enabled) throw new Error('Turn the tool server on first');
-    this.connections.get(server.id)?.stop('Restarting');
+    this.invalidateServerApprovals(server.id);
+    await this.connections.get(server.id)?.stop('Restarting');
     this.connections.delete(server.id);
     await this.connection(server).start();
     return this.snapshot().find(item => item.id === server.id);
@@ -373,6 +423,7 @@ export class Extensions {
     const server = this.servers().find(item => item.id === p?.id);
     if (!server || typeof p.name !== 'string' || !server.secrets.includes(p.name)) throw new Error('Add the variable name to the tool server first');
     this.secrets.set(server.id, p.name, p.value); this.secretFlags = undefined;
+    this.invalidateServerApprovals(server.id);
     // The new value applies from the next start.
     this.connections.get(server.id)?.stop('A secret changed'); this.connections.delete(server.id);
     this.core.changed();
@@ -391,5 +442,5 @@ export class Extensions {
         tools: (connection?.tools || []).map(tool => ({ name: tool.name, title: tool.title, description: tool.description.slice(0, 300), readOnlyHint: tool.readOnlyHint, destructiveHint: tool.destructiveHint, usable: tool.usable, problem: tool.problem || '', hidden: !!server.hidden?.includes(tool.name), allowed: server.allowed.includes(tool.name) })) };
     });
   }
-  close() { for (const connection of this.connections.values()) connection.stop('Cere is closing'); this.connections.clear(); }
+  async close() { for (const connection of this.connections.values()) connection.stop('Cere is closing'); this.connections.clear(); await Promise.all([...ownedTeardowns]); }
 }

@@ -1,4 +1,5 @@
 import { request } from './client.ts';
+import { brokerFrameLimit } from './fanout.ts';
 import { JsonLines } from './wire.ts';
 import net from 'node:net';
 import { socketPath } from './paths.ts';
@@ -8,17 +9,33 @@ if (!token) { console.error('Cere MCP must be launched by a managed session'); p
 const lines = new JsonLines();
 const respond = (m: any) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...m})+'\n');
 let initialized=false,lastTools='';
-const changes=net.createConnection(socketPath()),changeLines=new JsonLines();
+const changes=net.createConnection(socketPath()),changeLines=new JsonLines(brokerFrameLimit);
 changes.setEncoding('utf8');changes.on('error',()=>{});
 changes.on('connect',()=>{let trusted=false;try{trusted=trustedServer(changes);}catch{}if(!trusted){changes.destroy();return;}changes.write(JSON.stringify({id:'watch',method:'subscribe',params:{role:'mcp',resync:true}})+'\n');});
-changes.on('data',chunk=>{try{changeLines.push(String(chunk),m=>{
-  const state=m.method==='state'?m.params:m.id==='watch'?m.result:null, settings=state?.settings;
-  if(!settings)return;
-  const sessions=(state.sessions||[]).filter((s:any)=>!process.env.CERE_SESSION_ID||s.id===process.env.CERE_SESSION_ID)
-    .map((s:any)=>[s.id,s.provider,s.remote,s.temporary]).sort((a:any,b:any)=>String(a[0]).localeCompare(String(b[0])));
-  const signature=JSON.stringify([settings.profile,settings.paused,settings.categories,settings.bypassCliPermissions,settings.bypassComputerPermissions,settings.memory,settings.ollama?.host,sessions,state.power,state.remote]);
-  if(initialized&&lastTools&&lastTools!==signature)respond({method:'notifications/tools/list_changed'});lastTools=signature;
-});}catch{changes.destroy();}});
+// Large snapshots may omit settings or sessions. Compare the effective list the client can use.
+let reading = false, dirty = false;
+async function refreshTools() {
+  dirty = true;
+  if (reading) return;
+  reading = true;
+  try {
+    while (dirty) {
+      dirty = false;
+      let signature: string;
+      try { signature = JSON.stringify(await request('mcp.tools', { token })); }
+      catch { signature = 'unavailable'; }
+      if (initialized && lastTools && lastTools !== signature) respond({ method: 'notifications/tools/list_changed' });
+      lastTools = signature;
+    }
+  } finally { reading = false; }
+}
+changes.on('data', chunk => {
+  try {
+    changeLines.push(String(chunk), message => {
+      if (message.method === 'state' || message.method === 'resync' || message.id === 'watch') void refreshTools();
+    });
+  } catch { changes.destroy(); }
+});
 async function handle(m: any) {
   if (m.id === undefined) return;
   try {

@@ -7,7 +7,7 @@ CSection {
     description:"Choose your companion’s name and conversation style."
     property string savedBaseline:""
     property string savedName:"Cere"
-    property string savedAvatar:"cere"
+    property string savedAvatar:AvatarCatalog.defaultId
     property string savedRevision:"0"
     property bool conflict:false
     property bool loaded:false
@@ -34,14 +34,14 @@ CSection {
     function adopt(settings){
         savedBaseline=settings.personality??""
         savedName=settings.assistantName||"Cere"
-        savedAvatar=settings.avatar||"cere"
+        savedAvatar=AvatarCatalog.avatarFor(settings.avatar).id
         editor.text=savedBaseline;nameField.text=savedName
         savedRevision=App.state.settingsRevision||"0";conflict=false;loaded=true
     }
     function syncSaved(){
         const settings=App.state.settings||{}
         if(!loaded||!dirty)adopt(settings)
-        else if((settings.personality??"")!==savedBaseline||(settings.assistantName||"Cere")!==savedName||(settings.avatar||"cere")!==savedAvatar)conflict=true
+        else if((settings.personality??"")!==savedBaseline||(settings.assistantName||"Cere")!==savedName||AvatarCatalog.avatarFor(settings.avatar).id!==savedAvatar)conflict=true
         else savedRevision=App.state.settingsRevision||"0"
     }
     function fingerprint(){return JSON.stringify([editor.text,nameField.text])}

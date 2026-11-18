@@ -8,6 +8,7 @@
  * A pass shows the protocol names are still offered. It does not prove the payload semantics; the
  * fixture tests (tests/providers.test.ts) and a live check cover those.
  */
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,7 +16,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const families = /^(thread|turn|item|model|config|account|mcpServer|serverRequest|currentTime|remoteControl)\//;
 const sources = (await readdir(join(root, 'broker'))).filter(name => name.endsWith('.ts'));
 const used = new Set<string>();

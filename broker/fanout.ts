@@ -30,6 +30,7 @@ export interface FanoutClient<S extends FanoutSocket = FanoutSocket> {
   resyncPending?: boolean;
   drain?: () => void;
 }
+export const brokerFrameLimit = 16 * 1024 * 1024;
 const size = (line: string) => Buffer.byteLength(line);
 export class Fanout<S extends FanoutSocket = FanoutSocket> {
   clients = new Set<FanoutClient<S>>();
@@ -38,7 +39,7 @@ export class Fanout<S extends FanoutSocket = FanoutSocket> {
   maxPendingMessages: number;
   /** Held copies across every client; past this the largest holder resynchronizes. */
   globalLimit: number;
-  constructor(backlog = 1024*1024, limit = 16*1024*1024, maxPendingMessages = 512, globalLimit = 4*limit) {
+  constructor(backlog = 1024*1024, limit = brokerFrameLimit, maxPendingMessages = 512, globalLimit = 4*limit) {
     this.backlog = backlog; this.limit = limit; this.maxPendingMessages = maxPendingMessages; this.globalLimit = globalLimit;
   }
   add(socket: S): FanoutClient<S> {

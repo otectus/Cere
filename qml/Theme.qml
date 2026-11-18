@@ -1,21 +1,20 @@
 pragma Singleton
 import QtQuick
 // Shared colour, type, spacing and shape for every Cere surface.
-// Palettes live in assets/palettes.json and follow the saved avatar.
+// Palettes live in assets/avatars.json and follow the saved avatar.
 // Text pairs meet WCAG 2.2 AA (4.5:1) and every control boundary 3:1 on the surfaces
 // it sits on; tests/qml-tokens.test.ts checks both and keeps literals out of other files.
 QtObject {
     // The native host and QML share the same catalog. Standalone component previews
     // read it directly (qmltestrunner enables local-file reads); production uses App.
-    readonly property var palettes: typeof App !== "undefined" ? App.themes : loadPalettes()
-    readonly property var colors: typeof App !== "undefined" ? App.theme : palettes.cere
-    function loadPalettes() {
-        const request = new XMLHttpRequest()
-        request.open("GET", Qt.resolvedUrl("../assets/palettes.json"), false)
-        request.send()
-        return JSON.parse(request.responseText)
+    readonly property var palettes: typeof App !== "undefined" ? App.themes : catalogPalettes()
+    readonly property var colors: typeof App !== "undefined" ? App.theme : AvatarCatalog.defaultEntry.palette
+    function catalogPalettes() {
+        var result = {}
+        for (var entry of AvatarCatalog.entries) result[entry.id] = entry.palette
+        return result
     }
-    function paletteFor(avatarId) { return palettes[avatarId] || palettes.cere }
+    function paletteFor(avatarId) { return palettes[AvatarCatalog.avatarFor(avatarId).id] }
     readonly property color background: colors.background
     readonly property color sidebar: colors.sidebar
     readonly property color surface: colors.surface

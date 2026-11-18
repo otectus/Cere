@@ -5,11 +5,12 @@
  *
  *   node tools/feature-matrix.ts
  */
+import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { availableOperations, methods, mutations, needsProof } from '../broker/remote/schemas.ts';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.name === 'build' ? [] : entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]);
 const kotlin = walk(join(root, 'mobile/android')).filter(file => file.endsWith('.kt'));
 const android = kotlin.filter(file => file.includes('/src/main/'));

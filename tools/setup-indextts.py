@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -103,6 +104,81 @@ def run(args, env):
         raise InstallError("DEPENDENCY_INSTALL_FAILED")
 
 
+def archive_sources(archive, destination=None):
+    """Read trusted source checksums from the pinned archive, optionally unpacking a fresh tree."""
+    if not archive.is_file() or digest(archive) != PIN["upstream"]["sha256"]:
+        raise InstallError("CHECKSUM_MISMATCH")
+    hashes = {}
+    with tarfile.open(archive) as package:
+        for member in package:
+            parts = Path(member.name).parts[1:]
+            if not member.isfile() or not parts or ".." in parts or ".venv" in parts:
+                continue
+            name = Path(*parts)
+            hasher = hashlib.sha256()
+            with package.extractfile(member) as stream:
+                if destination is None:
+                    hashes[str(name)] = hashlib.file_digest(stream, "sha256").hexdigest()
+                    continue
+                target = destination / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("xb") as output:
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        hasher.update(block)
+                        output.write(block)
+                target.chmod(0o700 if member.mode & 0o111 else 0o600)
+            hashes[str(name)] = hasher.hexdigest()
+    return hashes
+
+
+def source_matches(source, hashes):
+    if not source.is_dir() or source.is_symlink():
+        return False
+    seen = set()
+    for directory, subdirs, files in os.walk(source):
+        # These are generated runtime caches, not archive authority. They must
+        # neither make a verified source look edited nor be copied into the
+        # trusted source manifest.
+        subdirs[:] = [name for name in subdirs if name not in {".venv", "__pycache__", ".pytest_cache", ".mypy_cache"}]
+        for subdir in subdirs:
+            if (Path(directory) / subdir).is_symlink():
+                return False
+        for name in files:
+            path = Path(directory) / name
+            key = str(path.relative_to(source))
+            if path.is_symlink() or not path.is_file() or key not in hashes or digest(path) != hashes[key]:
+                return False
+            seen.add(key)
+    return seen == hashes.keys()
+
+
+def restore_source(runtime, archive):
+    source = runtime / "source"
+    hashes = archive_sources(archive)
+    if source_matches(source, hashes):
+        return hashes
+    with tempfile.TemporaryDirectory(prefix="source-repair-", dir=runtime) as staging:
+        fresh = private(Path(staging) / "source")
+        archive_sources(archive, fresh)
+        if source.exists() or source.is_symlink():
+            # Preserve local edits and unrelated files outside the import path.
+            backup = Path(tempfile.mkdtemp(prefix="previous-source-", dir=runtime)) / "source"
+            source.rename(backup)
+            try:
+                venv = backup / ".venv"
+                if not backup.is_symlink() and venv.is_dir() and not venv.is_symlink():
+                    venv.rename(fresh / ".venv")
+                fresh.rename(source)
+            except OSError:
+                if (fresh / ".venv").exists():
+                    (fresh / ".venv").rename(backup / ".venv")
+                backup.rename(source)
+                raise
+        else:
+            fresh.rename(source)
+    return hashes
+
+
 def verify(model, runtime, version):
     try:
         installed = json.loads((model / "installation.json").read_text())
@@ -117,9 +193,9 @@ def verify(model, runtime, version):
         marker = json.loads((runtime / "runtime.json").read_text())
         if marker["commit"] != PIN["upstream"]["commit"] or not (runtime / "source/.venv/bin/python").is_file():
             raise InstallError("RUNTIME_MISSING")
-        for name, expected in marker["sourceHashes"].items():
-            if digest(runtime / "source" / name) != expected:
-                raise InstallError("CHECKSUM_MISMATCH")
+        hashes = archive_sources(runtime / "source.tar.gz")
+        if not source_matches(runtime / "source", hashes):
+            raise InstallError("CHECKSUM_MISMATCH")
         code = "import importlib.metadata as m,sys; assert sys.version_info[:3]==(3,11,13); assert m.version('torch')=='2.8.0+cu128'; assert m.version('torchaudio')=='2.8.0+cu128'"
         run([str(runtime / "source/.venv/bin/python"), "-B", "-c", code], dict(os.environ))
         emit("installed", progress=1, verified=True)
@@ -172,26 +248,9 @@ def install(args):
     archive = runtime / "source.tar.gz"
     download(PIN["upstream"]["url"], archive, PIN["upstream"]["sha256"])
     source = runtime / "source"
-    if not (runtime / "runtime.json").exists():
-        private(source)
-        with tarfile.open(archive) as tf:
-            # Only regular files/directories, strip the archive's commit prefix.
-            for member in tf:
-                parts = Path(member.name).parts[1:]
-                if not parts or ".." in parts or member.issym() or member.islnk():
-                    continue
-                target = source.joinpath(*parts)
-                if member.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
-                elif member.isfile():
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    with target.open("wb") as f:
-                        shutil.copyfileobj(tf.extractfile(member), f)
+    hashes = restore_source(runtime, archive)
     env = dict(os.environ, UV_CACHE_DIR=str(runtime / "cache"), UV_PYTHON_INSTALL_DIR=str(runtime / "python"), UV_PYTHON_PREFERENCE="only-managed")
     run([uv, "sync", "--frozen", "--project", str(source), "--python", PIN["python"], *(["--extra", "deepspeed"] if args.deepspeed else [])], env)
-    hashes = {str(p.relative_to(source)): digest(p) for p in source.rglob("*.py") if ".venv" not in p.parts}
-    for name in ["pyproject.toml", "uv.lock"]:
-        hashes[name] = digest(source/name)
     (runtime / "runtime.json").write_text(json.dumps(dict(commit=PIN["upstream"]["commit"], sourceHashes=hashes, deepspeed=args.deepspeed)))
     installed = dict(schema=1, version=args.version, upstream=PIN["upstream"]["commit"], runtime=str(runtime), emotion=args.emotion, installedAt=int(time.time()), manifest=PIN)
     (model / "installation.json").write_text(json.dumps(installed, indent=2)+"\n")

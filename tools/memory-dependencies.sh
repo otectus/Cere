@@ -122,13 +122,14 @@ qdrant_pid() {
 }
 
 wait_port() {
-  local name="$1" port="$2"
+  local name="$1" port="$2" timeout="$3"
+  local deadline=$((SECONDS + timeout))
   [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] || { echo "invalid $name port: $port" >&2; return 1; }
-  for _ in $(seq 1 60); do
+  while (( SECONDS < deadline )); do
     if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then exec 3>&-; exec 3<&-; return 0; fi
     sleep 0.25
   done
-  echo "$name did not become ready on loopback port $port" >&2
+  echo "$name did not become ready on loopback port $port within ${timeout}s" >&2
   return 1
 }
 
@@ -167,8 +168,9 @@ local_start() {
     record_qdrant "$started" || { echo "Qdrant exited before its identity could be recorded" >&2; return 1; }
     chmod 600 "$DEPS_HOME/run/qdrant.log"
   fi
-  wait_port Neo4j "${NEO4J_BOLT_PORT:-7687}"
-  wait_port Qdrant "${QDRANT_HTTP_PORT:-6333}"
+  wait_port Neo4j "${NEO4J_BOLT_PORT:-7687}" 15
+  # Qdrant recovers its persisted collections before opening the listener.
+  wait_port Qdrant "${QDRANT_HTTP_PORT:-6333}" 90
   echo "Neo4j and Qdrant are ready on loopback"
 }
 

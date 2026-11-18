@@ -13,6 +13,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
 #include "avatar-registration.h"
+#include "avatar-interpolation.h"
 
 #include <algorithm>
 #include <charconv>
@@ -185,12 +186,8 @@ cv::Mat interpolate(const cv::Mat &fromPremultiplied,
         const float *toConfidenceRow = confidenceTo.ptr<float>(y);
         auto *target = blended.ptr<cv::Vec4f>(y);
         for (int x = 0; x < blended.cols; ++x) {
-            const float fromWeight = (1.0f - time) * fromConfidenceRow[x];
-            const float toWeight = time * toConfidenceRow[x];
-            const float totalWeight = fromWeight + toWeight;
-            if (totalWeight > 1e-6f)
-                target[x] = (fromRow[x] * fromWeight + toRow[x] * toWeight)
-                        * (1.0f / totalWeight);
+            target[x] = AvatarInterpolation::blend(fromRow[x], toRow[x],
+                    fromConfidenceRow[x], toConfidenceRow[x], time);
         }
     }
     return blended;

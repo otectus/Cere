@@ -220,6 +220,24 @@ test("M02 M03 M04 durable outbox leases repeat and contiguous watermark never sk
     2,
   );
 });
+test("outbox retry deadlines remain integers in STRICT SQLite", (t) => {
+  const { c, scope } = fixture(t);
+  c.observeText({ scope_id: scope, text: "retry a projection", role: "user" });
+  const job = c.claimJob({ backend: "graph" });
+  assert.ok(job && "id" in job && typeof job.id === "string");
+
+  t.mock.method(Math, "random", () => 0.123456789);
+  assert.doesNotThrow(() => c.finishJob({ id: job.id, error: "backend unavailable" }));
+  const retried = c.one(
+    "SELECT state,next_retry_us,lease_until_us,error_code FROM outbox WHERE id=?",
+    job.id,
+  );
+  assert.equal(retried.state, "retryable");
+  assert.equal(Number.isInteger(retried.next_retry_us), true);
+  assert.ok(retried.next_retry_us > 0);
+  assert.equal(retried.lease_until_us, null);
+  assert.equal(retried.error_code, "backend unavailable");
+});
 test("M05 M27 stale semantic pointers are hydrated and isolated before ranking", (t) => {
   const { c, scope } = fixture(t);
   const a = c.remember(assertion(c, scope, "Black"));

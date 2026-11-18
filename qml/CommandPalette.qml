@@ -53,7 +53,7 @@ Popup {
         })))
         entries=entries.concat((App.state.folders||[]).map(folder=>({id:"folder:"+folder.id,kind:"folder",title:folder.name,detail:"Session folder",value:folder.id})))
         // Settings categories and the settings in them, from the same catalog as the Settings page.
-        for(const category of SettingsCatalog.visibleCategories(App.state.speech===undefined?["voice"]:[])){
+        for(const category of SettingsCatalog.visibleCategories(App.state.speech===undefined?["voice"]:[],AvatarCatalog.entries)){
             entries.push({id:"settings:"+category.id,kind:"settings",title:category.label,detail:"Settings · "+category.blurb,search:category.label+" "+category.keywords,value:{category:category.id,target:""}})
             for(const setting of category.settings)entries.push({id:"settings:"+category.id+"/"+setting.target,kind:"settings",title:setting.label,detail:"Settings › "+category.label,search:setting.label+" "+setting.keywords,value:{category:category.id,target:setting.target}})
         }

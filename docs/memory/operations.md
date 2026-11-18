@@ -2,6 +2,20 @@
 
 Build and install Cere using the root README. From a source checkout, invoke `node broker/memory-cli.ts`; after installation use `cere memory`. The existing Cere broker hosts memory; there is no separate memory daemon to start. CLI operations do not auto-start an absent broker.
 
+## API models (no Ollama required)
+
+In **Settings → Connections**, add a Gemini API key and, if using Claude for extraction, a Claude API key. Memory reuses those credentials; keys are never stored in memory settings. `GEMINI_API_KEY` / `GOOGLE_API_KEY` and `ANTHROPIC_API_KEY` in the broker environment also work.
+
+In **Settings → Knowledge → Memory**:
+
+- Choose **Gemini API embeddings**, enable **Allow Gemini to embed memory and search queries**, and use **Check & save**. The initial embedding model is `gemini-embedding-001`; its ID can be changed.
+- Choose **Gemini API** or **Claude API** as the extraction provider, then **Refresh** and select a model. Enable **Allow cloud memory extraction**. Extraction and embeddings are independent, so Claude extraction can use Gemini embeddings.
+- Enable **Share recalled memory with Codex, Claude and cloud models** when those chat providers should receive recalled memories. This permission is separate from background extraction and embedding consent.
+
+API processing is billed by the provider. Local-only sources are excluded from cloud extraction and all embedding queues; keyword recall remains available. Switching embedding providers/models preserves existing memories and uses a separate vector space that fills in the background. Project/server scope identifiers stay unchanged, so switching providers does not move or hide memories. With both jobs on APIs, the saved Ollama address remains a scope identifier and is not contacted for those jobs. Neo4j/Qdrant remain optional local projections as before.
+
+API provenance records the returned model version when supplied and a hash of its provider/model identity, not a model-weight digest. Embedding identity uses the configured model ID; a vendor silently changing that ID's weights cannot be detected. Prefer versioned model IDs where offered. Requests use the [Gemini content and embedding APIs](https://ai.google.dev/api) and [Claude Messages API](https://platform.claude.com/docs/en/api/messages/create).
+
 ## Local dependencies
 
 The source deployment profile is `packaging/memory-compose.yml`. Installed files are under the installation prefix's `share/cere/packaging` and `share/cere/tools`; memory documentation is under `share/doc/cere/memory`.

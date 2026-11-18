@@ -1,3 +1,4 @@
+import './fixtures/memory-environment.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -272,4 +273,19 @@ test('extraction model defaults, persists, and switches the model dispatched by 
   finally { reopened.close(); }
   await assert.rejects(core.updateSettings({ memory: { extractionModel: '' } }), /extraction model/);
   assert.equal(core.settings.memory.extractionModel, 'nemotron-3-super');
+});
+
+test('memory API provider settings validate atomically and persist independently of chat', async t => {
+  const { core, directory } = await fixture(t);
+  await core.updateSettings({ memory: { extractionProvider: 'anthropic', extractionModel: 'claude-haiku-4-5', embeddingProvider: 'google', model: 'gemini-embedding-001', allowCloudEmbedding: true } });
+  await core.memory.configure();
+  assert.equal(core.memory.service.configuration.extraction_provider, 'anthropic');
+  assert.equal(core.memory.service.configuration.embedding_provider, 'google');
+  const before = structuredClone(core.settings.memory);
+  for (const patch of [{ extractionProvider: 'codex' }, { embeddingProvider: 'anthropic' }, { allowCloudEmbedding: 'yes' }]) {
+    await assert.rejects(core.updateSettings({ memory: { ...patch, model: 'changed' } }));
+    assert.deepEqual(core.settings.memory, before);
+  }
+  const reopened = new Store(directory);
+  try { assert.deepEqual(reopened.settings().memory, before); } finally { reopened.close(); }
 });

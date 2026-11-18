@@ -10,7 +10,7 @@
     "start": "./tools/run.sh",
     "build": "./tools/build.sh",
     "broker": "node broker/main.ts",
-    "test": "CERE_TTS_DISABLED=1 node --test tests/*.test.ts",
+    "test": "CERE_TTS_DISABLED=1 node --import ./tests/fixtures/memory-environment.ts --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -26,6 +26,6 @@
     "qrcode": "1.5.4",
     "sharp": "0.35.5",
     "ws": "8.22.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   }
 }

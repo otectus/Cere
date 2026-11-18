@@ -152,7 +152,7 @@ export interface ExtractionRun {
   proposals: MutationProposalBatch;
   model: string;
   modelDigest: string;
-  endpointClass: 'local' | 'ollama_cloud';
+  endpointClass: 'local' | 'ollama_cloud' | 'google_api' | 'anthropic_api';
   promptVersion: string;
   schemaVersion: number;
   parserVersion: string;

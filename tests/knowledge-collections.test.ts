@@ -34,6 +34,7 @@ async function fixture(t: any, realProviders = false) {
   return { root, docs, state, core };
 }
 const indexed = async (core: Core, id: string) => { await core.rpc('collections.index', { id }); for (let index = 0; index < 400 && !core.collections.job?.done; index++) await new Promise(resolve => setTimeout(resolve, 10)); return core.collections.snapshot()!; };
+const deferred = <T = void>() => { let resolve!: (value: T | PromiseLike<T>) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 
 test('M06 a collection indexes only the files it may, reindexes changes with erasure, and stays in its own scope', async t => {
   const { root, docs, state, core } = await fixture(t);
@@ -116,6 +117,219 @@ test('RC-01 collection Markdown follows the vault privacy rules, and notes index
   assert.equal(listed.private, 2);
   assert.equal(await excerpt('walrus vault'), '', 'its old passages were erased');
   assert.match(await excerpt('kestrel sensor'), /kestrel sensor/);
+});
+
+test('AUD-005 collection packets carry a revocation witness and retrieval publishes only current authority', async t => {
+  const { root, docs, core } = await fixture(t);
+  let first = await core.rpc('collections.create', { name: 'First', allowCloud: true });
+  first = await core.rpc('collections.addSource', { id: first.id, expectedRevision: first.revision, path: join(docs, 'guide.md') });
+  await indexed(core, first.id);
+  let second = await core.rpc('collections.create', { name: 'Second', allowCloud: true });
+  second = await core.rpc('collections.addSource', { id: second.id, expectedRevision: second.revision, path: join(docs, 'sub', 'notes.txt') });
+  await indexed(core, second.id);
+  const session = await core.create({ provider: 'codex', cwd: root, trusted: true });
+  await core.rpc('collections.bind', { id: first.id, target: 'session', sessionId: session.id, bound: true });
+  await core.rpc('collections.bind', { id: second.id, target: 'session', sessionId: session.id, bound: true });
+
+  const packet = await core.collections.context(core.store.session(session.id), 'zircon heliotrope', 3000, 'cloud', new AbortController().signal);
+  assert.match(packet.text, /zircon/); assert.match(packet.text, /heliotrope/);
+  assert.ok(packet.authorization); assert.equal(core.collections.authorizeContext(core.store.session(session.id), packet.authorization, 'cloud'), true);
+  assert.equal(core.collections.revalidateContext(core.store.session(session.id), packet, 'local').text, '', 'a local proof cannot cross a cloud/local route boundary in either direction');
+
+  const original = core.memory.service.call.bind(core.memory.service);
+  const entered = deferred(), release = deferred(); let held = false;
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => {
+    if (method === 'retrieve' && p.scope_id === (core.store.get<any[]>('knowledge:collections', []).find(row => row.id === first.id)?.scopeId) && !held) {
+      held = true; entered.resolve(); await release.promise;
+    }
+    return original(method, p, signal);
+  }) as typeof core.memory.service.call;
+  const pending = core.collections.context(core.store.session(session.id), 'zircon heliotrope', 3000, 'cloud', new AbortController().signal);
+  await entered.promise;
+  const current = (await core.rpc('collections.list', {})).collections.find((row: any) => row.id === first.id);
+  await core.rpc('collections.update', { id: first.id, expectedRevision: current.revision, allowCloud: false });
+  release.resolve();
+  const afterRevocation = await pending;
+  assert.doesNotMatch(afterRevocation.text, /zircon/, 'revoked text retrieved in flight is discarded');
+  assert.match(afterRevocation.text, /heliotrope/, 'an unrelated still-authorized collection remains usable');
+  assert.equal(core.collections.revalidateContext(core.store.session(session.id), packet, 'cloud').text, '', 'an already prepared packet is invalid after consent changes');
+
+  const latest = (await core.rpc('collections.list', {})).collections.find((row: any) => row.id === first.id);
+  await core.rpc('collections.update', { id: first.id, expectedRevision: latest.revision, allowCloud: true });
+  const reboundPacket = await core.collections.context(core.store.session(session.id), 'zircon', 2000, 'cloud', new AbortController().signal);
+  await core.rpc('collections.bind', { id: first.id, target: 'session', sessionId: session.id, bound: false });
+  assert.equal(core.collections.revalidateContext(core.store.session(session.id), reboundPacket, 'cloud').text, '', 'unbind invalidates a prepared packet');
+  await core.rpc('collections.bind', { id: first.id, target: 'session', sessionId: session.id, bound: true });
+  const sourcePacket = await core.collections.context(core.store.session(session.id), 'zircon', 2000, 'cloud', new AbortController().signal);
+  const sourceRevision = (await core.rpc('collections.list', {})).collections.find((row: any) => row.id === first.id).revision;
+  await core.rpc('collections.removeSource', { id: first.id, expectedRevision: sourceRevision, path: join(docs, 'guide.md') });
+  assert.equal(core.collections.revalidateContext(core.store.session(session.id), sourcePacket, 'cloud').text, '', 'source removal invalidates a prepared packet');
+
+  let restored = (await core.rpc('collections.list', {})).collections.find((row: any) => row.id === first.id);
+  restored = await core.rpc('collections.addSource', { id: first.id, expectedRevision: restored.revision, path: join(docs, 'guide.md') });
+  restored = await core.rpc('collections.update', { id: first.id, expectedRevision: restored.revision, allowCloud: false });
+  const localPacket = await core.collections.context(core.store.session(session.id), 'zircon', 2000, 'local', new AbortController().signal);
+  assert.match(localPacket.text, /zircon/);
+  assert.equal(core.collections.revalidateContext(core.store.session(session.id), localPacket, 'cloud').text, '', 'a packet prepared for a local route cannot follow a later cloud route');
+  restored = await core.rpc('collections.update', { id: first.id, expectedRevision: restored.revision, allowCloud: true });
+
+  const deleteEntered = deferred(), deleteRelease = deferred(); let deleteHeld = false;
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => {
+    if (method === 'retrieve' && p?.scope_id === core.store.get<any[]>('knowledge:collections', []).find(row => row.id === first.id)?.scopeId && !deleteHeld) {
+      deleteHeld = true; deleteEntered.resolve(); await deleteRelease.promise;
+    }
+    return original(method, p, signal);
+  }) as typeof core.memory.service.call;
+  const duringDelete = core.collections.context(core.store.session(session.id), 'zircon', 2000, 'cloud', new AbortController().signal);
+  await deleteEntered.promise;
+  await core.rpc('collections.delete', { id: first.id, expectedRevision: restored.revision, confirmed: true });
+  deleteRelease.resolve();
+  assert.equal((await duringDelete).text, '', 'collection deletion during retrieval prevents late publication');
+});
+
+test('AUD-005 cancellation cannot publish a late collection packet', async t => {
+  const { root, docs, core } = await fixture(t);
+  let collection = await core.rpc('collections.create', { name: 'Cancelled', allowCloud: true });
+  collection = await core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: join(docs, 'guide.md') });
+  await indexed(core, collection.id);
+  const session = await core.create({ provider: 'codex', cwd: root, trusted: true });
+  await core.rpc('collections.bind', { id: collection.id, target: 'session', sessionId: session.id, bound: true });
+  const original = core.memory.service.call.bind(core.memory.service), entered = deferred(), release = deferred();
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => {
+    if (method === 'retrieve') { entered.resolve(); await release.promise; }
+    return original(method, p, signal);
+  }) as typeof core.memory.service.call;
+  const controller = new AbortController();
+  const pending = core.collections.context(core.store.session(session.id), 'zircon', 2000, 'cloud', controller.signal);
+  await entered.promise; controller.abort(new Error('stopped')); release.resolve();
+  await assert.rejects(pending, /stopped|aborted/i);
+});
+
+test('AUD-013 serialized commits preserve concurrent catalog changes and enforce revisions after awaits', async t => {
+  const { docs, core } = await fixture(t);
+  const original = core.memory.service.call.bind(core.memory.service), entered = deferred(), release = deferred(); let scopes = 0;
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => {
+    if (method === 'scope' && ++scopes === 1) { entered.resolve(); await release.promise; }
+    return original(method, p, signal);
+  }) as typeof core.memory.service.call;
+  const slow = core.rpc('collections.create', { name: 'Slow' });
+  await entered.promise;
+  const fast = await core.rpc('collections.create', { name: 'Fast' });
+  release.resolve(); const slowResult = await slow;
+  assert.deepEqual(new Set((await core.rpc('collections.list', {})).collections.map((row: any) => row.id)), new Set([fast.id, slowResult.id]));
+
+  const add = core.rpc('collections.addSource', { id: fast.id, expectedRevision: fast.revision, path: join(docs, 'guide.md') });
+  const revoked = await core.rpc('collections.update', { id: fast.id, expectedRevision: fast.revision, allowCloud: false });
+  await assert.rejects(add, (error: any) => error.code === 'REVISION_CONFLICT');
+  const persisted = (await core.rpc('collections.list', {})).collections.find((row: any) => row.id === fast.id);
+  assert.equal(persisted.allowCloud, false); assert.equal(persisted.revision, revoked.revision);
+});
+
+test('AUD-013 an index manifest cannot overwrite a concurrent consent revision', async t => {
+  const { docs, core } = await fixture(t);
+  let collection = await core.rpc('collections.create', { name: 'Index conflict', allowCloud: true });
+  collection = await core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path: join(docs, 'guide.md') });
+  const scope = core.store.get<any[]>('knowledge:collections', [])[0].scopeId;
+  const original = core.memory.service.call.bind(core.memory.service), entered = deferred(), release = deferred(); let held = false;
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => {
+    if (method === 'observe_text' && p?.scope_id === scope && !held) { held = true; entered.resolve(); await release.promise; }
+    return original(method, p, signal);
+  }) as typeof core.memory.service.call;
+  await core.rpc('collections.index', { id: collection.id }); await entered.promise;
+  const revoked = await core.rpc('collections.update', { id: collection.id, expectedRevision: collection.revision, allowCloud: false });
+  release.resolve();
+  for (let index = 0; index < 200 && !core.collections.job?.done; index++) await new Promise(resolve => setTimeout(resolve, 5));
+  const snapshot = core.collections.snapshot()!;
+  assert.equal(snapshot.done, true, JSON.stringify(snapshot)); assert.match(snapshot.error, /changed in another window/);
+  const current = (await core.rpc('collections.list', {})).collections[0];
+  assert.equal(current.allowCloud, false); assert.equal(current.revision, revoked.revision); assert.equal(current.chunks, 0);
+  assert.equal((await original('retrieve', { scope_id: scope, text: 'zircon' })).results.length, 0, 'the conflicted staged generation is erased');
+  assert.deepEqual(core.store.get<any[]>('knowledge:collection-ingestions', []), []);
+});
+
+test('AUD-006/AUD-014 generations account for cancellation and make A-to-B-to-A recallable', async t => {
+  const { docs, core } = await fixture(t);
+  const path = join(docs, 'guide.md');
+  let collection = await core.rpc('collections.create', { name: 'Generations' });
+  collection = await core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path });
+  await writeFile(path, 'alpha generation ' + 'orchid '.repeat(500));
+  assert.equal((await indexed(core, collection.id)).error, '');
+  const first = core.store.get<any[]>('knowledge:collections', [])[0].files[0];
+  await writeFile(path, 'beta generation ' + 'violet '.repeat(500)); await indexed(core, collection.id);
+  await writeFile(path, 'alpha generation ' + 'orchid '.repeat(500)); assert.equal((await indexed(core, collection.id)).error, '');
+  const third = core.store.get<any[]>('knowledge:collections', [])[0].files[0];
+  assert.equal(third.sha256, first.sha256); assert.notEqual(third.generation, first.generation, 'a reverted document receives a fresh non-tombstoned identity');
+  const scope = core.store.get<any[]>('knowledge:collections', [])[0].scopeId;
+  assert.ok((await core.memory.service.call('retrieve', { scope_id: scope, text: 'alpha orchid' })).results.length);
+
+  const raw = core.memory.service.call.bind(core.memory.service);
+  await writeFile(path, 'duplicate delivery generation ' + 'sapphire '.repeat(500));
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => {
+    if (method !== 'observe_text') return raw(method, p, signal);
+    await raw(method, p, signal); return raw(method, p, signal);
+  }) as typeof core.memory.service.call;
+  assert.equal((await indexed(core, collection.id)).error, '', 'a duplicate receipt for the same generation is idempotent');
+  assert.ok((await raw('retrieve', { scope_id: scope, text: 'duplicate sapphire' })).results.length);
+
+  await writeFile(path, 'cancelled generation ' + 'topaz '.repeat(1000));
+  let accepted = false;
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => {
+    const receipt = await raw(method, p, signal);
+    if (method === 'observe_text' && !accepted) { accepted = true; core.collections.cancel(); }
+    return receipt;
+  }) as typeof core.memory.service.call;
+  const cancelled = await indexed(core, collection.id);
+  assert.equal(cancelled.error, 'Indexing was cancelled'); assert.equal(accepted, true);
+  assert.deepEqual(core.store.get<any[]>('knowledge:collection-ingestions', []), [], 'accepted staging data is reconciled from the durable journal');
+  assert.equal((await core.memory.service.call('retrieve', { scope_id: scope, text: 'cancelled topaz' })).results.length, 0);
+  assert.ok((await core.memory.service.call('retrieve', { scope_id: scope, text: 'duplicate sapphire' })).results.length, 'the previously committed generation survives cancelled replacement');
+
+  await writeFile(path, 'rejected generation ' + 'garnet '.repeat(500));
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => method === 'observe_text' ? { id: 'tombstoned', duplicate: true, erased: true } : raw(method, p, signal)) as typeof core.memory.service.call;
+  assert.equal((await indexed(core, collection.id)).error, '');
+  const rejected = (await core.rpc('collections.list', {})).collections[0];
+  assert.equal(rejected.chunks, 0); assert.match(rejected.errors[0].error, /rejected an indexed document chunk/);
+});
+
+test('AUD-006 delete fences ingestion and erases a chunk accepted before cancellation', async t => {
+  const { docs, core } = await fixture(t);
+  const path = join(docs, 'guide.md'); await writeFile(path, 'delete during ingestion ' + 'citrine '.repeat(1000));
+  let collection = await core.rpc('collections.create', { name: 'Delete active' });
+  collection = await core.rpc('collections.addSource', { id: collection.id, expectedRevision: collection.revision, path });
+  const scope = core.store.get<any[]>('knowledge:collections', [])[0].scopeId;
+  const original = core.memory.service.call.bind(core.memory.service), accepted = deferred(), release = deferred(); let held = false;
+  core.memory.service.call = (async (method: string, p?: any, signal?: AbortSignal) => {
+    const receipt = await original(method, p, signal);
+    if (method === 'observe_text' && !held) { held = true; accepted.resolve(); await release.promise; }
+    return receipt;
+  }) as typeof core.memory.service.call;
+  await core.rpc('collections.index', { id: collection.id }); await accepted.promise;
+  const deleting = core.rpc('collections.delete', { id: collection.id, expectedRevision: collection.revision, confirmed: true });
+  release.resolve(); const deleted = await deleting;
+  assert.deepEqual([deleted.erasure.suppressed, deleted.erasure.purge_complete], [true, false], 'deletion reports canonical suppression without claiming asynchronous physical purge');
+  assert.equal((await core.memory.service.call('retrieve', { scope_id: scope, text: 'citrine' })).results.length, 0);
+  assert.deepEqual(core.store.get<any[]>('knowledge:collection-ingestions', []), []);
+  assert.equal((await core.rpc('collections.list', {})).collections.length, 0);
+});
+
+test('AUD-006 restart reconciliation erases an accepted chunk whose manifest was never committed', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cere-collections-restart-')), state = join(root, 'state'), path = join(root, 'orphan.md');
+  await writeFile(path, 'restart boundary amber document');
+  const firstCore = new Core(new Store(state), () => ({ async send() {}, async interrupt() {}, async close() {} }));
+  await firstCore.memory.ready;
+  const collection = await firstCore.rpc('collections.create', { name: 'Restart journal' });
+  const generation = 'durable-test-generation', documentSource = 'file-revision:' + JSON.stringify([path, generation]);
+  const receipt = await firstCore.memory.service.call('observe_text', { scope_id: collection.scopeId, text: 'restart boundary amber document', role: 'document', kind: 'document', session_id: documentSource, source_event_id: generation + '#0' });
+  assert.ok(receipt.id);
+  firstCore.store.set('knowledge:collection-ingestions', [{ id: 'interrupted-run', collectionId: collection.id, scopeId: collection.scopeId, baseRevision: collection.revision, created: Date.now(), phase: 'ingesting', cleanupSources: [], files: [{ path, generation, documentSource, sha256: 'test', chunks: 1, accepted: [generation + '#0'] }] }]);
+  await firstCore.close();
+
+  const core = new Core(new Store(state), () => ({ async send() {}, async interrupt() {}, async close() {} }));
+  t.after(async () => { await core.close(); await rm(root, { recursive: true, force: true }); });
+  await core.memory.ready;
+  await core.rpc('collections.list', {});
+  assert.deepEqual(core.store.get<any[]>('knowledge:collection-ingestions', []), []);
+  assert.equal((await core.memory.service.call('retrieve', { scope_id: collection.scopeId, text: 'amber' })).results.length, 0);
 });
 
 test('M06 a bound collection reaches an Ollama request as reference data and its plan lists the sources', async t => {

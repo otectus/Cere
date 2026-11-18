@@ -52,9 +52,13 @@ class ProtocolTest {
         val reply = Message("id", "session", role = "assistant", text = "Hello", revision = "1")
         assertTrue(reply.isConversationMessage())
         assertTrue(reply.copy(role = "user").isConversationMessage())
-        listOf("question", "answer", "queued", "queue-cancelled").forEach { kind ->
+        listOf("question", "answer", "queued", "queue-cancelled", "delegation").forEach { kind ->
             assertTrue(kind, reply.copy(kind = kind).isConversationMessage())
         }
+        // Cere's Delegation update is a user-role row that is not the user's own message.
+        assertTrue(reply.copy(role = "user", kind = "delegation").isDelegationUpdate())
+        assertFalse(reply.copy(role = "user").isDelegationUpdate())
+        assertFalse(reply.copy(kind = "delegation").isDelegationUpdate())
         assertFalse(reply.copy(role = "tool").isConversationMessage())
         assertFalse(reply.copy(kind = "tool").isConversationMessage())
         assertFalse(reply.copy(kind = "thinking").isConversationMessage())

@@ -63,8 +63,9 @@ test('saved general defaults never reach project, delegated or explicitly config
   // The broker never fills in the dialog's defaults: a request keeps exactly what it asked for.
   const explicit = await core.rpc('session.create', { provider: 'codex', cwd, trusted: true });
   assert.deepEqual([explicit.provider, explicit.model, explicit.effort], ['codex', '', '']);
-  // A delegated session uses the model and effort its parent chose, or the CLI's own.
-  await core.updateSettings({ bypassCliPermissions: true });
+  // A delegated session uses the model and effort its parent chose, or the CLI's own. The call runs outside
+  // any parent turn, so automatic delegation updates (tested on their own) stay off here.
+  await core.updateSettings({ bypassCliPermissions: true, delegationUpdates: false });
   const parent = await core.create({ provider: 'ollama', model: 'tools-model', tools: true, cwd, trusted: true });
   const child: any = await core.callTool(parent.id, 'sessions_start', { provider: 'codex', prompt: 'Review the project' }, new AbortController().signal);
   const delegated = core.store.session(child.id);

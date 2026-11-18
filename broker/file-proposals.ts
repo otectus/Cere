@@ -7,17 +7,37 @@
  * private backup first. A proposal applies once. Native CLI edits are not routed through here.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 
 export type FileProposal = {
   id: string; root: string; path: string; display: string; baseSha256: string | null; content: string;
-  diff: string; created: number; expires: number; sessionId: string; reason: string;
+  diff: string; digest: string; created: number; expires: number; sessionId: string; reason: string;
   /** M22: a proposal is used once, whether it was applied or declined. */
   used?: boolean;
 };
-export const proposalLimits = { bytes: 256 * 1024, diffLines: 1500, lifetimeMs: 15 * 60_000, backups: 50 };
+export const proposalLimits = { bytes: 256 * 1024, reviewBytes: 64 * 1024, diffLines: 1500, lifetimeMs: 15 * 60_000, backups: 50 };
 export const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+
+const proposalDigest = (proposal: Pick<FileProposal, 'root' | 'path' | 'display' | 'baseSha256' | 'content' | 'diff' | 'sessionId' | 'reason'>) => sha256(JSON.stringify({
+  root: proposal.root, path: proposal.path, display: proposal.display, baseSha256: proposal.baseSha256,
+  content: proposal.content, diff: proposal.diff, sessionId: proposal.sessionId, reason: proposal.reason,
+}));
+const staleBase = () => Object.assign(new Error('The file changed since this edit was proposed. Nothing was written; review a new proposal.'), { code: 'STALE_BASE' });
+
+// Cere-owned commits for one target are serialized. External editors do not take this lock, so apply
+// also rechecks immediately before replacement and reports conflicts rather than claiming portable CAS.
+const targetLocks = new Map<string, Promise<void>>();
+async function withTargetLock<T>(path: string, task: () => Promise<T>): Promise<T> {
+  const previous = targetLocks.get(path) || Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const current = previous.then(() => gate);
+  targetLocks.set(path, current);
+  await previous;
+  try { return await task(); }
+  finally { release(); if (targetLocks.get(path) === current) targetLocks.delete(path); }
+}
 
 /** A path inside root, without symbolic links on the way, hidden components or traversal. */
 export async function confinedPath(root: string, requested: string) {
@@ -36,10 +56,10 @@ export async function confinedPath(root: string, requested: string) {
   return { base, path: target, rel };
 }
 
-/** A unified-style diff by line; very large inputs get a summary instead of a full listing. */
+/** A complete unified-style diff by line. Operations too large for the review surface are refused. */
 export function lineDiff(before: string, after: string, name: string) {
   const a = before ? before.split('\n') : [], b = after.split('\n');
-  if (a.length > proposalLimits.diffLines || b.length > proposalLimits.diffLines) return `--- ${name}\n+++ ${name}\n@@ Content replaced: ${a.length} lines → ${b.length} lines (too long to list) @@`;
+  if (a.length > proposalLimits.diffLines || b.length > proposalLimits.diffLines) throw new Error(`This edit is too large to review completely (limit: ${proposalLimits.diffLines} lines)`);
   const lcs = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
   for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
   const lines: string[] = [];
@@ -59,7 +79,9 @@ export function lineDiff(before: string, after: string, name: string) {
     else folded.push(...lines.slice(start, end));
     start = end;
   }
-  return [`--- ${name}`, `+++ ${name}`, ...folded].join('\n');
+  const diff = [`--- ${name}`, `+++ ${name}`, ...folded].join('\n');
+  if (Buffer.byteLength(diff) > proposalLimits.reviewBytes) throw new Error('This edit is too large to review completely (limit: 64 KB of diff)');
+  return diff;
 }
 
 export async function propose(p: { root: string; path: string; content: unknown; sessionId: string; reason?: unknown }): Promise<FileProposal> {
@@ -69,33 +91,67 @@ export async function propose(p: { root: string; path: string; content: unknown;
   try { const info = await stat(path); if (!info.isFile()) throw new Error('Only files can be edited'); before = await readFile(path, 'utf8'); }
   catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
   const reason = typeof p.reason === 'string' ? p.reason.slice(0, 500) : '';
-  return { id: randomUUID(), root: base, path, display: rel, baseSha256: before === null ? null : sha256(before), content: p.content,
-    diff: lineDiff(before || '', p.content, rel), created: Date.now(), expires: Date.now() + proposalLimits.lifetimeMs, sessionId: p.sessionId, reason };
+  const proposal = { id: randomUUID(), root: base, path, display: rel, baseSha256: before === null ? null : sha256(before), content: p.content,
+    diff: lineDiff(before || '', p.content, rel), created: Date.now(), expires: Date.now() + proposalLimits.lifetimeMs, sessionId: p.sessionId, reason } as FileProposal;
+  proposal.digest = proposalDigest(proposal);
+  return proposal;
 }
 
 /** Applies a reviewed proposal once, refusing if the file changed since it was proposed. */
-export async function apply(proposal: FileProposal, backups: string) {
+export async function apply(proposal: FileProposal, backups: string, validate: () => void | Promise<void> = () => {}, authorizeCommit: () => void = () => {}) {
   if (proposal.used) throw new Error('This proposal was already used. Ask for a new one.');
   proposal.used = true;
   if (proposal.expires < Date.now()) throw new Error('This proposal expired. Ask for it again.');
-  const { path } = await confinedPath(proposal.root, proposal.display);
-  if (path !== proposal.path) throw new Error('The file’s location changed since the proposal');
-  let current: string | null = null, mode = 0o644;
-  try { const info = await stat(path); mode = info.mode & 0o777; current = await readFile(path, 'utf8'); }
-  catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
-  if ((current === null ? null : sha256(current)) !== proposal.baseSha256) throw Object.assign(new Error('The file changed since this edit was proposed. Nothing was written; review a new proposal.'), { code: 'STALE_BASE' });
-  let backup = '';
-  if (current !== null) {
-    await mkdir(backups, { recursive: true, mode: 0o700 });
-    backup = join(backups, `${Date.now()}-${randomUUID().slice(0, 8)}-${basename(path)}`);
-    await writeFile(backup, current, { mode: 0o600, flag: 'wx' });
-    await pruneBackups(backups);
-  } else await mkdir(dirname(path), { recursive: true });
-  const temporary = join(dirname(path), `.${basename(path)}.cere-${randomUUID().slice(0, 8)}`);
-  const handle = await open(temporary, 'wx', mode);
-  try { await handle.writeFile(proposal.content); await handle.sync(); } finally { await handle.close(); }
-  try { await chmod(temporary, mode); await rename(temporary, path); } catch (error) { await rm(temporary, { force: true }); throw error; }
-  return { path, sha256: sha256(proposal.content), backup, created: current === null };
+  if (proposal.digest !== proposalDigest(proposal)) throw new Error('This file proposal changed after review. Ask for a new one.');
+  const first = await confinedPath(proposal.root, proposal.display);
+  if (first.path !== proposal.path) throw new Error('The file’s location changed since the proposal');
+  return withTargetLock(first.path, async () => {
+    const confined = await confinedPath(proposal.root, proposal.display);
+    if (confined.path !== proposal.path) throw new Error('The file’s location changed since the proposal');
+    let current: string | null = null, mode = 0o644;
+    try { const info = await stat(confined.path); mode = info.mode & 0o777; current = await readFile(confined.path, 'utf8'); }
+    catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
+    if ((current === null ? null : sha256(current)) !== proposal.baseSha256) throw staleBase();
+    if (current === null) await mkdir(dirname(confined.path), { recursive: true });
+    const temporary = join(dirname(confined.path), `.${basename(confined.path)}.cere-${randomUUID().slice(0, 8)}`);
+    let backup = '', committed = false;
+    try {
+      const handle = await open(temporary, 'wx', mode);
+      try { await handle.writeFile(proposal.content); await handle.sync(); }
+      finally { await handle.close(); }
+      await chmod(temporary, mode);
+      await validate();
+      const final = await confinedPath(proposal.root, proposal.display);
+      if (final.path !== proposal.path) throw new Error('The file’s location changed since the proposal');
+      let latest: string | null = null;
+      try { latest = await readFile(final.path, 'utf8'); }
+      catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
+      if ((latest === null ? null : sha256(latest)) !== proposal.baseSha256) throw staleBase();
+      if (latest !== null) {
+        await mkdir(backups, { recursive: true, mode: 0o700 });
+        backup = join(backups, `${Date.now()}-${randomUUID().slice(0, 8)}-${basename(final.path)}`);
+        await writeFile(backup, latest, { mode: 0o600, flag: 'wx' });
+        await pruneBackups(backups);
+      }
+      await validate();
+      const atCommit = await confinedPath(proposal.root, proposal.display);
+      if (atCommit.path !== proposal.path) throw new Error('The file’s location changed since the proposal');
+      let commitBase: string | null = null;
+      try { commitBase = await readFile(atCommit.path, 'utf8'); }
+      catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
+      if ((commitBase === null ? null : sha256(commitBase)) !== proposal.baseSha256) throw staleBase();
+      authorizeCommit();
+      if (commitBase === null) {
+        try { await link(temporary, atCommit.path); }
+        catch (error: any) { if (error?.code === 'EEXIST') throw staleBase(); throw error; }
+      } else await rename(temporary, atCommit.path);
+      committed = true;
+      return { path: atCommit.path, sha256: sha256(proposal.content), backup, created: commitBase === null };
+    } finally {
+      await rm(temporary, { force: true });
+      if (!committed && backup) await rm(backup, { force: true });
+    }
+  });
 }
 async function pruneBackups(directory: string) {
   const names = (await readdir(directory)).sort();

@@ -16,9 +16,9 @@ Rectangle {
 
     // Inputs are explicit so the miniature and workspace share identical behavior.
     property var settings: ({})
-    property var avatar: ({portrait:"cere-portraits.png"})
+    property var avatar: AvatarCatalog.defaultEntry
     readonly property var portraitColors: Theme.paletteFor(avatar.id || settings.avatar)
-    readonly property string portraitFile: avatar.portrait || "cere-portraits.png"
+    readonly property string portraitFile: avatar.portrait || AvatarCatalog.defaultEntry.portrait
     readonly property url portraitSource: assetRoot + portraitFile
     readonly property string assistantName: settings.assistantName || "Cere"
     property var session: ({})
@@ -47,7 +47,7 @@ Rectangle {
         : resolved.tone === "warm" ? portraitColors.portraitWarm : portraitColors.portraitAccent
     readonly property var frames: ({neutral:0, curious:1, thinking:2, happy:3, cheeky:4, skeptical:5,
         tender:6, concerned:7, surprised:8, focused:9, sleepy:10})
-    readonly property int face: blinking ? 11 : (frames[expression] || 0)
+    readonly property int face: blinking && expression === "neutral" ? 11 : (frames[expression] || 0)
     // Production supplies the host's shared source. Standalone previews/tests
     // instantiate the same source component with explicit inputs.
     property var moodSource: null
@@ -104,7 +104,8 @@ Rectangle {
         running: portrait.animated
         onTriggered: {
             interval = 2800 + Math.random() * 3600
-            if (portrait.expression === "cheeky" || portrait.expression === "happy") return
+            // This atlas has one neutral blink. Preserve every other expression.
+            if (portrait.expression !== "neutral") return
             portrait.blinking = true; blinkEnd.start()
         }
     }

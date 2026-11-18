@@ -28,7 +28,10 @@ createInterface({input:process.stdin}).on('line',line=>{
     turn++;decisions=[];pending.clear();reply({turn:{id:`turn-${turn}`}});
     event('turn/started',{turn:{id:`turn-${turn}`}});
     const prompt=m.params.input[0].text;
-    if(prompt==='acting' || prompt==='acting-tender'){
+    if(prompt==='review-hold-stream'){
+      // The reviewer controls the stop after both windows have displayed the live turn.
+      event('item/agentMessage/delta',{itemId:`reply-${turn}`,delta:'Reply in progress.'});
+    }else if(prompt==='acting' || prompt==='acting-tender'){
       const tender=prompt==='acting-tender';
       actingTimers.push(setTimeout(()=>event('item/started',{item:{id:`tool-${turn}`,type:'commandExecution',command:'Fixture working state'}}),1400));
       actingTimers.push(setTimeout(()=>event('item/agentMessage/delta',{itemId:`reply-${turn}`,delta:tender?"I'm here. Take your time.":'You absolute menace. Let me explain.'}),2800));

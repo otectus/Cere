@@ -2,6 +2,8 @@
 
 This is a development implementation of the mobile plan, not a claim that every roadmap phase or external-release gate is complete. Unsupported operations are omitted from capability negotiation. Use the matching broker; a desktop without this gateway cannot pair.
 
+The current paired harness records the SHA-256 of each installed application and instrumentation APK returned by Android's package manager, including split APKs. The base APK digests are also available as `apkSha256` and `testApkSha256` in `summary.json`.
+
 ## Protocol 1.1 and desktop parity (0.1.4 / 1004, 2026-10-20)
 
 Implements the desktop and mobile review (W01–W16). [`docs/REVIEW-VALIDATION.md`](../REVIEW-VALIDATION.md) has the full record, and [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md) the current disposition of every desktop feature and plan row, superseding the plan inventory table below. The phone negotiates protocol 1.1 features and shows only what the desktop offers. New: desktop screen captures attached by digest; desktop draft attachments reviewed and sent as reviewed; project memory for every provider, with typed history, corrections, conflicts, identity decisions, episodes and a health line; pinned replies; conversation style, results and schedule pausing; the still status portrait; a workspace card and a panel of programs missing on the desktop; **Open on desktop** for linked terminals; Claude Code history import; and API providers under per-provider grants. Inbound frames are bounded before they are kept, screen reads are fenced to their desktop connection and transcript, saves are durable and image writes atomic, and losing a network that does not carry the connection no longer ends it.

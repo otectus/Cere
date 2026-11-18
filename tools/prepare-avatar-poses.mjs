@@ -3,14 +3,19 @@
 // bounded native surface sequences. Run from the repository root.
 import sharp from 'sharp';
 import {sheetComponents} from './avatar-sheet.mjs';
+import {applyHeldEyes} from './avatar-eyes.mjs';
+import {authoringAvatars,avatarRoutes} from '../broker/avatars.ts';
 import {mkdir,readFile,writeFile,rename} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-const run=promisify(execFile), interpolate=process.argv[2];
-if(!interpolate) throw Error('Usage: node tools/prepare-avatar-poses.mjs INTERPOLATOR [avatar ...]');
-const sourceConfig=JSON.parse(await readFile('artwork/avatars/sources.json','utf8'));
-const carryOnly=process.argv.includes('--carry-only'),ids=process.argv.slice(3).filter(arg=>arg!=='--carry-only');
-if(!ids.length) ids.push(...JSON.parse(await readFile('assets/avatars.json','utf8')).map(avatar=>avatar.id));
+const run=promisify(execFile),args=process.argv.slice(2);
+const blinkOnly=args.includes('--blink-only'),carryOnly=args.includes('--carry-only');
+if(blinkOnly&&carryOnly)throw Error('--blink-only and --carry-only cannot be combined');
+const positional=args.filter(arg=>arg!=='--blink-only'&&arg!=='--carry-only');
+const interpolate=blinkOnly?null:positional.shift();
+if(!blinkOnly&&!interpolate) throw Error('Usage: node tools/prepare-avatar-poses.mjs INTERPOLATOR [--carry-only] [avatar ...]\n       node tools/prepare-avatar-poses.mjs --blink-only [avatar ...]');
+const requestedIds=positional.length>0,avatars=authoringAvatars(positional);
+const ids=avatars.map(avatar=>avatar.id),sourceConfig=Object.fromEntries(avatars.map(avatar=>[avatar.id,avatar.authoring]));
 const raw=path=>sharp(path).ensureAlpha().raw().toBuffer({resolveWithObject:true});
 const smooth=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
 const median=values=>values.slice().sort((a,b)=>a-b)[Math.floor(values.length/2)];
@@ -24,6 +29,55 @@ function sample(image,x,y){
  }
  if(out[3]>0)for(let c=0;c<3;c++)out[c]*=255/out[3];return out;
 }
+function cropBuffer(data,atlasWidth,rect){
+ const [left,top,width,height]=rect,result=Buffer.alloc(width*height*4);
+ for(let y=0;y<height;y++)data.copy(result,y*width*4,((top+y)*atlasWidth+left)*4,((top+y)*atlasWidth+left+width)*4);
+ return result;
+}
+function blitBuffer(source,width,height,target,targetWidth,left,top){
+ for(let y=0;y<height;y++)source.copy(target,((top+y)*targetWidth+left)*4,y*width*4,(y+1)*width*4);
+}
+const heldRoutes=new Set(['wave','thinking','present','celebrate','shy','carry','shyHover']);
+function heldFrame(part,routes,key){
+ const routeName=key==='shyHover'?'shy':key,route=routes[routeName];
+ if(!route)throw Error(`heldEyes.${key} has no matching surface route`);
+ const candidates=route.frames.filter(frame=>frame>0&&part.surfaceFrames[frame-1]?.blinkSourceRect);
+ if(!candidates.length)throw Error(`heldEyes.${key} has no packed blink cell`);
+ return key==='shyHover'?candidates[0]:candidates.at(-1);
+}
+async function updateHeldBlinks(id,cfg){
+ if(!cfg?.heldEyes){if(requestedIds)throw Error(`${id}: --blink-only requires heldEyes configuration`);return false;}
+ const configured=Object.entries(cfg.heldEyes);
+ if(!configured.length)throw Error(`${id}: heldEyes must define at least one held pose`);
+ for(const [key] of configured)if(!heldRoutes.has(key))throw Error(`${id}: unsupported heldEyes route ${key}`);
+ const packedPath=`assets/${id}-surface.png`,rig=JSON.parse(await readFile(`assets/${id}-surface-rig.json`,'utf8'));
+ const registration=JSON.parse(await readFile(`artwork/avatars/${id}/registration.json`,'utf8'));
+ const atlas=await raw(packedPath),part=rig.parts?.[0],routes=rig.surfaceSequences?.routes;
+ if(!part||!routes||!Array.isArray(registration.targets))throw Error(`${id}: incomplete packed surface metadata`);
+ const [neutralX,neutralY,neutralWidth,neutralHeight]=part.blinkSourceRect||[];
+ if(!neutralWidth||!neutralHeight)throw Error(`${id}: neutral blink art is missing`);
+ const neutralFull=cropBuffer(atlas.data,atlas.info.width,[neutralX,neutralY,neutralWidth,neutralHeight]);
+ let changed=0;
+ for(const [key,spec] of configured){
+  const frameId=heldFrame(part,routes,key),frame=part.surfaceFrames[frameId-1];
+  const width=frame.sourceRect[2],height=frame.sourceRect[3],[blinkX,blinkY,blinkWidth,blinkHeight]=frame.blinkSourceRect;
+  if(width!==blinkWidth||height!==blinkHeight)throw Error(`${id}/${key}: open and blink cells differ in size`);
+  const openFrame=cropBuffer(atlas.data,atlas.info.width,frame.sourceRect);
+  const neutralBlink=(await sharp(neutralFull,{raw:{width:neutralWidth,height:neutralHeight,channels:4}}).resize(width,height).raw().toBuffer());
+  const repaired=applyHeldEyes({open:openFrame,neutralBlink,width,height,neutralTargets:registration.targets,spec,sourceEyes:cfg.heldEyeSource});
+  blitBuffer(repaired,width,height,atlas.data,atlas.info.width,blinkX,blinkY);changed++;
+ }
+ const temporary=packedPath+'.blink-only.tmp';
+ await sharp(atlas.data,{raw:atlas.info}).png().toFile(temporary);await rename(temporary,packedPath);
+ console.log(`${id}: repaired ${changed} held blink cell${changed===1?'':'s'}; open frames and rig geometry unchanged`);
+ return true;
+}
+if(blinkOnly){
+ let changed=0;
+ for(const id of ids){const cfg=sourceConfig[id];if(!cfg)throw Error(`${id}: missing source registration`);changed+=await updateHeldBlinks(id,cfg);}
+ if(!changed)throw Error('No heldEyes configuration found');
+ process.exit(0);
+}
 function iris(image,box,color){
  const {data,info:{width:w,height:h}}=image;let x=0,y=0,mass=0;
  for(let yy=Math.max(0,Math.floor(box[1]));yy<Math.min(h,box[3]);yy++)for(let xx=Math.max(0,Math.floor(box[0]));xx<Math.min(w,box[2]);xx++){
@@ -36,6 +90,7 @@ function iris(image,box,color){
   if(color==='brown')weight=r>65&&r>g*1.35&&r>b*1.5&&g<120?r-Math.max(g,b):0;
   if(color==='amber')weight=r>170&&g>75&&g<195&&b<100&&r>g*1.25?r-b:0;
   if(color==='green')weight=g>110&&g>r*1.09&&g>b*1.04?g-Math.min(r,b):0;
+  if(color==='olive')weight=g>65&&r<195&&g>r*.85&&g>b*1.25?g-b:0;
   x+=xx*weight;y+=yy*weight;mass+=weight;
  }
  return mass>40?{x:x/mass,y:y/mass,mass}:null;
@@ -82,9 +137,10 @@ function baseline(image){
 const motions={wave:'wave',greeting:'wave',goodbye:'wave',thinking:'thinking',ponder:'thinking',curious:'thinking',skeptical:'thinking',explainOpen:'present',explainSweep:'present',speaking:'present',listen:'present',approval:'present',celebrate:'celebrate',success:'celebrate',fistPump:'celebrate',shy:'shy',blush:'shy',hoverBlush:'shy',clickBlush:'shy',dragging:'carry'};
 for(const id of ids){
  const dir=`artwork/avatars/${id}`,original=await raw(`${dir}/front.png`),originalBlink=await raw(`${dir}/blink.png`);
- const cfg=sourceConfig[id],W=400,H=id==='cere'?420:460,fullW=W*2,fullH=H*2,referenceHeight=cfg?.referenceHeight||(id==='cere'?760:840);
- if(id!=='cere'&&!cfg)throw Error(`${id}: missing source registration`);
- const ox=Math.floor((fullW-original.info.width)/2),oy=id==='cere'?80:fullH-8-(cfg.bounds[3]+1);
+ const cfg=sourceConfig[id];
+ if(!cfg)throw Error(`${id}: missing source registration`);
+ const W=400,H=cfg.frameHeight||460,fullW=W*2,fullH=H*2,referenceHeight=cfg.referenceHeight||840;
+ const [ox,oy]=cfg.originalOffset||[Math.floor((fullW-original.info.width)/2),fullH-8-(cfg.bounds[3]+1)];
  const open=Buffer.alloc(fullW*fullH*4),closed=Buffer.alloc(open.length);
  if(ox<0||oy<0)throw Error(`${id}: reference exceeds the neutral canvas`);
  for(let y=0;y<original.info.height;y++){
@@ -97,8 +153,8 @@ for(const id of ids){
  }
  const neutral=await sharp(open,{raw:{width:fullW,height:fullH,channels:4}}).resize(W,H).raw().toBuffer({resolveWithObject:true});
  const blink=await sharp(closed,{raw:{width:fullW,height:fullH,channels:4}}).resize(W,H).raw().toBuffer({resolveWithObject:true});
- const color=id==='cere'?'cyan':cfg.color;
- const boxes=id==='cere'?[[140,230,205,285],[240,230,310,285]]:cfg.eyes.map(([x,y,w,h])=>[x-cfg.crop[0],y-cfg.crop[1],x-cfg.crop[0]+w,y-cfg.crop[1]+h]);
+ const color=cfg.color;
+ const boxes=cfg.irisBoxes||cfg.eyes.map(([x,y,w,h])=>[x-cfg.crop[0],y-cfg.crop[1],x-cfg.crop[0]+w,y-cfg.crop[1]+h]);
  const eyeTargets=boxes.map(b=>iris(original,b,color));
  if(eyeTargets.some(e=>!e))throw Error(id+': reference iris missing');
  if(eyeTargets.length<1||eyeTargets.length>2)throw Error(id+': register one or two visible eyes');
@@ -123,21 +179,26 @@ for(const id of ids){
  }
  const cache=`build/avatar-frames/${id}`;await mkdir(cache+'/inbetweens',{recursive:true});
  const neutralPath=`${cache}/neutral.png`;await sharp(neutral.data,{raw:neutral.info}).png().toFile(neutralPath);
- for(const name of carryOnly?['carry']:['wave','thinking','present','celebrate','shy','carry']){
+ for(const name of carryOnly?['carry']:avatarRoutes){
   // Isolate the connected figure for every avatar. The legacy rectangular
   // crops also admitted faint sheet rules and detached background debris.
-  const sheet=await raw(`${dir}/${name}-sheet.png`),cells=[],components=sheetComponents(sheet);
+  const sheet=await raw(`${dir}/${name}-sheet.png`),cells=[],sourceComponents=sheetComponents(sheet);
+  // Some authored sheets return to rest at the end. Retain reviewed source
+  // frames in progression order; the runtime already supplies the return.
+  const order=cfg.cellOrder?.[name]||Array.from({length:16},(_,i)=>i);
+  if(order.length!==16||order.some(i=>!Number.isInteger(i)||i<0||i>=16))throw Error(`${id}/${name}: invalid cell order`);
+  const components=order.map(i=>sourceComponents[i]);
   for(let n=0;n<16;n++){
    const cell=components[n];
    const cw=cell.info.width,ch=cell.info.height;
    // Explicit landmarks distinguish an iris from same-colored hair or facial
    // markings. Closed authored eyes still provide a stable registration point.
-   const authored=cfg?.sheetLandmarks?.[name]?.[n];
+   const authored=cfg?.sheetLandmarks?.[name]?.[order[n]];
    if(cfg?.sheetLandmarks?.[name] && (cfg.sheetLandmarks[name].length!==16 ||
       !authored || authored.eyes.length!==targets.length ||
       authored.eyes.some(p=>p.length!==2||p.some(v=>!Number.isFinite(v)||v<=0||v>=1))))
     throw Error(`${id}/${name}/${n}: invalid authored eye landmarks`);
-   const eyeBoxes=cfg?.sheetEyes||[[id==='nova'?.39:.33,id==='nova'?.31:.27,.49,.41],[.50,id==='nova'?.31:.27,id==='nova'?.62:.66,.41]];
+ const eyeBoxes=cfg.sheetEyes||[[.33,.27,.49,.41],[.50,.27,.66,.41]];
    const points=authored?authored.eyes.map(([x,y])=>({x:x*cw,y:y*ch}))
                         :eyeBoxes.map(box=>iris(cell,box.map((value,axis)=>value*(axis%2?ch:cw)),color));
    const [a,b]=points;
@@ -206,7 +267,12 @@ for(const id of ids){
     shut=(await raw(registrationPrefix+'-blink.png')).data;
     bodyRegistration=JSON.parse(await readFile(registrationPrefix+'.json','utf8'));
    }
+   const heldKey=n===15?name:name==='shy'&&n===6?'shyHover':null;
+   if(heldKey&&cfg.heldEyes?.[heldKey])shut=applyHeldEyes({
+    open:data,neutralBlink:blink.data,width:W,height:H,neutralTargets:targets,spec:cfg.heldEyes[heldKey],sourceEyes:cfg.heldEyeSource
+   });
    await sharp(data,{raw:{width:W,height:H,channels:4}}).png().toFile(next);
+   await sharp(shut,{raw:{width:W,height:H,channels:4}}).png().toFile(next+'.blink.png');
    const steps=n===0?5:2,prefix=`${cache}/inbetweens/${name}-${String(n).padStart(2,'0')}`;
    await run(interpolate,[previous,next,prefix,String(steps),...(carried?[]:[String(visibleBaseline(neutral))])]);
    for(let s=1;s<=steps;s++){
@@ -234,7 +300,7 @@ for(const id of ids){
  await sharp(atlas,{raw:{width:atlasW,height:atlasH,channels:4}}).png().toFile(packedPath+'.tmp');
  await rename(packedPath+'.tmp',packedPath);
  await writeFile(`assets/${id}-surface-rig.json`,JSON.stringify(rig,null,2)+'\n');
- if(id==='cere'){const base=JSON.parse(await readFile('assets/cere-rig.json','utf8'));await writeFile('assets/cere-rig.json',JSON.stringify({...base,...rig},null,2)+'\n');}
+ if(id==='cere_default'){const base=JSON.parse(await readFile('assets/cere-rig.json','utf8'));await writeFile('assets/cere-rig.json',JSON.stringify({...base,...rig},null,2)+'\n');}
  await writeFile(`${dir}/registration.json`,JSON.stringify(registration,null,2)+'\n');
  console.log(`${id}: ${frames.length} frames, ${atlasW}x${atlasH}, grounded at ${ground}`);
 }

@@ -135,13 +135,49 @@ test('M23 commands run one program without a shell or the broker environment; a 
   assert.equal(posts.requests.length, 1);
   assert.ok(!core.toolsFor(session.id).some(tool => tool.function.name === 'custom_save_item'));
   const changing = core.callTool(session.id, 'custom_echo', { text: 'z' }, signal);
-  const asked = await approval(core);
+  await approval(core);
   await core.updateSettings({ customTools: core.settings.customTools.map(tool => tool.name === 'echo' ? { ...tool, timeoutSeconds: 2 } : tool) });
-  core.answer({ id: asked.id, choice: 'allow' });
-  await assert.rejects(changing, /changed while waiting for approval/);
+  assert.deepEqual(await changing, { ran: false, message: 'The user declined this custom tool call.' });
   // Conversations without tools, and the review posture, see no custom tools.
   const plain = await core.create({ provider: 'openai', model: 'm', cwd: dir });
   assert.ok(!core.toolsFor(plain.id).some(tool => tool.function.name.startsWith('custom_')));
   await core.rpc('session.behavior', { id: session.id, postureId: 'posture:review' });
   assert.ok(!core.toolsFor(session.id).some(tool => tool.function.name.startsWith('custom_')));
+});
+
+test('AUD-011/AUD-016 custom tools expose the complete bounded operation and reject expanded option injection', async t => {
+  const adjacent = (await validTemplates([{ name: 'adjacent', description: 'Adjacent inputs.', kind: 'command', enabled: true, inputs: [
+    { name: 'prefix', type: 'string' }, { name: 'middle', type: 'string' }, { name: 'value', type: 'string', required: true }, { name: 'number', type: 'number' },
+  ], command: { executable: process.execPath, args: ['{prefix}{middle}{value}', '--number={number}'], cwd: tmpdir() } }]))[0];
+  assert.deepEqual(buildCommand(adjacent, { value: 'notes.md', number: -2 }), ['notes.md', '--number=-2']);
+  assert.throws(() => buildCommand(adjacent, { value: '--unexpected-option' }), /cannot start with "-"/);
+  assert.throws(() => buildCommand(adjacent, { prefix: '', middle: '', value: '-1' }), /cannot start with "-"/, 'negative variable-led operands follow the documented option rule');
+
+  const { core, session } = await broker(t);
+  const target = await server(t, (_req, _body, res) => res.end('{}'));
+  const longTail = 'TAIL-' + 'z'.repeat(1900);
+  await core.updateSettings({ customTools: [{ name: 'review_body', description: 'Review a body.', kind: 'http', enabled: true, timeoutSeconds: 2,
+    inputs: [{ name: 'id', type: 'string', required: true }, { name: 'first', type: 'string' }, { name: 'last', type: 'string' }],
+    http: { method: 'POST', url: `${target.base}/items/{id}`, body: 'json', credential: 'bearer', allowPrivate: true } }] });
+  const reviewId = core.settings.customTools[0].id;
+  await core.rpc('customTools.credential', { id: reviewId, value: 'first-credential' });
+  const call = core.callTool(session.id, 'custom_review_body', { id: 'x', first: 'a'.repeat(1900), last: longTail }, new AbortController().signal);
+  const asked = await approval(core);
+  assert.equal(asked.fields!.reviewComplete, true);
+  assert.match(asked.fields!.digest, /^[0-9a-f]{64}$/);
+  assert.match(asked.detail, /TAIL-z{100}/, 'content beyond the former 3,000-character cutoff remains reviewable');
+  core.answer({ id: asked.id, choice: 'deny' });
+  assert.equal((await call as any).ran, false);
+
+  const changedCredential = core.callTool(session.id, 'custom_review_body', { id: 'x', last: 'must-not-run' }, new AbortController().signal);
+  await approval(core);
+  await core.rpc('customTools.credential', { id: reviewId, value: 'replacement-credential' });
+  assert.deepEqual(await changedCredential, { ran: false, message: 'The user declined this custom tool call.' });
+  assert.equal(target.requests.length, 0);
+
+  const repeated = Array.from({ length: 32 }, () => '{value}');
+  await core.updateSettings({ customTools: [{ name: 'too_large', description: 'Too large to review.', kind: 'command', enabled: true, timeoutSeconds: 2,
+    inputs: [{ name: 'value', type: 'string', required: true, maxLength: 2000 }], command: { executable: process.execPath, args: repeated, cwd: tmpdir() } }] });
+  await assert.rejects(core.callTool(session.id, 'custom_too_large', { value: 'x'.repeat(2000) }, new AbortController().signal), /too large to review completely/);
+  assert.equal(core.approvals.size, 0, 'an incomplete operation never becomes approvable');
 });

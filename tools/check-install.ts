@@ -9,14 +9,15 @@
  *
  * Exit 1 lists what is missing or different.
  */
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const [prefixArgument, expectedCommit] = process.argv.slice(2);
 if (!prefixArgument) { console.error('Usage: check-install.ts <prefix> [expected-commit]'); process.exit(2); }
-const prefix = resolve(prefixArgument), root = new URL('..', import.meta.url).pathname, share = join(prefix, 'share/cere');
-const tracked = (dir: string) => execFileSync('git', ['-C', root, 'ls-files', dir], { encoding: 'utf8' }).split('\n').filter(Boolean);
+const prefix = resolve(prefixArgument), root = fileURLToPath(new URL('..', import.meta.url)), share = join(prefix, 'share/cere');
+const tracked = (dir: string) => execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', dir], { encoding: 'utf8' }).split('\0').filter(file => file && existsSync(join(root, file)));
 const problems: string[] = [];
 const need = (path: string, what: string) => { if (!existsSync(path)) problems.push(`missing ${what}: ${path.slice(prefix.length + 1)}`); };
 const executable = (path: string) => { need(path, 'program'); try { accessSync(path, constants.X_OK); } catch { if (existsSync(path)) problems.push(`not executable: ${path.slice(prefix.length + 1)}`); } };
@@ -24,8 +25,9 @@ const executable = (path: string) => { need(path, 'program'); try { accessSync(p
 for (const dir of ['broker', 'qml', 'assets', 'protocol', 'shell']) for (const file of tracked(dir)) {
   const installed = join(share, file);
   need(installed, dir + ' file');
-  if (existsSync(installed) && statSync(installed).size !== statSync(join(root, file)).size) problems.push(`differs from source: share/cere/${file}`);
+  if (existsSync(installed) && (!statSync(installed).isFile() || !readFileSync(installed).equals(readFileSync(join(root, file))))) problems.push(`differs from source: share/cere/${file}`);
 }
+executable(join(share, 'broker/graph-memory/adapters/fish/cere-memory-emitter.py'));
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 for (const name of Object.keys(manifest.dependencies || {})) need(join(share, 'node_modules', name, 'package.json'), 'runtime package');
 for (const module of ['cere-peercred.node', 'cere-telemetry.node']) need(join(share, 'native', module), 'native module');

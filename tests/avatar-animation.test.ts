@@ -99,6 +99,33 @@ test('all clips stay finite and within their puppet channel limits', () => {
   }
 });
 
+test('every clip releases all continuous transforms and carry springs back to the idle stance', () => {
+  const idle = catalog.puppet.poses['0'].joints;
+  for (const [name, clip] of Object.entries<any>(catalog.clips)) {
+    const state = stateFor('idle');
+    motion.select(state, clip, catalog, name);
+    const duration = (clip.entryMs || 0) + clip.keys.reduce((ms: number, key: any) => ms + key.ms, 0);
+    // Include each authored key and a live carry velocity before interruption.
+    for (let i = 0; i < Math.ceil(duration / 1000 * 60); ++i)
+      motion.sample(state, 1 / 60, 1, .6, -.4, 150, -90, false, { hovered: true });
+    motion.select(state, catalog.clips.idle, catalog, 'idle');
+    state.nextBlink = Infinity;
+    state.lastBlink = Infinity;
+    // Suppress ongoing life offsets to isolate residual transforms. Idle has an
+    // authored stance; its nonzero relaxed arm angles are not stale animation.
+    let result: any;
+    for (let i = 0; i < 960; ++i) result = sample(state, 1 / 120, 0);
+    for (const channel of channels) {
+      assert.ok(Math.abs(result[channel] - (idle[channel] || 0)) < 1e-7,
+        `${name}/${channel}: returns to idle stance`);
+      assert.ok(Math.abs(state.springs[channel].velocity) < 1e-7,
+        `${name}/${channel}: no residual velocity`);
+    }
+    assert.ok(result.carried < 1e-7 && Math.abs(state.carrying.velocity) < 1e-7,
+      `${name}: carry anchor releases completely`);
+  }
+});
+
 test('still mode is the exact first stance and never advances either clock', () => {
   for (const [name, clip] of Object.entries<any>(catalog.clips)) {
     const state = stateFor(name);
@@ -334,6 +361,24 @@ test('an interrupted blink finishes smoothly while a new gesture starts', () => 
   assert.equal(state.blink, 0);
 });
 
+test('authored eye clips let an automatic blink finish without restarting it', () => {
+  for (const name of ['blink', 'doubleBlink', 'doze', 'cheeky']) {
+    const state = stateFor('idle', 5);
+    let before: any;
+    for (let i = 0; i < 500; ++i) {
+      before = sample(state);
+      if (before.blink > .2 && before.blink < .8) break;
+    }
+    assert.ok(before.blink > .2 && before.blink < .8, name);
+    motion.select(state, catalog.clips[name], catalog, name);
+    assert.equal(sample(state, 0).blink, before.blink, name + ': no interruption pop');
+    assert.ok(Math.abs(sample(state, 1 / 240).blink - before.blink) < .12, name);
+    for (let i = 0; i < 90; ++i) sample(state);
+    assert.equal(state.blink, 0, name + ': the inherited blink completes');
+    for (let i = 0; i < 1000; ++i) assert.equal(sample(state).blink, 0, name + ': no new automatic blink');
+  }
+});
+
 test('energy profiles preserve Calm and give Lively more frequent autonomous beats', () => {
   const run = (profile: string) => {
     const state=stateFor('idle',17);motion.configure(state,profile,'neutral');
@@ -377,6 +422,9 @@ test('occluded eyes defer their overdue blink and authored eye clips own their e
   for(const name of ['wink','doze','cheeky','doubleBlink']) {
     if(!catalog.clips[name])continue;
     motion.select(state,catalog.clips[name],catalog,name);
+    // An inherited automatic blink is allowed to complete; authored clips
+    // prevent subsequent automatic blinks, not the in-flight eyelid envelope.
+    for(let i=0;i<90;i++)sample(state);
     for(let i=0;i<1000;i++)assert.equal(sample(state).blink,0,name);
   }
 });

@@ -113,7 +113,7 @@ class StaleResultException : IllegalStateException("This changed on the desktop 
  * same transcript epoch (memory erasure changes it). A late result can then never restore erased
  * text or a conversation a newer snapshot removed.
  */
-internal data class ReadFence(val desktopId: String?, val connection: Long, val cacheEpoch: String?) {
+internal data class ReadFence(val desktopId: String?, val connection: Long, val cacheEpoch: String?, val authorityGeneration: Long = 0, val snapshotGeneration: Long = 0) {
     fun holds(state: MobileState, connectionNow: Long, epoch: Boolean = true) =
         connection != HeldUpserts.NONE && connection == connectionNow && desktopId == state.desktop?.desktopId && (!epoch || cacheEpoch == state.cacheEpoch)
 }
@@ -145,7 +145,7 @@ class CereRepository(context: Context) {
     private val pendingResponses = ConcurrentHashMap<String, CompletableDeferred<WireResponse>>()
     private val uploadProgress = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
     private val binaryReads = ConcurrentHashMap<String, CompletableDeferred<Pair<Long, ByteArray>>>()
-    private val stateMutex = Mutex(); private val syncMutex = Mutex(); private val restoreMutex = Mutex()
+    private val stateMutex = Mutex(); private val commitGate = RepositoryCommitGate(stateMutex); private val syncMutex = Mutex(); private val restoreMutex = Mutex()
     private val draftMutexes = ConcurrentHashMap<String, Mutex>()
     private val approvalRetirements = ApprovalRetirements()
     private val snapshotRequests = Channel<Unit>(Channel.CONFLATED)
@@ -245,6 +245,7 @@ class CereRepository(context: Context) {
     /** Seal the response and new aliases before showing them. The old pairing remains committed. */
     suspend fun stagePairing(completed: CompletedPairing) {
         pairingTransition = true
+        commitGate.invalidate()
         try {
             stateMutex.withLock {
                 val current = _state.value
@@ -259,6 +260,7 @@ class CereRepository(context: Context) {
                     lastError = null,
                 )
                 store.write(cached(staged, lastVerified))
+                authorizedSessionIds = emptySet()
                 _state.value = staged
                 cacheDirty = false
             }
@@ -270,6 +272,7 @@ class CereRepository(context: Context) {
     }
 
     suspend fun completePairing(completed: CompletedPairing) {
+        commitGate.invalidate()
         val replacing = stateMutex.withLock {
             val current = _state.value
             require(current.stagedPairing == completed) { "Pairing response was not durably staged" }
@@ -290,6 +293,7 @@ class CereRepository(context: Context) {
                 lastError = null,
             )
             store.write(cached(next, lastVerified))
+            authorizedSessionIds = emptySet()
             _state.value = next
             cacheDirty = false
             previousDesktop
@@ -304,6 +308,7 @@ class CereRepository(context: Context) {
     }
 
     suspend fun cancelStagedPairing() {
+        commitGate.invalidate()
         val staged = stateMutex.withLock {
             val current = _state.value
             val pending = current.stagedPairing ?: return@withLock null
@@ -315,6 +320,7 @@ class CereRepository(context: Context) {
                 lastError = null,
             )
             store.write(cached(next, lastVerified))
+            authorizedSessionIds = emptySet()
             _state.value = next
             cacheDirty = false
             pending
@@ -450,17 +456,18 @@ class CereRepository(context: Context) {
      */
     suspend fun discardUnreadableCache() {
         check(restoreFailure?.repair == true) { "Only private data that cannot be read is discarded here." }
-        store.clear()
-        restoreMutex.withLock { stateMutex.withLock { _state.value = MobileState(restoreReady = true); cacheDirty = false; restoreBlocked = false; restoreFailure = null } }
+        commitGate.invalidate()
+        restoreMutex.withLock { stateMutex.withLock { store.clear(); _state.value = MobileState(restoreReady = true); cacheDirty = false; restoreBlocked = false; restoreFailure = null } }
         synchronized(this) { terminalBlocked = false; authRejections.reset() }
     }
     suspend fun forget() {
         val desktop = _state.value.desktop
+        commitGate.invalidate()
         if (desktop != null && _state.value.supports("devices.selfRevoke")) runCatching { mutate("devices.selfRevoke", buildJsonObject {}) }
         val staged = _state.value.stagedPairing?.desktop
         if (desktop == null && staged == null) return
         stopMonitoring("Forgotten"); synchronized(flushLock) { flushJob?.cancel(); flushJob = null }
-        desktop?.let { runCatching { pairing.delete(it) } }; staged?.let { runCatching { pairing.delete(it) } }; store.clear(); stateMutex.withLock { _state.value = MobileState(restoreReady = true); cacheDirty = false }
+        desktop?.let { runCatching { pairing.delete(it) } }; staged?.let { runCatching { pairing.delete(it) } }; stateMutex.withLock { authorizedSessionIds = emptySet(); store.clear(); _state.value = MobileState(restoreReady = true); cacheDirty = false }
         pairingTransition = false; approvalRetirements.clear(); questionDraftIdentities.clear(); approvalMutationIdentities.clear()
         _questionDrafts.value = emptyMap(); _approvalMutations.value = emptySet()
         synchronized(this) { terminalBlocked = false; authRejections.reset() }
@@ -471,8 +478,8 @@ class CereRepository(context: Context) {
         if (sessionId != null && _state.value.supports("sessions.get")) runCatching {
             val fence = fence()
             val full = WireCodec.json.decodeFromJsonElement(Session.serializer(), request("sessions.get", buildJsonObject { put("sessionId", sessionId) }))
-            updateState { current ->
-                if (!fence.holds(current, socketGeneration) || current.sessions.none { it.id == sessionId }) return@updateState current
+            updateState(remoteFence = fence) { current ->
+                if (current.sessions.none { it.id == sessionId }) return@updateState current
                 val merged = CacheReconciler.mergeSession(current.sessions.firstOrNull { it.id == sessionId }, full)
                 val draft = CacheReconciler.mergeDraft(current.drafts[sessionId], merged)
                 current.copy(sessions = current.sessions.map { if (it.id == sessionId) merged else it }, drafts = current.drafts + (sessionId to draft))
@@ -534,19 +541,25 @@ class CereRepository(context: Context) {
         val items = result["items"]?.jsonArray.orEmpty().map { WireCodec.json.decodeFromJsonElement(Session.serializer(), it) }
         mergeSummaries(items, fence) { current -> current.copy(search = current.search?.takeIf { it.query == search.query }?.copy(nextOffset = result["nextOffset"]?.jsonPrimitive?.intOrNull)) }
     }
-    private suspend fun mergeSummaries(items: List<Session>, fence: ReadFence? = null, extra: (MobileState) -> MobileState = { it }) = updateState { current ->
+    private suspend fun mergeSummaries(items: List<Session>, fence: ReadFence? = null, extra: (MobileState) -> MobileState = { it }) = updateState(remoteFence = fence, checkEpoch = false) { current ->
         // A summary from an older connection or pairing could restore a conversation that left scope.
-        if (fence != null && !fence.holds(current, socketGeneration, epoch = false)) return@updateState current
         val existing = current.sessions.associateBy(Session::id)
         val incoming = items.map { CacheReconciler.mergeSession(existing[it.id], it) }.associateBy(Session::id)
         extra(current.copy(sessions = current.sessions.filterNot { it.id in incoming } + incoming.values))
     }
 
-    private fun fence() = ReadFence(_state.value.desktop?.desktopId, socketGeneration, _state.value.cacheEpoch)
+    private var authorizedSessionIds: Set<String> = emptySet()
+    private fun fence() = commitGate.capture(_state.value.desktop?.desktopId, socketGeneration, _state.value.cacheEpoch)
+    /** Same paired desktop, socket, scope and erasure epoch; used only for catalog display reads. */
+    private fun authorityFenceCurrent(fence: ReadFence, epoch: Boolean = true) = !pairingTransition && _state.value.stagedPairing == null &&
+        commitGate.authorityCurrent(fence) && fence.holds(_state.value, socketGeneration, epoch)
+    /** Resource reads and state commits preserve authoritative snapshot ordering. */
+    private fun fenceCurrent(fence: ReadFence, epoch: Boolean = true) = authorityFenceCurrent(fence, epoch) &&
+        fence.snapshotGeneration == commitGate.snapshotGeneration
     /** [request] for a result shown on a screen: refused with [StaleResultException] when its fence no longer holds. */
     suspend fun read(method: String, params: JsonObject): JsonElement {
         val fence = fence(); val result = request(method, params)
-        if (!fence.holds(_state.value, socketGeneration)) throw StaleResultException()
+        if (!fenceCurrent(fence)) throw StaleResultException()
         return result
     }
     suspend fun request(method: String, params: JsonObject): JsonElement {
@@ -675,7 +688,7 @@ class CereRepository(context: Context) {
         val fence = fence()
         val result = mutate("messages.bookmark", buildJsonObject { put("sessionId", message.sessionId); put("messageId", message.id); put("bookmarked", bookmarked) })
         val updated = WireCodec.json.decodeFromJsonElement(Message.serializer(), result)
-        updateState { current -> if (!fence.holds(current, socketGeneration)) current else current.copy(messages = mergeMessages(current.messages, listOf(updated))) }
+        updateState(remoteFence = fence) { current -> current.copy(messages = mergeMessages(current.messages, listOf(updated))) }
     }
     /** The pinned replies of [sessionId], newest pin first. */
     suspend fun pinnedReplies(sessionId: String): List<Message> =
@@ -688,7 +701,7 @@ class CereRepository(context: Context) {
         val preview = if (metadata["kind"]?.jsonPrimitive?.contentOrNull == "text")
             DesktopAttachmentPreview.Text(metadata.getValue("text").jsonPrimitive.content, metadata["truncated"]?.jsonPrimitive?.booleanOrNull == true)
         else DesktopAttachmentPreview.Image(readPreview(metadata))
-        if (!fence.holds(_state.value, socketGeneration)) throw StaleResultException()
+        if (!fenceCurrent(fence)) throw StaleResultException()
         return preview
     }
 
@@ -753,7 +766,7 @@ class CereRepository(context: Context) {
         val result = request("sessions.messages", buildJsonObject { put("sessionId", sessionId); put("limit", 100) }).jsonObject
         val incoming = result["items"]?.jsonArray?.map { WireCodec.json.decodeFromJsonElement(Message.serializer(), it) }.orEmpty()
         val before = result["before"]?.jsonPrimitive?.contentOrNull
-        updateState(System.currentTimeMillis()) { current -> if (!fence.holds(current, socketGeneration) || current.sessions.none { it.id == sessionId }) current
+        updateState(System.currentTimeMillis(), remoteFence = fence) { current -> if (current.sessions.none { it.id == sessionId }) current
             else current.copy(messages = mergeMessages(current.messages, incoming), messagesBefore = if (before == null) current.messagesBefore - sessionId else current.messagesBefore + (sessionId to before)) }
     }
     suspend fun loadOlderMessages(sessionId: String) {
@@ -761,7 +774,7 @@ class CereRepository(context: Context) {
         val fence = fence()
         val result = request("sessions.messages", buildJsonObject { put("sessionId", sessionId); put("before", before); put("limit", 100) }).jsonObject
         val incoming = result["items"]?.jsonArray?.map { WireCodec.json.decodeFromJsonElement(Message.serializer(), it) }.orEmpty(); val next = result["before"]?.jsonPrimitive?.contentOrNull
-        updateState(System.currentTimeMillis()) { current -> if (!fence.holds(current, socketGeneration) || current.sessions.none { it.id == sessionId }) current
+        updateState(System.currentTimeMillis(), remoteFence = fence) { current -> if (current.sessions.none { it.id == sessionId }) current
             else current.copy(messages = mergeMessages(current.messages, incoming), messagesBefore = if (next == null) current.messagesBefore - sessionId else current.messagesBefore + (sessionId to next)) }
     }
     /** The newest Activity page; [loadOlderActivity] continues past it when the desktop pages Activity. */
@@ -770,7 +783,7 @@ class CereRepository(context: Context) {
         if (!_state.value.supports("activity.page")) {
             val incoming = request("activity.list", buildJsonObject { put("sessionId", sessionId); put("limit", 100) }).jsonArray
                 .map { WireCodec.json.decodeFromJsonElement(Message.serializer(), it) }
-            updateState { current -> if (!fence.holds(current, socketGeneration)) current else current.copy(messages = mergeMessages(current.messages, incoming)) }
+            updateState(remoteFence = fence) { current -> current.copy(messages = mergeMessages(current.messages, incoming)) }
             return
         }
         val result = request("activity.page", buildJsonObject { put("sessionId", sessionId); put("limit", 100) }).jsonObject
@@ -785,13 +798,20 @@ class CereRepository(context: Context) {
     private suspend fun applyActivity(sessionId: String, result: JsonObject, fence: ReadFence) {
         val incoming = result["items"]?.jsonArray.orEmpty().map { WireCodec.json.decodeFromJsonElement(Message.serializer(), it) }
         val before = result["before"]?.jsonPrimitive?.contentOrNull
-        updateState { current -> if (!fence.holds(current, socketGeneration) || current.sessions.none { it.id == sessionId }) current else current.copy(messages = mergeMessages(current.messages, incoming),
+        updateState(remoteFence = fence) { current -> if (current.sessions.none { it.id == sessionId }) current else current.copy(messages = mergeMessages(current.messages, incoming),
             activityBefore = if (before == null) current.activityBefore - sessionId else current.activityBefore + (sessionId to before)) }
     }
     suspend fun models(provider: String, refresh: Boolean = false, sessionId: String? = null): List<ModelOption> {
         val cached = _state.value.providers[provider]?.jsonObject?.get("models")?.jsonArray.orEmpty().mapNotNull { runCatching { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }.getOrNull() }
         if (!refresh && sessionId == null && cached.isNotEmpty()) return cached; if (!_state.value.supports("providers.models")) return emptyList()
-        return read("providers.models", buildJsonObject { put("provider", provider); sessionId?.let { put("sessionId", it) } }).jsonArray.map { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }
+        val fence = fence()
+        val result = request("providers.models", buildJsonObject { put("provider", provider); sessionId?.let { put("sessionId", it) } })
+        // A routine snapshot may publish while this display-only catalog request is in flight. It
+        // does not revoke the desktop. A session-scoped catalog still needs that exact session in
+        // the current authorized snapshot; all other resource reads remain snapshot-fenced.
+        val sessionStillAuthorized = sessionId == null || (sessionId in authorizedSessionIds && _state.value.sessions.any { it.id == sessionId })
+        if (!authorityFenceCurrent(fence) || !sessionStillAuthorized) throw StaleResultException()
+        return result.jsonArray.map { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }
     }
 
     suspend fun importImage(sessionId: String, uri: android.net.Uri): LocalAttachment {
@@ -883,7 +903,7 @@ class CereRepository(context: Context) {
         try {
             val metadata = request("approvals.preview", buildJsonObject { put("approvalId", approval.id); put("revision", approval.revision); put("digest", approval.digest) }).jsonObject
             val preview = readPreview(metadata)
-            if (!fence.holds(_state.value, socketGeneration)) throw StaleResultException()
+            if (!fenceCurrent(fence)) throw StaleResultException()
             return preview
         } catch (error: RemoteRequestException) {
             when (error.code) {
@@ -910,7 +930,7 @@ class CereRepository(context: Context) {
             content.append(next)
         }
         // A message erased (or a phone re-paired) while its parts loaded is not shown.
-        if (!fence.holds(_state.value, socketGeneration)) throw StaleResultException()
+        if (!fenceCurrent(fence)) throw StaleResultException()
         return content.toString()
     }
 
@@ -988,7 +1008,7 @@ class CereRepository(context: Context) {
         val fence = fence()
         val metadata = request("captures.preview", buildJsonObject { put("captureId", captureId) }).jsonObject
         val preview = readPreview(metadata)
-        if (!fence.holds(_state.value, socketGeneration)) throw StaleResultException()
+        if (!fenceCurrent(fence)) throw StaleResultException()
         return preview
     }
     /**
@@ -1165,7 +1185,8 @@ class CereRepository(context: Context) {
     private suspend fun applyUpserts(batch: HeldUpserts.Batch) {
         // Past the held-update budget the backlog was dropped; an authoritative snapshot replaces it.
         if (batch.overflowed) { snapshotRequests.trySend(Unit); return }
-        updateState(System.currentTimeMillis()) { current ->
+        val origin = fence()
+        updateState(System.currentTimeMillis(), remoteFence = origin) { current ->
             if (batch.generation != socketGeneration) return@updateState current
             val messages = current.messages.toMutableList(); val index = HashMap<String, Int>(messages.size * 2)
             messages.forEachIndexed { position, message -> index[message.id] = position }
@@ -1192,11 +1213,16 @@ class CereRepository(context: Context) {
                 if (desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) "Restart the updated Cere broker on your PC to use trusted-phone actions."
                 else "Desktop action authentication does not match this phone pairing."
             )
+            val scopeChanged = welcome?.scopeVersion?.let { it != frame.value.scopeVersion } == true
+            if (scopeChanged) commitGate.invalidate()
             synchronized(this) { welcome = frame.value; backoffAttempt = 0; unreachableSince = null; authRejections.reset() }
-            updateState { current -> current.copy(
-                connection = ConnectionState.Online(desktop.desktopName, frame.value.operations, frame.value.expiresAt, frame.value.features),
-                pendingCommands = current.pendingCommands.map { command -> if (command.scopeVersion != null && command.scopeVersion != frame.value.scopeVersion) command.copy(params = JsonObject(emptyMap())) else command },
-            ) }
+            updateState { current ->
+                if (scopeChanged) authorizedSessionIds = emptySet()
+                current.copy(
+                    connection = ConnectionState.Online(desktop.desktopName, frame.value.operations, frame.value.expiresAt, frame.value.features),
+                    pendingCommands = current.pendingCommands.map { command -> if (command.scopeVersion != null && command.scopeVersion != frame.value.scopeVersion) command.copy(params = JsonObject(emptyMap())) else command },
+                )
+            }
             refreshJob?.cancel(); refreshJob = scope.launch { delay(ConnectionPolicy.refreshDelay(frame.value.expiresAt, serverOffset, System.currentTimeMillis())); if (socket === webSocket) webSocket.close(4000, "AUTH_REFRESH") }
             snapshotRequests.trySend(Unit) }
         is Frame.Reply -> pendingResponses.remove(frame.value.id)?.complete(frame.value)
@@ -1214,10 +1240,16 @@ class CereRepository(context: Context) {
         val authorized = snapshot.sessionIds?.toSet() ?: snapshot.sessions.mapTo(mutableSetOf(), Session::id)
         val authorizedProjects = snapshot.projects.mapTo(mutableSetOf(), Project::id)
         // A snapshot from a connection that has since ended describes a scope that may no longer hold.
-        if (!fence.holds(_state.value, socketGeneration, epoch = false)) return
+        if (!fenceCurrent(fence, epoch = false)) return
+        // Invalidate older hydration before this authoritative snapshot waits for stateMutex. CAS
+        // prevents a revoke/pairing transition that raced the response from being overwritten.
+        val snapshotFence = commitGate.advance(fence) ?: return
         val outOfScope = _state.value.attachments.filter { it.sessionId !in authorized }.mapTo(HashSet(), LocalAttachment::id)
         var visibleApprovals = emptyList<Approval>()
-        updateState(System.currentTimeMillis()) { current ->
+        var hydrationFence: ReadFence? = null
+        if (!updateState(System.currentTimeMillis(), remoteFence = snapshotFence, checkEpoch = false) { current ->
+            authorizedSessionIds = authorized
+            hydrationFence = snapshotFence.copy(cacheEpoch = snapshot.cacheEpoch ?: current.cacheEpoch)
             visibleApprovals = approvalRetirements.visible(snapshot.approvals)
             val visibleSnapshot = snapshot.copy(approvals = visibleApprovals)
             val base = if (snapshot.cacheEpoch != null && snapshot.cacheEpoch != current.cacheEpoch) current.copy(messages = emptyList()) else current; val merged = CacheReconciler.merge(base, visibleSnapshot, selected); current.copy(sessions = merged.sessions, messages = merged.messages, approvals = merged.approvals, drafts = merged.drafts,
@@ -1228,11 +1260,13 @@ class CereRepository(context: Context) {
             // An authoritative snapshot settles unknown approval answers and self-correcting commands.
             pendingCommands = CommandOutcomes.afterSnapshot(CacheReconciler.retainAuthorizedCommands(current.pendingCommands, authorized, authorizedProjects, welcome?.scopeVersion)),
             cacheEpoch = snapshot.cacheEpoch ?: current.cacheEpoch, messagesBefore = if (selected == null) current.messagesBefore else snapshot.messagesBefore?.let { current.messagesBefore + (selected to it) } ?: (current.messagesBefore - selected), lastError = null)
-        }
-        retainApprovalInteractionState(visibleApprovals)
+        }) return
+        val committedFence = hydrationFence ?: return
+        if (!fenceCurrent(committedFence)) return
+        commitGate.commit(committedFence, { fenceCurrent(committedFence) }) { retainApprovalInteractionState(visibleApprovals) }
         // Their records left the cache with the snapshot; the files follow once that is saved.
-        if (outOfScope.isNotEmpty()) { flushNow(); if (!cacheDirty) outOfScope.forEach { store.deleteBlob(it) } }
-        hydrateSessions(snapshot)
+        if (outOfScope.isNotEmpty()) { flushNow(); commitGate.commit(committedFence, { !cacheDirty && fenceCurrent(committedFence) }) { outOfScope.filter { id -> _state.value.attachments.none { it.id == id } }.forEach { store.deleteBlob(it) } } }
+        hydrateSessions(snapshot, committedFence)
         Unit
     }
     /**
@@ -1241,22 +1275,27 @@ class CereRepository(context: Context) {
      * left scope is never brought back. An older desktop pages by offset. Either way the work per
      * snapshot is bounded; what remains is counted in sessionsNotLoaded and loads on request.
      */
-    private suspend fun hydrateSessions(snapshot: SyncSnapshot, batches: Int = HYDRATION_BATCHES) {
+    private suspend fun hydrateSessions(snapshot: SyncSnapshot, origin: ReadFence, batches: Int = HYDRATION_BATCHES) {
         val ids = snapshot.sessionIds
-        if (ids != null && _state.value.supports("sessions.batch")) { hydrateById(ids, batches); return }
+        if (ids != null && _state.value.supports("sessions.batch")) { hydrateById(ids, batches, origin); return }
         val first = snapshot.nextSessionOffset
-        if (first == null) { updateState { it.copy(sessionsNotLoaded = 0) }; return }
+        if (first == null) { updateState(remoteFence = origin) { it.copy(sessionsNotLoaded = 0) }; return }
         if (!_state.value.supports("sessions.list")) return
         var offset: Int? = first; var pages = 0
         while (offset != null && pages++ < batches) {
             val result = request("sessions.list", buildJsonObject { put("offset", offset) }).jsonObject
-            mergeSummaries(result["items"]?.jsonArray.orEmpty().map { WireCodec.json.decodeFromJsonElement(Session.serializer(), it) })
+            val items = result["items"]?.jsonArray.orEmpty().map { WireCodec.json.decodeFromJsonElement(Session.serializer(), it) }
+            if (!updateState(remoteFence = origin) { current ->
+                val existing = current.sessions.associateBy(Session::id)
+                val incoming = items.filter { ids == null || it.id in authorizedSessionIds }.map { CacheReconciler.mergeSession(existing[it.id], it) }.associateBy(Session::id)
+                current.copy(sessions = current.sessions.filterNot { it.id in incoming } + incoming.values)
+            }) return
             offset = result["nextOffset"]?.jsonPrimitive?.intOrNull
         }
         val total = ids?.size
-        updateState { current -> current.copy(sessionsNotLoaded = if (offset == null) 0 else total?.let { all -> (all - current.sessions.count { it.id in ids }).coerceAtLeast(1) } ?: 1) }
+        updateState(remoteFence = origin) { current -> current.copy(sessionsNotLoaded = if (offset == null) 0 else total?.let { all -> (all - current.sessions.count { it.id in ids }).coerceAtLeast(1) } ?: 1) }
     }
-    private suspend fun hydrateById(ids: List<String>, batches: Int) {
+    private suspend fun hydrateById(ids: List<String>, batches: Int, origin: ReadFence) {
         var rounds = 0
         while (rounds++ < batches) {
             val loaded = _state.value.sessions.mapTo(HashSet(), Session::id)
@@ -1266,15 +1305,15 @@ class CereRepository(context: Context) {
             val items = result["items"]?.jsonArray.orEmpty().map { WireCodec.json.decodeFromJsonElement(Session.serializer(), it) }
             val gone = result["missing"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty().toSet()
             // A summary arriving after a newer snapshot removed its conversation is not reinserted.
-            updateState { current ->
-                val authorized = ids.toSet() - gone
+            if (!updateState(remoteFence = origin) { current ->
+                val authorized = authorizedSessionIds - gone
                 val existing = current.sessions.associateBy(Session::id)
                 val incoming = items.filter { it.id in authorized }.map { CacheReconciler.mergeSession(existing[it.id], it) }.associateBy(Session::id)
                 current.copy(sessions = current.sessions.filterNot { it.id in incoming || it.id in gone } + incoming.values)
-            }
+            }) return
             if (items.isEmpty() && gone.isEmpty()) break
         }
-        updateState { current -> val loaded = current.sessions.mapTo(HashSet(), Session::id); current.copy(sessionsNotLoaded = ids.count { it !in loaded }) }
+        updateState(remoteFence = origin) { current -> val loaded = current.sessions.mapTo(HashSet(), Session::id); current.copy(sessionsNotLoaded = ids.count { it !in loaded }) }
     }
     /** Continues loading conversations a snapshot named that are not on this phone yet. */
     suspend fun loadMoreSessions() { if (_state.value.supports("sync.open")) snapshotRequests.trySend(Unit) }
@@ -1284,8 +1323,8 @@ class CereRepository(context: Context) {
         "device.revoked" -> revokeLocal(webSocket, "The desktop revoked this phone's access")
         "remote.disabled" -> fail(webSocket, "Remote access is turned off on the desktop", false)
         // Cursor acknowledgement follows the encrypted write of this message (see flushNow).
-        "message.upsert" -> { val message = WireCodec.json.decodeFromJsonElement(Message.serializer(), event.data)
-            updateState(System.currentTimeMillis()) { current -> val messages = current.messages.toMutableList(); val index = messages.indexOfFirst { it.id == message.id }; if (index < 0) messages += message else if (revisionAfter(message.revision, messages[index].revision)) messages[index] = message; current.copy(messages = messages, cursor = event.cursor) } }
+        "message.upsert" -> { val origin = fence(); val message = WireCodec.json.decodeFromJsonElement(Message.serializer(), event.data)
+            updateState(System.currentTimeMillis(), remoteFence = origin) { current -> val messages = current.messages.toMutableList(); val index = messages.indexOfFirst { it.id == message.id }; if (index < 0) messages += message else if (revisionAfter(message.revision, messages[index].revision)) messages[index] = message; current.copy(messages = messages, cursor = event.cursor) } }
         "notice" -> runCatching { WireCodec.json.decodeFromJsonElement(DesktopNotice.serializer(), event.data) }.getOrNull()?.let { _notices.tryEmit(it) }
     } }
     private suspend fun reconcilePendingCommands() { _state.value.pendingCommands.toList().forEach { command -> try { resolveCommand(command) } catch (cancelled: CancellationException) { throw cancelled } catch (_: CommandPendingException) { } catch (error: Throwable) { updateState { it.copy(lastError = error.message) } } } }
@@ -1303,10 +1342,11 @@ class CereRepository(context: Context) {
     }
     private suspend fun revokeLocal(webSocket: WebSocket, reason: String) {
         if (socket !== webSocket) return
+        commitGate.invalidate()
         val desktop = _state.value.desktop; val staged = _state.value.stagedPairing?.desktop
         synchronized(this) { socket = null; welcome = null; endConnection(); shouldMonitor = false; terminalBlocked = true; refreshJob?.cancel(); reconnectJob?.cancel(); webSocket.cancel(); failWaiters(reason) }
         synchronized(flushLock) { flushJob?.cancel(); flushJob = null }
-        if (desktop != null) runCatching { pairing.delete(desktop) }; if (staged != null) runCatching { pairing.delete(staged) }; store.clear(); stateMutex.withLock { _state.value = MobileState(restoreReady = true, connection = ConnectionState.Unpaired, lastError = reason); cacheDirty = false }
+        if (desktop != null) runCatching { pairing.delete(desktop) }; if (staged != null) runCatching { pairing.delete(staged) }; stateMutex.withLock { authorizedSessionIds = emptySet(); store.clear(); _state.value = MobileState(restoreReady = true, connection = ConnectionState.Unpaired, lastError = reason); cacheDirty = false }
         pairingTransition = false; approvalRetirements.clear(); questionDraftIdentities.clear(); approvalMutationIdentities.clear()
         _questionDrafts.value = emptyMap(); _approvalMutations.value = emptySet()
     }
@@ -1354,22 +1394,30 @@ class CereRepository(context: Context) {
      * returns whether the write succeeded, for changes that must survive a crash (command
      * IDs, attachments, a draft about to be sent).
      */
-    private suspend fun updateState(verifiedAt: Long? = lastVerified, immediate: Boolean = false, revertOnFailure: Boolean = false, transform: (MobileState) -> MobileState): Boolean = stateMutex.withLock {
-        if (restoreBlocked) return@withLock false; lastVerified = verifiedAt; val previous = _state.value; val transformed = transform(previous)
-        val cutoff = System.currentTimeMillis() - CacheRetention.PERSISTED_AGE_MS
-        val expired = transformed.attachments.filter { it.createdAt < cutoff }; expired.forEach { store.deleteBlob(it.id) }
-        val attachments = transformed.attachments.filter { it.createdAt >= cutoff }
-        // Only the open conversation keeps a hydrated desktop draft; others reload it when opened.
-        val sessions = transformed.sessions.map { if (it.id != transformed.selectedSessionId && transformed.drafts[it.id]?.dirty != true) it.copy(draft = "", draftIncluded = false) else it }
-        val (messages, cursors) = CacheRetention.liveBound(transformed.messages, transformed.messagesBefore, transformed.selectedSessionId)
-        val next = transformed.copy(sessions = sessions, messages = messages, messagesBefore = cursors, attachments = attachments, lastError = if (expired.isNotEmpty()) "Image drafts older than seven days were removed from this phone" else transformed.lastError)
-        val ready = if (next.lastError == PRIVATE_CACHE_ERROR) next.copy(lastError = null) else next
-        _state.value = ready
-        if (!immediate) { cacheDirty = true; scheduleFlush(); return@withLock true }
-        // A step that is only complete once saved (an imported or reviewed image) is undone when saving fails.
-        val saved = writeLocked(ready, verifiedAt)
-        if (!saved && revertOnFailure) _state.value = previous.copy(lastError = PRIVATE_CACHE_ERROR)
-        saved
+    private suspend fun updateState(verifiedAt: Long? = lastVerified, immediate: Boolean = false, revertOnFailure: Boolean = false, remoteFence: ReadFence? = null, checkEpoch: Boolean = true, transform: (MobileState) -> MobileState): Boolean {
+        val apply: suspend () -> Boolean = apply@{
+            if (restoreBlocked) return@apply false
+            lastVerified = verifiedAt
+            val previous = _state.value
+            val transformed = transform(previous)
+            val cutoff = System.currentTimeMillis() - CacheRetention.PERSISTED_AGE_MS
+            val expired = transformed.attachments.filter { it.createdAt < cutoff }
+            expired.forEach { store.deleteBlob(it.id) }
+            val attachments = transformed.attachments.filter { it.createdAt >= cutoff }
+            // Only the open conversation keeps a hydrated desktop draft; others reload it when opened.
+            val sessions = transformed.sessions.map { if (it.id != transformed.selectedSessionId && transformed.drafts[it.id]?.dirty != true) it.copy(draft = "", draftIncluded = false) else it }
+            val (messages, cursors) = CacheRetention.liveBound(transformed.messages, transformed.messagesBefore, transformed.selectedSessionId)
+            val next = transformed.copy(sessions = sessions, messages = messages, messagesBefore = cursors, attachments = attachments, lastError = if (expired.isNotEmpty()) "Image drafts older than seven days were removed from this phone" else transformed.lastError)
+            val ready = if (next.lastError == PRIVATE_CACHE_ERROR) next.copy(lastError = null) else next
+            _state.value = ready
+            if (!immediate) { cacheDirty = true; scheduleFlush(); return@apply true }
+            // A step that is only complete once saved (an imported or reviewed image) is undone when saving fails.
+            val saved = writeLocked(ready, verifiedAt)
+            if (!saved && revertOnFailure) _state.value = previous.copy(lastError = PRIVATE_CACHE_ERROR)
+            saved
+        }
+        return if (remoteFence == null) stateMutex.withLock { apply() }
+        else commitGate.commit(remoteFence, { fenceCurrent(remoteFence, checkEpoch) }, apply) ?: false
     }
     /** Writes [ready] while holding the state lock; on success acknowledges its cursor to the desktop. */
     private suspend fun writeLocked(ready: MobileState, verifiedAt: Long?): Boolean = try {

@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { avatarCatalog } from '../broker/avatars.ts';
 
 // qml/SettingsCatalog.js drives the Settings rail, chips, search, the command palette and deep links.
 const qml = new URL('../qml/', import.meta.url);
 const source = (name: string) => readFileSync(new URL(name, qml), 'utf8');
 const catalog: any = vm.createContext({});
 vm.runInContext(source('SettingsCatalog.js').replace(/^\.pragma library\s*/, ''), catalog);
+const search = (query: string, hidden?: string[]) => catalog.search(query, hidden, avatarCatalog);
 const files = readdirSync(qml).filter(name => name.endsWith('.qml'));
 const all = files.map(source).join('\n');
 // The catalog runs in its own realm; copy what is compared structurally into this one.
@@ -55,26 +57,40 @@ test('Settings has one page per category, and the palette builds its entries fro
 });
 
 test('search ranks a setting by its own words and honours unavailable categories', () => {
-  const only = catalog.search('citations');
+  const only = search('citations');
   assert.equal(only.length, 1);
   assert.equal(only[0].setting.target, 'showMemoryCitations');
-  assert.equal(catalog.search('citation')[0].setting.target, 'showMemoryCitations');
-  assert.equal(catalog.search('Memory citations')[0].setting.target, 'showMemoryCitations');
-  assert.equal(catalog.search('no-such-setting').length, 0);
-  assert.equal(catalog.search('   ').length, 0);
+  assert.equal(search('citation')[0].setting.target, 'showMemoryCitations');
+  assert.equal(search('Memory citations')[0].setting.target, 'showMemoryCitations');
+  assert.equal(search('no-such-setting').length, 0);
+  assert.equal(search('   ').length, 0);
   // A category's exact name leads; its own settings follow by how well their labels match.
-  const voice = catalog.search('voice');
+  const voice = search('voice');
   assert.equal(voice[0].category.id, 'voice'); assert.equal(voice[0].setting, null);
   assert.ok(voice.some((result: any) => result.setting?.target === 'speechVoice'));
-  assert.ok(!catalog.search('voice', ['voice']).some((result: any) => result.category.id === 'voice'));
+  assert.ok(!search('voice', ['voice']).some((result: any) => result.category.id === 'voice'));
   // Keywords find settings whose labels use other words.
-  assert.ok(catalog.search('gemini').some((result: any) => result.setting?.target === 'apiKey_google'));
-  assert.equal(catalog.search('backup')[0].setting.target, 'openBackup');
-  assert.equal(catalog.search('quiet')[0].setting.target, 'quietMode');
+  assert.ok(search('gemini').some((result: any) => result.setting?.target === 'apiKey_google'));
+  assert.equal(search('backup')[0].setting.target, 'openBackup');
+  assert.equal(search('quiet')[0].setting.target, 'quietMode');
   assert.equal(catalog.categoryOf('avatarSelection'), 'companion');
-  for (const word of ['avatar', 'appearance', 'jade', 'nova', 'soap', 'brandy', 'archy', 'ghost', 'violet', 'leafy', 'cachy', 'usagi', 'cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty', 'tactical', 'tan', 'purple']) {
-    const result = catalog.search(word)[0];
+  for (const word of ['avatar', 'appearance', 'mask', 'tactical', 'tan', 'purple', ...avatarCatalog.map(entry => entry.id.replaceAll('_', ' '))]) {
+    const result = search(word)[0];
     assert.equal(result.setting.target, 'avatarSelection');
     assert.equal(result.category.id, 'companion');
   }
+  // Automatic delegation updates sit with the other AI assistance switches.
+  assert.equal(catalog.categoryOf('delegationUpdates'), 'assistance');
+  assert.equal(search('delegated results')[0].setting.target, 'delegationUpdates');
+  assert.equal(search('report back')[0].setting.target, 'delegationUpdates');
+});
+
+
+test('new manifest entries reach both Settings and command-palette search without keyword wiring', () => {
+  const entries = [...avatarCatalog, { id: 'future_companion', label: 'Future companion', description: 'Copper feathers', themeLabel: 'Autumn', aliases: ['old_friend'] }];
+  for (const query of ['future companion', 'copper', 'autumn', 'old friend'])
+    assert.equal(catalog.search(query, [], entries)[0].setting.target, 'avatarSelection');
+  const companion = catalog.visibleCategories([], entries).find((entry: any) => entry.id === 'companion');
+  assert.match(companion.settings.find((entry: any) => entry.target === 'avatarSelection').keywords, /future_companion/);
+  assert.match(source('CommandPalette.qml'), /AvatarCatalog\.entries/);
 });

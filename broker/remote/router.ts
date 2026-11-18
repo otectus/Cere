@@ -400,7 +400,7 @@ export class Router {
       case 'settings.patch': {
         this.require(device,'settings.write');if(this.core.store.get('settingsRevision','0')!==p.expectedRevision)throw remoteError('REVISION_CONFLICT','Settings changed. Reload before saving.');
         if(p.defaultModel!==undefined&&!this.ollamaAllowed(device,this.core.settings.ollama.host))throw remoteError('SCOPE_DENIED','This Ollama server is not granted to the device.');
-        await this.core.updateSettings({...(p.personality!==undefined?{personality:p.personality}:{}),...(p.defaultModel!==undefined?{ollama:{...this.core.settings.ollama,model:p.defaultModel}}:{}),...(p.searchProvider!==undefined?{webSearch:{...this.core.settings.webSearch,provider:p.searchProvider}}:{})});return this.settings(device);
+        await this.core.updateSettings({expectedRevision:p.expectedRevision,...(p.personality!==undefined?{personality:p.personality}:{}),...(p.defaultModel!==undefined?{ollama:{...this.core.settings.ollama,model:p.defaultModel}}:{}),...(p.searchProvider!==undefined?{webSearch:{...this.core.settings.webSearch,provider:p.searchProvider}}:{})});return this.settings(device);
       }
       case 'desktop.apps': {this.category(device,p.projectId,'apps');const apps=await applications();this.category(device,p.projectId,'apps');return apps;}
       case 'desktop.windows': {this.category(device,p.projectId,'windows');const items=await windows();this.category(device,p.projectId,'windows');return items.map((w:any)=>({address:w.address,title:w.title,app:w.class,workspace:w.workspace?.id}));}

@@ -967,14 +967,15 @@ private fun DesktopAttachmentDialog(repository: CereRepository, state: MobileSta
     val scope = rememberCoroutineScope(); var content by remember(message.id, message.revision) { mutableStateOf(message.text) }; var loading by remember(message.id, message.revision) { mutableStateOf(false) }; var error by remember(message.id, message.revision) { mutableStateOf<String?>(null) }
     val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
     val uriHandler = LocalUriHandler.current
-    val mine = message.role == "user"
+    // A Delegation update is Cere's text in a user-role row: shown on Cere's side, never as the user's message.
+    val update = message.isDelegationUpdate(); val mine = message.role == "user" && !update
     // The stored Markdown keeps its memory citations; they are left out of what is shown and copied
     // unless the desktop shows them, including a marker that is still streaming in.
     val shown = Citations.shown(content, state.showMemoryCitations)
     val preview = message.contentTruncated && content == message.text
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) { Surface(color = if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(18.dp), modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(0.88f)) { Column(Modifier.padding(14.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) { Surface(color = if (mine) MaterialTheme.colorScheme.primaryContainer else if (update) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(18.dp), modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(0.88f)) { Column(Modifier.padding(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(message.role.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            Text(if (update) "Delegation update" else message.role.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
             // A pinned reply is the desktop's bookmark of it.
             if (message.bookmarked || state.supports("messages.bookmark") && message.isConversationMessage())
                 IconButton({ scope.launch { runCatching { repository.setBookmark(message, !message.bookmarked) }.onFailure { error = it.message } } }, Modifier.size(32.dp), enabled = state.supports("messages.bookmark")) {

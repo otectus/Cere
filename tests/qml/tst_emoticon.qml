@@ -21,19 +21,22 @@ Item {
             var mirror = make({mirror:badge})
             compare(badge.accent, "#49dfff")
             var original = badge.color.toString(), glyph = badge.glyph
-            for (var id of ["daemona", "jade", "nova", "soap", "brandy", "archy", "ghost", "violet", "leafy", "cachy", "usagi",
-                           "cynthia", "genga", "kippy", "pomni", "rem", "sarah", "sylva", "witty"]) {
+            for (var entry of Cere.AvatarCatalog.entries) {
+                var id = entry.id
                 badge.snapshot = state({avatar:id,reducedMotion:true})
                 compare(badge.accent, Cere.Theme.paletteFor(id).accentText)
+                compare(badge.color, Cere.Theme.paletteFor(id).badgeSurface)
                 compare(mirror.accent, badge.accent)
                 compare(mirror.color, badge.color)
-                verify(badge.color.toString() !== original)
                 compare(badge.glyph, glyph)
                 badge.snapshot = {settings:{avatar:id},approvals:[{kind:"cli"}]}
                 compare(badge.accent, Cere.Theme.paletteFor(id).amber)
                 verify(badge.accent !== Cere.Theme.paletteFor(id).accentText)
             }
             badge.snapshot = state({avatar:"unknown"})
+            compare(badge.color, original)
+            compare(badge.accent, "#49dfff")
+            badge.snapshot = state({avatar:"cere"})
             compare(badge.color, original)
             compare(badge.accent, "#49dfff")
         }

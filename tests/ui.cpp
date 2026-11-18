@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QImage>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
 #include <QMenu>
 #include <QClipboard>
@@ -28,6 +29,7 @@
 #include <QScopeGuard>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QLockFile>
 #include <QSignalSpy>
 #include <memory>
 #include <QAccessible>
@@ -52,14 +54,17 @@ class UiCheck : public QObject {
     QPointer<QQuickWindow> window;
     QString sessionId;
     QUrl openedMessageLink;
-    QStringList avatarIds(bool includeCere=true) const {
+    QStringList avatarIds(bool includeDefault=true) const {
         QStringList ids;
         const auto selected=qEnvironmentVariable("CERE_TEST_AVATAR");
+        bool selectedExists=selected.isEmpty();
         for(const auto &entry:app->avatars()){
             const auto id=entry.toMap().value("id").toString();
-            if((includeCere||id!="cere")&&(selected.isEmpty()||selected==id))ids.append(id);
+            selectedExists|=selected==id;
+            if((includeDefault||id!=app->defaultAvatar())&&(selected.isEmpty()||selected==id))ids.append(id);
         }
-        if(!selected.isEmpty()&&ids.isEmpty())qFatal("CERE_TEST_AVATAR does not select a tested avatar");
+        // The pointer test exercises Default separately before its nondefault loop.
+        if(!selectedExists)qFatal("CERE_TEST_AVATAR does not select a tested avatar");
         return ids;
     }
     QQuickItem *item(const QString &name){
@@ -68,24 +73,45 @@ class UiCheck : public QObject {
         return find(window->contentItem());
     }
     // Scrolls every scrolling ancestor until the control is in view.
-    void scrollTo(const QString &name){
-        auto control=item(name);QVERIFY2(control,qPrintable(name));
-        for(auto parent=control->parentItem();parent;parent=parent->parentItem())if(parent->property("contentY").isValid()&&parent->property("contentHeight").toDouble()>parent->height()){
-            const auto y=control->mapToItem(parent,QPointF(control->width()/2,control->height()/2)).y();
-            if(y<10||y>parent->height()-10){parent->setProperty("contentY",std::clamp(parent->property("contentY").toDouble()+y-parent->height()/2,0.,parent->property("contentHeight").toDouble()-parent->height()));QTest::qWait(60);}
-        }
+    bool scrollTo(const QString &name){
+        QElapsedTimer deadline;deadline.start();
+        QPointF center;
+        do{
+            auto control=item(name);
+            if(!control){QTest::qWait(30);continue;}
+            const QPointF local(control->width()/2,control->height()/2);
+            bool scrolled=false,clipped=false;
+            for(auto parent=control->parentItem();parent;parent=parent->parentItem()){
+                if(parent->clip()&&!parent->boundingRect().contains(control->mapToItem(parent,local)))clipped=true;
+                if(!parent->property("contentY").isValid())continue;
+                const qreal height=parent->height(),extent=parent->property("contentHeight").toDouble();
+                const qreal y=control->mapToItem(parent,local).y();
+                if(extent<=height||(y>=0&&y<height))continue;
+                const qreal origin=parent->property("originY").toDouble(),before=parent->property("contentY").toDouble();
+                const qreal next=std::clamp(before+y-height/2,origin,origin+extent-height);
+                if(std::abs(next-before)>.5){parent->setProperty("contentY",next);scrolled=true;break;}
+            }
+            center=control->mapToScene(local);
+            if(!scrolled&&!clipped&&QRect(QPoint(),window->size()).contains(center.toPoint()))return true;
+            QTest::qWait(30);
+        }while(deadline.elapsed()<3000);
+        if(!item(name)){QTest::qFail(qPrintable("Missing control: "+name),__FILE__,__LINE__);return false;}
+        QTest::qFail(qPrintable(QString("%1 did not scroll into the window (center %2, %3)").arg(name).arg(center.x()).arg(center.y())),__FILE__,__LINE__);
+        return false;
     }
     // Clicks once the control has stopped moving: a page that is still laying out late content can
     // shift a row under the pointer between finding it and clicking it.
     void stableClick(const QString &name){
-        scrollTo(name);QPointF last(-1,-1);
+        if(!scrollTo(name))return;QPointF last(-1,-1);
         for(int stable=0,tries=0;stable<3&&tries<40;++tries){QTest::qWait(50);auto control=item(name);QVERIFY2(control,qPrintable(name));const auto at=control->mapToScene(QPointF(0,0));stable=at==last?stable+1:0;last=at;}
         click(name);
     }
     void click(const QString &name){
+        if(!scrollTo(name))return;
         auto control=item(name);QVERIFY2(control,qPrintable(name));
-        scrollTo(name);
-        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());QTest::qWait(120);
+        const auto center=control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint();
+        if(!QRect(QPoint(),window->size()).contains(center))return;
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,center);QTest::qWait(120);
     }
     // Opens a conversation tool from its row, or from More when a short page folds the row away (F-03).
     void tool(const QString &row,const QString &entry){
@@ -117,7 +143,7 @@ class UiCheck : public QObject {
         QVERIFY(QMetaObject::invokeMethod(page,"open",Q_ARG(QVariant,id),Q_ARG(QVariant,QString())));
         QTRY_COMPARE(page->property("category").toString(),id);QTest::qWait(50);
     }
-    void capture(const QString &name){QVERIFY2(window,"no window to capture");QDir().mkpath("/tmp/cere-ui-evidence");QVERIFY(window->grabWindow().save("/tmp/cere-ui-evidence/"+name+".png"));}
+    void capture(const QString &name){QVERIFY2(window,"no window to capture");QVERIFY(QDir().mkpath("/tmp/cere-ui-evidence"));QVERIFY(window->grabWindow().save("/tmp/cere-ui-evidence/"+name+".png"));}
     QJsonDocument hypr(const QStringList &args){QProcess p;p.start("hyprctl",args);if(!p.waitForFinished(2000))return {};return QJsonDocument::fromJson(p.readAllStandardOutput());}
     // Offscreen runs own a virtual pointer and never reach the live compositor.
     bool offscreen(){return qGuiApp->platformName()=="offscreen";}
@@ -128,6 +154,7 @@ class UiCheck : public QObject {
     // A broker call that waits for its own result.
     QVariantMap call(const QString &method,const QVariantMap &params={},int timeout=8000){
         QVariant value;bool done=false;const int id=app->rpc(method,params);
+        if(id<0)return QVariantMap{{"error","Broker is disconnected; could not send "+method}};
         const auto connection=connect(app.get(),&Controller::result,this,[&](int result,const QVariant &v){if(result==id){value=v;done=true;}});
         QElapsedTimer clock;clock.start();while(!done&&clock.elapsed()<timeout)QTest::qWait(20);
         disconnect(connection);
@@ -156,6 +183,15 @@ private slots:
         QVERIFY2(offscreen() || qEnvironmentVariable("CERE_VIRTUAL_DESKTOP")=="1",
                  "Run desktop checks through tools/test-virtual-desktop.sh; never on the working desktop.");
         qputenv("CERE_TTS_DISABLED","1"); // UI fixtures must never speak on the user's speakers.
+        // The fixture broker has a temporary profile and private test endpoints.
+        qunsetenv("CERE_MEMORY_CREDENTIALS_FILE");
+        qunsetenv("CERE_NEO4J_PASSWORD");
+        qunsetenv("CERE_QDRANT_API_KEY");
+        qputenv("CERE_NEO4J_URI","bolt://127.0.0.1:9");
+        qputenv("CERE_QDRANT_URL","http://127.0.0.1:9");
+        // Every slot may save evidence directly; do not make a compositor check depend on an
+        // earlier screenshot slot having created this common directory.
+        QVERIFY(QDir().mkpath("/tmp/cere-ui-evidence"));
         // The broker and overlay host inherit this, so an offscreen run is fully isolated.
         if(offscreen())qunsetenv("HYPRLAND_INSTANCE_SIGNATURE");
         ollamaFixture.start("node",{QString(CERE_SOURCE_DIR)+"/tests/fixtures/ui-ollama.mjs"});
@@ -171,6 +207,57 @@ private slots:
         app->expand();
         QTRY_VERIFY_WITH_TIMEOUT(([&]{for(auto w:qGuiApp->allWindows())if(w->title()=="Cere"){window=qobject_cast<QQuickWindow*>(w);return window!=nullptr;}return false;})(),5000);
         QTRY_VERIFY(window->isVisible());QTest::qWait(500);
+    }
+    void startupEntryTracksSuccessfulWrites(){
+        const auto previous=qgetenv("XDG_CONFIG_HOME");
+        const auto restore=qScopeGuard([&]{if(previous.isNull())qunsetenv("XDG_CONFIG_HOME");else qputenv("XDG_CONFIG_HOME",previous);});
+        const auto config=data.path()+"/login-config";
+        qputenv("XDG_CONFIG_HOME",config.toUtf8());
+        const auto root=data.path()+"/Cere \"quoted\" $cash %code back\\slash";
+        QVERIFY(QFile::link(CERE_SOURCE_DIR,root));
+        Controller instance(root,false);
+        QVERIFY(instance.setAutostart(true));QVERIFY(instance.autostartEnabled());
+        QFile entry(config+"/autostart/cere.desktop");QVERIFY(entry.open(QIODevice::ReadOnly));
+        const auto contents=entry.readAll();entry.close();
+        QVERIFY(contents.contains(R"(\\"quoted\\")"));
+        QVERIFY(contents.contains(R"(\\$cash %%code back\\\\slash)"));
+        QVERIFY(instance.setAutostart(false));QVERIFY(!instance.autostartEnabled());
+        QVERIFY(QDir(config+"/autostart").removeRecursively());
+        QFile obstacle(config+"/autostart");QVERIFY(obstacle.open(QIODevice::WriteOnly));obstacle.close();
+        QVERIFY(!instance.setAutostart(true));QVERIFY(!instance.autostartEnabled());
+    }
+    void folderConversationActivation(){
+        const auto previous=app->state().value("settings").toMap();
+        const auto before=app->state().value("sessions").toList().size();
+        const QString first=data.path()+"/A project \"quoted\" $cash; café",second=data.path()+"/Another folder";
+        QVERIFY(QDir().mkpath(first));QVERIFY(QDir().mkpath(second));
+        QVERIFY(!call("settings.update",{{"bypassCliPermissions",false},{"conversationDefaults",QVariantMap{{"provider","codex"},{"model","fixture-model"},{"effort","high"},{"tools",false},{"temporary",false}}}}).contains("error"));
+        // Startup waits for the saved defaults before opening the folder's dialog.
+        window=nullptr;app.reset();app=std::make_unique<Controller>(CERE_SOURCE_DIR,false);
+        app->start(false,false,first);
+        QTRY_VERIFY_WITH_TIMEOUT((window=titled("Cere")),10000);
+        QTRY_VERIFY(item("sessionProjectPath"));
+        QCOMPARE(item("sessionProjectPath")->property("text").toString(),first);
+        QTRY_COMPARE(item("sessionModel")->property("currentValue").toString(),QString("fixture-model"));
+        QTRY_COMPARE(item("sessionEffort")->property("currentValue").toString(),QString("high"));
+        QVERIFY(item("sessionTrust"));QVERIFY(!item("sessionTrust")->property("checked").toBool());
+        item("sessionTrust")->setProperty("checked",true);
+        // A second CLI invocation must forward the path into this existing UI.
+        QLockFile lock(data.path()+"/runtime/ui.lock");QVERIFY(lock.tryLock());
+        QProcess launcher;launcher.start(QString(CERE_SOURCE_DIR)+"/build/cere",{"--root",CERE_SOURCE_DIR,"--new-conversation",second});
+        QVERIFY(launcher.waitForStarted());QTRY_COMPARE_WITH_TIMEOUT(launcher.state(),QProcess::NotRunning,10000);
+        QCOMPARE(launcher.exitCode(),0);
+        QTRY_COMPARE(item("sessionProjectPath")->property("text").toString(),second);
+        QVERIFY(!item("sessionTrust")->property("checked").toBool());
+        QCOMPARE(app->state().value("sessions").toList().size(),before);
+        capture("dolphin-new-conversation");
+        auto popup=window->contentItem()->findChild<QObject*>("createSessionDialog");QVERIFY(popup);
+        QVERIFY(QMetaObject::invokeMethod(popup,"close"));QTRY_VERIFY(!item("sessionProjectPath"));
+        click("tab_Sessions");click("newSession");QTRY_VERIFY(item("sessionProjectPath"));
+        QCOMPARE(item("sessionProjectPath")->property("text").toString(),QString());
+        QVERIFY(QMetaObject::invokeMethod(popup,"close"));QTRY_VERIFY(!item("sessionProjectPath"));
+        QVERIFY(!call("settings.update",{{"bypassCliPermissions",previous.value("bypassCliPermissions")},{"conversationDefaults",previous.value("conversationDefaults")}}).contains("error"));
+        click("tab_Chat");
     }
     void navigationAndScreenshots(){
         QVERIFY(item("tab_Chat"));capture("chat-empty");
@@ -511,7 +598,7 @@ private slots:
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Send key check"}});
         QTRY_VERIFY(app->selectedId()!=previous);const auto session=app->selectedId();
         QVERIFY(!call("settings.update",{{"sendKey","ctrlEnter"}}).contains("error"));
-        QTRY_VERIFY(item("composer"));auto composer=item("composer");
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());auto composer=item("composer");
         QTRY_COMPARE(item("sendKeyHint")->property("text").toString(),QString("Ctrl+Enter sends · Enter new line"));
         QTest::qWait(300);composer->forceActiveFocus();QTRY_VERIFY(composer->hasActiveFocus());
         for(const auto ch:QByteArray("completion-ctrl"))QTest::keyClick(window,ch);
@@ -567,7 +654,8 @@ private slots:
         const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Task lifecycle"}});
         QTRY_VERIFY(app->selectedId()!=previous);
-        QTRY_VERIFY(item("composer"));item("composer")->forceActiveFocus();
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());item("composer")->forceActiveFocus();
+        QTRY_VERIFY(item("composer")->hasActiveFocus());
         for(const auto ch:QByteArray("completion-task"))QTest::keyClick(window,ch);
         QTest::keyClick(window,Qt::Key_Return);
         QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);
@@ -641,6 +729,7 @@ private slots:
         QVERIFY(item("searchSourcesApply"));
         item("searchOnlySites")->setProperty("text","https://docs.ollama.com/api");item("searchRecency")->setProperty("currentIndex",2);click("searchSourcesApply");
         QTRY_COMPARE(item("searchSources")->property("text").toString(),QString("docs.ollama.com · past week"));
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         item("composer")->setProperty("text","ollama embeddings");click("sendMessage");
         QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
         QTRY_VERIFY(!item("searchSources"));
@@ -671,6 +760,7 @@ private slots:
         click("tab_Chat");const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","compatible"},{"model","fixture-chat:latest"},{"cwd",data.path()},{"title","Compatible check"}});
         QTRY_VERIFY(app->selectedId()!=previous);
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         item("composer")->setProperty("text","Hello endpoint");click("sendMessage");
         QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
         QCOMPARE(app->messages().last().toMap().value("text").toString(),QString("Hello from the compatible endpoint."));
@@ -774,6 +864,7 @@ private slots:
         click("tab_Chat");const auto previous=app->selectedId();
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Timing check"}});
         QTRY_VERIFY(app->selectedId()!=previous);
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         item("composer")->setProperty("text","completion-timing");click("sendMessage");
         QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
         QVERIFY(openSetting("openHealth"));click("openHealth");
@@ -837,7 +928,7 @@ private slots:
         QCOMPARE(name->property("text").toString(),QString("Cere"));
         QCOMPARE(item("settingsCategoryTitle")->property("text").toString(),QString("Personality"));
         QVERIFY(!item("avatarSelection"));
-        QCOMPARE(app->avatars().size(),20);
+        QCOMPARE(app->avatars().size(),app->avatarCatalog().size());
         name->setProperty("text","  Daemona  ");
         QCOMPARE(app->assistantName(),QString("Cere"));
         // Unrelated edits must not destroy the name/personality draft or create a conflict.
@@ -845,8 +936,12 @@ private slots:
         QCOMPARE(name->property("text").toString(),QString("  Daemona  "));
         QVERIFY(item("personalitySave")->isEnabled());click("personalitySave");
         QTRY_COMPARE(app->assistantName(),QString("Daemona"));
-        QCOMPARE(app->avatar().value("id").toString(),QString("cere"));
+        QCOMPARE(app->avatar().value("id").toString(),QString("cere_default"));
         QCOMPARE(app->theme().value("background").toString(),QString("#0b121b"));
+        // An old client may still submit the retired id; snapshots remain canonical.
+        QVERIFY(!call("settings.update",{{"avatar","cere"}}).contains("error"));
+        QTRY_COMPARE(app->state().value("settings").toMap().value("avatar").toString(),QString("cere_default"));
+        QCOMPARE(app->avatar().value("id").toString(),QString("cere_default"));
         QCOMPARE(name->property("text").toString(),QString("Daemona"));
         QVERIFY(!item("personalitySave")->isEnabled());
         auto avatarSelection=openSetting("avatarSelection");QVERIFY(avatarSelection);
@@ -857,7 +952,7 @@ private slots:
             QTRY_VERIFY(preview->property("ready").toBool());
         }
         click("avatar_daemona");
-        QCOMPARE(app->avatar().value("id").toString(),QString("cere"));
+        QCOMPARE(app->avatar().value("id").toString(),QString("cere_default"));
         QCOMPARE(app->theme().value("background").toString(),QString("#0b121b"));
         // Unrelated edits must not destroy the avatar draft or create a conflict.
         QVERIFY(!call("settings.update",{{"quiet",false}}).contains("error"));
@@ -868,12 +963,12 @@ private slots:
         QVERIFY(!item("avatarSave")->isEnabled());
         // An identity change from another client preserves the local avatar draft and blocks a stale save.
         click("avatar_jade");
-        QVERIFY(!call("settings.update",{{"avatar","cere"}}).contains("error"));
+        QVERIFY(!call("settings.update",{{"avatar","cere_default"}}).contains("error"));
         QTRY_VERIFY(item("avatarConflict"));
         QVERIFY(item("avatar_jade")->property("checked").toBool());
         QVERIFY(!item("avatarSave")->isEnabled());
         click("avatarDiscard");
-        QVERIFY(item("avatar_cere")->property("checked").toBool());
+        QVERIFY(item("avatar_cere_default")->property("checked").toBool());
         click("avatar_daemona");click("avatarSave");
         QTRY_COMPARE(app->avatar().value("id").toString(),QString("daemona"));
         QVERIFY(openSetting("playMotionShowcase"));
@@ -890,14 +985,14 @@ private slots:
         QVERIFY(openSetting("assistantName"));name=item("assistantName");QVERIFY(name);
         QVERIFY(!item("avatarSelection"));QTest::qWait(100);capture("personality-settings-wide");
         name->setProperty("text","Local draft");
-        QVERIFY(!call("settings.update",{{"assistantName","Changed elsewhere"},{"avatar","cere"}}).contains("error"));
+        QVERIFY(!call("settings.update",{{"assistantName","Changed elsewhere"},{"avatar","cere_default"}}).contains("error"));
         QTRY_VERIFY(item("personalityConflict"));
         QCOMPARE(name->property("text").toString(),QString("Local draft"));
         QVERIFY(!item("personalitySave")->isEnabled());
         click("personalityDiscard");
         QCOMPARE(name->property("text").toString(),QString("Changed elsewhere"));
         QVERIFY(openSetting("avatarSelection"));
-        QVERIFY(item("avatar_cere")->property("checked").toBool());
+        QVERIFY(item("avatar_cere_default")->property("checked").toBool());
         // Choosing another avatar never changes the assistant name, personality, or voice.
         click("avatar_daemona");click("avatarSave");
         QTRY_COMPARE(app->avatar().value("id").toString(),QString("daemona"));
@@ -930,9 +1025,9 @@ private slots:
             QCOMPARE(app->state().value("settings").toMap().value("voice"),original.value("voice"));
             QCOMPARE(app->state().value("settings").toMap().value("personality"),original.value("personality"));
         }
-        click("avatar_cere");click("avatarSave");
-        QTRY_COMPARE(app->avatar().value("id").toString(),QString("cere"));
-        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("cere-surface.png"));
+        click("avatar_cere_default");click("avatarSave");
+        QTRY_COMPARE(app->avatar().value("id").toString(),QString("cere_default"));
+        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("cere_default-surface.png"));
         QVERIFY(puppet->property("ready").toBool());
     }
     void avatarThemeSwitching_data(){
@@ -943,15 +1038,10 @@ private slots:
         QTest::addColumn<QString>("portraitColor");
         QTest::addColumn<QString>("badgeColor");
         QTest::addColumn<QString>("stageColor");
-        QTest::newRow("Daemona") << QString("daemona") << QString("#100b0d") << QString("#ff9098") << QString("#120a0d") << QString("#271015") << QString("#ed241014") << QString("#1d1015");
-        QTest::newRow("Jade") << QString("jade") << QString("#0c090a") << QString("#ff7b7b") << QString("#10090b") << QString("#210b12") << QString("#ed220b13") << QString("#190c12");
-        QTest::newRow("Nova") << QString("nova") << QString("#0c0911") << QString("#d4adff") << QString("#100a18") << QString("#1f112e") << QString("#ed20102e") << QString("#180f24");
-        // Soap's neutral tan palette is asset-owned; the test below still
-        // verifies every native and QML consumer uses its catalog tokens.
-        QTest::newRow("Soap") << QString("soap") << QString() << QString() << QString() << QString() << QString() << QString();
-        for(const auto &id:{"brandy","archy","ghost","violet","leafy","cachy","usagi",
-                            "cynthia","genga","kippy","pomni","rem","sarah","sylva", "witty"})
-            QTest::newRow(id) << QString(id) << QString() << QString() << QString() << QString() << QString() << QString();
+        for(const auto &value:app->avatarCatalog()) {
+            const auto id=value.toMap().value("id").toString();
+            QTest::newRow(qPrintable(id)) << id << QString() << QString() << QString() << QString() << QString() << QString();
+        }
     }
     void avatarThemeSwitching(){
         QFETCH(QString,avatarId);QFETCH(QString,background);QFETCH(QString,accent);
@@ -969,41 +1059,62 @@ private slots:
         QVERIFY(!catalogTheme.isEmpty());
         const auto original=app->state().value("settings").toMap();
         const auto restore=qScopeGuard([&]{call("settings.update",original);restoreWorkspace();click("tab_Chat");});
-        QVERIFY(!call("settings.update",{{"avatar","cere"},{"quiet",true},{"hidden",false},{"topmost",false},{"reducedMotion",true}}).contains("error"));
+        QVERIFY(!call("settings.update",{{"avatar","cere_default"},{"quiet",true},{"hidden",false},{"topmost",false},{"reducedMotion",true}}).contains("error"));
         restoreWorkspace();click("tab_Chat");
-        QSignalSpy transcriptLoaded(app.get(),&Controller::messagesChanged);
         const auto id=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Avatar colors"}}).value("id").toString();
         QVERIFY(!id.isEmpty());QTRY_COMPARE(app->selectedId(),id);
-        // Selection clears the old transcript, then the asynchronous history page
-        // replaces it. Inject the rendering fixture only after that page has arrived.
-        QTRY_VERIFY(transcriptLoaded.size()>=2);
-        auto model=static_cast<TranscriptModel*>(static_cast<QSortFilterProxyModel*>(app->transcript())->sourceModel());
-        model->reset({QVariantMap{{"id","theme"},{"sessionId",id},{"role","assistant"},{"text","## Ready when you are\n\n[Project notes](https://example.com) and a code sample.\n\n```js\nconst ready = true;\n```"}}});
-        QTRY_VERIFY(item("messageBody_theme"));
-        auto body=item("messageBody_theme");
+        // Send the Markdown fixture through the deterministic provider so the broker stores it.
+        // Compact/workspace transitions reload transcript history and must recolor the same row.
+        const QString fixtureText="completion-theme\n\n## Ready when you are\n\n[Project notes](https://example.com) and a code sample.\n\n```js\nconst ready = true;\n```";
+        QVERIFY(!call("session.send",{{"id",id},{"text",fixtureText}}).contains("error"));
+        QString fixtureId;
+        QTRY_VERIFY_WITH_TIMEOUT(([&]{for(const auto &value:app->messages()){
+            const auto message=value.toMap();
+            if(message.value("role")=="user"&&message.value("text")==fixtureText){fixtureId=message.value("id").toString();return !fixtureId.isEmpty();}
+        }return false;})(),10000);
+        QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
+        QTRY_VERIFY(item("messageBody_"+fixtureId));
+        auto body=item("messageBody_"+fixtureId);
         QPointer<QTextDocument> document=body->property("textDocument").value<QQuickTextDocument*>()->textDocument();
         const auto codeColor=[&]{if(document)for(auto block=document->begin();block.isValid();block=block.next())if(block.text().contains("const ready"))return block.blockFormat().background().color();return QColor();};
         const auto linkColor=[&]{if(document)for(auto block=document->begin();block.isValid();block=block.next())for(auto it=block.begin();!it.atEnd();++it)if(it.fragment().charFormat().isAnchor())return it.fragment().charFormat().foreground().color();return QColor();};
         QTRY_COMPARE(codeColor(),QColor("#0d131c"));
         QCOMPARE(linkColor(),QColor("#49dfff"));
         const auto prose=document->toPlainText();
-        const auto blueIcon=QGuiApplication::windowIcon().pixmap(64,64).toImage();
+        const auto blueIcon=QGuiApplication::windowIcon().pixmap(QSize(64,64),1.0).toImage();
+        const QImage defaultPortrait(QString(CERE_SOURCE_DIR)+"/assets/cere_default-portraits.png");
+        QVERIFY(!defaultPortrait.isNull());
+        QPixmap expectedIcon(64,64);expectedIcon.fill(Qt::transparent);
+        {
+            QPainter painter(&expectedIcon);painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);
+            QPainterPath clip;clip.addRoundedRect(QRectF(0,0,64,64),64*.24,64*.24);painter.setClipPath(clip);
+            painter.fillRect(expectedIcon.rect(),QColor(app->themes().value("cere_default").toMap().value("portraitSurface").toString()));
+            painter.drawImage(expectedIcon.rect(),defaultPortrait.copy(0,0,defaultPortrait.width()/4,defaultPortrait.height()/3));
+        }
+        QCOMPARE(blueIcon,expectedIcon.toImage());
+        QVERIFY(blueIcon!=QIcon(QString(CERE_SOURCE_DIR)+"/assets/cere-emblem.png").pixmap(QSize(64,64),1.0).toImage());
         auto tray=app->findChild<QSystemTrayIcon*>();QVERIFY(tray);QVERIFY(tray->contextMenu());
         auto shell=qobject_cast<QQuickView*>(window)->rootObject()->childItems().first();QVERIFY(shell);
         QCOMPARE(shell->property("color").value<QColor>(),QColor("#0b121b"));
+        // The catalog includes Default: selecting it again is a no-op, while
+        // every actual avatar switch must emit exactly one theme change.
+        const int expectedChanges=avatarId==app->avatar().value("id").toString()?0:1;
         QSignalSpy changes(app.get(),&Controller::themeChanged);
         QVERIFY(!call("settings.update",{{"avatar",avatarId}}).contains("error"));
+        // The Cere variants can share colors; wait for identity, not a color
+        // that was already correct before the asynchronous state snapshot.
+        QTRY_COMPARE(app->avatar().value("id").toString(),avatarId);
         QTRY_COMPARE(shell->property("color").value<QColor>(),QColor(expectedBackground));
         QCOMPARE(app->assistantName(),original.value("assistantName").toString());
-        QCOMPARE(changes.size(),1);
+        QCOMPARE(changes.size(),expectedChanges);
         QCOMPARE(QApplication::palette().color(QPalette::Window),QColor(expectedBackground));
         QCOMPARE(QApplication::palette().color(QPalette::Link),QColor(expectedAccent));
         // QApplication delivers native-widget palette changes through the event loop.
         QTRY_COMPARE(tray->contextMenu()->palette().color(QPalette::Window),QColor(expectedBackground));
-        QVERIFY(QGuiApplication::windowIcon().pixmap(64,64).toImage()!=blueIcon);
+        QCOMPARE(QGuiApplication::windowIcon().pixmap(QSize(64,64),1.0).toImage()==blueIcon,expectedChanges==0);
         QCOMPARE(tray->icon().cacheKey(),QGuiApplication::windowIcon().cacheKey());
         QTRY_COMPARE(window->icon().cacheKey(),QGuiApplication::windowIcon().cacheKey());
-        QVERIFY(document);QVERIFY(item("messageBody_theme"));
+        QVERIFY(document);QVERIFY(item("messageBody_"+fixtureId));
         QTRY_COMPARE(codeColor(),QColor(expectedCode));
         QTRY_COMPARE(linkColor(),QColor(expectedAccent));
         QCOMPARE(document->toPlainText(),prose);
@@ -1025,25 +1136,30 @@ private slots:
         // takes the saved palette from its first snapshot without a second preference.
         {
             Controller fresh(CERE_SOURCE_DIR,true);fresh.start(false);
+            QTRY_VERIFY(fresh.connected());
+            QTRY_COMPARE(fresh.avatar().value("id").toString(),avatarId);
             QTRY_COMPARE(fresh.theme().value("background").toString(),expectedBackground);
         }
-        QCOMPARE(changes.size(),1); // unrelated snapshots do not reformat every message
+        QCOMPARE(changes.size(),expectedChanges); // unrelated snapshots do not reformat every message
         app->closePanel();app->togglePanel();QTRY_VERIFY((window=titled("Cere Panel")));
         shell=qobject_cast<QQuickView*>(window)->rootObject()->childItems().first();QVERIFY(shell);
         QCOMPARE(shell->property("color").value<QColor>(),QColor(expectedBackground));
         QVERIFY(openSetting("avatarSelection"));QTest::qWait(100);capture(avatarId+"-theme-compact");
-        click("avatar_cere");
+        click("avatar_cere_default");
         QCOMPARE(shell->property("color").value<QColor>(),QColor(expectedBackground));
+        QCOMPARE(item("avatarSave")->isEnabled(),expectedChanges>0);
+        QCOMPARE(item("avatarDiscard")->isEnabled(),expectedChanges>0);
         click("avatarDiscard");
         QCOMPARE(shell->property("color").value<QColor>(),QColor(expectedBackground));
-        click("avatar_cere");click("avatarSave");
+        click("avatar_cere_default");click("avatarSave");
+        QTRY_COMPARE(app->avatar().value("id").toString(),QString("cere_default"));
         QTRY_COMPARE(shell->property("color").value<QColor>(),QColor("#0b121b"));
         QCOMPARE(QApplication::palette().color(QPalette::Window),QColor("#0b121b"));
-        QCOMPARE(QGuiApplication::windowIcon().pixmap(64,64).toImage(),blueIcon);
-        QCOMPARE(changes.size(),2);
+        QCOMPARE(QGuiApplication::windowIcon().pixmap(QSize(64,64),1.0).toImage(),blueIcon);
+        QCOMPARE(changes.size(),2*expectedChanges);
         restoreWorkspace();click("tab_Chat");
-        QTRY_VERIFY(item("messageBody_theme"));
-        document=item("messageBody_theme")->property("textDocument").value<QQuickTextDocument*>()->textDocument();
+        QTRY_VERIFY(item("messageBody_"+fixtureId));
+        document=item("messageBody_"+fixtureId)->property("textDocument").value<QQuickTextDocument*>()->textDocument();
         QTRY_COMPARE(codeColor(),QColor("#0d131c"));
         QTRY_COMPARE(linkColor(),QColor("#49dfff"));
         QCOMPARE(document->toPlainText(),prose);
@@ -1212,6 +1328,15 @@ Unicode: café ✦ 日本語
         QVERIFY(!call("power.end",{{"id",lease.value("id")}}).contains("error"));
         QTRY_COMPARE(app->state().value("power").toList().first().toMap().value("state").toString(),QString("ended"));
         for(auto w:qGuiApp->allWindows())for(auto center:w->findChildren<QObject*>("permissionCenter"))if(center->property("opened").toBool())QVERIFY(QMetaObject::invokeMethod(center,"close"));
+        // An idle temporary conversation used to enable Start and then receive the broker refusal.
+        const auto temporary=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"temporary",true},{"title","Temporary power refusal"}});
+        QVERIFY(!temporary.contains("error"));app->select(temporary.value("id").toString());QTRY_COMPARE(app->selectedId(),temporary.value("id").toString());
+        click("shellPermissionCenter");QTRY_VERIFY(item("powerCliAccess"));
+        auto center=dialog("permissionCenter");QVERIFY(center);
+        QTRY_VERIFY(!center->property("selectedAccess").toMap().value("canStartPower").toBool());
+        QCOMPARE(center->property("selectedAccess").toMap().value("powerUnavailableReason").toString(),QString("Power mode is unavailable for temporary sessions"));
+        click("powerCliAccess");QVERIFY(!item("startPower")->isEnabled());
+        QVERIFY(QMetaObject::invokeMethod(center,"close"));
         click("tab_Chat");
     }
     void projectAndDraft(){
@@ -1220,10 +1345,29 @@ Unicode: café ✦ 日本語
         app->rpc("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","UI integration test"}});
         QTRY_VERIFY(!app->selectedId().isEmpty()&&app->selectedId()!=previous);sessionId=app->selectedId();
         QTRY_COMPARE(app->session().value("id").toString(),sessionId);
-        auto composer=item("composer");QVERIFY(composer);composer->setProperty("text","A draft that must survive session switching.");
+        auto composer=item("composer");QTRY_VERIFY(composer&&composer->isEnabled());composer->setProperty("text","A draft that must survive session switching.");
         app->rpc("session.create",{{"provider","claude"},{"cwd",data.path()},{"trusted",true},{"title","Second session"}});
         QTRY_VERIFY(app->selectedId()!=sessionId);app->select(sessionId);
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         QTRY_COMPARE(item("composer")->property("text").toString(),QString("A draft that must survive session switching."));capture("draft");
+    }
+    void switchingWithDraftSaveInFlight(){
+        click("tab_Chat");
+        const auto other=createSession("codex","Other draft");
+        const auto original=createSession("codex","Unfinished draft");
+        QVERIFY(!other.isEmpty()&&!original.isEmpty());
+        app->select(original);
+        QTRY_COMPARE(app->session().value("id").toString(),original);
+        QQuickItem *composer=nullptr;
+        QTRY_VERIFY((composer=item("composer"))&&composer->isEnabled());
+        composer->setProperty("text","First version");
+        QVERIFY(QMetaObject::invokeMethod(item("chatView"),"saveDraft",Q_ARG(QVariant,false),Q_ARG(QVariant,false)));
+        composer->setProperty("text","Last edit before switching");
+        app->select(other);
+        const auto saved=[&]{return call("session.hydrate",{{"id",original}}).value("session").toMap().value("draft").toString();};
+        QTRY_COMPARE(saved(),QString("Last edit before switching"));
+        app->select(original);
+        QTRY_COMPARE(composer->property("text").toString(),QString("Last edit before switching"));
     }
     void queuedOllamaMessages(){
         click("tab_Chat");
@@ -1243,6 +1387,42 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE(app->session().value("queuedCount").toInt(),0);
         int prompts=0;for(const auto &m:app->messages())if(m.toMap().value("role").toString()=="user")++prompts;
         QCOMPARE(prompts,2);
+    }
+    void delegationUpdateCard(){
+        // AI assistance: on by default, and the switch round-trips through settings.update.
+        openCategory("assistance");
+        auto toggle=item("delegationUpdates");QVERIFY(toggle);
+        QVERIFY(app->state().value("settings").toMap().value("delegationUpdates").toBool());QVERIFY(toggle->property("checked").toBool());
+        click("delegationUpdates");QTRY_VERIFY(!app->state().value("settings").toMap().value("delegationUpdates").toBool());QTRY_VERIFY(!toggle->property("checked").toBool());
+        click("delegationUpdates");QTRY_VERIFY(app->state().value("settings").toMap().value("delegationUpdates").toBool());QTRY_VERIFY(toggle->property("checked").toBool());
+        // A delegated Codex task reports back to its Ollama parent as a Delegation update card.
+        const auto original=app->state().value("settings").toMap();
+        const auto restore=qScopeGuard([&]{call("settings.update",{{"bypassCliPermissions",original.value("bypassCliPermissions")},{"paused",original.value("paused")},{"quiet",original.value("quiet")}});click("tab_Chat");});
+        QVERIFY(!call("settings.update",{{"bypassCliPermissions",true},{"paused",false},{"quiet",true},{"memory",QVariantMap{{"enabled",false}}}}).contains("error"));
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",data.path()},{"trusted",true},{"tools",true},{"title","Delegation update check"}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        const auto parent=created.value("id").toString();app->select(parent);click("tab_Chat");
+        QVERIFY(!call("session.send",{{"id",parent},{"text","delegation-ui-check"}}).contains("error"));
+        auto delegationRow=[&]{for(const auto &m:app->messages())if(m.toMap().value("kind").toString()=="delegation")return m.toMap();return QVariantMap{};};
+        auto replied=[&]{for(const auto &m:app->messages())if(m.toMap().value("text").toString().startsWith("The delegated check finished"))return true;return false;};
+        QTRY_VERIFY_WITH_TIMEOUT(!delegationRow().isEmpty()&&replied(),15000);
+        QTRY_COMPARE_WITH_TIMEOUT(app->session().value("status").toString(),QString("idle"),8000);
+        const auto row=delegationRow();
+        QCOMPARE(row.value("role").toString(),QString("user"));
+        QVERIFY(row.value("text").toString().startsWith(QString::fromUtf8("Codex finished “Delegated · completion-delegation” after")));
+        QVERIFY(row.value("text").toString().contains("**completion-delegation finished.**"));
+        // The card names Cere's update and is not styled as the user's own message.
+        QList<QQuickItem*> authors;
+        std::function<void(QQuickItem*)> walk=[&](QQuickItem *root){if(!root->isVisible())return;if(root->objectName()=="messageAuthor")authors<<root;for(auto child:root->childItems())walk(child);};
+        auto cardOf=[](QQuickItem *author){auto card=author->parentItem();while(card&&!card->property("message").isValid())card=card->parentItem();return card;};
+        QQuickItem *update=nullptr,*own=nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT(([&]{authors.clear();walk(window->contentItem());update=own=nullptr;
+            for(auto author:authors){const auto text=author->property("text").toString();if(text.endsWith(QString::fromUtf8(" · Delegation update")))update=cardOf(author);else if(text=="You")own=cardOf(author);}
+            return update&&own;})(),5000);
+        QVERIFY(update->property("delegation").toBool());QVERIFY(!own->property("delegation").toBool());
+        QVERIFY(update->property("color").value<QColor>()!=own->property("color").value<QColor>());
+        QVERIFY(update->property("border").value<QObject*>()->property("color").value<QColor>()!=own->property("border").value<QObject*>()->property("color").value<QColor>());
+        capture("delegation-update");
     }
     void ollamaConversation(){
         auto defaults=openSetting("ollamaDefaultModel");QVERIFY(defaults);
@@ -1294,8 +1474,14 @@ Unicode: café ✦ 日本語
             return request.waitForFinished(5000)&&request.exitCode()==0;
         };
         QVERIFY(fixtureModels("POST"));
-        const auto previous=app->state().value("settings").toMap().value("memory").toMap();
-        auto restore=qScopeGuard([&]{fixtureModels("DELETE");call("provider.models",{{"provider","ollama"}});call("settings.update",{{"memory",previous}});});
+        // state broadcasts are paced; ask the broker for the authoritative baseline rather than
+        // retaining a possibly previous UI snapshot for this slot's cleanup.
+        const auto previous=call("state").value("settings").toMap().value("memory").toMap();
+        auto restore=qScopeGuard([&]{
+            fixtureModels("DELETE");call("provider.models",{{"provider","ollama"}});
+            auto value=previous;value["extractionModel"]=previous.value("extractionModel","nemotron-3-super");value["extractionProvider"]=previous.value("extractionProvider","ollama");value["embeddingProvider"]=previous.value("embeddingProvider","ollama");value["allowCloudEmbedding"]=previous.value("allowCloudEmbedding",false);value["allowCloudMemory"]=previous.value("allowCloudMemory",false);value["allowCloudExtraction"]=previous.value("allowCloudExtraction",false);
+            QVERIFY(!call("settings.update",{{"memory",value}}).contains("error"));QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap(),value);
+        });
         QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"extractionModel","nemotron-3-super"}}}}).contains("error"));
         QVERIFY(openSetting("extractionModelsRefresh"));click("extractionModelsRefresh");
         auto picker=item("extractionModel");QVERIFY(picker);
@@ -1318,6 +1504,24 @@ Unicode: café ✦ 日本語
         QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"extractionModel","unregistered-cloud-model"}}}}).contains("error"));
         QTRY_COMPARE(picker->property("count").toInt(),4);
         QTRY_COMPARE(picker->property("currentValue").toString(),QString("unregistered-cloud-model"));
+    }
+    void memoryApiProviders(){
+        const auto previous=call("state").value("settings").toMap().value("memory").toMap();
+        auto restore=qScopeGuard([&]{
+            auto value=previous;value["extractionModel"]=previous.value("extractionModel","nemotron-3-super");value["extractionProvider"]=previous.value("extractionProvider","ollama");value["embeddingProvider"]=previous.value("embeddingProvider","ollama");value["allowCloudEmbedding"]=previous.value("allowCloudEmbedding",false);value["allowCloudMemory"]=previous.value("allowCloudMemory",false);value["allowCloudExtraction"]=previous.value("allowCloudExtraction",false);
+            QVERIFY(!call("settings.update",{{"memory",value}}).contains("error"));QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap(),value);
+        });
+        QVERIFY(!call("settings.update",{{"memory",QVariantMap{{"enabled",true},{"extractionProvider","ollama"},{"embeddingProvider","ollama"},{"allowCloudEmbedding",false}}}}).contains("error"));
+        QVERIFY(openSetting("memoryExtractionProvider"));click("memoryExtractionProvider");
+        QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap().value("extractionProvider").toString(),QString("anthropic"));
+        QVERIFY(openSetting("memoryEmbeddingProvider"));click("memoryEmbeddingProvider");
+        QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap().value("embeddingProvider").toString(),QString("google"));
+        QTRY_COMPARE(app->state().value("settings").toMap().value("memory").toMap().value("model").toString(),QString("gemini-embedding-001"));
+        QVERIFY(openSetting("cloudEmbeddingEnabled"));
+        QVERIFY(!item("cloudEmbeddingEnabled")->property("checked").toBool());
+        capture("memory-api-providers");
     }
     void searchAndMemory(){
         click("tab_Chat");
@@ -1349,6 +1553,7 @@ Unicode: café ✦ 日本語
         capture("graph-memory-inspector");
         QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(100);click("closeMemory");
         click("tab_Chat");QVERIFY(item("searchThisTurn"));
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         item("composer")->setProperty("text","Find Ollama embeddings documentation");click("searchThisTurn");
         auto composer=item("composer");composer->forceActiveFocus();QTest::keyClick(window,Qt::Key_Return,Qt::ControlModifier);
         QTRY_COMPARE_WITH_TIMEOUT(app->session().value("status").toString(),QString("idle"),5000);
@@ -1794,7 +1999,21 @@ Unicode: café ✦ 日本語
         app->rpc("settings.update",{{"roaming",false},{"topmost",true},{"quiet",false},{"scale",1.0},{"position",QVariantMap{{"output",source->name()},{"x",x},{"y",y}}}});
         QTest::qWait(300);
         QFile lock(data.path()+"/runtime/overlay.lock");QVERIFY(lock.open(QIODevice::ReadOnly));const auto pid=lock.readLine().trimmed().toLongLong();QVERIFY(pid>0);
-        auto output=[&]{const auto layers=hypr({"-j","layers"}).object();for(auto it=layers.begin();it!=layers.end();++it)for(const auto layer:it.value().toObject()["levels"].toObject()["3"].toArray())if(layer.toObject()["pid"].toInteger()==pid&&layer.toObject()["namespace"].toString()=="cere-pet")return it.key();return QString();};
+        // The seam mirror shares the primary surface's PID and namespace. Wait for the
+        // body to clear the seam before stopping, when exactly one output owns it.
+        auto output=[&]{
+            const auto layers=hypr({"-j","layers"}).object();
+            QString result;
+            for(auto it=layers.begin();it!=layers.end();++it){
+                for(const auto layer:it.value().toObject()["levels"].toObject()["3"].toArray()){
+                    const auto surface=layer.toObject();
+                    if(surface["pid"].toInteger()!=pid||surface["namespace"].toString()!="cere-pet")continue;
+                    if(!result.isEmpty())return QString();
+                    result=it.key();break;
+                }
+            }
+            return result;
+        };
         QTRY_COMPARE(output(),source->name());
         qInfo()<<"Follow outputs"<<source->name()<<source->geometry()<<target->name()<<target->geometry();
         movePointer(target->geometry().center());QTest::qWait(100);
@@ -1812,6 +2031,7 @@ Unicode: café ✦ 日本語
         QProcess p;p.start("hyprctl",{"-j","layers"});QVERIFY(p.waitForFinished(2000));QVERIFY(p.readAllStandardOutput().contains("cere-pet"));
     }
     void petGesturesAndReducedMotion(){
+        QVERIFY(QDir().mkpath("/tmp/cere-ui-evidence"));
         app->closePanel();
         app->rpc("settings.update",{{"scale",1.0},{"topmost",false},{"quiet",false},{"reducedMotion",false}});
         QTRY_VERIFY(!app->state().value("settings").toMap().value("reducedMotion").toBool());
@@ -1820,9 +2040,7 @@ Unicode: café ✦ 日本語
         QTRY_VERIFY_WITH_TIMEOUT(([&]{for(auto w:qGuiApp->allWindows())if(w->title()=="Cere Pet"&&w->isVisible()){pet=qobject_cast<QQuickWindow*>(w);return pet!=nullptr;}return false;})(),5000);
         auto player=pet->findChild<QQuickItem*>("gesturePlayer");QVERIFY(player);
         app->preview("jump");QCOMPARE(app->motion(),QString("jump"));
-        QTest::qWait(380);
-        QCOMPARE(player->property("pose").toInt(),11);
-        QVERIFY(player->property("shiftY").toDouble()<0);
+        QTRY_VERIFY_WITH_TIMEOUT(player->property("pose").toInt()==11&&player->property("shiftY").toDouble()<0,1500);
         QVERIFY(pet->grabWindow().save("/tmp/cere-ui-evidence/pet-jump.png"));
         app->beginDrag(96,150);QCOMPARE(app->motion(),QString("dragging"));
         app->endDrag();QCOMPARE(app->motion(),QString("land"));
@@ -1904,7 +2122,7 @@ Unicode: café ✦ 日本語
             call("settings.update",original);restoreWorkspace();
             if(layerSurface)moveDesktopPointer(originalPointer);
         });
-        QVERIFY(!call("settings.update",{{"avatar","cere"},{"topmost",layerSurface},{"hidden",false},
+        QVERIFY(!call("settings.update",{{"avatar","cere_default"},{"topmost",layerSurface},{"hidden",false},
                                            {"quiet",false},{"reducedMotion",false},{"motionIntensity",1.0},
                                            {"roaming",false},{"scale",pointerScale},{"idleEnergy","calm"},
                                            {"bypassCliPermissions",false}}).contains("error"));
@@ -1920,12 +2138,16 @@ Unicode: café ✦ 日本語
             compositorOverlay=std::make_unique<Controller>(CERE_SOURCE_DIR,true);
             compositorOverlay->start(false);petApp=compositorOverlay.get();
             QTRY_VERIFY_WITH_TIMEOUT(petApp->connected(),8000);
-            QTRY_COMPARE(petApp->state().value("settings").toMap().value("topmost").toBool(),true);
         }
+        // A preceding test can still have a settings snapshot queued. Motion
+        // preview must target this host before we inject its pointer events.
+        QTRY_COMPARE(petApp->state().value("settings").toMap().value("topmost").toBool(),layerSurface);
+        QTRY_COMPARE(petApp->avatar().value("id").toString(),QString("cere_default"));
         petApp->closePanel();
         if(layerSurface){moveDesktopPointer(petApp->petPosition()+QPoint(-30,-30));QTest::qWait(100);}
         petApp->setPetHovered(false);petApp->setPetInteracting(false);
         QQuickWindow *pet=nullptr;QTRY_VERIFY_WITH_TIMEOUT((pet=titled("Cere Pet")),5000);
+        QTRY_COMPARE(pet->width(),qRound(192*pointerScale));
         auto player=pet->findChild<QQuickItem*>("gesturePlayer");QVERIFY(player);
         auto puppet=pet->findChild<QQuickItem*>("avatarPuppet");QVERIFY(puppet);
         QQuickItem *pointerArea=nullptr;
@@ -1939,7 +2161,18 @@ Unicode: café ✦ 日本語
             return false;
         })());
         QTRY_VERIFY(puppet->property("ready").toBool());
+        QTRY_VERIFY(puppet->property("source").toUrl().toString().endsWith("cere_default-surface.png"));
         QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("idle"),8000);
+        QElapsedTimer pointerTraceClock;pointerTraceClock.start();
+        const bool tracePointer=qEnvironmentVariableIsSet("CERE_TRACE_POINTER");
+        const auto tracePointerState=[&](const char *event){
+            if(tracePointer)qInfo("Pointer trace %lld ms %s: motion=%s player=%s frame=%d pressed=%d topmost=%d active=%d",
+                pointerTraceClock.elapsed(),event,qPrintable(petApp->motion()),qPrintable(player->property("motion").toString()),
+                puppet->property("surfaceFrame").toInt(),pointerArea->property("pressed").toBool(),
+                petApp->state().value("settings").toMap().value("topmost").toBool(),player->property("active").toBool());
+        };
+        const auto motionTrace=connect(petApp,&Controller::motionChanged,this,[&]{tracePointerState("motionChanged");});
+        const auto disconnectTrace=qScopeGuard([&]{disconnect(motionTrace);});
 
         // Every selectable connected avatar maps dragging to the same bounded,
         // authored ping-pong route; exercise the live pixels below with Cere.
@@ -1983,12 +2216,14 @@ Unicode: café ✦ 日本語
                 physicalButtonDown=true;QVERIFY(nativePointer.button(true));
                 QTRY_VERIFY(pointerArea->property("pressed").toBool());
             }else QTest::mousePress(pet,Qt::LeftButton,Qt::NoModifier,local);
+            tracePointerState("after press");
         };
         const auto releaseOnPet=[&](QPoint local){
             if(layerSurface){
                 QVERIFY(nativePointer.button(false));physicalButtonDown=false;
                 QTRY_VERIFY(!pointerArea->property("pressed").toBool());
             }else QTest::mouseRelease(pet,Qt::LeftButton,Qt::NoModifier,local);
+            tracePointerState("after release");
         };
         const auto clickOnPet=[&](QPoint local){
             pressOnPet(local);releaseOnPet(local);
@@ -2100,6 +2335,7 @@ Unicode: café ✦ 日本語
         QVERIFY(!titled("Cere Panel"));
         QTRY_COMPARE_WITH_TIMEOUT(puppet->property("surfaceFrame").toInt(),0,3000);
         QTRY_COMPARE_WITH_TIMEOUT(petApp->motion(),QString("idle"),3000);
+        QVERIFY(pet->grabWindow().save(evidence+"/pointer-cere-rest.png"));
 
         // Reduced motion suppresses both pointer poses and the connected frame.
         QVERIFY(!call("settings.update",{{"reducedMotion",true}}).contains("error"));
@@ -2223,18 +2459,30 @@ Unicode: café ✦ 日本語
         app->setPetInteracting(true);
         QTRY_COMPARE_WITH_TIMEOUT(app->motion(),QString("idle"),8000);
         const auto readRig=[&]{return player->property("rig").value<QJSValue>().toVariant().toMap();};
+        // The director selects idle before its authored transition out of resize or carry ends.
+        QTRY_COMPARE_WITH_TIMEOUT(player->property("motion").toString(),QString("idle"),8000);
+        QTRY_COMPARE_WITH_TIMEOUT(player->property("phase").toString(),QString("living"),8000);
         const int startFrame=player->property("renderedFrames").toInt();
         QSet<int> distinctHead;double maxStep=0,previous=readRig().value("headTilt").toDouble();
-        QElapsedTimer sampleClock;sampleClock.start();
-        while(sampleClock.elapsed()<900){
-            QTest::qWait(8);
-            const auto rig=readRig();const double head=rig.value("headTilt").toDouble();
-            QVERIFY(std::isfinite(head));maxStep=std::max(maxStep,std::abs(head-previous));previous=head;
+        // Observe every actual rig update. A delayed polling tick can span several frames.
+        QQmlExpression frameCounter(QQmlEngine::contextForObject(player),player,"renderedFrames");
+        frameCounter.setNotifyOnValueChanged(true);frameCounter.evaluate();QVERIFY(!frameCounter.hasError());
+        int samples=0;bool finite=true;
+        const auto watch=connect(&frameCounter,&QQmlExpression::valueChanged,this,[&]{
+            frameCounter.evaluate();
+            const double head=readRig().value("headTilt").toDouble();
+            ++samples;finite=finite&&std::isfinite(head);
+            maxStep=std::max(maxStep,std::abs(head-previous));previous=head;
             distinctHead.insert(qRound(head*100000));
-        }
+        });
+        QElapsedTimer sampleClock;sampleClock.start();
+        QTest::qWait(900);
+        disconnect(watch);
+        QVERIFY(finite);
         const int rendered=player->property("renderedFrames").toInt()-startFrame;
+        QCOMPARE(samples,rendered);
         QVERIFY2(rendered>=30,qPrintable(QString("Only %1 frame updates in 900 ms").arg(rendered)));
-        QVERIFY(distinctHead.size()>=25);QVERIFY(maxStep<.3);
+        QVERIFY(distinctHead.size()>=25);QVERIFY2(maxStep<.3,qPrintable(QString("Largest consecutive-frame head rotation: %1 degrees").arg(maxStep)));
         app->preview("wave");QTRY_COMPARE(app->motion(),QString("wave"));
         double minArm=100,maxArm=-100;
         sampleClock.restart();
@@ -2313,10 +2561,10 @@ Unicode: café ✦ 日本語
         const auto restore=qScopeGuard([&]{
             if(player)player->setProperty("followAppMotion",true);
             app->setPetInteracting(false);
-            app->rpc("settings.update",{{"avatar","cere"},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"scale",1.0},{"topmost",true}});
+            app->rpc("settings.update",{{"avatar","cere_default"},{"quiet",false},{"reducedMotion",false},{"motionIntensity",.7},{"scale",1.0},{"topmost",true}});
             restoreWorkspace();
         });
-        QVERIFY(!call("settings.update",{{"avatar","cere"},{"topmost",layerSurface},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.0},{"scale",1.0},{"roaming",false}}).contains("error"));
+        QVERIFY(!call("settings.update",{{"avatar","cere_default"},{"topmost",layerSurface},{"quiet",false},{"reducedMotion",false},{"motionIntensity",1.0},{"scale",1.0},{"roaming",false}}).contains("error"));
         if(layerSurface){
             for(auto process:app->findChildren<QProcess*>())if(process->arguments().contains("--overlay")){
                 spawnedOverlay=process;process->terminate();
@@ -2629,6 +2877,7 @@ Unicode: café ✦ 日本語
         bool found=false;
         for(const auto output:layers)for(const auto layer:output.toObject()["levels"].toObject()["3"].toArray())if(layer.toObject()["namespace"].toString()=="cere-pet")found=true;
         QVERIFY(found);
+        QVERIFY(QDir().mkpath("/tmp/cere-ui-evidence"));
         QProcess capture;capture.start("grim",{"-o",window->screen()->name(),"/tmp/cere-ui-evidence/fullscreen-overlay.png"});QVERIFY(capture.waitForFinished(3000));QCOMPARE(capture.exitCode(),0);
         window->showNormal();
     }
@@ -2717,6 +2966,7 @@ Unicode: café ✦ 日本語
         item("nextPosture")->setProperty("currentIndex",2);click("nextPostureApply");
         QTRY_VERIFY(item("turnPostureChip"));QVERIFY(item("turnPostureChip")->property("text").toString().contains("Review"));
         capture("conversation-style-posture");
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         item("composer")->setProperty("text","completion-rich");click("sendMessage");
         QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);QTRY_COMPARE(app->session().value("status").toString(),QString("idle"));
         QTRY_VERIFY(!item("turnPostureChip"));
@@ -3101,7 +3351,7 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE(item("companionRequester")->property("text").toString(),QString("Another pinned project"));
         const auto shown=bubble->property("currentReply").toMap();
         QCOMPARE(shown.value("id"),replies().last().toMap().value("id"));
-        call("settings.update",{{"avatar","cere"}});
+        call("settings.update",{{"avatar","cere_default"}});
         QTRY_COMPARE(bubble->property("accent").value<QColor>(),QColor("#49dfff"));
         QCOMPARE(bubble->property("currentReply").toMap().value("id"),shown.value("id"));
         for(const auto &id:avatarIds(false)){
@@ -3229,8 +3479,9 @@ Unicode: café ✦ 日本語
         capture("project-quick-session-360x560");QTest::keyClick(window,Qt::Key_Return);
         QTRY_COMPARE(app->session().value("title").toString(),QString("Quick project task"));
         QCOMPARE(app->session().value("cwd").toString(),cwd);QCOMPARE(app->session().value("model").toString(),QString("fixture-model"));QCOMPARE(app->session().value("effort").toString(),QString("high"));
-        QTRY_VERIFY(item("composer"));auto composer=item("composer");
-        composer->forceActiveFocus();for(const auto ch:QByteArray("completion-first line"))QTest::keyClick(window,ch);QTest::keyClick(window,Qt::Key_Return,Qt::ShiftModifier);for(const auto ch:QByteArray("Second line"))QTest::keyClick(window,ch);
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());auto composer=item("composer");
+        QTRY_VERIFY(composer->hasActiveFocus());
+        for(const auto ch:QByteArray("completion-first line"))QTest::keyClick(window,ch);QTest::keyClick(window,Qt::Key_Return,Qt::ShiftModifier);for(const auto ch:QByteArray("Second line"))QTest::keyClick(window,ch);
         QCOMPARE(composer->property("text").toString(),QString("completion-first line\nSecond line"));QCOMPARE(app->messages().size(),0);
         QTest::keyClick(window,Qt::Key_Return);
         QTRY_VERIFY_WITH_TIMEOUT(app->messages().size()>=2,10000);
@@ -3420,7 +3671,7 @@ Unicode: café ✦ 日本語
         QTRY_VERIFY(!app->state().value("folders").toList().isEmpty());
         const auto folder=app->state().value("folders").toList().first().toMap();
         QVERIFY(!call("session.organize",{{"id",id},{"folderId",folder.value("id")},{"pinned",true}}).contains("error"));
-        click("tab_Chat");QTRY_VERIFY(item("composer"));
+        click("tab_Chat");QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         item("composer")->setProperty("text","A draft with an attachment");
         const auto path=data.path()+"/draft-reference.txt";QFile file(path);QVERIFY(file.open(QIODevice::WriteOnly));file.write("Reference content kept with the draft.");file.close();
         app->attachImage(path);
@@ -3498,7 +3749,7 @@ Unicode: café ✦ 日本語
         QTRY_VERIFY(row("sessionList"));openMenu("sessionList");QCOMPARE(item("sessionContextArchive")->property("text").toString(),QString("Unarchive"));click("sessionContextArchive");
         QTRY_VERIFY(!session().value("archived").toBool());filter->setProperty("currentIndex",0);QVERIFY(QMetaObject::invokeMethod(filter,"activated",Q_ARG(int,0)));
         QTRY_VERIFY(row("sessionList"));auto control=row("sessionList");QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,control->mapToScene(QPointF(control->width()/2,control->height()/2)).toPoint());
-        QTRY_COMPARE(app->selectedId(),target);QTRY_VERIFY(item("composer"));
+        QTRY_COMPARE(app->selectedId(),target);QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         QVERIFY(!call("folders.delete",{{"id",folder.value("id")},{"expectedRevision",folder.value("revision")}}).contains("error"));
         // F10: Delete… asks first, then removes the open conversation and moves the selection off it.
         click("tab_Sessions");QTRY_VERIFY(row("sessionList"));control=row("sessionList");
@@ -3508,14 +3759,40 @@ Unicode: café ✦ 日本語
         click("sessionDeleteConfirm");
         QTRY_VERIFY(session().isEmpty());QTRY_VERIFY(!row("sessionList"));QTRY_VERIFY(app->selectedId()!=target);
     }
+    void workflowEditsBelongToLoadedProject(){
+        const auto create=[&](const QString &name){
+            const auto cwd=data.path()+"/"+name;
+            if(!QDir().mkpath(cwd))return QString();
+            return call("session.create",{{"provider","codex"},{"cwd",cwd},{"trusted",true}}).value("id").toString();
+        };
+        const auto first=create("capsule-first"),second=create("capsule-second");
+        QVERIFY(!first.isEmpty()&&!second.isEmpty());
+        for(const auto &id:{first,second}){
+            const auto result=call("capsules.save",{{"sessionId",id},{"goal",id},{"expectedRevision","0"},{"sources",QVariantList{}}});
+            QVERIFY2(!result.contains("error"),qPrintable(result.value("error").toString()));
+        }
+        app->select(first);QTRY_COMPARE(app->session().value("id").toString(),first);
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");
+        const auto closeDialog=qScopeGuard([&]{if(auto workflow=dialog("workflowsDialog"))QMetaObject::invokeMethod(workflow,"close");});
+        QTRY_VERIFY(item("capsuleGoal")&&item("capsuleGoal")->isEnabled());
+        QCOMPARE(item("capsuleGoal")->property("text").toString(),first);
+        app->select(second);
+        QVERIFY(!item("capsuleGoal")->isEnabled());
+        QTRY_VERIFY(item("capsuleGoal")->isEnabled());
+        QCOMPARE(item("capsuleGoal")->property("text").toString(),second);
+        item("capsuleGoal")->setProperty("text","Edited second project");click("saveCapsule");
+        QTRY_COMPARE(call("capsules.get",{{"sessionId",second}}).value("goal").toString(),QString("Edited second project"));
+        QCOMPARE(call("capsules.get",{{"sessionId",first}}).value("goal").toString(),first);
+    }
     void projectCapsulesAndRecipeReview(){
         const auto source=call("session.create",{{"provider","codex"},{"cwd",data.path()},{"trusted",true},{"title","Workflow check"}});
         QVERIFY(!source.contains("error"));app->select(source.value("id").toString());
-        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");QTRY_VERIFY(item("capsuleGoal"));
+        click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");QTRY_VERIFY(item("capsuleGoal")&&item("capsuleGoal")->isEnabled());
+        const auto closeDialog=qScopeGuard([&]{if(auto workflow=dialog("workflowsDialog");workflow&&workflow->property("opened").toBool())QMetaObject::invokeMethod(workflow,"close");});
         item("capsuleGoal")->setProperty("text","Keep the release reviewable");click("saveCapsule");
         QTRY_COMPARE(call("capsules.get",{{"sessionId",source.value("id")}}).value("goal").toString(),QString("Keep the release reviewable"));
         click("resumeCapsule");QTRY_VERIFY(app->selectedId()!=source.value("id").toString());
-        QTRY_VERIFY(item("composer"));QTRY_VERIFY(item("composer")->property("text").toString().contains("Keep the release reviewable"));
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());QTRY_VERIFY(item("composer")->property("text").toString().contains("Keep the release reviewable"));
         click(item("sidebarWorkflows")?"sidebarWorkflows":"openWorkflows");click("workflowTab1");QTRY_VERIFY(item("recipePicker"));
         const auto recipes=call("recipes.list").value("recipes").toList();int index=-1;
         for(int i=0;i<recipes.size();++i)if(recipes[i].toMap().value("id")=="diagnose-crash")index=i;
@@ -3535,10 +3812,11 @@ Unicode: café ✦ 日本語
         auto saved=[&]{return app->session().value("draft").toString();};
         auto compact=[&]{
             app->closePanel();app->togglePanel();QTRY_VERIFY((window=titled("Cere Panel")));QTest::qWait(150);
-            click("tab_Sessions");click("session_"+session);QTRY_VERIFY(item("composer"));
+            click("tab_Sessions");click("session_"+session);QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         };
         // Edits shorter than the 600 ms debounce survive hiding and expanding in both directions.
         restoreWorkspace();
+        click("tab_Chat");QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         item("composer")->setProperty("text","typed in the workspace");
         compact();QTRY_COMPARE(item("composer")->property("text").toString(),QString("typed in the workspace"));
         item("composer")->setProperty("text","typed in the compact panel");
@@ -3564,7 +3842,7 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE(saved(),QString("saved on destruction"));
         // F-14: an edit typed while an earlier save is still in flight survives an immediate Expand,
         // even though Expand destroys this editor before that save returns.
-        window=titled("Cere Panel");QTRY_VERIFY(item("composer"));
+        window=titled("Cere Panel");QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());
         item("composer")->setProperty("text","saved first");
         QVERIFY(QMetaObject::invokeMethod(item("chatView"),"saveDraft",Q_ARG(QVariant,false),Q_ARG(QVariant,false)));
         item("composer")->setProperty("text","typed during that save");
@@ -3619,12 +3897,16 @@ Unicode: café ✦ 日本語
         const auto session=createSession("codex","Bubble focus");QVERIFY(!session.isEmpty());
         app->closePanel();QTest::qWait(600);
         auto active=[&]{return hypr({"-j","activewindow"}).object().value("title").toString();};
-        const QString before=active();
+        QQuickWindow typing;
+        typing.setTitle("Cere Focus Witness");typing.resize(320,180);typing.show();
+        typing.requestActivate();
+        QTRY_COMPARE(active(),typing.title());
+        QTRY_COMPARE(qGuiApp->focusWindow(), &typing);
         call("session.send",{{"id",session},{"text","approval"}});
         QQuickWindow *bubble=nullptr;QTRY_VERIFY_WITH_TIMEOUT((bubble=titled("Cere Approval")),8000);
         QTest::qWait(900);
-        QVERIFY2(active()!="Cere Approval",qPrintable("Hyprland gave the bubble the keyboard; active before: "+before));
-        QVERIFY2(!bubble->isActive(),"the bubble became the active window");
+        QCOMPARE(active(),typing.title());
+        QCOMPARE(qGuiApp->focusWindow(), &typing);
     }
     // F-037: roaming crosses output seams without jumps at every scale.
     void roamingPlacementIsContinuousAcrossOutputs(){
@@ -3761,6 +4043,15 @@ Unicode: café ✦ 日本語
         QTest::qWait(300);
         QCOMPARE(received.count("settings.update"),saves);QCOMPARE(received.count("session.create"),creates); // Nothing is replayed.
         QCOMPARE(outcomes(saving),1);QCOMPARE(outcomes(creating),1);
+        // AUD-009: two individually legal frames can arrive in one socket read.
+        const auto padding=QJsonDocument(QJsonObject{{"method","fixture.padding"},{"params",QString(9*1024*1024,'x')}}).toJson(QJsonDocument::Compact)+'\n';
+        client->write(padding+padding);
+        notify(message("m4","assistant","After coalesced frames",11));
+        QTRY_COMPARE_WITH_TIMEOUT(textOf("m4"),QString("After coalesced frames"),10000);
+        QVERIFY(fake.connected());
+        // An unfinished frame over the limit still closes this connection.
+        client->write(QByteArray(16*1024*1024+1,'x'));
+        QTRY_VERIFY_WITH_TIMEOUT(!fake.connected(),5000);
         view.hide();
     }
     // W04: a broker that stays connected but stops answering (frozen, stopped) cannot leave an
@@ -3801,6 +4092,24 @@ Unicode: café ✦ 日本語
         fake.start(false);
         QTRY_VERIFY(fake.connected());QTRY_VERIFY(received.contains("ping"));QVERIFY(!fake.brokerUnresponsive());
         auto outcomes=[&](int id){QVariantList found;for(const auto &r:results)if(r.at(0).toInt()==id)found<<r.at(1);return found;};
+        // A slow UI operation can hold up both the watchdog and socket notifications. A broker
+        // reply already waiting when the event loop resumes must win over the overdue timer.
+        bool falselyUnresponsive=false;
+        const auto watchResponsive=connect(&fake,&Controller::stateChanged,this,[&]{falselyUnresponsive|=fake.brokerUnresponsive();});
+        const auto stopWatching=qScopeGuard([&]{disconnect(watchResponsive);});
+        const int delayed=fake.rpc("settings.update",{{"hidden",true}});QVERIFY(delayed>0);
+        QTRY_COMPARE(ids.value("settings.update"),delayed);
+        QTest::qSleep(1700);
+        send(QJsonObject{{"id",delayed},{"result",QJsonObject{{"queued",true}}}});
+        QVERIFY(client->flush());
+        QCOMPARE(client->bytesToWrite(),qint64(0));
+        // Exercise the timer-first ordering seen after cold QML construction; ordinary dispatch
+        // may choose the socket first and hide this regression.
+        fake.checkLiveness();
+        QVERIFY2(!falselyUnresponsive,"A delayed UI event loop must not mark a broker with a waiting reply unresponsive");
+        QTRY_COMPARE(outcomes(delayed).size(),1);
+        QVERIFY(outcomes(delayed).first().toMap().value("queued").toBool());
+        disconnect(watchResponsive);
         // Responsive broker, one lost answer: only that request ends, as unconfirmed, at its deadline.
         const int saving=fake.rpc("settings.update",{{"hidden",true}}),transcribing=fake.rpc("transcription.importFile",{{"path","/tmp/a.wav"}});
         QVERIFY(saving>0&&transcribing>0);
@@ -4082,18 +4391,33 @@ private slots:
             if(!waitFor([&]{return app->session().value("status").toString()=="idle";},8000)){note("long session turn idle",false,QString::number(turns));break;}
         }
         note("200+ messages created",app->messages().size()>=200,QString("messages=%1 turns=%2 ms=%3").arg(app->messages().size()).arg(turns).arg(clock.elapsed()));
-        const auto other=createSession("codex","Rich reply");
+        const auto other=createSession("codex","Rich reply","fixture-model");
+        QVERIFY(!other.isEmpty());
         app->select(longSession);waitFor([&]{return app->messages().size()>=100;},8000);QTest::qWait(500);
         note("transcript loaded after reselect",app->messages().size()>=200,QString("messages=%1 hasOlder=%2").arg(app->messages().size()).arg(app->hasOlderMessages()));
         capture("review-long-session-workspace");
         reviewCompact();waitFor([&]{return item("messageList")!=nullptr;});QTest::qWait(400);capture("review-long-session-compact");
         reviewWorkspace();
         QImage picture(320,180,QImage::Format_ARGB32);picture.fill(QColor("#49dfff"));const auto imagePath=data.path()+"/review-image.png";picture.save(imagePath);
-        app->select(other);waitFor([&]{return app->selectedId()==other;});
-        call("session.send",{{"id",other},{"text","completion-rich:"+imagePath}});
-        waitFor([&]{return app->session().value("status").toString()=="idle"&&app->messages().size()>=2;},10000);QTest::qWait(500);
-        for(const auto &m:app->messages())if(m.toMap().value("role")=="assistant"&&m.toMap().value("text").toString().contains("Review fixture"))richMessageId=m.toMap().value("id").toString();
-        note("rich reply persisted",!richMessageId.isEmpty());
+        app->select(other);
+        QTRY_COMPARE(app->session().value("id").toString(),other);
+        QTRY_VERIFY_WITH_TIMEOUT(app->connected(),15000);
+        const auto sent=call("session.send",{{"id",other},{"text","completion-rich:"+imagePath}},60000);
+        QVERIFY2(!sent.contains("error"),qPrintable(sent.value("error").toString()));
+        richMessageId.clear();
+        const bool received=waitFor([&]{
+            for(const auto &value:app->messages()){
+                const auto message=value.toMap();
+                if(message.value("role")=="assistant"&&message.value("text").toString().contains("Review fixture")){
+                    richMessageId=message.value("id").toString();return true;
+                }
+            }
+            return false;
+        },15000);
+        const auto status=app->session().value("status").toString();
+        note("rich reply persisted",received,status);
+        QVERIFY2(received,qPrintable("Expected the rich fixture reply; session status: "+status+
+            ", session error: "+app->session().value("error").toString()+", messages: "+QString::number(app->messages().size())));
         QStringList wideProse; // F-10: prose wraps within the visible width; only code and tables may reach past it
         auto inspect=[&](const QString &label){
             auto viewport=item("messageViewport_"+richMessageId),body=item("messageBody_"+richMessageId);
@@ -4117,7 +4441,7 @@ private slots:
         window->resize(1040,780);QTest::qWait(300);
         reviewCompact();waitFor([&]{return item("messageBody_"+richMessageId)!=nullptr;});QTest::qWait(400);inspect("compact 440");capture("review-rich-reply-compact");
         reviewWorkspace();saveNotes("review-long-content");
-        if(!richMessageId.isEmpty())QVERIFY2(wideProse.isEmpty(),qPrintable(wideProse.join("; ")));
+        QVERIFY2(wideProse.isEmpty(),qPrintable(wideProse.join("; ")));
     }
     void reviewApprovalsAndKeyboard(){
         app->rpc("settings.update",{{"topmost",false},{"quiet",true},{"reducedMotion",true}});
@@ -4159,27 +4483,33 @@ private slots:
         if(bubble){
             window=bubble;QTest::qWait(500);capture("review-approvals-bubble");
             note("bubble has no default-focused control",!bubble->activeFocusItem()||bubble->activeFocusItem()==bubble->contentItem(),focusName());
-            note("bubble leaves the keyboard alone",!bubble->isActive());
+            if(liveHyprland())note("bubble leaves the keyboard alone",!bubble->isActive());
+            else qInfo()<<"Offscreen bubble active flag:"<<bubble->isActive()<<"; keyboard ownership is checked on the private Wayland seat.";
             QTest::keyClick(window,Qt::Key_Tab);QTest::qWait(30);note("bubble first Tab target",true,focusName());
             const int before=requests().size();QTest::keyClick(window,Qt::Key_Return);QTest::qWait(500);
             note("Enter in bubble does not approve",requests().size()==before,focusName());
         }else note("bubble appeared",false);
         reviewWorkspace();
-        app->select(sessions[1]);QTest::qWait(400);
-        composer=item("composer");if(composer){composer->setProperty("text","Escape keeps this draft");composer->forceActiveFocus();}
+        const auto escapeSession=createSession("codex","Keyboard dismissal","fixture-model");
+        QVERIFY(!escapeSession.isEmpty());
+        app->select(escapeSession);QTRY_COMPARE(app->session().value("id").toString(),escapeSession);
+        composer=item("composer");QVERIFY(composer);composer->forceActiveFocus();
         click("renameSession");QTest::qWait(150);note("rename dialog open",item("renameSessionTitle")!=nullptr);
         QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(200);
         note("Escape closes the dialog only",item("renameSessionTitle")==nullptr&&window->isVisible());
         click("tab_Settings");QTest::qWait(150);QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(200);
         note("Escape on Settings returns to Chat",item("composer")!=nullptr);
-        call("session.send",{{"id",sessions[1]},{"text","acting"}});waitFor([&]{return app->session().value("status").toString()=="working";},4000);
-        if(auto c=item("composer"))c->forceActiveFocus();
+        const auto acting=call("session.send",{{"id",escapeSession},{"text","review-hold-stream"}});
+        QVERIFY2(!acting.contains("error"),qPrintable(acting.value("error").toString()));
+        QTRY_COMPARE(app->session().value("status").toString(),QString("working"));
+        composer=item("composer");QVERIFY(composer);
+        composer->setProperty("text","Escape keeps this draft");composer->forceActiveFocus();
         QTest::keyClick(window,Qt::Key_Escape);QTest::qWait(300);
         note("Escape on Chat hides the window",!window->isVisible());
         note("Escape does not stop the running turn",app->session().value("status").toString()=="working",app->session().value("status").toString());
         reviewWorkspace();
         note("draft survives Escape",item("composer")&&item("composer")->property("text").toString()=="Escape keeps this draft",item("composer")?item("composer")->property("text").toString():"missing");
-        waitFor([&]{return app->session().value("status").toString()=="idle";},8000);
+        QVERIFY(!call("session.stop",{{"id",escapeSession}}).contains("error"));
         if(auto c=item("composer"))c->setProperty("text","");
         reviewCompact();QTest::qWait(300);capture("review-long-title-compact");
         if(auto title=item("chatView")){Q_UNUSED(title);}
@@ -4245,7 +4575,7 @@ private slots:
             snapshot("compact",cycle);
             if(cycle==7){
                 click("tab_Sessions");QTest::qWait(200);
-                if(auto row=item("session_"+longSession)){QTest::mouseClick(window,Qt::RightButton,Qt::NoModifier,row->mapToScene(QPointF(row->width()/2,row->height()/2)).toPoint());QTest::qWait(200);auto menu=window->contentItem()->findChild<QObject*>("sessionContextMenu");note("session menu open before expand",menu&&menu->property("visible").toBool());}
+                if(scrollTo("session_"+longSession)){auto row=item("session_"+longSession);QTest::mouseClick(window,Qt::RightButton,Qt::NoModifier,row->mapToScene(QPointF(row->width()/2,row->height()/2)).toPoint());const bool open=waitFor([&]{return item("sessionContextRename")!=nullptr;});note("session menu open before expand",open);QVERIFY(open);}
                 else note("session row found for menu",false);
             }
             reviewWorkspace();waitFor(loaded,3000);QTest::qWait(300);
@@ -4262,7 +4592,8 @@ private slots:
         app->select(streamSession);QTest::qWait(400);
         if(auto toggle=item("activityToggle")){QMetaObject::invokeMethod(toggle,"clicked");QTest::qWait(200);}
         note("activity panel expanded before transition",item("activityPanel")&&item("activityPanel")->property("expanded").toBool());
-        call("session.send",{{"id",streamSession},{"text","acting"}});waitFor([&]{return app->session().value("status").toString()=="working";},4000);
+        QVERIFY(!call("session.send",{{"id",streamSession},{"text","review-hold-stream"}}).contains("error"));
+        QTRY_COMPARE(app->session().value("status").toString(),QString("working"));
         if(auto c=item("composer")){c->setProperty("text","typed while streaming");c->forceActiveFocus();}
         QTest::qWait(700);
         auto streamSnapshot=[&](const QString &surface){
@@ -4276,7 +4607,7 @@ private slots:
         };
         reviewCompact();waitFor([&]{auto c=item("composer");return c&&c->property("text").toString()=="typed while streaming";},3000);QTest::qWait(200);streamSnapshot("compact");streaming("compact");capture("review-streaming-transition-compact");
         reviewWorkspace();waitFor([&]{auto c=item("composer");return c&&c->property("text").toString()=="typed while streaming";},3000);QTest::qWait(200);streamSnapshot("workspace");streaming("workspace");capture("review-streaming-transition-workspace");
-        waitFor([&]{return app->session().value("status").toString()=="idle";},10000);
+        QVERIFY(!call("session.stop",{{"id",streamSession}}).contains("error"));
         if(auto c=item("composer"))c->setProperty("text","");
         for(const auto &r:app->state().value("approvals").toList())call("approval.answer",{{"id",r.toMap().value("id")},{"choice","deny"}});
         saveNotes("review-transitions");
@@ -4371,7 +4702,7 @@ private slots:
     void reviewLiveOutputs(){
         if(!qGuiApp->platformName().startsWith("wayland"))QSKIP("Layer-shell surfaces need the live compositor");
         app->closePanel();
-        app->rpc("settings.update",{{"topmost",true},{"hidden",false},{"roaming",false},{"quiet",true},{"reducedMotion",true}});QTest::qWait(1000);
+        QVERIFY(!call("settings.update",{{"topmost",true},{"hidden",false},{"roaming",false},{"quiet",true},{"reducedMotion",true}}).contains("error"));
         const auto session=createSession("codex","Layer surfaces");
         auto layerOn=[&](const QString &output,const QString &ns){
             QJsonArray found;const auto layers=hypr({"-j","layers"}).object();
@@ -4382,15 +4713,20 @@ private slots:
             if(layer.isEmpty())return;QProcess grim;grim.start("grim",{"-g",QString("%1,%2 %3x%4").arg(layer.value("x").toInt()-8).arg(layer.value("y").toInt()-8).arg(layer.value("w").toInt()+16).arg(layer.value("h").toInt()+16),"/tmp/cere-ui-evidence/"+file+".png"});grim.waitForFinished(5000);
         };
         for(auto screen:qGuiApp->screens()){
-            app->rpc("settings.update",{{"position",QVariantMap{{"output",screen->name()},{"x",.9},{"y",.8}}}});QTest::qWait(700);
-            app->rpc("ui.toggle");QTest::qWait(1500);
+            QVERIFY(!call("settings.update",{{"position",QVariantMap{{"output",screen->name()},{"x",.9},{"y",.8}}}}).contains("error"));
+            QTRY_VERIFY_WITH_TIMEOUT(!layerOn(screen->name(),"cere-pet").isEmpty(),20000);
+            QVERIFY(!call("ui.toggle").contains("error"));
+            QTRY_VERIFY_WITH_TIMEOUT(!layerOn(screen->name(),"cere-panel").isEmpty(),20000);
             const auto panels=layerOn(screen->name(),"cere-panel");
             note("compact layer on "+screen->name()+" scale "+QString::number(screen->devicePixelRatio()),!panels.isEmpty(),QJsonDocument(panels).toJson(QJsonDocument::Compact));
             if(!panels.isEmpty())crop(panels.last().toObject(),"review-live-compact-"+screen->name());
-            app->rpc("ui.toggle");QTest::qWait(700);
+            QVERIFY(!call("ui.toggle").contains("error"));
+            QTRY_VERIFY_WITH_TIMEOUT(layerOn(screen->name(),"cere-panel").isEmpty(),20000);
         }
-        call("session.send",{{"id",session},{"text","approval"}});waitFor([&]{return !app->state().value("approvals").toList().isEmpty();},8000);QTest::qWait(1500);
+        QVERIFY(!call("session.send",{{"id",session},{"text","approval"}}).contains("error"));
+        QTRY_VERIFY(!app->state().value("approvals").toList().isEmpty());
         const auto last=qGuiApp->screens().last();
+        QTRY_VERIFY_WITH_TIMEOUT(!layerOn(last->name(),"cere-approval").isEmpty(),20000);
         const auto bubbles=layerOn(last->name(),"cere-approval"),pets=layerOn(last->name(),"cere-pet");
         note("bubble layer beside pet on "+last->name(),!bubbles.isEmpty(),QJsonDocument(bubbles).toJson(QJsonDocument::Compact)+" pet "+QJsonDocument(pets).toJson(QJsonDocument::Compact));
         if(!bubbles.isEmpty()&&!pets.isEmpty()){
@@ -4573,7 +4909,7 @@ private slots:
         restoreWorkspace();click("tab_Chat");
         const auto session=createSession("ollama","Offline draft","fixture-chat:latest");QVERIFY(!session.isEmpty());
         app->select(session);QTRY_COMPARE(app->selectedId(),session);
-        QTRY_VERIFY(item("composer"));item("composer")->setProperty("text","Saved before the outage");
+        QTRY_VERIFY(item("composer")&&item("composer")->isEnabled());item("composer")->setProperty("text","Saved before the outage");
         QTRY_COMPARE_WITH_TIMEOUT(app->session().value("draft").toString(),QString("Saved before the outage"),5000);
         QFile pidFile(data.path()+"/runtime/broker.pid");QVERIFY(pidFile.open(QIODevice::ReadOnly));
         const int pid=pidFile.readAll().trimmed().toInt();QVERIFY(pid>1);

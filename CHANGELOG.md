@@ -4,6 +4,8 @@ Notable changes to Cere, the desktop application and its broker, and to Cere Mob
 
 ## [Unreleased]
 
+Repository remediation adds revision-safe policy commits, cancellable turn preparation, consent-bound private context, journaled collection ingestion, complete bounded operation review, process-group cleanup, byte-bounded desktop hydration, and Android stale-response fencing. Zod is pinned to 4.6.7. See [implementation and remaining gates](docs/remediation-2026-11-17.md); exhaustive audit and release validation are not complete.
+
 The desktop and mobile review, implemented in October 2026 as work packages W01–W16. Finding IDs F01–F18 are the review's; [docs/REVIEW-VALIDATION.md](docs/REVIEW-VALIDATION.md) records the commit, tests and evidence for each, and [docs/FEATURE-MATRIX.md](docs/FEATURE-MATRIX.md) shows what the phone and the desktop each offer. The phone build from this source has not been published; a stable phone release still needs the device gates in [docs/mobile/TESTING.md](docs/mobile/TESTING.md).
 
 ### Added

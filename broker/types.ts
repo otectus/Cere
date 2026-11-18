@@ -1,7 +1,7 @@
 import { defaultExtractionModel } from './graph-memory/models.ts';
 import { providerIds } from './provider-catalog.ts';
 import { defaultElevenConfig, type ElevenConfig } from './elevenlabs.ts';
-import { defaultPersonality, defaultAssistantName, type AvatarId } from './personality.ts';
+import { defaultPersonality, defaultAssistantName, defaultAvatar, type AvatarId } from './personality.ts';
 import type { RemoteExecution } from './execution.ts';
 import { defaultIndexConfig, type IndexConfig } from './indextts-config.ts';
 
@@ -55,6 +55,11 @@ export type Project = { cwd: string; name: string; revision: string; updated: nu
   /** A06: whether Cere-managed API/Ollama turns read the project's convention files. */
   conventions?: boolean };
 export type Source = { title: string; url: string };
+/**
+ * `kind` refines `role`: tool rows are 'tool' or 'agent', assistant rows may be 'question', and user rows may be
+ * 'answer', 'queued' or 'queue-cancelled'. A 'delegation' row is user-role text that Cere writes itself when
+ * delegated work reports back to the conversation that started it; it is never the user's words.
+ */
 export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string;
   /** M02: formatting checks this reply did not meet. A note only: the text is never changed. */
   styleNotes?: { constraint: string; label: string; count: number }[] };
@@ -77,7 +82,7 @@ export type Settings = {
   /** The new-conversation dialog's starting choices for general conversations; null keeps its stock choices. Projects keep their own defaults. */
   conversationDefaults: ConversationDefaults | null;
   webSearch: { enabled: boolean; provider: SearchProvider; searxngUrl: string };
-  memory: { enabled: boolean; model: string; extractionModel?: string; allowCloudMemory?: boolean; allowCloudExtraction?: boolean };
+  memory: { enabled: boolean; model: string; extractionModel?: string; extractionProvider?: 'ollama' | 'google' | 'anthropic'; embeddingProvider?: 'ollama' | 'google'; allowCloudEmbedding?: boolean; allowCloudMemory?: boolean; allowCloudExtraction?: boolean };
   desktopProfile: 'normal'|'focus'|'gaming'|'presentation'; interfaceScale:number; homePositions:Record<string,{x:number;y:number}>;
   topmost: boolean; scale: number; roaming: boolean; quiet: boolean; reducedMotion: boolean;
   motionIntensity: number; expressiveCues: boolean; idleEnergy: 'calm' | 'lively';
@@ -99,6 +104,8 @@ export type Settings = {
   voiceCommands: { enabled: boolean; confirm: boolean; speakFeedback: boolean };
   /** M16: measure responsiveness (durations only) while on. */
   responsiveness: boolean;
+  /** When a delegated Codex or Claude turn ends, its parent conversation takes an automatic turn to report it. */
+  delegationUpdates: boolean;
   hidden: boolean; profile: 'manual' | 'scoped' | 'broad'; paused: boolean;
   bypassCliPermissions: boolean; bypassComputerPermissions: boolean;
   categories: string[]; grants: { category: string; cwd: string; expires: number }[];
@@ -149,7 +156,7 @@ export interface Adapter {
 export const defaultSettings: Settings = {
   telemetry: { enabled:false, roots:[], ignores:[], commands:false, output:false },
   personality: defaultPersonality,
-  assistantName: defaultAssistantName, avatar: 'cere',
+  assistantName: defaultAssistantName, avatar: defaultAvatar,
   ttsProvider:'local', indextts:structuredClone(defaultIndexConfig), elevenlabs:structuredClone(defaultElevenConfig),
   voice: 'en_US-amy-medium', speechEnabled: true, speechProviders:Object.fromEntries(providerIds.map(id=>[id,true])) as Record<Provider,boolean>, speechRate:1, speechPitch:0, speechVolume:1, speechBrief:false, transcription:{executable:'',model:''},
   ollama: { host: 'http://127.0.0.1:11434', model: '' },
@@ -160,7 +167,7 @@ export const defaultSettings: Settings = {
   topmost: true, scale: 1, roaming: false, quiet: false, reducedMotion: false, motionIntensity: .7, expressiveCues: true, idleEnergy: 'lively', hidden: false,
   showMemoryCitations: false, sendKey: 'enter', notesVault: { path: '', enabled: false, allowCloud: false },
   compatible: { baseUrl: '', label: '', requiresKey: true, tools: false, images: false, streaming: true, usage: false, contextLength: 0, maxOutputTokens: 0 },
-  extensions: [], customTools: [], audio: { input: '', output: '' }, voiceCommands: { enabled: false, confirm: true, speakFeedback: false }, responsiveness: false,
+  extensions: [], customTools: [], audio: { input: '', output: '' }, voiceCommands: { enabled: false, confirm: true, speakFeedback: false }, responsiveness: false, delegationUpdates: true,
   profile: 'scoped', paused: false, bypassCliPermissions: false, bypassComputerPermissions: false, categories: [], grants: [],
   position: { output: '', x: 0.86, y: 0.78 }, roamArea: { left: 0.05, right: 0.95, top: 0.5, bottom: 0.95 },
   onboarding: true, scripts: [],

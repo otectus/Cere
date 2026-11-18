@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "avatarpuppet.h"
 #include "avatardefinition.h"
+#include "avatarcatalog.h"
 #include "citations.h"
 #include <qqml.h>
 #include <LayerShellQt/Window>
@@ -101,9 +102,16 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
     const auto baseRig=m_animations.value("puppet").toMap();
     const auto resolvedBase=AvatarDefinition::resolve(baseRig);
     m_animations.insert("puppet",resolvedBase.definition);
-    QFile avatarFile(m_root+"/assets/avatars.json");
-    if(avatarFile.open(QIODevice::ReadOnly)){
-        for(const auto &value:QJsonDocument::fromJson(avatarFile.readAll()).array()){
+    auto catalog=AvatarCatalog::load(m_root+"/assets/avatars.json");
+    if(!catalog.error.isEmpty()) {
+        qWarning()<<catalog.error;
+        catalog=AvatarCatalog::load(":/assets/avatars.json");
+    }
+    if(!catalog.error.isEmpty())qFatal("Invalid embedded avatar manifest: %s",qPrintable(catalog.error));
+    m_avatarCatalog=catalog.entries.toVariantList();m_defaultAvatar=catalog.defaultId;
+    m_avatarAliases=catalog.aliases;m_themes=catalog.palettes;
+    {
+        for(const auto &value:catalog.entries){
             auto entry=value.toObject().toVariantMap();
             QVariantMap overrides;
             const QString overrideFile=entry.take("rig").toString();
@@ -127,10 +135,10 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
             entry.insert("puppet",definition);m_avatars.append(entry);
         }
     }
-    if(m_avatars.isEmpty())m_avatars.append(QVariantMap{{"id","cere"},{"label","Cere"},{"portrait","cere-portraits.png"},{"puppet",m_animations.value("puppet")}});
-    // Compiled with the host so native dialogs and the overlay cannot lose their palette.
-    QFile palettes(":/assets/palettes.json");
-    if(palettes.open(QIODevice::ReadOnly))m_themes=QJsonDocument::fromJson(palettes.readAll()).object().toVariantMap();
+    if(m_avatars.isEmpty())for(const auto &value:m_avatarCatalog) {
+        auto entry=value.toMap();if(entry.value("id").toString()!=m_defaultAvatar)continue;
+        entry.insert("puppet",m_animations.value("puppet"));m_avatars.append(entry);break;
+    }
     applyTheme();
     m_director=MotionDirector(m_animations);m_reactionClock.start();
     m_clock.start();
@@ -158,7 +166,15 @@ Controller::Controller(QString root,bool overlay,QObject *parent):QObject(parent
         if(!m_disconnected.isValid())m_disconnected.start();
         stopRoaming(false);refreshMotion();emit stateChanged();m_retry.start(1500);
     });
-    connect(&m_socket,&QLocalSocket::errorOccurred,this,[this]{if(!m_disconnected.isValid())m_disconnected.start();m_retry.start(1500);emit stateChanged();});
+    connect(&m_socket,&QLocalSocket::errorOccurred,this,[this](QLocalSocket::LocalSocketError error){
+        if(!m_disconnected.isValid())m_disconnected.start();
+        // A delayed retry can find the original broker already listening. Relaunch only
+        // after this connection actually failed, with enough spacing for a slow start.
+        const bool unavailable=error==QLocalSocket::ServerNotFoundError||error==QLocalSocket::ConnectionRefusedError;
+        if(unavailable&&!m_overlay&&m_disconnected.elapsed()>=6000&&(!m_lastLaunch.isValid()||m_lastLaunch.elapsed()>=15000))
+            launchBroker(false);
+        m_retry.start(1500);emit stateChanged();
+    });
     connect(&m_retry,&QTimer::timeout,this,&Controller::connectBroker);
     m_toastTimer.setSingleShot(true); connect(&m_toastTimer,&QTimer::timeout,this,[this]{m_toast.clear();emit toastChanged();});
     m_motionTimer.setTimerType(Qt::PreciseTimer);m_motionTimer.setSingleShot(true); connect(&m_motionTimer,&QTimer::timeout,this,&Controller::restoreMotion);
@@ -189,8 +205,9 @@ Controller::~Controller(){
 }
 QString Controller::assetPath()const{return QUrl::fromLocalFile(m_root+"/assets/").toString();}
 QVariantMap Controller::avatar()const{
-    const auto selected=m_state.value("settings").toMap().value("avatar","cere").toString();
+    const auto selected=canonicalAvatar(m_state.value("settings").toMap().value("avatar").toString());
     if(!m_brokenAvatars.contains(selected))for(const auto &entry:m_avatars)if(entry.toMap().value("id").toString()==selected)return entry.toMap();
+    if(!m_brokenAvatars.contains(m_defaultAvatar))for(const auto &entry:m_avatars)if(entry.toMap().value("id").toString()==m_defaultAvatar)return entry.toMap();
     for(const auto &entry:m_avatars)if(!m_brokenAvatars.contains(entry.toMap().value("id").toString()))return entry.toMap();
     return m_avatars.first().toMap();
 }
@@ -244,8 +261,9 @@ void Controller::launchBroker(bool initial){
     }
     QProcess broker;broker.setProgram(QStandardPaths::findExecutable("node"));broker.setArguments({m_root+"/broker/main.ts"});broker.setStandardOutputFile(QProcess::nullDevice());broker.setStandardErrorFile(QProcess::nullDevice());broker.startDetached();
 }
-void Controller::start(bool show,bool toggle){
+void Controller::start(bool show,bool toggle,const QString &conversationFolder){
     m_pendingToggle=toggle;
+    m_pendingConversationFolder=conversationFolder;
     if(!m_overlay){
         launchBroker(true);
         m_overlayProcess=new QProcess(this);m_overlayProcess->setProgram(qEnvironmentVariable("CERE_HOST_EXEC",QCoreApplication::applicationFilePath()));
@@ -257,20 +275,26 @@ void Controller::start(bool show,bool toggle){
         menu->addAction("Disable remote access now",this,[this]{rpc("remote.off",{});});
         menu->addSeparator();menu->addAction("Quit · keep sessions running",this,[this]{quit(false);});menu->addAction("Quit and stop sessions",this,[this]{quit(true);});
         m_tray->setContextMenu(menu);m_tray->show();connect(m_tray,&QSystemTrayIcon::activated,this,[this](auto reason){if(reason==QSystemTrayIcon::Trigger)expand();});
-        if(show) QTimer::singleShot(500,this,[this]{showWorkspace();});
+        if(show||!conversationFolder.isEmpty()) QTimer::singleShot(500,this,[this]{showWorkspace();});
     }
     connectBroker();
 }
 void Controller::connectBroker(){
     if(m_socket.state()==QLocalSocket::ConnectedState||m_socket.state()==QLocalSocket::ConnectingState)return;
-    // A broker that stopped (a crash, a manual stop, a restart that did not come back) is restarted
-    // by the interface process; launches are spaced so a slow start is not raced.
-    if(!m_overlay&&m_disconnected.isValid()&&m_disconnected.elapsed()>=6000&&(!m_lastLaunch.isValid()||m_lastLaunch.elapsed()>=15000))launchBroker(false);
     const auto runtime=runtimePath();
     if(QFileInfo::exists(runtime)&&!privateRuntime(runtime)){notify("Cere's runtime directory is not private to you; refusing to connect.");m_retry.start(5000);return;}
     m_socket.abort();m_socket.connectToServer(runtime+"/broker.sock");
 }
 void Controller::checkLiveness(){
+    if(m_socket.state()!=QLocalSocket::ConnectedState){m_liveness.stop();return;}
+    // A slow UI operation can delay both this timer and readyRead. Consume replies already waiting
+    // before timing out the broker or its requests. Peek without consuming native bytes, then let
+    // QLocalSocket own the read; an empty zero-time wait would itself report a socket timeout.
+    const auto descriptor=m_socket.socketDescriptor();
+    char waiting;
+    if(m_socket.bytesAvailable()==0&&descriptor>=0&&::recv(int(descriptor),&waiting,1,MSG_PEEK|MSG_DONTWAIT)>0)
+        m_socket.waitForReadyRead(0); // May synchronously emit readyRead and call receive().
+    if(m_socket.bytesAvailable()>0)receive();
     if(m_socket.state()!=QLocalSocket::ConnectedState){m_liveness.stop();return;}
     const qint64 now=m_clock.elapsed();
     // A request the broker has not answered by its deadline ends as unconfirmed. Long jobs the user
@@ -298,7 +322,7 @@ void Controller::endRequests(const QList<int> &ids,const QString &message,const 
         if(!m_requests.remove(id))continue;
         if(id==m_messagesRequest){m_messagesRequest=-1;m_liveMessages.clear();}
         if(id==m_olderRequest)m_olderRequest=-1;
-        m_copies.remove(id);m_deferredDrafts.remove(id);
+        m_copies.remove(id);retainDeferredDraft(id);
         // An offline draft whose save went unconfirmed stays held, to be saved again or handed back.
         m_offlineFlushes.remove(id);
         emit result(id,QVariantMap{{"error",message},{"code","CONNECTION_LOST"},{"reason",reason}});
@@ -307,7 +331,8 @@ void Controller::endRequests(const QList<int> &ids,const QString &message,const 
 void Controller::failPendingRequests(const QString &message){
     const auto pending=std::exchange(m_requests,{});
     // Offline flushes in flight ended with the connection; their conversations may flush again.
-    m_messagesRequest=-1;m_olderRequest=-1;m_copies.clear();m_liveMessages.clear();m_deferredDrafts.clear();m_offlineFlushes.clear();
+    m_messagesRequest=-1;m_olderRequest=-1;m_copies.clear();m_liveMessages.clear();m_offlineFlushes.clear();
+    for(const int id:m_deferredDrafts.keys())retainDeferredDraft(id);
     for(auto it=pending.cbegin();it!=pending.cend();++it)emit result(it.key(),QVariantMap{{"error",message},{"code","CONNECTION_LOST"}});
 }
 // Refetches the newest transcript page without clearing the selection or composer.
@@ -356,14 +381,14 @@ int Controller::rpc(const QString &method,const QVariantMap &params){
     m_socket.write(QJsonDocument(QJsonObject{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}}).toJson(QJsonDocument::Compact)+'\n');return id;
 }
 void Controller::receive(){
-    m_buffer+=m_socket.readAll();if(m_buffer.size()>16*1024*1024){m_socket.abort();return;}
+    m_buffer+=m_socket.read(16*1024*1024+1-m_buffer.size());
     m_lastInbound.restart();
     if(!m_responsive&&m_socket.state()==QLocalSocket::ConnectedState){
         // Answering again: requests ended meanwhile stay ended; the open transcript is reread.
         m_responsive=true;emit stateChanged();refreshMotion();reloadMessages();notify("Cere's session broker is responding again.");
     }
     int newline;
-    while((newline=m_buffer.indexOf('\n'))>=0){auto line=m_buffer.left(newline);m_buffer.remove(0,newline+1);auto object=QJsonDocument::fromJson(line).object();
+    while((newline=m_buffer.indexOf('\n'))>=0){if(newline>16*1024*1024){m_buffer.clear();m_socket.abort();return;}auto line=m_buffer.left(newline);m_buffer.remove(0,newline+1);auto object=QJsonDocument::fromJson(line).object();
         if(object.contains("id")){
             int id=object["id"].toInt();
             // An answer to a request that already ended (deadline, unresponsive broker) changes nothing.
@@ -371,12 +396,16 @@ void Controller::receive(){
             QString method=m_requests.take(id).method;
             if(id==m_pingRequest){m_pingRequest=-1;continue;}
             // A saved offline draft is done; a refused one stays for its conversation's composer.
-            if(m_offlineFlushes.contains(id)){const auto sessionId=m_offlineFlushes.take(id);if(!object.contains("error"))m_offlineDrafts.remove(sessionId);}
+            if(m_offlineFlushes.contains(id)){
+                const auto saved=m_offlineFlushes.take(id);
+                const auto sessionId=saved.value("id").toString();
+                if(!object.contains("error")&&m_offlineDrafts.value(sessionId)==saved)m_offlineDrafts.remove(sessionId);
+            }
             if(object.contains("error")){
                 const auto error=object["error"].toObject();
                 if(id==m_messagesRequest)m_messagesRequest=-1;
                 if(id==m_olderRequest)m_olderRequest=-1;
-                m_copies.remove(id);m_deferredDrafts.remove(id);
+                m_copies.remove(id);retainDeferredDraft(id);
                 notify(error["message"].toString());emit result(id,QVariantMap{{"error",error["message"].toString()},{"code",error["code"].toString()}});continue;
             }
             auto value=object["result"].toVariant();
@@ -406,7 +435,24 @@ void Controller::receive(){
                         togglePanel();
                     }
                     m_pendingToggle=false;
+                    if(!m_overlay&&!m_pendingConversationFolder.isEmpty()){
+                        const auto folder=m_pendingConversationFolder;m_pendingConversationFolder.clear();
+                        showNewConversation(folder);
+                    }
                 }
+            }
+            if(method=="state.field"){
+                const auto page=value.toMap();const auto field=page.value("field").toString();
+                if(page.value("revision")==m_state.value("revision")&&m_hydration.contains(field)&&m_hydration[field].size()==page.value("offset").toInt()){
+                    m_hydration[field]+=page.value("text").toString();
+                    if(!page.value("next").isNull())rpc("state.field",{{"revision",page.value("revision")},{"field",field},{"offset",page.value("next")}});
+                    else{const auto json=QJsonDocument::fromJson(("["+m_hydration.take(field)+"]").toUtf8()).array();if(!json.isEmpty()){m_state[field]=json.at(0).toVariant();if(field=="settings"){applyTheme();syncPet();refreshMotion();emit avatarChanged();}emit stateChanged();}}
+                }
+            }
+            if(method=="session.hydrate"){
+                const auto hydrated=value.toMap().value("session").toMap();auto sessions=m_state.value("sessions").toList();
+                for(auto &entry:sessions){auto summary=entry.toMap();if(summary.value("id")==hydrated.value("id")&&summary.value("draftRevision")==hydrated.value("draftRevision")){summary["draft"]=hydrated.value("draft");summary["draftAttachments"]=hydrated.value("draftAttachments");if(summary.value("revision")==hydrated.value("revision"))summary["view"]=hydrated.value("view");summary["draftIncluded"]=true;entry=summary;}}
+                m_state["sessions"]=sessions;emit stateChanged();
             }
             if(method=="session.messages"&&id==m_messagesRequest){
                 m_messagesRequest=-1;
@@ -443,7 +489,12 @@ void Controller::receive(){
             }
             if(method=="session.create")select(value.toMap().value("id").toString());
             emit result(id,value);
-            if(m_deferredDrafts.contains(id)){auto params=m_deferredDrafts.take(id);params["expectedRevision"]=value.toMap().value("draftRevision");rpc("session.draft",params);}
+            if(m_deferredDrafts.contains(id)){
+                auto draft=m_deferredDrafts.take(id);
+                draft["expectedRevision"]=value.toMap().value("draftRevision","0");
+                keepOfflineDraft(draft.value("id").toString(),draft);
+                sendHeldDraft(draft);
+            }
         }else{
             QString method=object["method"].toString();auto params=object["params"].toObject().toVariantMap();
             if(method=="state"){
@@ -480,6 +531,7 @@ void Controller::receive(){
             if(method=="ui"){
                 QString command=params.value("command").toString();bool top=m_state.value("settings").toMap().value("topmost",true).toBool();
                 if(command=="expand"){if(m_overlay)closePanel();else showWorkspace();}
+                if(command=="newConversation"){if(m_overlay)closePanel();else showNewConversation(params.value("cwd").toString());}
                 if(command=="toggle"&&top==m_overlay)togglePanel();
                 if(command=="animate"&&top==m_overlay)playMotion(params.value("name").toString());
                 if(command=="attention"){
@@ -496,12 +548,29 @@ void Controller::receive(){
             }
         }
     }
+    if(m_buffer.size()>16*1024*1024){m_buffer.clear();m_socket.abort();return;}
+    if(m_socket.bytesAvailable()>0)QMetaObject::invokeMethod(this,[this]{receive();},Qt::QueuedConnection);
 }
 void Controller::applyState(const QVariantMap &state){
     const auto before=m_director.context();
     const auto oldSettings=m_state.value("settings").toMap();
     const auto oldAvatarId=avatar().value("id");
-    m_state=state;
+    auto incoming=state;
+    auto rows=incoming.value("sessions").toList();
+    const auto previousRows=m_state.value("sessions").toList();
+    for(auto &row:rows){auto summary=row.toMap();if(summary.value("draftIncluded",true).toBool())continue;
+        for(const auto &oldRow:previousRows){const auto old=oldRow.toMap();if(old.value("id")==summary.value("id")&&old.value("draftRevision")==summary.value("draftRevision")&&old.value("draftIncluded",true).toBool()){
+            for(const auto &key:{"draft","draftAttachments"})summary[key]=old.value(key);if(old.value("revision")==summary.value("revision"))summary["view"]=old.value("view");summary["draftIncluded"]=true;row=summary;break;
+        }}
+    }
+    incoming["sessions"]=rows;m_state=incoming;
+    m_hydration.clear();
+    for(const auto &entry:state.value("hydration").toMap().value("fields").toList()){
+        const auto field=entry.toString();m_hydration[field]=QString();
+        rpc("state.field",{{"revision",state.value("revision")},{"field",field},{"offset",0}});
+    }
+    auto settings=m_state.value("settings").toMap();
+    settings["avatar"]=canonicalAvatar(settings.value("avatar").toString());m_state["settings"]=settings;
     applyTheme();
     QSet<QString> pendingQuestions;
     for(const auto &entry:state.value("approvals").toList())pendingQuestions.insert(entry.toMap().value("id").toString());
@@ -531,7 +600,7 @@ void Controller::applyState(const QVariantMap &state){
 void Controller::applyTheme(){
     const auto selected=avatar();
     const auto id=selected.value("id").toString();
-    const QString themeId=m_themes.contains(id)?id:QStringLiteral("cere");
+    const QString themeId=m_themes.contains(id)?id:m_defaultAvatar;
     if(m_themeId==themeId)return;
     m_themeId=themeId;m_theme=m_themes.value(themeId).toMap();
     const auto color=[this](const char *token){return QColor(m_theme.value(QLatin1String(token)).toString());};
@@ -552,8 +621,9 @@ void Controller::applyTheme(){
     QApplication::setPalette(palette);
 
     QIcon icon(m_root+"/assets/cere-emblem.png");
-    if(themeId!="cere"){
-        // Render the existing neutral portrait as a native icon; the source atlas stays intact.
+    {
+        // Every selected avatar, including the unmasked default, supplies its
+        // live icon. The application emblem remains the missing-art fallback.
         const QImage atlas(m_root+"/assets/"+selected.value("portrait").toString());
         if(!atlas.isNull()){
             icon=QIcon();
@@ -589,7 +659,11 @@ void Controller::deferDraft(int afterRequest,const QVariantMap &params){
     // Without its predecessor there is no confirmed revision to build on; never save blind.
     if(m_requests.contains(afterRequest))m_deferredDrafts.insert(afterRequest,params);
 }
-void Controller::select(const QString &id){if(m_selected==id)return;m_selected=id;m_messages.clear();m_olderCursor=0;m_olderRequest=-1;m_transcript.reset({});emit messagesChanged();emit stateChanged();reloadMessages();publishAttention();refreshMotion();}
+void Controller::retainDeferredDraft(int request){
+    const auto draft=m_deferredDrafts.take(request);
+    if(!draft.isEmpty())keepOfflineDraft(draft.value("id").toString(),draft);
+}
+void Controller::select(const QString &id){if(m_selected==id)return;m_selected=id;m_messages.clear();m_olderCursor=0;m_olderRequest=-1;m_transcript.reset({});emit messagesChanged();emit stateChanged();if(!id.isEmpty())rpc("session.hydrate",{{"id",id}});reloadMessages();publishAttention();refreshMotion();}
 QQuickView *Controller::view(const QString &file,bool layer,const QString &title){
     auto v=new QQuickView(&m_qmlEngine,nullptr);v->setColor(Qt::transparent);v->setResizeMode(QQuickView::SizeRootObjectToView);v->setTitle(title);
     v->rootContext()->setContextProperty("App",this);
@@ -629,7 +703,12 @@ void Controller::syncPet(){
         placePet(g.topLeft()+QPoint(qRound(p.value("x",.86).toDouble()*std::max(0,g.width()-m_pet->width())),qRound(p.value("y",.78).toDouble()*std::max(0,g.height()-m_pet->height()))),target,false);
         m_placedPosition=p;m_placedScale=scale;m_placedArea=g;m_pendingPosition.clear();
     }
-    updateMask();if(!m_pet->isVisible()){m_pet->show();if(!m_overlay&&qGuiApp->platformName().startsWith("wayland")){
+    updateMask();if(!m_pet->isVisible()){
+        // A rule installed after mapping is too late for the initial maximized configure.
+        // Keep the fixed-size floating companion movable from its first Wayland frame.
+        if(!m_overlay&&qGuiApp->platformName().startsWith("wayland")&&!qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE"))
+            hyprRule(R"(hl.window_rule({name="cere-floating-pet",match={title="^Cere Pet$"},float=true,no_initial_focus=true,suppress_event="maximize fullscreen"}))","windowrulev2 float,title:^(Cere Pet)$");
+        m_pet->show();if(!m_overlay&&qGuiApp->platformName().startsWith("wayland")){
         QTimer::singleShot(150,this,[this]{hyprDispatch("hl.dsp.window.float({window=\"title:^Cere Pet$\",action=\"set\"})","setfloating title:^Cere Pet$");placePet(m_petPosition,m_screen,false);});
     }}
 }
@@ -936,6 +1015,10 @@ void Controller::expand(){
     notify("Cere is reconnecting to her session broker.");
 }
 void Controller::showWorkspaceLocally(){if(!m_overlay)showWorkspace();}
+void Controller::showNewConversation(const QString &folder){
+    showWorkspace();
+    emit newConversationRequested(folder);
+}
 bool Controller::signalInterface(const QString &runtime,int signal){
     QLockFile lock(runtime+"/ui.lock");qint64 pid=0;QString host,application;
     if(!lock.getLockInfo(&pid,&host,&application)||pid<=1||pid==QCoreApplication::applicationPid()||host!=QSysInfo::machineHostName()||application!="cere")return false;
@@ -944,18 +1027,25 @@ bool Controller::signalInterface(const QString &runtime,int signal){
     if(!process.exists()||process.ownerId()!=::getuid()||QFileInfo(process.filePath()+"/exe").symLinkTarget()!=QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath())return false;
     return ::kill(pid_t(pid),signal)==0;
 }
-void Controller::keepOfflineDraft(const QString &sessionId,const QVariantMap &params){if(!sessionId.isEmpty())m_offlineDrafts.insert(sessionId,params);}
+void Controller::keepOfflineDraft(const QString &sessionId,const QVariantMap &params){
+    if(sessionId.isEmpty())return;
+    auto draft=params;draft["id"]=sessionId;m_offlineDrafts.insert(sessionId,draft);
+}
 QVariantMap Controller::takeOfflineDraft(const QString &sessionId){return m_offlineDrafts.take(sessionId);}
+void Controller::sendHeldDraft(const QVariantMap &draft){
+    auto params=draft;params.remove("attachments");
+    const int request=rpc("session.draft",params);
+    if(request>=0)m_offlineFlushes.insert(request,draft);
+}
 // After reconnecting, drafts typed offline are saved against the revision they were edited from.
 // A conversation changed elsewhere meanwhile keeps its offline text for the composer's conflict choice.
 void Controller::flushOfflineDrafts(){
     const auto sessions=m_state.value("sessions").toList();
     for(auto it=m_offlineDrafts.cbegin();it!=m_offlineDrafts.cend();++it){
-        if(m_offlineFlushes.values().contains(it.key()))continue;
+        if(std::any_of(m_offlineFlushes.cbegin(),m_offlineFlushes.cend(),[&](const auto &draft){return draft.value("id").toString()==it.key();}))continue;
         QVariantMap session;for(const auto &entry:sessions)if(entry.toMap().value("id").toString()==it.key()){session=entry.toMap();break;}
         if(session.isEmpty()||session.value("draftRevision").toString()!=it.value().value("expectedRevision").toString())continue;
-        auto params=it.value();params.remove("attachments");params["id"]=it.key();
-        const int id=rpc("session.draft",params);if(id>=0)m_offlineFlushes.insert(id,it.key());
+        sendHeldDraft(it.value());
     }
 }
 void Controller::showWorkspace(){stopRoaming(true);if(m_panel&&!m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}m_expanded=true;if(!m_panel){m_panel=view("Workspace.qml",false,"Cere");m_panel->resize(1040,780);m_panel->setMinimumSize({720,520});connect(m_panel,&QWindow::visibleChanged,this,[this]{refreshMotion();});}m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");}
@@ -1335,4 +1425,32 @@ void Controller::followMouse(){
     }
 }
 bool Controller::autostartEnabled()const{return QFile::exists(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)+"/autostart/cere.desktop");}
-void Controller::setAutostart(bool enabled){QString dir=QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)+"/autostart";QString path=dir+"/cere.desktop";if(!enabled){QFile::remove(path);return;}QDir().mkpath(dir);QSaveFile file(path);if(!file.open(QIODevice::WriteOnly)){notify("Could not update login startup");return;}QString exe=QCoreApplication::applicationFilePath();file.write(QString("[Desktop Entry]\nType=Application\nName=Cere\nExec=\"%1\" --root \"%2\"\nIcon=cere\nTerminal=false\n").arg(exe,m_root).toUtf8());file.commit();}
+static QString desktopExecArgument(QString value){
+    // Desktop Entry Exec is not shell syntax: percent starts a field code even inside quotes.
+    if(value.contains('\n')||value.contains('\r'))return {};
+    // Quote the argument first, then encode that complete token as a Desktop Entry string.
+    value.replace("\\","\\\\").replace("\"","\\\"").replace("`","\\`").replace("$","\\$").replace("%","%%");
+    value.replace("\\","\\\\");
+    return "\""+value+"\"";
+}
+bool Controller::setAutostart(bool enabled){
+    const QString dir=QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)+"/autostart";
+    const QString path=dir+"/cere.desktop";
+    if(!enabled){
+        if(!QFile::exists(path)||QFile::remove(path)){emit autostartChanged();return true;}
+        notify("Could not remove login startup");return false;
+    }
+    if(!QDir().mkpath(dir)){notify("Could not create login startup directory");return false;}
+    QSaveFile file(path);
+    if(!file.open(QIODevice::WriteOnly)){notify("Could not update login startup");return false;}
+    const auto program=QCoreApplication::applicationFilePath(),root=desktopExecArgument(m_root);
+    auto executable=desktopExecArgument(program);
+    if(executable.isEmpty()||root.isEmpty()){notify("Login startup path cannot contain a newline");return false;}
+    if(program.contains('%')||program.contains('=')){
+        // Resolve a fixed program first; pass the actual binary and its arguments as distinct argv.
+        executable="/bin/sh -c "+desktopExecArgument("exec \"$@\"")+" cere "+executable;
+    }
+    const QString entry=QString("[Desktop Entry]\nType=Application\nName=Cere\nExec=%1 --root %2\nIcon=cere\nTerminal=false\n").arg(executable,root);
+    if(file.write(entry.toUtf8())!=entry.toUtf8().size()||!file.commit()){notify("Could not update login startup");return false;}
+    emit autostartChanged();return true;
+}

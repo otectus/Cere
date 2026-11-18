@@ -1,12 +1,14 @@
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Core } from '../broker/core.ts';
 import { Store } from '../broker/store.ts';
+import { ExtensionSecrets, secretStoreLimits } from '../broker/extensions.ts';
 
-const fixture = new URL('./fixtures/mcp-server.mjs', import.meta.url).pathname;
+const fixture = fileURLToPath(new URL('./fixtures/mcp-server.mjs', import.meta.url));
 const idle = () => ({ async send() {}, async interrupt() {}, async close() {} });
 async function broker(t: any, real = false) {
   const dir = await mkdtemp(join(tmpdir(), 'cere-extensions-')), project = join(dir, 'project'), other = join(dir, 'other');
@@ -191,4 +193,69 @@ test('RC-13 a hidden extension tool is neither offered nor callable, and a quest
   await core.updateSettings({ extensions: [{ ...core.settings.extensions[0], hidden: [] }] });
   await core.extensions.ensure(session.id);
   assert.ok(offered().includes('ext_fixture_lookup'), 'unhiding offers it again');
+});
+
+test('AUD-010/AUD-011 extension approval binds the complete arguments, process configuration, secrets and tool definition', async t => {
+  const { core, project, server, calls } = await broker(t);
+  await core.updateSettings({ extensions: [server()] });
+  const id = core.settings.extensions[0].id;
+  const session = await core.create({ provider: 'openai', model: 'm', cwd: project, tools: true, trusted: true });
+  await core.extensions.ensure(session.id);
+  const signal = new AbortController().signal;
+
+  const tail = 'TAIL-' + 'x'.repeat(5000);
+  const review = core.callTool(session.id, 'ext_fixture_lookup', { query: tail }, signal);
+  const asked = await approval(core);
+  assert.equal(asked.fields!.reviewComplete, true);
+  assert.match(asked.fields!.digest, /^[0-9a-f]{64}$/);
+  assert.match(asked.detail, /TAIL-x{100}/, 'arguments after the former 4,000-character cutoff are present');
+  core.answer({ id: asked.id, choice: 'deny' });
+  assert.equal((await review as any).ran, false);
+
+  await assert.rejects(core.callTool(session.id, 'ext_fixture_lookup', { query: 'x'.repeat(50_000) }, signal), /too large to review completely/);
+  assert.equal(core.approvals.size, 0);
+
+  const changedProcess = core.callTool(session.id, 'ext_fixture_write_note', { text: 'must-not-run' }, signal);
+  await approval(core);
+  await core.updateSettings({ extensions: [{ ...core.settings.extensions[0], args: [...core.settings.extensions[0].args, 'normal'] }] });
+  assert.deepEqual(await changedProcess, { ran: false, message: 'The user declined this extension call.' });
+  assert.ok(!(await calls()).some(call => call.params?.arguments?.text === 'must-not-run'));
+
+  await core.extensions.ensure(session.id);
+  const changedSecret = core.callTool(session.id, 'ext_fixture_write_note', { text: 'also-must-not-run' }, signal);
+  await approval(core);
+  await core.rpc('extensions.secret', { id, name: 'FIXTURE_TOKEN', value: 'replacement-secret' });
+  assert.deepEqual(await changedSecret, { ran: false, message: 'The user declined this extension call.' });
+  assert.ok(!(await calls()).some(call => call.params?.arguments?.text === 'also-must-not-run'));
+
+  await core.extensions.ensure(session.id); core.extensions.toolsFor(session.id);
+  const changedSchema = core.callTool(session.id, 'ext_fixture_lookup', { query: 'schema-must-not-run' }, signal);
+  const schemaApproval = await approval(core);
+  const connection: any = core.extensions.connections.get(id);
+  connection.tools.find((item: any) => item.name === 'lookup').schema.properties.query.maxLength = 1;
+  core.answer({ id: schemaApproval.id, choice: 'allow' });
+  await assert.rejects(changedSchema, /tool definition changed while waiting for approval/);
+  assert.ok(!(await calls()).some(call => call.params?.arguments?.query === 'schema-must-not-run'));
+});
+
+test('AUD-015 secret stores share a UTF-8 byte budget, preserve valid state on refusal and support bounded selective recovery', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cere-secret-budget-')), directory = join(root, 'credentials');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new ExtensionSecrets(directory, 'budget.json'), id = 'server';
+  for (let index = 0; index < 31; index++) store.set(id, `KEY_${index}`, 'a'.repeat(8192));
+  const before = await readFile(store.file, 'utf8');
+  assert.ok(Buffer.byteLength(before) < secretStoreLimits.bytes);
+  await assert.rejects(async () => store.set(id, 'UTF8', 'é'.repeat(8192)), /256 KB store limit/);
+  assert.equal(await readFile(store.file, 'utf8'), before, 'a refused write leaves the previous valid store byte-for-byte intact');
+  assert.equal(store.values(id).KEY_30.length, 8192, 'every accepted value round-trips');
+
+  const oversized = Object.fromEntries(Array.from({ length: 34 }, (_, index) => [`KEY_${index}`, 's'.repeat(8192)]));
+  await writeFile(store.file, JSON.stringify({ [id]: oversized }), { mode: 0o600 });
+  await assert.rejects(async () => store.values(id), (error: any) => error.code === 'SECRET_STORE_CAPACITY');
+  for (let index = 0; index < 4; index++) store.set(id, `KEY_${index}`, '');
+  assert.equal(store.values(id).KEY_0, undefined, 'oversized owner-only stores can be shrunk by selective deletion');
+  assert.equal(store.values(id).KEY_33.length, 8192);
+
+  await chmod(store.file, 0o644);
+  await assert.rejects(async () => store.values(id), /private, owner-only/, 'permission failures stay distinct from capacity failures');
 });

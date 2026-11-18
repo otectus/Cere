@@ -59,3 +59,20 @@ test('AntiGravity provider errors retain useful details, redact credentials and 
   await f.adapter.send('fail-empty');await f.adapter.task;
   assert.match(f.events.at(-1).text,/no error details/);
 });
+
+test('unconfirmed cleanup leaves retryable ownership and never reports turn success', async t => {
+  const f = await fixture(t);
+  await f.adapter.send('hello');
+  const child = f.adapter.process!;
+  const stop = child.close.bind(child);
+  const mock = t.mock.method(child, 'close', async () => { await stop(); throw new Error('fixture cleanup verification'); });
+  await f.adapter.task;
+  assert.equal(f.events.at(-1).type, 'error');
+  assert.match(f.events.at(-1).text, /cleanup could not be confirmed/);
+  await assert.rejects(f.adapter.send('next'), /previous AntiGravity process/);
+  mock.mock.restore();
+  await f.adapter.interrupt();
+  await f.adapter.send('next');
+  await f.adapter.task;
+  assert.equal(f.events.at(-1).type, 'complete');
+});

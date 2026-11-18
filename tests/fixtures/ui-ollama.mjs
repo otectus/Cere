@@ -36,9 +36,13 @@ const server=createServer(async(req,res)=>{
   else if(req.url.startsWith('/search?'))res.end(JSON.stringify({results:[{title:'Ollama embeddings',url:'https://docs.ollama.com/api/embed',content:'Generate embeddings with Ollama.'}]}));
   else if(req.url==='/api/chat'){
     res.setHeader('Content-Type','application/x-ndjson');
+    // Delegation update: the turn starts a Codex task and replies; the task's automatic update gets a summary.
+    const users=(body.messages||[]).filter(m=>m.role==='user'),latest=body.messages?.at(-1);
+    const answer=message=>res.end(JSON.stringify({message:{role:'assistant',...message},done:true})+'\n');
     // The phone's paired connectivity check (ConnectedDesktopTest) asks for this exact reply.
-    const users=(body.messages||[]).filter(m=>m.role==='user');
-    if(String(users.at(-1)?.content).includes('Reply with exactly CERE_MOBILE_OK'))return res.end(JSON.stringify({message:{role:'assistant',content:'CERE_MOBILE_OK'},done:true})+'\n');
+    if(String(users.at(-1)?.content).includes('Reply with exactly CERE_MOBILE_OK'))return answer({content:'CERE_MOBILE_OK'});
+    if(String(users.at(-1)?.content).includes('<cere_delegation_update>'))return answer({content:'The delegated check finished: its changes are ready and its checks passed.'});
+    if(users.at(-1)?.content==='delegation-ui-check')return answer(latest?.role==='tool'?{content:'Started the delegated check; it will report back.'}:{content:'',tool_calls:[{function:{name:'sessions_start',arguments:{provider:'codex',prompt:'completion-delegation'}}}]});
     res.write(JSON.stringify({message:{role:'assistant',content:'Hello from Ollama. '},done:false})+'\n');
     if(body.messages?.at(-1)?.content==='queue-validation-hold')await new Promise(resolve=>setTimeout(resolve,2500));
     res.end(JSON.stringify({message:{role:'assistant',content:'Your conversation is ready.'},done:true})+'\n');

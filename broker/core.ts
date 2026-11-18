@@ -18,7 +18,7 @@ import { RpcProcess } from './wire.ts';
 import { paths } from './paths.ts';
 import { OllamaAdapter, modelRoute, ollamaHost, ollamaModels } from './ollama.ts';
 import type { OllamaMessage, OllamaTool } from './ollama.ts';
-import { orchestrationDefinitions, orchestrate } from './orchestration.ts';
+import { orchestrationDefinitions, orchestrationOffer, orchestrate } from './orchestration.ts';
 import { WebSearch, webDefinitions, webUrl, searchProviders } from './web.ts';
 import type { SearchTrace } from './web.ts';
 import { validConstraints } from './web-plan.ts';
@@ -30,13 +30,14 @@ import { behaviorInstructions, builtinPostures, resolveBehavior, type ResolvedBe
 import { checkReply } from './style-checks.ts';
 import { exportConversation } from './conversation-export.ts';
 import { LocalModels } from './local-models.ts';
-import { KnowledgeCollections } from './knowledge-collections.ts';
+import { KnowledgeCollections, type CollectionAuthorization } from './knowledge-collections.ts';
 import { NotesVault, notesDefinitions } from './notes-vault.ts';
 import { apply as applyProposal, propose } from './file-proposals.ts';
 import { ProfilePackages } from './profile-packages.ts';
 import { projectConventions } from './project-instructions.ts';
 import { validateAnswers, claudeQuestions } from './questions.ts';
 import { SendQueue } from './send-queue.ts';
+import { DelegationPings, boundedText } from './delegation-pings.ts';
 import { ordinarySettings, busy, remoteError } from './execution.ts';
 import type { RemoteExecution } from './execution.ts';
 import { Speech, listVoices, validateVoice, voiceDirectories, voiceTestLine } from './tts.ts';
@@ -140,7 +141,14 @@ export class Core extends EventEmitter {
   elevenlabs:ElevenLabs; speech: Speech; transcription:Transcription; indextts:IndexTTS;
   speechResponses = new Map<string, string>();
   sending = new Set<string>();
+  deleting = new Set<string>();
+  private settingsEffects: Promise<unknown> = Promise.resolve();
+  preparations = new Map<string, AbortController>();
+  notePackets = new Map<string, string>();
+  noteRoutes = new Map<string, { host: string; model: string; local: boolean }>();
   sendQueue: SendQueue;
+  /** Delegated turns report back to the conversation that started them. */
+  pings: DelegationPings;
   stopping = new Map<string, Promise<boolean>>();
   delegations = new Map<string, Set<string>>(); closed = false;
   web = new WebSearch(); webController = new AbortController(); memory: Memory;
@@ -195,33 +203,52 @@ export class Core extends EventEmitter {
         return this.callTool(s.id, name, args, signal).then(value => { end(); return value; }, error => { end(signal.aborted ? 'stopped' : 'failed'); throw error; });
       },
       prepare: (text, signal, budget, route) => {
-        if (this.settingsFor(s.id).memory.enabled && this.memory.active() && !this.withheld(s.id, 'recall')) { const end = this.spans.start('memory'); return this.recalling(s.id, () => this.memory.context(s, text, signal, budget, route, this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, signal))).then(value => { end(); return value; }, error => { end(signal.aborted ? 'stopped' : 'failed'); throw error; }); }
-        this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: this.memoryOffReason(s.id), budgetTokens: budget || 0, route: route || 'unknown' });
+        // A delegation update is Cere's text, not the user's: it recalls nothing and is not captured.
+        const delegation = this.pings.isDelegationTurn(s.id, this.store.session(s.id).turnId);
+        if (!delegation && this.settingsFor(s.id).memory.enabled && this.memory.active() && !this.withheld(s.id, 'recall')) { const end = this.spans.start('memory'); return this.recalling(s.id, () => this.memory.context(s, text, signal, budget, route, this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, signal))).then(value => { end(); return value; }, error => { end(signal.aborted ? 'stopped' : 'failed'); throw error; }); }
+        this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: delegation ? 'delegation_turn' : this.memoryOffReason(s.id), budgetTokens: budget || 0, route: route || 'unknown' });
         return Promise.resolve('');
       },
       memorySignal: () => this.memory.controller.signal,
       inference: active => this.memory.service.call('foreground',{active}),
-      memoryActive: () => this.settingsFor(s.id).memory.enabled && this.memory.active(), completed: (text, answer, signal) => this.settingsFor(s.id).memory.enabled && this.memoryWritable(s.id) ? this.memory.capture(s, text, answer, signal, () => this.memoryAuthorized(s.id, true, signal)) : Promise.resolve(),
+      memoryActive: () => this.settingsFor(s.id).memory.enabled && this.memory.active(), completed: (text, answer, signal) => !this.pings.isDelegationTurn(s.id, this.store.session(s.id).turnId) && this.settingsFor(s.id).memory.enabled && this.memoryWritable(s.id) ? this.memory.capture(s, text, answer, signal, () => this.memoryAuthorized(s.id, true, signal)) : Promise.resolve(),
       search: (query, signal, constraints) => { if (!this.settingsFor(s.id).webSearch.enabled) throw new Error('Web scope denied'); return this.webCall('web_search', { query, ...(constraints || {}) }, signal, s.id); },
       plan: plan => this.recordPlan(s.id, plan),
+      delegationUpdates: () => this.settings.delegationUpdates,
       conventions: async () => {
         const row = this.store.db.prepare('SELECT data FROM projects WHERE cwd=?').get(this.store.session(s.id).cwd);
         return row && JSON.parse(String(row.data)).conventions ? projectConventions(this.store.session(s.id).cwd) : { text: '', files: [] };
       },
+      authorizePrivate: async (signal) => {
+        if (!this.notePackets.has(s.id)) return;
+        await this.refreshNoteRoute(s.id, signal);
+        this.assertNotePacket(s.id);
+      },
+      privateValid: () => { this.assertNotePacket(s.id); },
       documents: async (text, signal, budget) => {
         const session = this.store.session(s.id);
         if (session.temporary || !this.collections.bound(session).length) return { text: '' };
         const route = isApiProvider(session.provider) ? 'cloud' : (await modelRoute(session.ollama!.host, session.model, signal)).route;
-        return this.collections.context(session, text, budget, route, signal);
+        const packet = await this.collections.context(session, text, budget, route, signal);
+        let currentRoute = route;
+        return {...packet, authorize: async () => {
+          currentRoute = isApiProvider(session.provider) ? 'cloud' : (await modelRoute(session.ollama!.host,session.model,signal)).route;
+          if (packet.text && !this.collections.authorizeContext(this.store.session(s.id),packet.authorization,currentRoute)) throw new Error('Collection access changed before dispatch');
+        }, assert: () => {
+          if (packet.text && !this.collections.authorizeContext(this.store.session(s.id),packet.authorization,currentRoute)) throw new Error('Collection access changed before dispatch');
+        }};
       },
     }));
     this.sendQueue = new SendQueue(this);
+    this.pings = new DelegationPings(this);
+    this.memory.eraseDelegations = (sessions, matches) => this.pings.erase(sessions, matches);
     for (const s of store.sessions()) if (['starting','working','waiting','stopping'].includes(s.status)) {
       s.status = 'interrupted'; delete s.activity;
       s.agents = s.agents?.map(a => this.agentActive(a) ? {...a, status:'interrupted', updated:Date.now()} : a); s.error = 'Cere restarted. The previous turn was not replayed.'; store.saveSession(s);
       for (const agent of s.agents || []) if (agent.status === 'interrupted') this.recordAgent(s.id,agent);
     }
     for (const s of store.sessions()) this.sendQueue.recover(s.id);
+    this.pings.recover();
     this.completions=store.get<any[]>('completionInbox',[]).flatMap(row=>{const message=store.messageById(row.messageId);try{const s=store.session(row.sessionId);return[{...row,message:message||{id:'',sessionId:s.id,role:'assistant',text:'This run finished without a final message.',time:row.time}}];}catch{return[];}});
     this.flush();
     this.ticker = setInterval(() => void this.checkTimers(), 1000); this.ticker.unref();
@@ -268,7 +295,30 @@ export class Core extends EventEmitter {
     if ((event==='notice'||event==='ui') && this.stateDirty && !this.closed) this.emitState();
     return super.emit(event, ...args);
   }
-  snapshot() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), jobs:this.jobs.snapshot(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, providerTraits, providerOrder: [...providerIds], actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
+  private snapshotFields = new Map<string, string>();
+  private snapshotFieldRevision = -1;
+  snapshot() {
+    const state: any = this.snapshotData();
+    const fields = new Map<string,string>();
+    // Keep headroom for the RPC/event envelope and bound UTF-8 bytes, not JS characters.
+    while(Buffer.byteLength(JSON.stringify(state)) > 12*1024*1024) {
+      const candidates=Object.keys(state).filter(key=>!['version','revision','hydration'].includes(key)).map(key=>({key,json:JSON.stringify(state[key])})).filter(item=>item.json!==undefined).sort((a,b)=>Buffer.byteLength(b.json)-Buffer.byteLength(a.json));
+      const largest=candidates[0];if(!largest)throw new Error('Snapshot metadata exceeds transport budget');
+      fields.set(largest.key,largest.json);delete state[largest.key];
+    }
+    this.snapshotFields=fields;this.snapshotFieldRevision=state.revision;
+    state.hydration={version:1,fields:[...fields.keys()]};
+    return state as ReturnType<Core['snapshotData']> & {hydration:{version:number;fields:string[]}};
+  }
+  private snapshotField(p: any) {
+    if(p.revision!==this.stateRevision||p.revision!==this.snapshotFieldRevision)throw remoteError('REVISION_CONFLICT','Snapshot changed; reload state before hydrating.');
+    const text=this.snapshotFields.get(p.field);
+    if(text===undefined||!Number.isSafeInteger(p.offset)||p.offset<0||p.offset>text.length)throw new Error('Invalid snapshot field page');
+    let end=Math.min(text.length,p.offset+32768);
+    if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;
+    return {version:1,revision:p.revision,field:p.field,offset:p.offset,text:text.slice(p.offset,end),next:end<text.length?end:null};
+  }
+  private snapshotData() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), jobs:this.jobs.snapshot(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, providerTraits, providerOrder: [...providerIds], actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
   settingsFor(id: string): Settings {
     const session = this.store.session(id), execution = session.remote;
     if (execution && (!this.remoteAuthority?.(execution, session) || execution.expiresAt <= Date.now())) throw remoteError('AUTH_REVOKED', 'Remote authority expired or was revoked. Detach locally to continue.');
@@ -282,7 +332,7 @@ export class Core extends EventEmitter {
     this.terminal.add(id); this.generations.set(id, (this.generations.get(id) || 0) + 1);
     const adapter = this.adapters.get(id); this.adapters.delete(id);
     for (const [token, sessionId] of this.tokens) if (sessionId === id) this.tokens.delete(token);
-    await adapter?.close(); return true;
+    try { await adapter?.close(); } catch(error) { if(adapter)this.adapters.set(id,adapter); throw error; } return true;
   }
   async sendRemote(p: any, execution: RemoteExecution, beforeAccept?:()=>void, onDispatched?:()=>void, onAccepted?:()=>void, onRejected?:()=>void) {
     const initial=this.store.session(p.id);
@@ -293,17 +343,19 @@ export class Core extends EventEmitter {
       if(p.desktopAttachments?.length)throw remoteError('SESSION_BUSY','Queued messages carry text only. Send this draft with its desktop attachments when the current turn ends, or remove them.');
       return this.sendQueue.add(p, execution, beforeAccept, onAccepted);
     }
-    if (this.sending.has(p.id) || this.stopping.has(p.id) || busy(initial)) throw remoteError('SESSION_BUSY', 'This session is busy.');
+    if (this.deleting.has(p.id) || this.sending.has(p.id) || this.stopping.has(p.id) || busy(initial)) throw remoteError('SESSION_BUSY', 'This session is busy.');
     this.sending.add(p.id);
+    const preparation=new AbortController();this.preparations.set(p.id,preparation);
     try {
       await this.disconnect(p.id);
+      preparation.signal.throwIfAborted();
       const session = this.store.session(p.id);
       if ((!p.queuedMessageId && (session.draftRevision || '0') !== p.expectedDraftRevision) || (session.configRevision || '0') !== p.expectedConfigRevision) throw remoteError('REVISION_CONFLICT', 'The desktop draft or configuration changed.');
       if (!p.queuedMessageId && !reviewed(session.draftAttachments)) throw remoteError('REVISION_CONFLICT', 'The desktop draft attachments changed. Review them again before sending.');
       if (!this.remoteAuthority?.(execution, session)) throw remoteError('AUTH_REVOKED','Remote authority changed.');
       this.updateSession(p.id, { remote:structuredClone(execution), effectivePolicy:['ollama','claude'].includes(session.provider)||isApiProvider(session.provider)?'restricted':'unknown', turnId:p.turnId });
-      return await this.sendTurn(p,beforeAccept,onDispatched,onAccepted,onRejected);
-    } finally { this.sending.delete(p.id); this.sendQueue.kick(p.id); }
+      return await this.prepareTurn(p,preparation.signal,beforeAccept,onDispatched,onAccepted,onRejected);
+    } finally { if(this.preparations.get(p.id)===preparation)this.preparations.delete(p.id);this.sending.delete(p.id); this.sendQueue.kick(p.id); this.pings.kick(p.id); }
   }
   draft(id: string, text: string, expectedRevision?: string, scroll?: number, attachmentIds?:unknown, view?:unknown) {
     const session = this.store.session(id);
@@ -382,6 +434,8 @@ export class Core extends EventEmitter {
     if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(),80);
   }
   updateSession(id: string, patch: Partial<Session>) {
+    // A status change can end a delegated turn; it is judged against the session as it was.
+    const before = patch.status ? this.store.session(id) : undefined;
     const interruptedAgents: AgentActivity[] = [];
     if (patch.status && ['error','interrupted','disconnected'].includes(patch.status)) {
       this.workflows.finish(id);
@@ -402,9 +456,12 @@ export class Core extends EventEmitter {
     const s = { ...this.store.session(id), ...patch, updated: Date.now() }; this.store.saveSession(s); this.changed();
     for (const agent of interruptedAgents) this.recordAgent(id,agent);
     if (interruptedAgents.length) this.flush();
+    const delegated = before && (s.parentId || before.parentId) && busy(before) && !busy(s) ? this.pings.resolve(before, s) : undefined;
     if (s.parentId && (patch.status || patch.activity)) {
       const status = ({idle:'completed',starting:'starting',working:'running',waiting:'waiting',stopping:'running',error:'failed',interrupted:'interrupted',disconnected:'closed'} as const)[s.status];
-      this.event(s.parentId,{type:'agent',id:s.id,data:{name:s.provider.toUpperCase(),task:s.title,status,detail:s.error || (s.activity ? s.activity : undefined)}});
+      // A finished delegated turn shows the start of its reply on the parent's agent card.
+      const result = delegated?.outcome?.status === 'completed' && delegated.outcome.reply ? boundedText(delegated.outcome.reply, 2000).text : undefined;
+      this.event(s.parentId,{type:'agent',id:s.id,data:{name:s.provider.toUpperCase(),task:s.title,status,detail:result || s.error || (s.activity ? s.activity : undefined)}});
     }
     return s;
   }
@@ -549,7 +606,8 @@ export class Core extends EventEmitter {
       const waiting = [...this.approvals.values()].some(a => a.value.sessionId === id);
       this.updateSession(id, { agents:retained, status:waiting ? 'waiting' : 'working', activity:waiting ? undefined : active ? 'delegating' : 'thinking' });
       this.recordAgent(id,agent);
-      if (!active && this.pendingCompletions.has(id)) { const completion = this.pendingCompletions.get(id)!; this.pendingCompletions.delete(id); this.event(id,completion); }
+      // A delegation update ready to go out releases the held completion even while siblings still run.
+      if ((!active || this.pings.announcing(id)) && this.pendingCompletions.has(id)) { const completion = this.pendingCompletions.get(id)!; this.pendingCompletions.delete(id); this.event(id,completion); }
       return;
     }
     if (e.type === 'activity') {
@@ -589,7 +647,7 @@ export class Core extends EventEmitter {
     } else if (['error','complete','interrupted','cancelled','stopped'].includes(e.type)) {
       const session = this.store.session(id);
       if ((this.terminal.has(id) && e.type !== 'error') || ['error','interrupted','disconnected'].includes(session.status)) return;
-      if (e.type === 'complete' && !['interrupted','cancelled','canceled','stopped'].includes((e.text || '').toLowerCase()) && session.status !== 'stopping' && (session.agents || []).some(a => this.agentActive(a))) {
+      if (e.type === 'complete' && !['interrupted','cancelled','canceled','stopped'].includes((e.text || '').toLowerCase()) && session.status !== 'stopping' && (session.agents || []).some(a => this.agentActive(a)) && !this.pings.announcing(id)) {
         this.pendingCompletions.set(id,e);
         if (session.status !== 'waiting') this.updateSession(id,{status:'working',activity:'waitingForAgents'});
         return;
@@ -605,9 +663,12 @@ export class Core extends EventEmitter {
       this.workflows.finish(id);
       this.workflows.observeResult(session,this.turnReplies.get(id),status==='idle'?'completed':status==='error'?'failed':'interrupted');
       const reply = this.turnReplies.get(id);
+      // This reply predates a delegated result that the next turn announces at once; it stays unread but
+      // makes no notice, inbox entry or speech of its own. A delegation turn's reply is never superseded.
+      const superseded = status === 'idle' && this.pings.announcing(id) && !this.pings.isDelegationTurn(id, session.turnId);
       if (status === 'idle') {
-        if (reply) this.finishReply(session,reply);
-        this.queueCompletion(session,reply);
+        if (reply && !superseded) this.finishReply(session,reply);
+        if (!superseded) this.queueCompletion(session,reply);
       } else this.speech.stopSession(id);
       this.finishNativeMemory(session, status === 'idle' ? this.turnReplies.get(id)?.text || '' : undefined);
       // M02: a finished reply is checked against its turn's formatting constraints; a miss is a note on it.
@@ -620,12 +681,16 @@ export class Core extends EventEmitter {
       if (status === 'idle') this.unacknowledged.delete(id); else this.returnUnacknowledged(id, e.type === 'error' ? e.text || 'The provider reported an error.' : 'Stopped before the provider accepted it.');
       this.updateSession(id, { status, unread:true,error: e.type === 'error' ? e.text : undefined });
       this.attachments.prune(id);
-      this.emit('notice', { kind: e.type === 'error' ? 'error' : interrupted ? 'interrupted' : 'complete', sessionId: id, text: e.type === 'error' ? e.text : interrupted ? (e.text || 'Task interrupted') : 'Task complete' });
+      // A delegated child whose parent will report the result leaves "complete" to the parent; failures still notify.
+      const reported = status === 'idle' && this.pings.reportsFor(session);
+      if (!superseded && !reported) this.emit('notice', { kind: e.type === 'error' ? 'error' : interrupted ? 'interrupted' : 'complete', sessionId: id, text: e.type === 'error' ? e.text : interrupted ? (e.text || 'Task interrupted') : 'Task complete' });
       const response = this.speechResponses.get(id); this.speechResponses.delete(id);
-      if (status === 'idle' && response && !session.pinned && !this.deliveredReplies.get(id)?.has(reply?.id || '') && session.mode === 'managed' && !session.parentId && !session.remote && !this.closed && this.settings.speechProviders[session.provider]!==false) this.speech.speak(this.speechText(response),false,undefined,undefined,undefined,session.provider);
+      if (status === 'idle' && !superseded && response && !session.pinned && !this.deliveredReplies.get(id)?.has(reply?.id || '') && session.mode === 'managed' && !session.parentId && !session.remote && !this.closed && this.settings.speechProviders[session.provider]!==false) this.speech.speak(this.speechText(response),false,undefined,undefined,undefined,session.provider);
       this.settledReplies.delete(id); this.deliveredReplies.delete(id);
       if (status === 'idle') this.sendQueue.kick(id);
       else this.sendQueue.cancel(id, 'The previous turn ended; copy this message to send it again');
+      // Ready delegation updates follow a finished or failed turn; after a Stop they are dropped, never sent.
+      if (status === 'interrupted') this.pings.dropReady(id, 'Stopped by the user'); else this.pings.kick(id);
     }
   }
   automaticallyApprove(id: string, approval: Pick<Approval, 'kind' | 'choices'>): boolean {
@@ -655,6 +720,7 @@ export class Core extends EventEmitter {
   }
   answer(p: any, automatic = false) {
     const approval = this.approvals.get(p.id); if (!approval) throw new Error('This request has already ended');
+    if(p.choice==='allow' && (['file','extension','custom-tool'].includes(approval.value.kind) && approval.value.fields?.reviewComplete!==true)) throw new Error('This operation cannot be reviewed completely');
     if (!approval.value.choices.includes(p.choice)) throw new Error('Invalid approval response');
     if (approval.value.kind === 'question' && p.choice === 'answer') {
       p = {...p, answers:validateAnswers(approval.value,p.answers)};
@@ -674,19 +740,33 @@ export class Core extends EventEmitter {
   }
   async send(p: any) {
     if(this.recovery.pending)throw new Error('Recovery restart is pending');
+    // Only Cere's own delivery starts a delegation turn; a client's message is always the user's.
+    const { delegation: _delegation, ...message } = p; p = message;
     if (typeof p.text === 'string' && p.text.trim() === '/tts-test' && !p.images?.length) {
       this.draft(p.id, '', p.expectedDraftRevision);
       return this.speech.speak(this.settings.ttsProvider==='indextts'?this.indextts.previewText(this.settings.indextts.profileId):voiceTestLine(this.settings.assistantName), true);
     }
+    if (this.closed || this.deleting.has(p.id)) throw new Error('Conversation is closing or being deleted');
     if (!p.queuedMessageId && this.sendQueue.shouldQueue(this.store.session(p.id))) return this.sendQueue.add(p);
     if(this.sending.has(p.id) || this.stopping.has(p.id))throw new Error('This session is busy. Stop it or wait for completion.');
     this.sending.add(p.id);
-    try { return await this.sendTurn(p); } finally { this.sending.delete(p.id); this.sendQueue.kick(p.id); }
+    try { return await this.sendTurn(p); } finally { this.sending.delete(p.id); this.sendQueue.kick(p.id); this.pings.kick(p.id); }
   }
   async sendTurn(p: any, beforeAccept?:()=>void, onDispatched?:()=>void, onAccepted?:()=>void, onRejected?:()=>void) {
+    if (this.closed || this.deleting.has(p.id) || this.preparations.has(p.id)) throw new Error('Conversation is closing or busy');
+    const controller = new AbortController();
+    this.preparations.set(p.id, controller);
+    this.notePackets.delete(p.id);
+    try { return await this.prepareTurn(p, controller.signal, beforeAccept, onDispatched, onAccepted, onRejected); }
+    finally { if (this.preparations.get(p.id) === controller) this.preparations.delete(p.id); }
+  }
+  private async prepareTurn(p: any, signal: AbortSignal, beforeAccept?:()=>void, onDispatched?:()=>void, onAccepted?:()=>void, onRejected?:()=>void) {
     let s = this.store.session(p.id);
+    // A delegation update is Cere's own turn (broker/delegation-pings.ts): its card shows a summary, and it
+    // never touches the draft or the recovery record, which belong to the user's messages.
+    const delegation: { pingIds: string[]; summary: string } | undefined = p.delegation;
     const powerAtStart=this.power.effective(s);
-    const authorizeDispatch=()=>{this.settingsFor(s.id);if(powerAtStart.leaseId&&this.power.effective(this.store.session(s.id)).leaseId!==powerAtStart.leaseId)throw new Error('Power authorization expired before the provider accepted this turn');beforeAccept?.();};
+    const authorizeDispatch=()=>{signal.throwIfAborted();if(this.closed||this.deleting.has(s.id))throw new Error("Conversation is closing");this.settingsFor(s.id);if(powerAtStart.leaseId&&this.power.effective(this.store.session(s.id)).leaseId!==powerAtStart.leaseId)throw new Error('Power authorization expired before the provider accepted this turn');beforeAccept?.();};
     if (p.expectedDraftRevision !== undefined && !p.turnId && !p.queuedMessageId && p.expectedDraftRevision !== (s.draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed on another client. Review before sending.');
     const effective = this.settingsFor(p.id);
     // A phone's turn runs only for a provider its authorized execution carries: never AntiGravity, and a
@@ -706,6 +786,7 @@ export class Core extends EventEmitter {
     if (typeof p.text !== 'string' || !p.text.trim() || p.text.length > 100000) throw new Error('Enter a message of up to 100,000 characters');
     const userText=p.text;
     const attached=p.attachmentIds===undefined?{assets:[],images:[],text:''}:await this.attachments.content(s.id,p.attachmentIds);
+    authorizeDispatch();
     let providerText=userText+attached.text;
     if(providerText.length>100000)throw new Error('Message and text attachments exceed 100,000 characters');
     const images: string[] = [];
@@ -713,16 +794,21 @@ export class Core extends EventEmitter {
     if(p.images!==undefined&&(!Array.isArray(p.images)||!p.images.every((v:any)=>typeof v==='string')))throw new Error('Invalid image attachments');
     for (const path of p.images || []) {
       const resolved = await realpath(path);
+      signal.throwIfAborted();
       if (!(await stat(resolved)).isFile()) throw new Error('Attachment is not a file'); images.push(resolved);
     }
     if (images.length > 4) throw new Error('Attach at most four images');
     this.settingsFor(s.id); // Recheck after every asynchronous attachment validation.
     if (!p.queuedMessageId && p.expectedDraftRevision !== undefined && p.expectedDraftRevision !== (this.store.session(s.id).draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed during send validation.');
     // Input the destination cannot take is refused before anything is recorded or sent.
-    await this.preflight(s, images);
+    authorizeDispatch();
+    await this.preflight(s, images, signal);
+    authorizeDispatch();
     // A02: tool servers this turn may use start now; one that fails is reported in Settings, not fatal.
     await this.extensions.ensure(s.id);
-    this.settingsFor(s.id);
+    authorizeDispatch();
+    await this.refreshNoteRoute(s.id, signal);
+    authorizeDispatch();
     if (!p.queuedMessageId && p.expectedDraftRevision !== undefined && p.expectedDraftRevision !== (this.store.session(s.id).draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed during send validation.');
     // A very fast provider can emit and flush its first reply before its start
     // acknowledgement returns. Reserve an earlier timestamp for the deferred
@@ -732,19 +818,22 @@ export class Core extends EventEmitter {
     if (p.posture !== undefined) this.turnPostures.set(s.id, p.posture); else this.turnPostures.delete(s.id);
     this.turnBehavior.set(s.id, this.resolvedBehavior(s.id));
     const userTime=Date.now()-1;
-    if (s.provider === 'ollama') this.delegations.delete(s.id);
+    // Children still running stay stoppable and listed through a delegation turn.
+    if (s.provider === 'ollama' && !delegation) this.delegations.delete(s.id);
+    if (!delegation) this.pings.userTurn(s.id);
     this.terminal.delete(s.id); this.pendingCompletions.delete(s.id); this.speechResponses.delete(s.id); this.turnReplies.delete(s.id);
     this.settledReplies.delete(s.id); this.deliveredReplies.delete(s.id);
     const remoteAcceptance=!!onAccepted;
     // A turn that recalls memory says so until its context is ready, then it is thinking.
-    s = this.updateSession(s.id, { status: 'starting', activity: effective.memory.enabled && this.memory.active() ? 'recalling' : 'thinking', error: undefined, agents:[], turnId:p.turnId || randomUUID() });
+    s = this.updateSession(s.id, { status: 'starting', activity: !delegation && effective.memory.enabled && this.memory.active() ? 'recalling' : 'thinking', error: undefined, agents:delegation ? (s.agents || []).filter(a => this.agentActive(a)) : [], turnId:p.turnId || randomUUID() });
     if (this.spans.enabled) this.turnTimers.set(s.id, { started: performance.now(), provider: s.provider, first: false });
     const submittedDraftRevision=s.draftRevision;
-    if(!remoteAcceptance)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
+    if(!remoteAcceptance && !delegation)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
     const userMessageId=randomUUID();
-    if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', text: p.text + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
+    if(delegation)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', kind: 'delegation', text: delegation.summary, time: Date.now() });
+    else if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', text: p.text + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
     // HTTP providers and AntiGravity accept a turn from their stream, after send() returns.
-    const tracked=!remoteAcceptance&&!p.queuedMessageId&&(s.provider==='ollama'||s.provider==='antigravity'||isApiProvider(s.provider));
+    const tracked=!remoteAcceptance&&!p.queuedMessageId&&!delegation&&(s.provider==='ollama'||s.provider==='antigravity'||isApiProvider(s.provider));
     if(tracked)this.unacknowledged.set(s.id,{turnId:s.turnId!,messageId:userMessageId,text:userText,attachmentIds:attached.assets.map(a=>a.id)});
     const acknowledged=()=>{const turn=this.unacknowledged.get(s.id);if(!turn||turn.turnId!==s.turnId||turn.returned)return;this.unacknowledged.delete(s.id);this.store.set('submission:'+s.id,{turnId:s.turnId,time:Date.now(),state:'accepted'});this.attachments.prune(s.id);};
     let accepted=!remoteAcceptance;
@@ -754,7 +843,7 @@ export class Core extends EventEmitter {
       s=this.updateSession(s.id,{draft:'',view:undefined,...(attached.assets.length&&JSON.stringify((this.store.session(s.id).draftAttachments||[]).map(a=>a.id))===sentAttachments?{draftAttachments:[]}:{})});
       this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(attached.assets.length?'\n\nAttached files: '+attached.assets.map(a=>a.name).join(', '):'')+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
     try {
-      let memorySignal: AbortSignal | undefined, memoryText = '', documents: { text: string; detail?: Record<string, any> } = { text: '' };
+      let memorySignal: AbortSignal | undefined, memoryText = '', documents: { text: string; detail?: Record<string, any>; authorization?: CollectionAuthorization } = { text: '' };
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && !(effective.memory.enabled && this.memory.active())) this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: this.memoryOffReason(s.id), route: 'cloud' });
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && effective.memory.enabled && this.memory.active()) {
         const controller = new AbortController();
@@ -762,7 +851,7 @@ export class Core extends EventEmitter {
         this.nativeMemoryTurns.set(s.id, { text:userText, turnId:s.turnId, controller, epoch });
         // A style that withholds recall supplies no memory text; capture still follows the memory settings.
         const context = this.withheld(s.id, 'recall') ? (this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: 'style_withheld', route: 'cloud' }), '')
-          : await this.recalling(s.id, () => this.memory.context(s, userText, controller.signal, 4000, 'cloud', this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, controller.signal)));
+          : await this.recalling(s.id, () => this.memory.context(s, userText, AbortSignal.any([signal, controller.signal]), 4000, 'cloud', this.memoryWritable(s.id), () => this.memoryAuthorized(s.id, false, controller.signal)));
         controller.signal.throwIfAborted();
         if (context && !epoch.aborted) {
           memorySignal = AbortSignal.any([controller.signal, epoch]);
@@ -771,9 +860,10 @@ export class Core extends EventEmitter {
       }
       // M06: a CLI is a cloud consumer: only collections that allow cloud models contribute excerpts.
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && !s.temporary && this.collections.bound(s).length) {
-        documents = await this.collections.context(s, userText, 3000, 'cloud', AbortSignal.timeout(15000)).catch(() => ({ text: '' }));
+        documents = await this.collections.context(s, userText, 3000, 'cloud', AbortSignal.any([signal, AbortSignal.timeout(15000)])).catch(() => ({ text: '' }));
         if (documents.text) providerText = documents.text + '\n\n' + providerText;
       }
+      authorizeDispatch();
       this.ensureAdapter(s);
       // A CLI keeps its own instructions, history and tools; Cere records only what it supplies itself.
       if (s.provider !== 'ollama' && !isApiProvider(s.provider)) {
@@ -791,9 +881,9 @@ export class Core extends EventEmitter {
       }
       if(s.remote&&s.provider!=='ollama'&&this.settingsFor(s.id).paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
       authorizeDispatch();
-      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, ...(p.webConstraints !== undefined ? { webConstraints: validConstraints(p.webConstraints) } : {}), messageId: !remoteAcceptance && !p.queuedMessageId ? userMessageId : undefined, beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:tracked?acknowledged:undefined });
+      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, ...(p.webConstraints !== undefined ? { webConstraints: validConstraints(p.webConstraints) } : {}), messageId: !remoteAcceptance && !p.queuedMessageId ? userMessageId : undefined, beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();if(documents.text&&!this.collections.authorizeContext(this.store.session(s.id),documents.authorization,'cloud'))throw new Error('Collection access changed before dispatch');}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:tracked?acknowledged:undefined });
       if(!accepted)throw new Error('Provider did not confirm that it accepted the turn.');
-      if(!remoteAcceptance){
+      if(!remoteAcceptance && !delegation){
         const turn=this.unacknowledged.get(s.id),returned=!!turn&&turn.turnId===s.turnId&&turn.returned===true;
         if(returned)this.unacknowledged.delete(s.id);
         // A tracked turn stays recoverable until its provider accepts it.
@@ -804,7 +894,7 @@ export class Core extends EventEmitter {
       if (this.store.session(s.id).status === 'starting') this.updateSession(s.id, { status: 'working' });
       return true;
     } catch (e: any) {
-      if(!remoteAcceptance)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'uncertain'});
+      if(!remoteAcceptance && !delegation)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'uncertain'});
       this.event(s.id, { type: 'error', text: e.message });
       this.turnPostures.delete(s.id); this.turnBehavior.delete(s.id);
       for (const [token, owner] of this.tokens) if (owner === s.id) this.tokens.delete(token);
@@ -827,8 +917,8 @@ export class Core extends EventEmitter {
     return model?.capabilities?.length && !model.capabilities.includes('vision') ? `${s.model} does not accept images. Choose a model with Images, or attach text.` : '';
   }
   /** Refuses input the destination cannot accept, before a turn is recorded or dispatched. */
-  async preflight(s: Session, images: string[]) {
-    await this.ensureAdapter(s).preflight?.(images, AbortSignal.timeout(30000));
+  async preflight(s: Session, images: string[], signal?: AbortSignal) {
+    await this.ensureAdapter(s).preflight?.(images, AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]));
   }
   /** The session's provider adapter, created with callbacks bound to its current generation. */
   ensureAdapter(s: Session): Adapter {
@@ -865,6 +955,8 @@ export class Core extends EventEmitter {
   async stop(id: string): Promise<boolean> {
     if (this.spans.enabled && this.turnTimers.has(id) && !this.stopRequests.has(id)) this.stopRequests.set(id, performance.now());
     this.sendQueue.cancel(id, 'Stopped before sending; copy this message to send it again');
+    // No automatic turn follows a Stop, including one for updates that were about to go out.
+    this.pings.dropReady(id, 'Stopped by the user');
     this.speech.stopSession(id);
     const existing = this.stopping.get(id); if (existing) return existing;
     const pending = Promise.resolve().then(() => this.stopTurn(id)).finally(() => this.stopping.delete(id));
@@ -882,10 +974,10 @@ export class Core extends EventEmitter {
     let timer:NodeJS.Timeout|undefined;
     try {
       await Promise.race([adapter?.close(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Provider termination could not be confirmed')),5000);timer.unref();})]);
-      this.updateSession(id,{status:'interrupted',error:'Power access ended. Managed provider termination confirmed; external processes are outside Cere’s supervision.'});
+      this.updateSession(id,{status:'interrupted',error:'Power access ended. Managed process-group termination confirmed; detached descendants and remote work are unconfirmed.'});
       this.attachments.prune(id);
     } catch(error){this.updateSession(id,{status:'interrupted',error:'Power access ended. Provider termination is unconfirmed.'});throw error;}
-    finally{if(timer)clearTimeout(timer);if(wasActive)this.finishInterruptedTurn(id);}
+    finally{if(timer)clearTimeout(timer);if(wasActive)this.finishInterruptedTurn(id);this.pings.dropReady(id,'Power access ended');}
   }
   private finishInterruptedTurn(id:string) {
     this.pendingCompletions.delete(id);this.flush();this.cancelApprovals(id);this.turnPostures.delete(id);this.turnBehavior.delete(id);
@@ -919,7 +1011,8 @@ export class Core extends EventEmitter {
     void capture.finally(() => this.memoryCaptures.delete(capture));
   }
   async stopTurn(id: string) {
-    const s = this.store.session(id); if (!['starting','working','waiting','stopping'].includes(s.status)) return true;
+    this.preparations.get(id)?.abort(new Error('Stopped by the user'));
+    const s = this.store.session(id); if (!['starting','working','waiting','stopping'].includes(s.status)) { if(this.preparations.has(id)) await this.disconnect(id); return true; }
     this.cancelApprovals(id); this.updateSession(id, { status: 'stopping' });
     // The deadline is armed before anything is awaited: an interruption that never
     // acknowledges, or a capture editor left open, cannot hold Stop past it.
@@ -944,9 +1037,9 @@ export class Core extends EventEmitter {
     let timeout:NodeJS.Timeout|undefined;
     const confirmed=await Promise.race([adapter?.close().then(()=>true).catch(()=>false)??Promise.resolve(true),new Promise<boolean>(resolve=>{timeout=setTimeout(()=>resolve(false),this.forceCloseMs);timeout.unref();})]);if(timeout)clearTimeout(timeout);
     if(this.store.session(id).status!=='stopping')return;
-    const text=confirmed?'Managed provider termination confirmed. External processes are outside Cere’s supervision.':'Provider termination is unconfirmed. Cere revoked this session’s tools; inspect the provider before retrying.';
+    const text=confirmed?'Managed process-group termination confirmed; detached descendants and remote work are unconfirmed.':'Provider termination is unconfirmed. Cere revoked this session’s tools; inspect the provider before retrying.';
     this.updateSession(id,{status:'interrupted',error:text});
-    this.finishInterruptedTurn(id);
+    this.finishInterruptedTurn(id);this.pings.dropReady(id,'The turn was stopped');
     if(confirmed)this.attachments.prune(id);
     this.emit('notice',{kind:'interrupted',sessionId:id,text});
   }
@@ -960,10 +1053,14 @@ export class Core extends EventEmitter {
     if ('expectedIdentity' in patch) {
       const keys = ['personality', 'assistantName', 'avatar'] as const, expected = patch.expectedIdentity;
       if (Object.keys(patch).some(key => ![...keys, 'expectedIdentity', 'expectedRevision'].includes(key))) throw new Error('An identity draft may only update name, avatar and personality');
-      if (!expected || typeof expected !== 'object' || Array.isArray(expected) || Object.keys(expected).length !== keys.length || keys.some(key => expected[key] !== this.settings[key]))
+      let expectedAvatar: unknown;
+      try { expectedAvatar = expected && typeof expected === 'object' && !Array.isArray(expected) ? validateAvatar(expected.avatar) : undefined; } catch {}
+      if (!expected || typeof expected !== 'object' || Array.isArray(expected) || Object.keys(expected).length !== keys.length ||
+          expected.personality !== this.settings.personality || expected.assistantName !== this.settings.assistantName || expectedAvatar !== this.settings.avatar)
         throw remoteError('REVISION_CONFLICT','Name, avatar or personality changed on another client. Reload before saving.');
     } else if (patch.expectedRevision !== undefined && patch.expectedRevision !== this.store.get('settingsRevision','0')) throw remoteError('REVISION_CONFLICT','Settings changed on another client. Reload before saving.');
-    const next = structuredClone(this.settings);
+    const baseline = structuredClone(this.settings);
+    let next = structuredClone(baseline);
     if ('telemetry' in patch) next.telemetry = await telemetryConfiguration(patch.telemetry, next.telemetry);
     if ('personality' in patch) next.personality = validatePersonality(patch.personality);
     if ('assistantName' in patch) next.assistantName = validateAssistantName(patch.assistantName);
@@ -983,7 +1080,7 @@ export class Core extends EventEmitter {
       if(next.indextts.profileId&&!this.indextts.profiles().some(p=>p.id===next.indextts.profileId&&p.version===next.indextts.version))throw new IndexError('PROFILE_MISSING');
     }
     for (const key of ['webSearch','memory'] as const) if (key in patch) {
-      const value = patch[key], allowed = key === 'webSearch' ? ['enabled','provider','searxngUrl'] : ['enabled','model','extractionModel','allowCloudMemory','allowCloudExtraction'];
+      const value = patch[key], allowed = key === 'webSearch' ? ['enabled','provider','searxngUrl'] : ['enabled','model','extractionModel','extractionProvider','embeddingProvider','allowCloudEmbedding','allowCloudMemory','allowCloudExtraction'];
       if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !allowed.includes(k))) throw new Error(`Invalid ${key} settings`);
       if ('enabled' in value && typeof value.enabled !== 'boolean') throw new Error(`Invalid ${key} enabled setting`);
       if (key === 'webSearch') {
@@ -995,8 +1092,11 @@ export class Core extends EventEmitter {
         next.webSearch = { ...next.webSearch, ...value };
         if (next.webSearch.enabled && next.webSearch.provider === 'searxng' && !next.webSearch.searxngUrl) throw new Error('Enter your SearXNG server URL first');
       } else {
-        if ('model' in value && (typeof value.model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(value.model))) throw new Error('Enter an Ollama embedding model name');
-        if ('extractionModel' in value && (typeof value.extractionModel !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(value.extractionModel))) throw new Error('Enter an Ollama extraction model name');
+        if ('model' in value && (typeof value.model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(value.model))) throw new Error('Enter an embedding model name');
+        if ('extractionModel' in value && (typeof value.extractionModel !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,511}$/.test(value.extractionModel))) throw new Error('Enter an extraction model name');
+        if ('extractionProvider' in value && !['ollama','google','anthropic'].includes(value.extractionProvider)) throw new Error('Choose Ollama, Gemini or Claude for extraction');
+        if ('embeddingProvider' in value && !['ollama','google'].includes(value.embeddingProvider)) throw new Error('Choose Ollama or Gemini for embeddings');
+        if ('allowCloudEmbedding' in value && typeof value.allowCloudEmbedding !== 'boolean') throw new Error('Invalid cloud embedding permission');
         if ('allowCloudMemory' in value && typeof value.allowCloudMemory !== 'boolean') throw new Error('Invalid cloud memory permission');
         if ('allowCloudExtraction' in value && typeof value.allowCloudExtraction !== 'boolean') throw new Error('Invalid cloud extraction permission');
         next.memory = { ...next.memory, ...value };
@@ -1033,9 +1133,9 @@ export class Core extends EventEmitter {
       if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['input', 'output'].includes(key))) throw new Error('Invalid audio device settings');
       next.audio = { input: 'input' in value ? deviceId(value.input) : next.audio.input, output: 'output' in value ? deviceId(value.output) : next.audio.output };
     }
-    const previousExtensions = this.settings.extensions, previousAudio = this.settings.audio;
+    const previousAudio = this.settings.audio;
     const endpointChanged = JSON.stringify(next.compatible) !== JSON.stringify(this.settings.compatible);
-    for (const key of ['speechEnabled','speechBrief','topmost','roaming','quiet','reducedMotion','expressiveCues','showMemoryCitations','hidden','paused','onboarding','bypassCliPermissions','bypassComputerPermissions','responsiveness'] as const) if (key in patch) {
+    for (const key of ['speechEnabled','speechBrief','topmost','roaming','quiet','reducedMotion','expressiveCues','showMemoryCitations','hidden','paused','onboarding','bypassCliPermissions','bypassComputerPermissions','responsiveness','delegationUpdates'] as const) if (key in patch) {
       if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}`); next[key] = patch[key];
     }
     for (const [key,min,max,label] of [['speechRate',.5,2,'Speech rate'],['speechPitch',-6,6,'Speech pitch'],['speechVolume',0,1,'Speech volume']] as const) {
@@ -1087,21 +1187,46 @@ export class Core extends EventEmitter {
         if (!s.id || typeof s.id !== 'string' || typeof s.name !== 'string' || !isAbsolute(s.executable) || !isAbsolute(s.cwd) || !Array.isArray(s.args) || !s.args.every((v: any) => typeof v === 'string' && !v.includes('\0')) || !Number.isInteger(s.timeout) || s.timeout < 1000 || s.timeout > 600000) throw new Error('Scripts need absolute paths, argument arrays, and a 1–600 second timeout'); return s;
       });
     }
-    const hostChanged = next.ollama.host !== this.settings.ollama.host;
-    if (JSON.stringify(next.webSearch) !== JSON.stringify(this.settings.webSearch) || next.paused !== this.settings.paused) { this.webController.abort(new Error('Web search settings changed')); this.webController = new AbortController(); }
-    if (JSON.stringify(next.memory) !== JSON.stringify(this.settings.memory) || hostChanged || next.paused !== this.settings.paused) this.memory.invalidate();
     if('ttsProvider' in patch||'indextts' in patch||'elevenlabs' in patch){this.speech.stop();await this.speech.idle();await this.indextts.reconfigure();}
-    this.settings = next; this.store.set('settings', next);
+    if ('expectedIdentity' in patch) {
+      if (['personality','assistantName','avatar'].some(key => (this.settings as any)[key] !== (baseline as any)[key]))
+        throw remoteError('REVISION_CONFLICT','Name, avatar or personality changed on another client. Reload before saving.');
+    } else if (patch.expectedRevision !== undefined && patch.expectedRevision !== this.store.get('settingsRevision','0'))
+      throw remoteError('REVISION_CONFLICT','Settings changed on another client. Reload before saving.');
+    // Revision-free patches merge their explicitly supplied fields into the latest state.
+    // Arrays are replacements; nested configuration objects merge only supplied keys.
+    const merge = (current: any, prepared: any, supplied: any, base: any): any => {
+      if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared) || supplied === null) return prepared;
+      const result = {...current};
+      const keys=new Set([...Object.keys(supplied || {}),...Object.keys(prepared).filter(key=>JSON.stringify(prepared[key])!==JSON.stringify(base?.[key]))]);
+      for (const key of keys) if (Object.hasOwn(prepared,key)) result[key] = merge(current?.[key],prepared[key],supplied?.[key],base?.[key]);
+      return result;
+    };
+    const committed = structuredClone(this.settings);
+    const changedKeys=new Set([...Object.keys(patch),...Object.keys(next).filter(key=>JSON.stringify((next as any)[key])!==JSON.stringify((baseline as any)[key]))]);
+    for (const key of changedKeys) if (Object.hasOwn(next,key)) (committed as any)[key] = merge((committed as any)[key],(next as any)[key],patch[key],(baseline as any)[key]);
+    next = committed;
+    const hostChanged = next.ollama.host !== this.settings.ollama.host;
+    this.store.transaction(() => {
+      this.store.set('settings',next);
+      this.store.set('settingsRevision',String(BigInt(this.store.get('settingsRevision','0'))+1n));
+    });
+    const previous = this.settings; this.settings = next;
+    if (JSON.stringify(next.webSearch) !== JSON.stringify(previous.webSearch) || next.paused !== previous.paused) { this.webController.abort(new Error('Web search settings changed')); this.webController = new AbortController(); }
+    if (JSON.stringify(next.memory) !== JSON.stringify(previous.memory) || hostChanged || next.paused !== previous.paused) this.memory.invalidate();
+    this.noteRoutes.clear();
+    if ('extensions' in patch) this.extensions.reconfigure(previous.extensions);
+    if ('customTools' in patch) this.customTools.reconfigure();
+    this.changed();
     if('speechProviders' in patch)this.speech.stopProviders(providerIds.filter(id=>next.speechProviders[id]===false));
-    await this.telemetry.configure(next.telemetry);
+    const effects=this.settingsEffects.catch(()=>{}).then(()=>this.telemetry.configure(this.settings.telemetry));
+    this.settingsEffects=effects;
+    await effects;
     if (!next.speechEnabled || next.quiet || next.speechVolume===0 || 'voice' in patch) this.speech.stop();
     // Resolve only matching permission requests; input questions must never receive invented answers.
     for (const { value } of [...this.approvals.values()]) if (this.automaticallyApprove(value.sessionId, value)) this.answer({ id: value.id, choice: 'allow' }, true);
-    this.store.set('settingsRevision', String(BigInt(this.store.get('settingsRevision', '0')) + 1n));
     this.changed();
     if (hostChanged) { this.capabilities.ollama = {}; void this.refreshProviderModels('ollama').catch(() => {}); }
-    if ('extensions' in patch) this.extensions.reconfigure(previousExtensions);
-    if ('customTools' in patch) this.customTools.reconfigure();
     if ('responsiveness' in patch) { this.spans.configure(next.responsiveness); if (!next.responsiveness) { this.turnTimers.clear(); this.stopRequests.clear(); } }
     if ('audio' in patch) {
       const outputChanged = next.audio.output !== previousAudio.output;
@@ -1212,10 +1337,11 @@ export class Core extends EventEmitter {
     const extensions = ceiling.extensions === false ? [] : [...this.extensions.toolsFor(id), ...this.customTools.toolsFor(id)];
     const kept = definitions.filter(d => !(ceiling.desktop === false && actionDefinitions.includes(d)) && !(ceiling.delegation === false && orchestrationDefinitions.includes(d))
       && !(ceiling.web === false && webDefinitions.includes(d)) && !(ceiling.memory === false && (memoryDefinitions.includes(d) || notesDefinitions.includes(d))));
-    return [...kept.map(d => ({
-      type: 'function' as const, function: { name: d.name.replaceAll('.', '_'), description: d.description,
-        parameters: { type: 'object', properties: d.schema, required: d.required || Object.keys(d.schema), additionalProperties: false } },
-    })), ...extensions];
+    return [...kept.map(d => {
+      const offer = orchestrationDefinitions.includes(d) ? orchestrationOffer(d, settings.delegationUpdates) : d;
+      return { type: 'function' as const, function: { name: d.name.replaceAll('.', '_'), description: offer.description,
+        parameters: { type: 'object', properties: offer.schema, required: offer.required || Object.keys(offer.schema), additionalProperties: false } } };
+    }), ...extensions];
   }
   memoryToolsFor(id: string) {
     const s = this.store.session(id), settings = this.settingsFor(id);
@@ -1270,29 +1396,62 @@ export class Core extends EventEmitter {
    * cloud-hosted model (any CLI or API provider, or an Ollama model not known to be local) only when
    * the vault allows cloud models. Writes are not offered to phone-started turns.
    */
+  private notePolicy(id: string) {
+    const session=this.store.session(id);
+    return JSON.stringify([this.settings.notesVault,session.provider,session.model,session.ollama?.host]);
+  }
+  private assertNotePacket(id: string) {
+    const witness=this.notePackets.get(id);
+    if(witness && (witness!==this.notePolicy(id)||!this.notesToolsFor(id).length)) throw new Error('Notes access changed before dispatch');
+  }
+  async refreshNoteRoute(id: string, signal: AbortSignal) {
+    const s = this.store.session(id);
+    if (!this.settings.notesVault.enabled || this.settings.notesVault.allowCloud || s.provider !== 'ollama') return;
+    const host = ollamaHost(s.ollama!.host), model = s.model;
+    const route = await modelRoute(host, model, signal); signal.throwIfAborted();
+    const current = this.store.session(id);
+    if (current.model !== model || ollamaHost(current.ollama!.host) !== host) throw new Error('Model route changed');
+    this.noteRoutes.set(id, {host, model, local: route.verified && route.route === 'local'});
+  }
   notesToolsFor(id: string) {
     const s = this.store.session(id), vault = this.settings.notesVault;
     if (!vault.enabled || !vault.path || s.temporary || this.settings.paused || this.withheld(id, 'memory') || !this.toolCalling(s)) return [];
-    const local = s.provider === 'ollama' && (this.capabilities.ollama?.models as ModelOption[] | undefined)?.find(m => m.id === s.model)?.cloud === false;
+    const proof = this.noteRoutes.get(id);
+    const local = s.provider === 'ollama' && proof?.host === ollamaHost(s.ollama!.host) && proof.model === s.model && proof.local;
     if (!local && !vault.allowCloud) return [];
     return notesDefinitions.filter(d => d.readOnly || !s.remote);
   }
   /** Runs one notes tool; an edit is shown as an exact diff and applied only after the user allows it. */
   async notesCall(id: string, name: string, p: Record<string, unknown>, signal: AbortSignal) {
-    if (name === 'notes_search') return this.vault.search(p.query);
-    if (name === 'notes_read') return this.vault.read(p.path);
+    await this.refreshNoteRoute(id, signal);
+    if (!this.notesToolsFor(id).some(d => d.name.replaceAll('.', '_') === name)) throw new Error('Notes access changed');
+    if (name === 'notes_search' || name === 'notes_read') {
+      const result = await (name === 'notes_search' ? this.vault.search(p.query) : this.vault.read(p.path));
+      await this.refreshNoteRoute(id, signal);
+      if (!this.notesToolsFor(id).length) throw new Error('Notes access changed');
+      this.notePackets.set(id,this.notePolicy(id));
+      return result;
+    }
     const path = await this.vault.editable(p.path);
     const proposal = await propose({ root: this.settings.notesVault.path, path, content: p.content, sessionId: id, reason: p.reason });
     signal.throwIfAborted();
     const answer = await this.approval(id, { kind: 'file', title: `${proposal.baseSha256 ? 'Edit' : 'Create'} note ${proposal.display}?`,
-      detail: (proposal.reason ? 'Reason: ' + proposal.reason + '\n\n' : '') + proposal.diff, choices: ['allow', 'deny'], fields: { path: proposal.display } });
+      detail: (proposal.reason ? 'Reason: ' + proposal.reason + '\n\n' : '') + proposal.diff, choices: ['allow', 'deny'], fields: { path: proposal.display, digest: proposal.digest, reviewComplete: true } });
     if (answer.choice !== 'allow') { proposal.used = true; return { applied: false, message: 'The user declined this note edit.' }; }
     signal.throwIfAborted();
     // M22: the approval covers this folder and these permissions only; a change while it was open refuses.
     if (!this.notesToolsFor(id).some(d => d.name === 'notes.propose_edit')) throw new Error('Notes editing was turned off before the edit was applied');
     const folder = await realpath(this.settings.notesVault.path).catch(() => '');
     if (folder !== proposal.root) throw new Error('The notes folder changed before the edit was applied. Nothing was written.');
-    const result = await applyProposal(proposal, join(this.store.directory, 'vault-backups'));
+    const result = await applyProposal(proposal, join(this.store.directory, 'vault-backups'), async () => {
+      signal.throwIfAborted();
+      await this.refreshNoteRoute(id, signal);
+      if (!this.notesToolsFor(id).some(d=>d.name==='notes.propose_edit') || await realpath(this.settings.notesVault.path).catch(()=>'') !== proposal.root) throw new Error('Notes permission changed before commit');
+      signal.throwIfAborted();
+    }, () => {
+      signal.throwIfAborted();
+      if (!this.notesToolsFor(id).some(d=>d.name==='notes.propose_edit') || this.settings.notesVault.path !== proposal.root) throw new Error('Notes permission changed before commit');
+    });
     // Every applied edit is attributable: the conversation, the note and the new content's hash.
     this.store.activity({ action: 'notes.edit', sessionId: id, path: proposal.display, sha256: result.sha256, created: result.created, status: 'completed' });
     this.workflows.observeEdit(result.path, Date.now(), 'notes');
@@ -1313,6 +1472,7 @@ export class Core extends EventEmitter {
     if (name.startsWith('custom_')) return this.customTools.call(id, name, args, signal);
     const notes = notesDefinitions.find(d => d.name.replaceAll('.', '_') === name);
     if (notes) {
+      await this.refreshNoteRoute(id,signal);
       if (!this.notesToolsFor(id).includes(notes)) throw new Error('This tool is disabled in Cere settings');
       if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(k => !(k in notes.schema))) throw new Error('Invalid tool arguments');
       return this.notesCall(id, name, args as Record<string, unknown>, signal);
@@ -1358,7 +1518,7 @@ export class Core extends EventEmitter {
     guard.throwIfAborted(); return result;
   }
   async configureSession(p: any, authorize?: () => void, remoteExecution?: RemoteExecution) {
-    if (this.sending.has(p.id) || this.stopping.has(p.id)) throw new Error('This session is busy');
+    if (this.deleting.has(p.id) || this.sending.has(p.id) || this.stopping.has(p.id)) throw new Error('This session is busy');
     this.sending.add(p.id);
     try {
       const s = this.store.session(p.id), api=isApiProvider(s.provider), local=s.provider==='ollama';
@@ -1399,7 +1559,7 @@ export class Core extends EventEmitter {
       await this.disconnect(s.id);check();
       if(api&&modelId!==s.model)this.store.set('api:'+s.id,portableApiHistory(this.store.get<OllamaMessage[]>('api:'+s.id,[])));
       return this.updateSession(s.id,{model:modelId,effort,...(local?{ollama:{...s.ollama!,tools}}:api?{api:{tools}}:{}),error:undefined});
-    } finally { this.sending.delete(p.id); }
+    } finally { this.sending.delete(p.id); this.pings.kick(p.id); }
   }
   /**
    * Deletes a saved conversation: transcript, draft, attachments, queued and recovery records,
@@ -1413,13 +1573,18 @@ export class Core extends EventEmitter {
       throw new Error('Stop this conversation before deleting it');
     if (this.power.effective(s).leaseId) throw new Error('End this conversation’s power session before deleting it');
     if (this.store.sessions().some(child => child.parentId === s.id && busy(child))) throw new Error('Stop its delegated conversations before deleting it');
-    await this.disconnect(s.id);
+    this.deleting.add(s.id);
+    try { await this.disconnect(s.id); } catch(error) {
+      this.updateSession(s.id,{status:'interrupted',error:'Deletion is incomplete because provider termination is unconfirmed. Retry deletion to finish cleanup; sending remains blocked.'});
+      throw error;
+    }
     this.sendQueue.cancel(s.id, 'Conversation deleted');
     this.workflows.finish(s.id); this.workflows.forgetSession(s.id);
     this.attachments.removeSession(s.id);
     this.store.deleteSession(s.id);
     for (const map of [this.settledReplies, this.deliveredReplies, this.turnReplies, this.speechResponses, this.pendingCompletions, this.unacknowledged, this.delegations, this.generations]) map.delete(s.id);
     for (const children of this.delegations.values()) children.delete(s.id);
+    this.pings.forget(s.id); this.pings.forgetChild(s);
     this.terminal.delete(s.id); this.memory.packets.delete(s.id); this.webTraces.delete(s.id); this.collections.forgetSession(s.id);
     this.completions = this.completions.filter(c => c.sessionId !== s.id); this.persistCompletions(); this.clearCompanion(s.id);
     for (const row of this.store.db.prepare("SELECT key,value FROM meta WHERE key LIKE 'memory-review:%'").all()) {
@@ -1458,7 +1623,7 @@ export class Core extends EventEmitter {
     if (provider === 'codex') {
       const process = new RpcProcess(providerExecutable('codex'), ['app-server'], homedir());
       process.on('fault', () => {});
-      const abort=()=>{void process.close();};signal?.addEventListener('abort',abort,{once:true});
+      const abort=()=>{void process.close().catch(() => {});};signal?.addEventListener('abort',abort,{once:true});
       try {
         await process.request('initialize', { clientInfo: { name: 'cere-history', version: '0.1.0' } }); process.write({ method: 'initialized' });
         const r = await process.request('thread/list', { limit: 100, useStateDbOnly: true });
@@ -1486,7 +1651,7 @@ export class Core extends EventEmitter {
     return entries;
   }
   async rpc(method: string, p: any = {}) : Promise<any> {
-    const readOnly=['state','projects.list','session.messages','session.messageText','session.recovery','session.context','navigation.search','sessions.list','session.search','bookmarks.list','capsules.get','recipes.list','recipes.versions','results.list','memoryReview.list','memoryReview.recalled','recovery.status','diagnostics.preview','utility.list','utility.calculate','utility.convert','ui.panel','ui.attention','session.stop','approval.answer','power.end','personality.preview','presets.list','behavior.postures','behavior.resolve','behavior.preview','session.export','models.local','memory.embeddingImpact','collections.list','notes.status','notes.search','notes.read','packages.export','packages.preview','extensions.status','audio.devices','diagnostics.spans','diagnostics.uiLag','schedules.list'].includes(method);
+    const readOnly=['state.field','session.hydrate','state','settings.inspect','projects.list','session.messages','session.messageText','session.recovery','session.context','navigation.search','sessions.list','session.search','bookmarks.list','capsules.get','recipes.list','recipes.versions','results.list','memoryReview.list','memoryReview.recalled','recovery.status','diagnostics.preview','utility.list','utility.calculate','utility.convert','ui.panel','ui.attention','session.stop','approval.answer','power.end','personality.preview','presets.list','behavior.postures','behavior.resolve','behavior.preview','session.export','models.local','memory.embeddingImpact','collections.list','notes.status','notes.search','notes.read','packages.export','packages.preview','extensions.status','audio.devices','diagnostics.spans','diagnostics.uiLag','schedules.list'].includes(method);
     if(readOnly||method==='recovery.activate'||method==='recovery.cancel')return this.rpcInner(method,p);
     return this.withMutation(()=>this.rpcInner(method,p));
   }
@@ -1526,6 +1691,8 @@ export class Core extends EventEmitter {
     if(['sessions.list','session.search','session.organize','session.read','folders.save','folders.delete','bookmarks.list','message.bookmark','navigation.search','navigation.record','navigation.favorite'].includes(method))return this.organization.dispatch(method,p);
     switch (method) {
       case 'state': return this.snapshot();
+      case 'settings.inspect': return { bypassCliPermissions: this.settings.bypassCliPermissions, settingsRevision: this.store.get('settingsRevision','0') };
+      case 'state.field': return this.snapshotField(p);
       case 'session.create': return this.create(p);
       case 'session.configure': return this.configureSession(p);
       case 'session.send': if(this.recovery.pending)throw new Error('Recovery restart is pending');return this.send(p);
@@ -1535,6 +1702,7 @@ export class Core extends EventEmitter {
       case 'session.delete': return this.deleteSession(p);
       case 'session.detachRemote': { await this.disconnect(p.id); return this.updateSession(p.id,{remote:undefined,effectivePolicy:undefined}); }
       // Byte-bounded pages, newest first by cursor; clients load older pages on request.
+      case 'session.hydrate': { const {id,revision,draftRevision,draft,draftAttachments,view}=this.store.session(p.id); return {version:1,session:{id,revision,draftRevision,draft,draftAttachments,view}}; }
       case 'session.messages': this.flush(); return messagePage(this.store, p.id, p.before, p.maxBytes);
       case 'session.messageText': this.flush(); return messageChunk(this.store, p.id, p.messageId, p.offset);
       case 'session.draft': return this.draft(p.id, p.text, p.expectedRevision, Number(p.scroll) || 0,p.attachmentIds,p.view);
@@ -1603,6 +1771,9 @@ export class Core extends EventEmitter {
         // M13: a compatible endpoint's key is saved for the endpoint's current origin only.
         const origin=p.provider==='compatible'?endpointOrigin(this.settings.compatible.baseUrl):undefined;
         const status=this.credentials.update(p.provider,p.key,origin);
+        this.memory.service.controller.abort(new Error('API credentials changed'));
+        this.memory.service.controller = new AbortController();
+        this.memory.service.extractor = undefined;
         this.modelGenerations.set(p.provider,(this.modelGenerations.get(p.provider)||0)+1);
         this.capabilities[p.provider]={...status[p.provider],available:false,models:[],modelsStatus:'unknown',remoteRestricted:false,label:apiLabel(p.provider,this.apiAccess(p.provider)),...(p.provider==='compatible'?{endpoint:this.settings.compatible.baseUrl,declared:declared(this.settings.compatible)}:{})};
         // Revoking a key also stops an in-flight tool loop before another request can leave.
@@ -1652,7 +1823,7 @@ export class Core extends EventEmitter {
         return {paused:this.settings.paused,profile:this.settings.profile,categories:this.settings.categories,grants:this.settings.grants,
           persistent:{cli:this.settings.bypassCliPermissions,computer:this.settings.bypassComputerPermissions},
           providers:Object.entries(this.capabilities).map(([provider,value])=>({provider,...(value as object)})),power:this.power.snapshot(),
-          effective:sessions.map(s=>{const lease=this.power.effective(s),persistentCli=!s.remote&&this.settings.bypassCliPermissions,persistentComputer=!s.remote&&this.settings.bypassComputerPermissions;return{sessionId:s.id,title:s.title,cwd:s.cwd,provider:s.provider,status:s.status,termination:s.error||'',...lease,persistentCli,persistentComputer,cli:persistentCli||lease.cli,computer:persistentComputer||lease.computer};}),
+          effective:sessions.map(s=>{const lease=this.power.effective(s),persistentCli=!s.remote&&this.settings.bypassCliPermissions,persistentComputer=!s.remote&&this.settings.bypassComputerPermissions;const powerUnavailableReason=this.power.startUnavailableReason(s);return{sessionId:s.id,title:s.title,cwd:s.cwd,provider:s.provider,status:s.status,mode:s.mode,remote:!!s.remote,temporary:!!s.temporary,canStartPower:!powerUnavailableReason,powerUnavailableReason,termination:s.error||'',...lease,persistentCli,persistentComputer,cli:persistentCli||lease.cli,computer:persistentComputer||lease.computer};}),
           warning:'Pause Cere actions blocks Cere tools. Stop provider ends the selected turn. CLI shell access is not sandboxed by Cere grants.'};
       }
       case 'permissions.revoke': return this.updateSettings({grants:this.settings.grants.filter(g=>g.category!==p.category||g.cwd!==p.cwd)});
@@ -1723,6 +1894,7 @@ export class Core extends EventEmitter {
       case 'packages.export': return this.packages.export(p);
       case 'packages.preview': return this.packages.preview(p);
       case 'packages.import': return this.packages.import(p);
+      case 'packages.discard': this.packages.discard(p.token); return true;
       // M07: the notes vault, for Settings and the utility shelf.
       case 'notes.status': return this.vault.scan();
       case 'extensions.status': return this.extensions.snapshot();
@@ -1768,6 +1940,11 @@ export class Core extends EventEmitter {
       case 'timer.cancel': this.store.removeTimer(p.id); this.changed(); return true;
       case 'ui.toggle': await this.updateSettings({ hidden: false }); this.emit('ui', { command:'toggle' }); return true;
       case 'ui.expand': this.emit('ui', { command:'expand' }); return true;
+      case 'ui.newConversation': {
+        if(typeof p.cwd!=='string'||!isAbsolute(p.cwd)||p.cwd.includes('\0'))throw new Error('Choose an absolute project folder');
+        if(!(await stat(p.cwd)).isDirectory())throw new Error('Project must be a folder');
+        this.emit('ui',{command:'newConversation',cwd:p.cwd});return true;
+      }
       case 'ui.animate':
         if (typeof p.name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9]{0,31}$/.test(p.name)) throw new Error('Invalid animation name');
         this.emit('ui', { command:'animate', name:p.name }); return true;
@@ -1832,11 +2009,12 @@ export class Core extends EventEmitter {
   /** Closes once; a second caller (a server error followed by shutdown, a test hook) awaits the same close. */
   close(): Promise<void> { return this.closing ??= this.closeOnce(); }
   private async closeOnce() {
+    for (const controller of this.preparations.values()) controller.abort(new Error('Broker shutting down'));
     this.closed = true; this.acceptingMutations = false;
     if (this.stateTimer) { clearTimeout(this.stateTimer); this.stateTimer=undefined; }
     for (const session of this.store.sessions()) this.sendQueue.cancel(session.id, 'Cere closed before sending');
     await this.telemetry.close();
-    this.jobs.cancelAll();this.workflows.close();this.utilities.close();this.localModels.cancel();this.collections.cancel();this.extensions.close();await this.transcription.close();await this.power.close();
+    this.jobs.cancelAll();this.workflows.close();this.utilities.close();this.localModels.cancel();this.collections.cancel();this.packages.close();await this.extensions.close().catch(error=>this.emit('notice',{kind:'error',text:error.message}));await this.transcription.close();await this.power.close();
     const speechClosed = this.speech.close(); this.speechResponses.clear();
     this.memory.invalidate(); this.webController.abort(new Error('Cere is closing'));
     clearInterval(this.ticker); this.flush();

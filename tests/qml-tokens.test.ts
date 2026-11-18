@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import { avatarCatalog } from '../broker/avatars.ts';
 
 // All avatar palettes must cover the same controls and keep their text readable.
 const qml = new URL('../qml/', import.meta.url);
@@ -8,7 +9,7 @@ const files = readdirSync(qml).filter(name => name.endsWith('.qml'));
 const artwork = new Set(['Theme.qml', 'CerePortrait.qml', 'EmoticonBadge.qml', 'MotionStage.qml', 'GesturePlayer.qml']);
 const source = (name: string) => readFileSync(new URL(name, qml), 'utf8');
 const theme = source('Theme.qml');
-const palettes: Record<string, Record<string, string>> = JSON.parse(readFileSync(new URL('../assets/palettes.json', import.meta.url), 'utf8'));
+const palettes: Record<string, Record<string, string>> = Object.fromEntries(avatarCatalog.map(entry => [entry.id, entry.palette]));
 const luminance = (hex: string) => {
   const channel = (offset: number) => {
     const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;

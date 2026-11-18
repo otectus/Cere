@@ -26,13 +26,14 @@ export function exportConversation(store: Store, sessionId: string, assistantNam
   if (selected && messages.length !== selected.size) throw new Error('Some selected messages are no longer in this conversation');
   if (!messages.length) throw new Error('There is nothing to export yet');
   const markdown = format === 'markdown', when = (time: number) => new Date(time).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
-  const author = (role: string) => role === 'user' ? 'You' : role === 'tool' ? 'Tool activity' : assistantName;
+  // A delegation row is user-role, but Cere wrote it; it is labelled the way the conversation shows it.
+  const author = ({ role, kind }: { role: string; kind?: string }) => kind === 'delegation' ? assistantName + ' · Delegation update' : role === 'user' ? 'You' : role === 'tool' ? 'Tool activity' : assistantName;
   const parts: string[] = markdown
     ? [`# ${session.title}`, '', `_Exported from Cere on ${when(Date.now())} · ${session.provider}${session.model ? ' · ' + session.model : ''} · ${session.cwd}_`]
     : [session.title, `Exported from Cere on ${when(Date.now())} · ${session.provider}${session.model ? ' · ' + session.model : ''} · ${session.cwd}`];
   for (const message of messages) {
     const text = p.showCitations === true ? message.text : stripMemoryCitations(message.text);
-    parts.push('', markdown ? `## ${author(message.role)} · ${when(message.time)}` : `${author(message.role)} · ${when(message.time)}`, '');
+    parts.push('', markdown ? `## ${author(message)} · ${when(message.time)}` : `${author(message)} · ${when(message.time)}`, '');
     // A tool transcript is shown verbatim; Markdown keeps it from being read as formatting.
     parts.push(markdown && message.role === 'tool' ? '```text\n' + text.replaceAll('```', '`​``') + '\n```' : text);
     if (message.sources?.length) parts.push('', markdown ? 'Sources:' : 'Sources:', ...message.sources.map(source => markdown ? `- [${source.title.replace(/[[\]]/g, '')}](${source.url})` : `- ${source.title}: ${source.url}`));

@@ -16,7 +16,8 @@ export class MemoryReview {
       this.core.store.set(key,[proposal,...proposals]);return proposal;
     }
     if(method==='memoryReview.list'){
-      const rows=proposals.flatMap(proposal=>{const message=this.core.store.messageById(proposal.messageId);return message?[{...proposal,text:message.text.slice(0,2000),sourceText:message.text,sourceLabel:proposal.role==='assistant'?'Model suggestion':proposal.role==='user'?'Observed user statement':'Observed tool or document statement',currentRevision:hash([message.id,message.revision,message.text])}]:[]});
+      // A delegation update is user-role text that Cere wrote from a delegated session's reply.
+      const rows=proposals.flatMap(proposal=>{const message=this.core.store.messageById(proposal.messageId);return message?[{...proposal,text:message.text.slice(0,2000),sourceText:message.text,sourceLabel:proposal.role==='assistant'?'Model suggestion':message.kind==='delegation'?'Delegation update':proposal.role==='user'?'Observed user statement':'Observed tool or document statement',currentRevision:hash([message.id,message.revision,message.text])}]:[]});
       const assertions=await this.core.memory.list(session,'assertions',p.offset||0);
       const notes=await this.core.memory.list(session,'saved',p.offset||0);
       // Retention pins: what the user chose to keep, listed so each one can be released.

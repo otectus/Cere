@@ -239,6 +239,58 @@ bool referenceSurfaceImageChecks()
     ok &= check(changedInside > 0 && changedOutside == 0,
                 "surface blink blend must change only the eye region");
 
+    ReferenceArt::Pose wink;
+    wink.wink = 1.0;
+    const auto selection = ReferenceArt::winkSelection(open, closed);
+    const QImage winked = ReferenceArt::render(open, closed, rect, wink);
+    int leftEyeChanges = 0, rightEyeChanges = 0, winkChangesOutsideEyes = 0;
+    bool winkPreservesAlpha = true;
+    for (int y = 0; y < open.height(); ++y) for (int x = 0; x < open.width(); ++x) {
+        winkPreservesAlpha &= qAlpha(winked.pixel(x, y)) == qAlpha(open.pixel(x, y));
+        if (winked.pixel(x, y) == open.pixel(x, y))
+            continue;
+        if (QRect(10, 8, 6, 4).contains(x, y)) ++leftEyeChanges;
+        else if (QRect(16, 8, 6, 4).contains(x, y)) ++rightEyeChanges;
+        else ++winkChangesOutsideEyes;
+    }
+    ok &= check(selection.eyeGroups == 2 && leftEyeChanges > 0
+                        && rightEyeChanges == 0 && winkChangesOutsideEyes == 0,
+                "surface wink must close only the viewer-left authored eye region");
+    ok &= check(winkPreservesAlpha,
+                "surface wink must retain the exact authored silhouette");
+    // Feathered eyelid edits for close-set eyes overlap into one connected
+    // difference region. Its two horizontal lobes must still yield one wink.
+    QImage bridgedClosed = closed;
+    for (int x = 14; x <= 17; ++x)
+        bridgedClosed.setPixelColor(x, 9, QColor(30, 45, 65));
+    const auto bridgedSelection = ReferenceArt::winkSelection(open, bridgedClosed);
+    const QImage bridgedWink = ReferenceArt::expressedEyes(
+            open, bridgedClosed, 0.0, 1.0, &bridgedSelection);
+    int bridgedLeftChanges = 0, bridgedRightChanges = 0;
+    for (int y = 0; y < open.height(); ++y) for (int x = 0; x < open.width(); ++x) {
+        if (bridgedWink.pixel(x, y) == open.pixel(x, y))
+            continue;
+        if (x < 16) ++bridgedLeftChanges;
+        else ++bridgedRightChanges;
+    }
+    ok &= check(bridgedSelection.eyeGroups == 2 && bridgedLeftChanges > 0
+                        && bridgedRightChanges == 0,
+                "surface wink must split overlapping close-set eyelid differences");
+    wink.blink = 0.5;
+    const QImage blinkingWink = ReferenceArt::render(open, closed, rect, wink);
+    bool combinedEyes = true;
+    for (int y = 0; y < open.height(); ++y) for (int x = 0; x < open.width(); ++x) {
+        const int index = y * open.width() + x;
+        combinedEyes &= blinkingWink.pixel(x, y)
+                == (selection.pixels[index] ? closed.pixel(x, y)
+                                            : halfClosed.pixel(x, y));
+    }
+    ok &= check(combinedEyes,
+                "automatic blink must blend the open eye while a wink holds the selected eye closed");
+    wink.blink = 1.0;
+    ok &= check(ReferenceArt::render(open, closed, rect, wink) == closed,
+                "full automatic blink must close both eyes while wink is held");
+
     ReferenceArt::Pose extreme;
     extreme.breathLift = -2;
     extreme.bodyTilt = 4;
@@ -1083,6 +1135,191 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
     return ok;
 }
 
+bool scaledBlinkChecks(QQuickWindow &window, AvatarPuppet &puppet,
+                       const QUrl &source, const QVariantMap &definition)
+{
+    const QImage atlas(source.toLocalFile());
+    if (!check(!atlas.isNull(), "blink checks require the packed artwork")) return false;
+    const auto part = definition.value("parts").toList().first().toMap();
+    const auto frames = part.value("surfaceFrames").toList();
+    const auto routes = definition.value("surfaceSequences").toMap().value("routes").toMap();
+    const auto crop = [](const QVariant &value) {
+        const auto r = value.toList();
+        return r.size() == 4 ? QRect(r[0].toInt(), r[1].toInt(), r[2].toInt(), r[3].toInt()) : QRect();
+    };
+    struct Held { QString name; int frame; bool changes; };
+    QList<Held> held;
+    const auto add = [&](const QString &name, int frame, const QVariantMap &art) {
+        held.append({name, frame, atlas.copy(crop(art.value("sourceRect")))
+                                 != atlas.copy(crop(art.value("blinkSourceRect")))});
+    };
+    add("idle", 0, part);
+    for (auto route = routes.cbegin(); route != routes.cend(); ++route) {
+        const int frame = route.value().toMap().value("frames").toList().last().toInt();
+        add(route.key(), frame, frames[frame - 1].toMap());
+    }
+    bool ok = true;
+    const auto avatar = definition.value("texture").toString().section('-', 0, 0);
+    const auto backend = window.rendererInterface()->graphicsApi()
+            == QSGRendererInterface::Software ? "software" : "opengl";
+    for (int scale : {1, 2}) {
+        const int width = 192 * scale, height = 208 * scale, row = height + 24;
+        window.resize(width, height); puppet.setSize(QSizeF(width, height));
+        puppet.setSurfaceFrame(0); puppet.setPose({});
+        const auto neutral = synchronizedGrab(window);
+        QImage sheet(width * held.size(), row * 2, QImage::Format_ARGB32);
+        sheet.fill(QColor("#20232e")); QPainter painter(&sheet);
+        for (int i = 0; i < held.size(); ++i) {
+            const auto &pose = held[i];
+            puppet.setSurfaceFrame(pose.frame); puppet.setPose({});
+            const auto open = synchronizedGrab(window);
+            puppet.setPose({{"blink", 1.0}});
+            const auto closed = synchronizedGrab(window);
+            const auto label = QString("%1/%2 at %3%").arg(avatar, pose.name).arg(scale * 100);
+            // An authored closed-eye pose legitimately has identical open/closed
+            // crops. Otherwise blinking must visibly repaint at either UI size.
+            ok &= check(!open.isNull() && !closed.isNull() && (open != closed) == pose.changes,
+                        label + ": rendered blink must match its authored eye state");
+            puppet.setPose({});
+            ok &= check(synchronizedGrab(window) == open, label + ": reopening must restore exact held pixels");
+            puppet.setSurfaceFrame(0);
+            ok &= check(synchronizedGrab(window) == neutral, label + ": blink release must restore exact neutral pixels");
+            painter.setPen(Qt::white);
+            painter.drawText(i * width + 4, 18, pose.name + " open");
+            painter.drawImage(i * width, 24, open);
+            painter.drawText(i * width + 4, row + 18, pose.name + " blink");
+            painter.drawImage(i * width, row + 24, closed);
+        }
+        painter.end();
+        ok &= check(sheet.save(QString("/tmp/cere-motion-evidence/blinks-%1-%2-%3.png")
+                                       .arg(avatar, backend).arg(scale * 100)),
+                    "scaled blink contact sheet must save");
+    }
+    return ok;
+}
+
+bool winkChecks(QQuickWindow &window, AvatarPuppet &puppet,
+                const QUrl &source, const QVariantMap &definition)
+{
+    const QImage atlas(source.toLocalFile());
+    if (!check(!atlas.isNull(), "wink checks require the packed artwork")) return false;
+    const auto part = definition.value("parts").toList().first().toMap();
+    const auto frames = part.value("surfaceFrames").toList();
+    const auto routes = definition.value("surfaceSequences").toMap().value("routes").toMap();
+    const auto crop = [](const QVariant &value) {
+        const auto r = value.toList();
+        return r.size() == 4 ? QRect(r[0].toInt(), r[1].toInt(), r[2].toInt(), r[3].toInt()) : QRect();
+    };
+    const QString avatar = definition.value("texture").toString().section('-', 0, 0);
+    const bool singleVisibleEye = avatar == "witty" || avatar == "rem";
+    struct Held { QString name; int frame; int eyeGroups; };
+    QList<Held> held;
+    QSet<int> checkedFrames;
+    const auto add = [&](const QString &name, int frame, const QVariantMap &art) {
+        if (checkedFrames.contains(frame)) return;
+        checkedFrames.insert(frame);
+        if (art.value("sourceRect") == art.value("blinkSourceRect")) return;
+        if (!crop(art.value("blinkSourceRect")).isValid()) return;
+        const QImage open = atlas.copy(crop(art.value("sourceRect")));
+        const QImage closed = atlas.copy(crop(art.value("blinkSourceRect")));
+        if (open.isNull() || closed.isNull() || open == closed)
+            return;
+        const int eyeGroups = ReferenceArt::winkSelection(open, closed).eyeGroups;
+        held.append(Held{name, frame, eyeGroups});
+    };
+    add("idle", 0, part);
+    for (auto route = routes.cbegin(); route != routes.cend(); ++route) {
+        // Hover holds partway through shy, so endpoints alone miss a live blink.
+        for (const auto &entry : route.value().toMap().value("frames").toList()) {
+            const int frame = entry.toInt();
+            if (frame > 0) add(route.key() + "/" + QString::number(frame), frame,
+                               frames[frame - 1].toMap());
+        }
+    }
+    bool ok = check(!held.isEmpty(), avatar + ": wink checks require blinkable held artwork");
+    const auto expectedEyes = [&](const Held &pose) {
+        // Genga's authored carry endpoint already winks the left eye. Closing
+        // its remaining eye must not paint a second lid over the closed one.
+        return singleVisibleEye || (avatar == "genga" && pose.name.startsWith("carry/")) ? 1 : 2;
+    };
+    for (const auto &pose : held) {
+        const auto label = avatar + "/" + pose.name;
+        ok &= check(pose.eyeGroups == expectedEyes(pose),
+                    expectedEyes(pose) == 1
+                        ? label + ": the sole visible eye must form one authored group"
+                        : label + ": both open eyes must form separate authored groups");
+    }
+
+    puppet.setSource(source); puppet.setDefinition(definition);
+    for (int scale : {1, 2}) {
+        const int width = 192 * scale, height = 208 * scale;
+        window.resize(width, height); puppet.setSize(QSizeF(width, height));
+        puppet.setSurfaceFrame(0); puppet.setPose({});
+        const QImage neutral = synchronizedGrab(window);
+        QImage winkSheet(width * 3, (height + 24) * held.size(), QImage::Format_ARGB32);
+        winkSheet.fill(QColor("#20232e"));
+        QPainter winkPainter(&winkSheet);
+        int winkRow = 0;
+        for (const auto &pose : held) {
+            const auto label = QString("%1/%2 at %3%").arg(avatar, pose.name).arg(scale * 100);
+            puppet.setSurfaceFrame(pose.frame); puppet.setPose({});
+            const QImage open = synchronizedGrab(window);
+            puppet.setPose({{"wink", 1.0}});
+            const QImage winked = synchronizedGrab(window);
+            puppet.setPose({{"blink", 1.0}});
+            const QImage blinked = synchronizedGrab(window);
+            const QList<QImage> eyeStates{open, winked, blinked};
+            const QStringList eyeNames{"open", "wink", "blink"};
+            for (int column = 0; column < eyeStates.size(); ++column) {
+                winkPainter.setPen(Qt::white);
+                winkPainter.drawText(column * width + 4, winkRow * (height + 24) + 18,
+                                     pose.name + " " + eyeNames[column]);
+                winkPainter.drawImage(QRect(column * width, winkRow * (height + 24) + 24,
+                                             width, height), eyeStates[column],
+                                      QRectF(0, 0, width * window.devicePixelRatio(),
+                                             height * window.devicePixelRatio()));
+            }
+            ++winkRow;
+            int winkChanges = 0, blinkChanges = 0, alphaChanges = 0;
+            for (int y = 0; y < open.height(); ++y) for (int x = 0; x < open.width(); ++x) {
+                winkChanges += winked.pixel(x, y) != open.pixel(x, y);
+                blinkChanges += blinked.pixel(x, y) != open.pixel(x, y);
+                alphaChanges += qAlpha(winked.pixel(x, y)) != qAlpha(open.pixel(x, y));
+            }
+            ok &= check(!open.isNull() && winkChanges > 0 && blinkChanges >= winkChanges
+                                && alphaChanges == 0,
+                        label + ": wink must repaint an eye without changing the silhouette");
+            if (expectedEyes(pose) == 1)
+                ok &= check(winked == blinked,
+                            label + ": sole visible eye wink must equal full blink");
+            else
+                ok &= check(winked != blinked && winkChanges < blinkChanges,
+                            label + ": two-eye wink must change fewer pixels than full blink");
+            puppet.setPose({{"wink", 1.0}, {"blink", 1.0}});
+            ok &= check(synchronizedGrab(window) == blinked,
+                        label + ": automatic blink must close both eyes over wink");
+            puppet.setPose({{"wink", 1.0}, {"eyeClose", 1.0}});
+            ok &= check(synchronizedGrab(window) == blinked,
+                        label + ": eyeClose must close both eyes over wink");
+            puppet.setPose({});
+            ok &= check(synchronizedGrab(window) == open,
+                        label + ": clearing wink must exactly restore the selected frame");
+        }
+        puppet.setSurfaceFrame(0); puppet.setPose({});
+        ok &= check(synchronizedGrab(window) == neutral,
+                    avatar + ": returning selection to neutral must discard every wink cache at "
+                        + QString::number(scale * 100) + "%");
+        winkPainter.end();
+        QDir().mkpath("/tmp/cere-motion-evidence");
+        const auto backend = window.rendererInterface()->graphicsApi()
+                == QSGRendererInterface::Software ? "software" : "opengl";
+        ok &= check(winkSheet.save(QString("/tmp/cere-motion-evidence/winks-%1-%2-%3.png")
+                                      .arg(avatar, backend).arg(scale * 100)),
+                    "open/wink/blink comparison must save for visual eye-ownership review");
+    }
+    return ok;
+}
+
 bool motionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
                         const QString &root,const QUrl &source,const QVariantMap &definition)
 {
@@ -1557,7 +1794,7 @@ int main(int argc, char **argv)
     QFile avatars(root + "/assets/avatars.json");
     if (!check(avatars.open(QIODevice::ReadOnly), "avatar catalog must open")) return 1;
     const auto entries=QJsonDocument::fromJson(avatars.readAll()).array();
-    ok &= check(entries.size()==20, "all twenty selectable connected avatars must be checked");
+    ok &= check(!entries.isEmpty(), "the manifest must contain selectable connected avatars");
     // Match the application: switch every avatar on one live scene graph.
     QQuickWindow productionWindow;
     productionWindow.setColor(Qt::transparent);
@@ -1571,6 +1808,8 @@ int main(int argc, char **argv)
         ok &= productionOk;
         if (productionOk)
             ok &= productionRenderChecks(productionWindow, productionPuppet, productionSource, productionDefinition)
+                && scaledBlinkChecks(productionWindow, productionPuppet, productionSource, productionDefinition)
+                && winkChecks(productionWindow, productionPuppet, productionSource, productionDefinition)
                 && motionRenderChecks(productionWindow, productionPuppet,root,productionSource,productionDefinition)
                 && waistRenderChecks(productionWindow, productionPuppet, productionSource, productionDefinition);
         std::cout << "checked avatar " << entry["id"].toString().toStdString() << '\n';

@@ -7,7 +7,7 @@
 | Neo4j Community | 5.26.31 |
 | Qdrant | 1.19.1 |
 | Neo4j driver | 6.2.0, exact package lock |
-| Zod | 4.6.5, exact package lock |
+| Zod | 4.6.7, exact package lock |
 | Ollama | 0.34.4 in live adapter validation |
 | Extraction default | `glm-5.3-flash:cloud`; evaluated 2026-10-16, see [evaluation](evaluation.md) |
 | Extraction evaluated | `glm-5.3-flash:cloud`, `nemotron-3-super:cloud` and `gpt-oss:20b-cloud` (EV-01, 2026-10-16); `glm-5.3-flash:cloud` again the same day, at the same digest, once undated statements could be accepted |

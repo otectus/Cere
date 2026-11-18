@@ -1,4 +1,5 @@
 module Cere
 singleton Theme 1.0 Theme.qml
+singleton AvatarCatalog 1.0 AvatarCatalog.qml
 
 singleton ConversationMood 1.0 ConversationMood.qml

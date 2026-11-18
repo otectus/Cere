@@ -29,6 +29,7 @@ export class AntigravityAdapter implements Adapter {
   async preflight(images: string[]) {if(images.length)throw new Error('AntiGravity headless input supports text attachments only. Use an API provider for images.');}
   async send(text: string, images: string[] = [], options: SendOptions = {}) {
     if(this.task)throw new Error('This AntiGravity session is busy');
+    if (this.process) throw new Error('The previous AntiGravity process needs to be stopped before starting another turn');
     if(this.hooks.restrictive)throw new Error('AntiGravity is available on the desktop only; its CLI cannot confirm Cere’s remote permission policy');
     if(images.length)throw new Error('AntiGravity headless input supports text attachments only. Use an API provider for images.');
     const fixed=pinnedEffort(this.session.model);
@@ -51,7 +52,16 @@ export class AntigravityAdapter implements Adapter {
     const ids=new Map<number,string>(), replies=new Map<string,string>(), completed=new Set<string>(); let lastReply='';
     let finish!:(event:{type:string;text?:string})=>void;
     this.task=new Promise<void>(resolve=>{
-      finish=event=>{if(settled)return;settled=true;clearTimeout(timer);if(!accepted)rejectAccepted(new Error(event.text||'AntiGravity did not accept the turn'));void child.close().finally(()=>{this.task=undefined;this.process=undefined;this.hooks.event(event);resolve();});};
+      finish=event=>{if(settled)return;settled=true;clearTimeout(timer);if(!accepted)rejectAccepted(new Error(event.text||'AntiGravity did not accept the turn'));void (async()=>{
+        let finalEvent=event;
+        try { await child.close(); this.process=undefined; }
+        catch (error) {
+          // Teardown failure is observed and becomes a truthful terminal
+          // outcome; it cannot become an unhandled rejection that kills an
+          // unrelated broker conversation.
+          finalEvent={type:'error',text:`AntiGravity finished, but process cleanup could not be confirmed: ${resultError(error) || 'unknown error'}`};
+        } finally { this.task=undefined;this.hooks.event(finalEvent);resolve(); }
+      })();};
       timer=setTimeout(()=>finish({type:'error',text:'AntiGravity did not finish within ten minutes. The turn was stopped; it was not retried.'}),600000);timer.unref();
       child.on('fault',()=>finish({type:this.stopped?'interrupted':'error',text:'AntiGravity could not start or its stream failed. Check the installed agy CLI and sign in using agy.'}));
       child.on('exit',()=>finish({type:this.stopped?'interrupted':'error',text:'AntiGravity exited before completing its response. Check agy authentication and permissions.'}));
@@ -84,6 +94,6 @@ export class AntigravityAdapter implements Adapter {
     } catch {finish({type:'error',text:'AntiGravity disconnected before the prompt was sent'});}
     if(options.onAccepted)await acceptance;
   }
-  async interrupt(){this.stopped=true;await this.process?.close();await this.task;}
+  async interrupt(){this.stopped=true;const child=this.process;await child?.close();await this.task;if(this.process===child)this.process=undefined;}
   async close(){await this.interrupt();}
 }

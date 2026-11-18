@@ -67,6 +67,22 @@ test('Codex resumes a large saved conversation without downloading its history',
   assert.equal(requests.filter(message => message.method === 'turn/start').length, 1);
 });
 
+test('CERE-033 ignores a retired process exit after personality replacement', async t => {
+  const f = await fixture(t), events: any[] = []; let personality = 'First instructions';
+  let answer!: (value: any) => void;
+  const adapter = new CodexAdapter(f.session, { token: 'fixture', event: event => events.push(event), native() {}, approve() { return new Promise(resolve => { answer = resolve; }); }, personality: () => personality });
+  t.after(() => adapter.close()); await adapter.ready;
+  const pending = adapter.handle({ id: 42, method: 'item/tool/requestUserInput', params: { questions: [] } });
+  const retired = adapter.process; personality = 'Replacement instructions';
+  await adapter.send('Use the replacement process');
+  const replies: unknown[] = [];
+  t.mock.method(adapter.process, 'write', (message: unknown) => replies.push(message));
+  answer({ choice: 'answer', answers: {} }); await pending;
+  assert.deepEqual(replies, [], 'an old pending answer never reaches the new process');
+  retired.emit('exit', null, 'SIGTERM'); retired.emit('fault', new Error('retired fault')); retired.emit('message', { method: 'error', params: { error: { message: 'retired message' } } });
+  assert.equal(events.filter(event => event.type === 'error').length, 0);
+});
+
 test('Codex reports only confirmed success as complete and preserves terminal failures', async t => {
   const f=await fixture(t),events:any[]=[];
   const hooks:Hooks={token:'fixture',event:event=>events.push(event),native(){},async approve(){return{choice:'deny'};}};
@@ -368,7 +384,7 @@ test('Claude uses task lifecycle as authority and interrupts unresolved tasks wh
 });
 
 test('terminal wrapper inherits the saved CLI bypass setting for both providers', async t => {
-  const f = await fixture(t); let bypass = false;
+  const f = await fixture(t); let bypass = false, legacy = false;
   // Use an isolated broker socket and executable PATH; no real terminal or provider is touched.
   const { symlink } = await import('node:fs/promises');
   await symlink(f.executable, join(f.directory, 'codex')); await symlink(f.executable, join(f.directory, 'claude'));
@@ -378,14 +394,19 @@ test('terminal wrapper inherits the saved CLI bypass setting for both providers'
       buffer += chunk;
       while (buffer.includes('\n')) {
         const end = buffer.indexOf('\n'), m = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
-        const result = m.method === 'windows.list' ? [] : m.method === 'session.link' ? { id: 'linked' } : m.method === 'state' ? { settings: { bypassCliPermissions: bypass } } : true;
+        if (legacy && m.method === 'settings.inspect') {
+          socket.write(JSON.stringify({ id: m.id, error: { message: 'Unknown Cere method: settings.inspect' } }) + '\n');
+          continue;
+        }
+        const result = m.method === 'windows.list' ? [] : m.method === 'session.link' ? { id: 'linked' } : m.method === 'settings.inspect' ? { bypassCliPermissions: bypass } : m.method === 'state' ? { settings: { bypassCliPermissions: bypass } } : true;
         socket.write(JSON.stringify({ id: m.id, result }) + '\n');
       }
     });
   });
   await new Promise<void>(resolve => server.listen(join(f.directory, 'broker.sock'), resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
-  for (const provider of ['codex', 'claude']) for (const setting of [false, true]) {
+  for (const previous of [false, true]) for (const provider of ['codex', 'claude']) for (const setting of [false, true]) {
+    legacy = previous;
     bypass = setting;
     const child = spawn(process.execPath, ['broker/terminal.ts', provider, '--fixture'], { env: { ...process.env, CERE_RUNTIME_DIR: f.directory, PATH: f.directory + ':' + process.env.PATH }, stdio: 'pipe' });
     assert.equal((await once(child, 'close'))[0], 0);

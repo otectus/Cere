@@ -3323,9 +3323,11 @@ export class Canonical {
       this.run(
         "UPDATE outbox SET state='retryable',error_code=?,lease_until_us=NULL,next_retry_us=? WHERE id=?",
         String(p.error).slice(0, 100),
-        now() +
-          Math.min(300e6, 1e6 * 2 ** Math.min(job.attempts, 8)) *
-            (0.8 + Math.random() * 0.4),
+        Math.round(
+          now() +
+            Math.min(300e6, 1e6 * 2 ** Math.min(job.attempts, 8)) *
+              (0.8 + Math.random() * 0.4),
+        ),
         p.id,
       );
       this.run(
@@ -3577,7 +3579,8 @@ export class Canonical {
   /** Stored memories served by one Ollama server that have no vector in its current space, newest first. */
   vectorBacklog(p: Row) {
     return this.all(
-      "SELECT a.id,a.content_revision,a.erasure_epoch,p.body AS text FROM artifacts a JOIN payloads p ON p.id=a.payload_id JOIN scopes s ON s.id=a.scope_id WHERE a.invalidated=0 AND p.erased=0 AND a.known_to_revision IS NULL AND CASE WHEN json_valid(s.external_key) THEN json_extract(s.external_key,'$[0]') END=? AND NOT EXISTS (SELECT 1 FROM embedding_records e WHERE e.artifact_id=a.id AND e.content_revision=a.content_revision AND e.fingerprint=?) ORDER BY a.content_revision DESC LIMIT ?",
+      "SELECT a.id,a.content_revision,a.erasure_epoch,p.body AS text FROM artifacts a JOIN payloads p ON p.id=a.payload_id JOIN scopes s ON s.id=a.scope_id WHERE a.invalidated=0 AND p.erased=0 AND a.known_to_revision IS NULL AND (?=0 OR a.sensitivity='cloud_allowed') AND CASE WHEN json_valid(s.external_key) THEN json_extract(s.external_key,'$[0]') END=? AND NOT EXISTS (SELECT 1 FROM embedding_records e WHERE e.artifact_id=a.id AND e.content_revision=a.content_revision AND e.fingerprint=?) ORDER BY a.content_revision DESC LIMIT ?",
+      p.cloud === true ? 1 : 0,
       p.host,
       p.fingerprint,
       Math.max(1, Math.min(64, Number(p.limit) || 32)),
@@ -3597,8 +3600,9 @@ export class Canonical {
   }
   pendingArtifacts(p: Row) {
     return this.all(
-      "SELECT a.*,p.body AS text FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND p.erased=0 AND a.known_to_revision IS NULL AND NOT EXISTS (SELECT 1 FROM embedding_records e WHERE e.artifact_id=a.id AND e.content_revision=a.content_revision AND e.fingerprint=?) ORDER BY a.content_revision DESC LIMIT 8",
+      "SELECT a.*,p.body AS text FROM artifacts a JOIN payloads p ON p.id=a.payload_id WHERE a.scope_id IN (SELECT value FROM json_each(?)) AND a.invalidated=0 AND p.erased=0 AND a.known_to_revision IS NULL AND (?=0 OR a.sensitivity='cloud_allowed') AND NOT EXISTS (SELECT 1 FROM embedding_records e WHERE e.artifact_id=a.id AND e.content_revision=a.content_revision AND e.fingerprint=?) ORDER BY a.content_revision DESC LIMIT 8",
       JSON.stringify(this.effectiveScopes(p.scope_id)),
+      p.cloud === true ? 1 : 0,
       p.fingerprint,
     );
   }

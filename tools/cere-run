@@ -24,6 +24,8 @@ def safe_line(raw, overflow=False):
     return value if len(encoded)<=1024 else encoded[:1022].decode('utf-16-le','ignore')+'…'
 
 def address():
+    if runtime := os.environ.get('CERE_RUNTIME_DIR'):
+        return os.path.join(runtime, 'telemetry.sock')
     runtime = os.environ.get('XDG_RUNTIME_DIR')
     return os.path.join(runtime, 'cere', 'telemetry.sock') if runtime else '/tmp/cere-%s/telemetry.sock' % os.getuid()
 

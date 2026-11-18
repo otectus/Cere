@@ -15,22 +15,34 @@ function sheetRows(sheet,left,width,rowCount){
  }
  rows.push(h);return rows;
 }
-export function sheetComponents(sheet,columns=4,rowCount=4,threshold=200){
+export function sheetComponents(sheet,columns=4,rowCount=4,threshold=200,coreErode=0){
  const {data,info:{width:w,height:h}}=sheet,size=w*h,labels=new Int32Array(size),queue=new Int32Array(size),cores=[];let component=0;
+ if(!Number.isInteger(coreErode)||coreErode<0||coreErode>4)throw Error('core erosion must be an integer from zero to four');
+ // Thin opaque contacts between adjacent portraits are not separate heads.
+ // Erode only the labeling seeds; the growth below restores original pixels.
+ const core=new Uint8Array(size);
+ for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+  let inside=data[(y*w+x)*4+3]>=threshold;
+  for(let dy=-coreErode;inside&&dy<=coreErode;dy++)for(let dx=-coreErode;inside&&dx<=coreErode;dx++){
+   const xx=x+dx,yy=y+dy;
+   inside=xx>=0&&xx<w&&yy>=0&&yy<h&&data[(yy*w+xx)*4+3]>=threshold;
+  }
+  core[y*w+x]=inside?1:0;
+ }
  for(let start=0;start<size;start++){
-  if(labels[start]||data[start*4+3]<threshold)continue;
+  if(labels[start]||!core[start])continue;
   component++;let head=0,tail=0;queue[tail++]=start;labels[start]=component;
   let sx=0,sy=0;
   while(head<tail){const p=queue[head++],x=p%w,y=Math.floor(p/w);sx+=x;sy+=y;
    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
     const xx=x+dx,yy=y+dy,q=yy*w+xx;
-    if(xx<0||xx>=w||yy<0||yy>=h||labels[q]||data[q*4+3]<threshold)continue;
+    if(xx<0||xx>=w||yy<0||yy>=h||labels[q]||!core[q])continue;
     labels[q]=component;queue[tail++]=q;
    }
   }
   if(tail>=1000)cores.push({label:component,x:sx/tail,y:sy/tail});
  }
- if(cores.length!==columns*rowCount&&threshold===200)return sheetComponents(sheet,columns,rowCount,245);
+ if(cores.length!==columns*rowCount&&threshold===200)return sheetComponents(sheet,columns,rowCount,245,coreErode);
  if(cores.length!==columns*rowCount)throw Error(`sprite sheet needs ${columns*rowCount} separate opaque character cores, found ${cores.length}`);
  const grid=new Set(cores.map(c=>Math.floor(c.y/(h/rowCount))*columns+Math.floor(c.x/(w/columns))));
  if(grid.size!==columns*rowCount)throw Error('sprite sheet must have one character core in each grid cell');

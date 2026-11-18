@@ -1,3 +1,4 @@
+import { proseLines } from './markdown-prose.ts';
 import type { Provider } from './types.ts';
 import type { ElevenLabs } from './elevenlabs.ts';
 import { spawn } from 'node:child_process';
@@ -98,17 +99,11 @@ export async function listVoices(directories = voiceDirectories(), manifestPath:
 /** Read prose, not fenced code, markdown syntax, memory citations, or link destinations. Bound playback. */
 export function speechText(text: string): string {
   const prose: string[] = [];
-  let fence = '', size = 0;
-  // Scan fences once. Greedy fence/link regexes on malformed model output can
-  // otherwise spend seconds backtracking on the broker's response thread.
-  for (const line of stripMemoryCitations(text.slice(0, 100000)).split(/\r?\n/)) {
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (marker) {
-      if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = '';
-      continue;
-    }
-    if (!fence) { prose.push(line); size += line.length + 1; if (size >= 16000) break; }
+  let size = 0;
+  for (const line of proseLines(stripMemoryCitations(text.slice(0, 100000)))) {
+    prose.push(line);
+    size += line.length + 1;
+    if (size >= 16000) break;
   }
   return prose.join('\n').slice(0, 16000)
     .replace(/!\[[^\]]{0,512}\]\([^\n)]{0,2048}\)/g, ' ')

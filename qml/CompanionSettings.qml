@@ -7,8 +7,8 @@ ColumnLayout {
     id:companion
     Layout.fillWidth:true;spacing:14
     property var settings:App.state.settings||({})
-    property string savedAvatar:"cere"
-    property string draftAvatar:"cere"
+    property string savedAvatar:AvatarCatalog.defaultId
+    property string draftAvatar:AvatarCatalog.defaultId
     property string savedPersonality:""
     property string savedName:"Cere"
     property string savedRevision:"0"
@@ -20,7 +20,7 @@ ColumnLayout {
     readonly property bool avatarDirty:draftAvatar!==savedAvatar
     function update(value){return App.rpc("settings.update",value)}
     function adoptAvatar(value){
-        savedAvatar=value.avatar||"cere"
+        savedAvatar=AvatarCatalog.avatarFor(value.avatar).id
         savedPersonality=value.personality??""
         savedName=value.assistantName||"Cere"
         draftAvatar=savedAvatar;savedRevision=App.state.settingsRevision||"0"
@@ -29,7 +29,7 @@ ColumnLayout {
     function syncAvatar(){
         const value=App.state.settings||{}
         if(!avatarLoaded||!avatarDirty)adoptAvatar(value)
-        else if((value.avatar||"cere")!==savedAvatar||(value.personality??"")!==savedPersonality||(value.assistantName||"Cere")!==savedName)avatarConflict=true
+        else if(AvatarCatalog.avatarFor(value.avatar).id!==savedAvatar||(value.personality??"")!==savedPersonality||(value.assistantName||"Cere")!==savedName)avatarConflict=true
         else savedRevision=App.state.settingsRevision||"0"
     }
     Component.onCompleted:syncAvatar()
@@ -98,7 +98,7 @@ ColumnLayout {
         CText { text:"Profiles coordinate visibility, speech, motion and ordinary notifications. Pending approvals remain available from Cere’s tray.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CCheckBox { objectName:"alwaysOnTop";text:"Always on top";checked:companion.settings.topmost===true;onClicked:companion.update({topmost:checked}) }
         CText { text:"Keep "+App.assistantName+" above your applications, including fullscreen windows.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CCheckBox { objectName:"autostart";text:"Start Cere at login";checked:App.autostartEnabled();onClicked:App.setAutostart(checked) }
+        CCheckBox { objectName:"autostart";text:"Start Cere at login";checked:App.autostartEnabled;onClicked:{App.setAutostart(checked);checked=App.autostartEnabled} }
         CButton { objectName:"hideCere";text:(companion.settings.hidden?"Show ":"Hide ")+App.assistantName;onClicked:companion.update({hidden:!companion.settings.hidden}) }
     }
     CSection {

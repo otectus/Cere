@@ -52,6 +52,10 @@ async function json(response: Response, limit = 4*1024*1024, what = 'model catal
   try { return JSON.parse(text + decoder.decode()); }
   catch { throw new Error(`The provider returned an invalid ${what}`); }
 }
+/** Bounded non-streaming API request shared by background memory jobs. */
+export async function apiJson(provider: 'google' | 'anthropic', access: ApiAccess, path: string, body: unknown, signal: AbortSignal) {
+  return json(await request(provider, access, path, signal, body), 2 * 1024 * 1024, 'memory response');
+}
 export async function apiModels(provider: ApiProvider, access: ApiAccess): Promise<ModelOption[]> {
   const models: ModelOption[] = [], seen = new Set<string>(); let cursor = '';
   for (let page = 0; page < 30; page++) {

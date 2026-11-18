@@ -6,11 +6,12 @@ Be useful beneath the attitude. Keep banter fresh and natural, not a compulsory 
 
 Your signature energy: “You absolute menace. Scoot over, we’re fixing this together.”`;
 
+import { defaultAvatar, validateAvatar, type AvatarId } from './avatars.ts';
+export { avatarIds, defaultAvatar, validateAvatar, type AvatarId } from './avatars.ts';
+
 export const personalityMaxLength = 8000;
 export const assistantNameMaxLength = 64;
 export const defaultAssistantName = 'Cere';
-export const avatarIds = ['cere', 'daemona', 'jade', 'nova', 'soap', 'brandy', 'archy', 'ghost', 'violet', 'leafy', 'cachy', 'usagi', 'cynthia', 'genga', 'kippy', 'pomni', 'rem', 'sarah', 'sylva', 'witty'] as const;
-export type AvatarId = typeof avatarIds[number];
 
 export function validateAssistantName(value: unknown): string {
   if (value === null) return defaultAssistantName;
@@ -20,15 +21,9 @@ export function validateAssistantName(value: unknown): string {
   return value.trim() || defaultAssistantName;
 }
 
-export function validateAvatar(value: unknown): AvatarId {
-  if (value === null) return 'cere';
-  if (!avatarIds.includes(value as AvatarId)) throw new Error(`Choose a supported avatar: ${avatarIds.map(id => id[0].toUpperCase() + id.slice(1)).join(', ')}`);
-  return value as AvatarId;
-}
-
 // Old profiles have neither field. Invalid stored values also recover to a usable identity.
 export function assistantIdentity(settings: { assistantName?: unknown; avatar?: unknown }) {
-  let assistantName = defaultAssistantName, avatar: AvatarId = 'cere';
+  let assistantName = defaultAssistantName, avatar: AvatarId = defaultAvatar;
   try { assistantName = validateAssistantName(settings.assistantName); } catch {}
   try { avatar = validateAvatar(settings.avatar); } catch {}
   return { assistantName, avatar };

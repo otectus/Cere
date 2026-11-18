@@ -216,10 +216,15 @@ export class CodexAdapter implements Adapter {
   /** The behavior block this thread receives: the resolved profile, or the plain personality block. */
   behaviorBlock() { return this.hooks.behavior?.() ?? personalityInstructions(this.hooks.personality?.() ?? defaultPersonality, this.hooks.assistantName?.() ?? defaultAssistantName); }
   launch(personality: string, assistantName: string, memory: boolean) {
-    this.process = new RpcProcess(providerExecutable('codex'), ['app-server'], this.session.cwd);
-    this.process.on('fault', error => this.hooks.event({ type: 'error', text: error.message }));
-    this.process.on('exit', code => { this.agentThrottle.flushAll(); if (!this.intentional) this.hooks.event({ type: 'error', text: `Codex disconnected (${code ?? 'signal'}). Resume explicitly to continue.` }); });
-    this.process.on('message', message => { void this.handle(message).catch(error => this.hooks.event({ type: 'error', text: error.message })); });
+    this.pendingRequests = new Set();
+    this.externallyResolved = new Set();
+    const process = this.process = new RpcProcess(providerExecutable('codex'), ['app-server'], this.session.cwd);
+    // A replacement may be ready before Node delivers an old child's close,
+    // fault, or buffered message. Only the currently owned process can settle
+    // the current session or answer an outstanding approval.
+    process.on('fault', error => { if (!this.intentional && this.process === process) this.hooks.event({ type: 'error', text: error.message }); });
+    process.on('exit', code => { if (this.process !== process) return; this.agentThrottle.flushAll(); if (!this.intentional) this.hooks.event({ type: 'error', text: `Codex disconnected (${code ?? 'signal'}). Resume explicitly to continue.` }); });
+    process.on('message', message => { if (!this.intentional && this.process === process) void this.handle(message).catch(error => { if (!this.intentional && this.process === process) this.hooks.event({ type: 'error', text: error.message }); }); });
     this.ready = this.initialize(personality, assistantName, memory);
   }
   async initialize(personality: string, assistantName: string, memory: boolean) {
@@ -305,17 +310,21 @@ export class CodexAdapter implements Adapter {
     else if (method === 'turn/completed') for (const [id, entry] of this.items) if (entry.threadId === p.threadId) this.items.delete(id);
   }
   async handle(m: any) {
+    const owner = this.process, pending = this.pendingRequests, external = this.externallyResolved;
+    const reply = (message: unknown) => {
+      if (owner === this.process && !this.intentional && !owner.closed) owner.write(message);
+    };
     const p = m.params || {};
     if (m.id === undefined) this.trackItem(m.method, p);
     if (m.method === 'serverRequest/resolved') {
       const key = requestKey(p.requestId, p.threadId);
-      if (this.pendingRequests.has(key)) this.externallyResolved.add(key);
+      if (pending.has(key)) external.add(key);
       this.hooks.event({ type: 'approvalResolved', data: p });
       return;
     }
     if (m.id !== undefined && m.method) {
       const key = requestKey(m.id, p.threadId);
-      this.pendingRequests.add(key);
+      pending.add(key);
       try { if (/requestApproval$/.test(m.method)) {
         let response: any;
         let answer: any;
@@ -328,22 +337,22 @@ export class CodexAdapter implements Adapter {
           answer = await this.hooks.approve({ nativeRequestId:m.id, nativeThreadId:p.threadId, kind: 'provider', title: prompt.title, detail: prompt.detail, remoteAllow: prompt.complete, choices: approvalChoices(p.availableDecisions) });
           response = { decision: answer.choice === 'allow' && (!answer.automatic || this.hooks.automaticApprovalValid?.('provider') === true) ? 'accept' : answer.choice === 'cancel' ? 'cancel' : 'decline' };
         } else {
-          this.process.write({ id: m.id, error: { code: -32601, message: 'Unsupported approval type; use the CLI to continue' } }); return;
+          reply({ id: m.id, error: { code: -32601, message: 'Unsupported approval type; use the CLI to continue' } }); return;
         }
-        const resolved = this.externallyResolved.delete(key) || answer.resolved;
-        if (!resolved && !this.process.closed) this.process.write({ id: m.id, result: response });
+        const resolved = external.delete(key) || answer.resolved;
+        if (!resolved && !this.process.closed) reply({ id: m.id, result: response });
       } else if (m.method === 'item/tool/requestUserInput') {
         const answer = await this.hooks.approve({ nativeRequestId:m.id, nativeThreadId:p.threadId, kind: 'question', title: 'Codex has a question', detail: p.isBlocking === false ? 'Codex keeps working while this waits for your answer.' : '', choices: ['answer'], questions: questionParams(p.questions) });
-        const resolved = this.externallyResolved.delete(key) || answer.resolved;
-        if (!resolved && !this.process.closed) this.process.write({ id: m.id, result: { answers: answer.answers || {} } });
+        const resolved = external.delete(key) || answer.resolved;
+        if (!resolved && !this.process.closed) reply({ id: m.id, result: { answers: answer.answers || {} } });
       } else if (m.method === 'mcpServer/elicitation/request') {
         if(p.mode==='url'){
           let url='';
           try { const parsed=new URL(String(p.url));if(!['https:','http:'].includes(parsed.protocol))throw new Error();url=parsed.toString(); }
-          catch { this.hooks.event({type:'message',text:'An MCP server requested an unsupported sign-in URL, so Cere declined it.'});this.process.write({id:m.id,result:{action:'decline'}});return; }
+          catch { this.hooks.event({type:'message',text:'An MCP server requested an unsupported sign-in URL, so Cere declined it.'});reply({id:m.id,result:{action:'decline'}});return; }
           const answer=await this.hooks.approve({nativeRequestId:m.id,nativeThreadId:p.threadId,kind:'question',title:`MCP sign-in · ${p.serverName}`,detail:p.message,url,choices:['allow','deny']});
-          const resolved=this.externallyResolved.delete(key)||answer.resolved;
-          if(!resolved&&!this.process.closed)this.process.write({id:m.id,result:{action:answer.choice==='allow'?'accept':'decline'}});
+          const resolved=external.delete(key)||answer.resolved;
+          if(!resolved&&!this.process.closed)reply({id:m.id,result:{action:answer.choice==='allow'?'accept':'decline'}});
           return;
         }
         const properties=p.requestedSchema?.properties || {};
@@ -351,7 +360,7 @@ export class CodexAdapter implements Adapter {
         const supported=p.mode==='form'&&Object.values(properties).every((v:any)=>(['string','boolean','number','integer'].includes(v.type)&&(!Array.isArray(v.enum)||v.enum.length>0)&&(!Array.isArray(v.oneOf)||v.oneOf.length>0))||(v.type==='array'&&v.items?.type==='string'&&Array.isArray(v.items.enum)&&v.items.enum.length>0));
         if(!supported){
           this.hooks.event({type:'message',text:'This MCP request uses a form Cere cannot display, so it was declined.'});
-          this.process.write({id:m.id,result:{action:'decline'}});return;
+          reply({id:m.id,result:{action:'decline'}});return;
         }
         const questions=Object.entries(properties).map(([id,v]:[string,any])=>{
           const options=v.type==='array'?v.items.enum.map((label:any)=>({label:String(label)})):v.enum?.map((label:any)=>({label:String(label)}))||v.oneOf?.map((o:any)=>({label:String(o.const),...(o.title!==undefined?{description:String(o.title)}:{})}))||(v.type==='boolean'?[{label:'true'},{label:'false'}]:undefined);
@@ -366,15 +375,15 @@ export class CodexAdapter implements Adapter {
           content[key]=v.type==='array'?values:v.type==='boolean'?raw==='true':['number','integer'].includes(v.type)?Number(raw):raw;
           if(typeof content[key]==='number'&&!Number.isFinite(content[key]))delete content[key];
         }
-        const resolved = this.externallyResolved.delete(key) || answer.resolved;
-        if (!resolved && !this.process.closed) this.process.write({id:m.id,result:{action:['allow','answer'].includes(answer.choice)&&(!answer.automatic||this.hooks.automaticApprovalValid?.('provider')===true)?'accept':'decline',content:questions.length?content:{}}});
+        const resolved = external.delete(key) || answer.resolved;
+        if (!resolved && !this.process.closed) reply({id:m.id,result:{action:['allow','answer'].includes(answer.choice)&&(!answer.automatic||this.hooks.automaticApprovalValid?.('provider')===true)?'accept':'decline',content:questions.length?content:{}}});
       } else if (m.method === 'currentTime/read') {
-        if (!this.process.closed) this.process.write({ id: m.id, result: { currentTimeAt: Math.floor(Date.now() / 1000) } });
+        if (!this.process.closed) reply({ id: m.id, result: { currentTimeAt: Math.floor(Date.now() / 1000) } });
       } else {
         this.hooks.event({type:'message',text:`Cere cannot handle this provider request yet: ${m.method}. Continue in the CLI.`});
-        this.process.write({ id: m.id, error: { code: -32601, message: `Cere does not support ${m.method}` } });
+        reply({ id: m.id, error: { code: -32601, message: `Cere does not support ${m.method}` } });
       }
-      } finally { this.pendingRequests.delete(key); this.externallyResolved.delete(key); }
+      } finally { pending.delete(key); external.delete(key); }
       return;
     }
     if (m.method === 'thread/started' && p.thread?.parentThreadId) {
@@ -473,9 +482,11 @@ export class CodexAdapter implements Adapter {
       // resuming the saved thread; the interrupted turn itself is never replayed.
       if (!this.process.closed) {
         this.intentional = true;
-        await this.process.close();
-        this.intentional = false;
+        try { await this.process.close(); }
+        finally { if (!this.released) this.intentional = false; }
       }
+      if (this.released) throw new Error('This Codex session was closed');
+      this.agentThrottle.clear();
       this.turn = '';
       this.launch(personality, assistantName, memory);
       await this.ready;

@@ -1,10 +1,13 @@
 import net from 'node:net';
 import { socketPath } from './paths.ts';
+import { brokerFrameLimit } from './fanout.ts';
 import { JsonLines } from './wire.ts';
 import { trustedServer } from './peercred.ts';
 export function request(method: string, params: any = {}, timeout = 10000, expectedUid = process.getuid?.()): Promise<any> {
   return new Promise((resolve,reject) => {
-    const socket = net.createConnection(socketPath()); const lines=new JsonLines();
+    // The same-user broker may send a bounded 16 MiB fanout/RPC frame. This is
+    // separate from provider JSON framing, which intentionally stays at 8 MiB.
+    const socket = net.createConnection(socketPath()); const lines=new JsonLines(brokerFrameLimit);
     const timer=setTimeout(() => { socket.destroy(); reject(new Error('Cere did not respond')); },timeout);
     const done=(error?: Error,value?: any) => { clearTimeout(timer); socket.destroy(); error ? reject(error) : resolve(value); };
     socket.setEncoding('utf8'); socket.on('error',error => done(error));

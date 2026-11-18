@@ -1,4 +1,5 @@
 #include "../tools/avatar-registration.h"
+#include "../tools/avatar-interpolation.h"
 #include <iostream>
 
 int main() {
@@ -21,6 +22,27 @@ int main() {
     const auto require = [](bool condition, const char *message) {
         if (!condition) { std::cerr << message << '\n'; std::exit(1); }
     };
+    const cv::Vec4f opaque(.2f, .4f, .8f, 1.f), transparent(0, 0, 0, 0);
+    const auto fading = AvatarInterpolation::blend(opaque, transparent, 1, 0, 5.f/6);
+    require(std::abs(fading[3] - 1.f/6) < 1e-6f,
+            "a disappearing limb must fade even when destination flow loses confidence");
+    require(cv::norm(fading - opaque * (1.f/6)) < 1e-6,
+            "fading coverage must preserve the limb's straight colour");
+    require(std::abs(AvatarInterpolation::blend(transparent, opaque, 0, 1, 5.f/6)[3] - 5.f/6) < 1e-6f,
+            "appearing and disappearing coverage must be symmetric");
+    require(AvatarInterpolation::blend(opaque, opaque, .01f, 1, .5f)[3] == 1,
+            "unequal flow confidence must not make overlapping artwork translucent");
+    require(cv::norm(AvatarInterpolation::blend(opaque, transparent, 0, 0, .5f) - opaque * .5f) < 1e-6,
+            "missing confidence must retain finite premultiplied colour without a black fringe");
+    for (const float time : {0.f, .2f, .5f, .9f, 1.f}) {
+        const auto pixel = AvatarInterpolation::blend(opaque, transparent, 1, 0, time);
+        for (int channel = 0; channel < 3; ++channel)
+            require(pixel[channel] >= 0 && pixel[channel] <= pixel[3],
+                    "interpolation must retain premultiplied colour bounds");
+    }
+    require(AvatarInterpolation::blend(opaque, transparent, 0, 1, 0) == opaque
+                    && AvatarInterpolation::blend(opaque, transparent, 1, 0, 1) == transparent,
+            "interpolation endpoints must remain exact even with missing confidence");
     require(std::abs(registered.head.scale - 1.08) < .025, "head-size drift must be recovered");
     require(std::abs(registered.body(0, 0) - 1.08) < .025, "body-size drift must be recovered");
     require(cv::norm(registered.head.map({200, 140}) - cv::Point2f(200, 116.8)) < 2,

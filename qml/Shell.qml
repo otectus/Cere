@@ -299,7 +299,8 @@ Rectangle {
         target:shell.Window.window
         function onVisibleChanged(){if(shell.Window.window&&shell.Window.window.visible&&!shell.expanded&&shell.page===0)Qt.callLater(()=>conversation.focusComposer())}
     }
-    NewSession { id:newSession;objectName:"createSessionDialog";onSessionOpened:shell.openConversation() }
+    Connections { target:App;function onNewConversationRequested(folder){if(shell.expanded)newSession.openFolder(folder)} }
+    NewSession { id:newSession;objectName:"createSessionDialog";onSessionOpened:shell.openConversation();onClosed:imported=({}) }
     PermissionCenter { id:permissionCenter }
     Workflows { id:workflows;onSessionRequested:id=>{App.selectedId=id;shell.openConversation()} }
     CommandPalette {
@@ -318,6 +319,6 @@ Rectangle {
         CText { text:"A little company. A place for your projects.\n\nClick me to talk, drag me somewhere comfortable, or right-click to change my size. Your sessions keep working when this panel closes." }
         CCheckBox { id:startup;text:"Keep me around after login" }
         CText { text:"Desktop AI tools start disabled. Enable the categories you want in Settings. Existing CLI permissions remain in effect.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CButton { text:"Make yourself at home";primary:true;Layout.fillWidth:true;onClicked:{if(startup.checked)App.setAutostart(true);App.rpc("settings.update",{onboarding:false});welcome.close()} }
+        CButton { text:"Make yourself at home";primary:true;Layout.fillWidth:true;onClicked:{if(startup.checked&&!App.setAutostart(true))return;App.rpc("settings.update",{onboarding:false});welcome.close()} }
     }
 }

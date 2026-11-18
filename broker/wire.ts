@@ -1,19 +1,24 @@
+import { terminateProcessGroup } from './process-group.ts';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 export class JsonLines {
   buffer = '';
+  readonly limit: number;
+  /** Provider input remains deliberately small; trusted desktop broker responses
+   * may use the fanout frame budget instead. */
+  constructor(limit = 8 * 1024 * 1024) { this.limit = limit; }
   push(chunk: string, receive: (value: any) => void) {
     this.buffer += chunk;
     // A read may contain several valid messages; the bound applies to each line.
     let i: number;
     while ((i = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, i);
-      if (Buffer.byteLength(line) > 8 * 1024 * 1024) throw new Error('Protocol message exceeds 8 MiB');
+      if (Buffer.byteLength(line) > this.limit) throw new Error(`Protocol message exceeds ${Math.floor(this.limit / 1024 / 1024)} MiB`);
       this.buffer = this.buffer.slice(i + 1);
       if (line.trim()) receive(JSON.parse(line));
     }
-    if (Buffer.byteLength(this.buffer) > 8 * 1024 * 1024) throw new Error('Protocol message exceeds 8 MiB');
+    if (Buffer.byteLength(this.buffer) > this.limit) throw new Error(`Protocol message exceeds ${Math.floor(this.limit / 1024 / 1024)} MiB`);
   }
 }
 export class RpcResponseError extends Error {}
@@ -30,7 +35,7 @@ export class RpcProcess extends EventEmitter {
           const p = this.pending.get(message.id)!; clearTimeout(p.timer); this.pending.delete(message.id);
           message.error ? p.reject(new RpcResponseError(message.error.message || JSON.stringify(message.error))) : p.resolve(message.result);
         } else this.emit('message', message);
-      }); } catch (e) { this.emit('fault', e); this.child.kill('SIGTERM'); }
+      }); } catch (e) { this.emit('fault', e); void this.close().catch(error => this.emit('fault',error)); }
     });
     this.child.stderr.setEncoding('utf8');
     this.child.stderr.on('data', chunk => { this.stderr = (this.stderr + chunk).slice(-8192); });
@@ -54,11 +59,12 @@ export class RpcProcess extends EventEmitter {
       try { this.write({ id, method, params }); onDispatched?.(); } catch (e) { clearTimeout(timer); this.pending.delete(id); reject(e); }
     });
   }
-  async close() {
-    if (this.closed) return;
-    this.child.stdin.end();
-    this.child.kill('SIGTERM');
-    const timer = setTimeout(() => { try { if (this.child.pid) process.kill(-this.child.pid, 'SIGKILL'); } catch {} }, 3000);
-    await new Promise<void>(resolve => this.child.once('close', () => { clearTimeout(timer); resolve(); }));
+  private closing?: Promise<void>;
+  close(): Promise<void> {
+    if (!this.closing) this.closing = (async () => {
+      this.child.stdin.end();
+      await terminateProcessGroup(this.child.pid);
+    })().catch(error => { this.closing = undefined; throw error; });
+    return this.closing;
   }
 }

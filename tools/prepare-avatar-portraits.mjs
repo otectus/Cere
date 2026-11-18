@@ -2,16 +2,15 @@
 // Normalize the authored 4x3 expression grids to the runtime's 256px cells.
 import sharp from 'sharp';
 import {sheetComponents} from './avatar-sheet.mjs';
-import {readFile} from 'node:fs/promises';
-const configs=JSON.parse(await readFile('artwork/avatars/sources.json','utf8'));
-const ids=process.argv.slice(2);if(!ids.length)ids.push(...JSON.parse(await readFile('assets/avatars.json','utf8')).map(avatar=>avatar.id));
-for(const id of ids){
+import {authoringAvatars} from '../broker/avatars.ts';
+for(const {id,authoring:config,portrait} of authoringAvatars(process.argv.slice(2))){
  const source=`artwork/avatars/${id}/portrait-sheet.png`,meta=await sharp(source).metadata(),cells=[];
  // Uneven gutters can leave another portrait's shoulders inside a square crop.
  // Separate the actual figures, then pack them at one shared scale with margin.
  let portraits=null,scale=1;
- if(configs[id]?.portraitComponents){
-  const components=sheetComponents(await sharp(source).ensureAlpha().raw().toBuffer({resolveWithObject:true}),4,3);
+ if(config.portraitComponents){
+  const components=sheetComponents(await sharp(source).ensureAlpha().raw().toBuffer({resolveWithObject:true}),4,3,
+   config.portraitCoreThreshold||200,config.portraitCoreErode||0);
   portraits=components.map(image=>{
    const {data,info:{width,height}}=image;let left=width,top=height,right=-1,bottom=-1;
    for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(data[(y*width+x)*4+3]>=12){left=Math.min(left,x);right=Math.max(right,x);top=Math.min(top,y);bottom=Math.max(bottom,y);}
@@ -31,6 +30,6 @@ for(const id of ids){
   for(let p=3;p<data.length;p+=4)if(data[p]<12)data[p]=0;
   cells.push({input:await sharp(data,{raw:{width:256,height:256,channels:4}}).png().toBuffer(),left:col*256,top:row*256});
  }
- await sharp({create:{width:1024,height:768,channels:4,background:'#00000000'}}).composite(cells).png().toFile(`assets/${id}-portraits.png`);
+ await sharp({create:{width:1024,height:768,channels:4,background:'#00000000'}}).composite(cells).png().toFile(`assets/${portrait}`);
  console.log(`${id}: twelve expression portraits packed`);
 }

@@ -14,6 +14,8 @@ Rectangle {
     property string directory: App.session.cwd || ""
     // Cere's no-progress notice from its own tool loop (broker/tool-progress.ts): a warning, never an action.
     readonly property bool noProgress: message.role==="tool"&&String(message.text||"").startsWith("No progress detected\n")
+    // Cere's own Delegation update (broker/delegation-pings.ts): a user-role row, but never the user's words.
+    readonly property bool delegation: message.kind==="delegation"
     property bool collapsed: message.role==="tool"&&!noProgress
     // The stored reply keeps its memory citations; while they are hidden this card leaves them out of
     // what it shows, copies, quotes, speaks and branches. Tool output stays as it was produced.
@@ -27,14 +29,14 @@ Rectangle {
         target: App
         function onThemeChanged() { Qt.callLater(body.formatDocument) }
     }
-    color: message.role==="user" ? Theme.userBubble : message.role==="tool" ? Theme.input : Theme.surface
+    color: delegation ? Theme.surface : message.role==="user" ? Theme.userBubble : message.role==="tool" ? Theme.input : Theme.surface
     radius: Theme.radius
-    border.color: noProgress ? Theme.amber : message.role==="user" ? Theme.userBubbleBorder : Theme.subtle
+    border.color: noProgress ? Theme.amber : delegation ? Theme.activeBorder : message.role==="user" ? Theme.userBubbleBorder : Theme.subtle
     implicitHeight: contents.implicitHeight+32
     ColumnLayout {
         id:contents;anchors.fill:parent;anchors.margins:16;spacing:12
         RowLayout {
-            Text { objectName:"messageAuthor";text:card.message.role==="user" ? "You" : card.noProgress ? "No progress detected" : card.message.role==="tool" ? "Tool activity" : App.assistantName;elide:Text.ElideRight;textFormat:Text.PlainText;color:card.message.role==="user"?Theme.muted:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;Layout.fillWidth:true }
+            Text { objectName:"messageAuthor";text:card.delegation ? App.assistantName+" · Delegation update" : card.message.role==="user" ? "You" : card.noProgress ? "No progress detected" : card.message.role==="tool" ? "Tool activity" : App.assistantName;elide:Text.ElideRight;textFormat:Text.PlainText;color:card.message.role==="user"&&!card.delegation?Theme.muted:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;Layout.fillWidth:true }
             CButton{objectName:"noProgressStop";visible:card.noProgress&&card.message.sessionId===App.selectedId&&["starting","working","waiting"].indexOf(App.session.status)>=0;danger:true;text:"Stop";implicitHeight:28;help:"Stop this turn";enabled:App.connected;onClicked:App.rpc("session.stop",{id:card.message.sessionId})}
             CButton{visible:card.message.role==="tool";quiet:true;text:card.collapsed?"Show":"Hide";implicitHeight:28;onClicked:card.collapsed=!card.collapsed}
             // A display copy shortened for transport copies the complete stored text instead.

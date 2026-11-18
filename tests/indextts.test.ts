@@ -87,6 +87,9 @@ test('existing speech queue preserves IndexTTS annotations and cancellation',asy
 test('reference validation and emotion mapping use no models or GPU',async()=>{
   const result=await promisify(execFile)('python3',['-B','tests/indextts-worker-test.py']);assert.match(result.stdout,/passed/);
 });
+test('Kokoro interrupted setup preserves its verified target and cleans temporary downloads',async()=>{
+  const result=await promisify(execFile)('python3',['-B','tests/kokoro-setup-test.py']);assert.match(result.stdout,/preserves target/);
+});
 test('voice profiles copy private originals, persist edits, and delete all files',async t=>{
   const dir=await mkdtemp(join(tmpdir(),'cere-index-voices-')),store=new Store(join(dir,'state'));
   const service=new IndexTTS(store,()=>defaultIndexConfig,()=>{},{...process.env,XDG_DATA_HOME:dir});service.engine=engine(t);

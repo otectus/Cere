@@ -44,6 +44,16 @@ export class PowerSessions {
 
   constructor(hooks: PowerHooks) { this.hooks = hooks; }
 
+  startUnavailableReason(session: Session): string {
+    if (session.mode !== 'managed') return 'Power mode only supports managed sessions';
+    if (session.temporary) return 'Power mode is unavailable for temporary sessions';
+    if (session.remote) return 'Power mode is unavailable for remote sessions';
+    if (session.status !== 'idle') return 'Stop the selected session before enabling power mode';
+    if (this.blockingLeaseFor(session.id)) return 'A selected session has an active or unconfirmed power lease';
+    if (this.startingSessions.has(session.id)) return 'Power mode is already starting for a selected session';
+    return '';
+  }
+
   async start(input: PowerStart): Promise<PowerLease> {
     if (this.closed) throw new Error('Power sessions are closed');
     if (!input || !Array.isArray(input.sessionIds) || input.sessionIds.length === 0) throw new Error('Select at least one session');
@@ -61,12 +71,8 @@ export class PowerSessions {
       const selected = ids.map(id => sessions.get(id));
       if (selected.some(session => !session)) throw new Error('A selected session no longer exists');
       for (const session of selected as Session[]) {
-        if (session.mode !== 'managed') throw new Error('Power mode only supports managed sessions');
-        if (session.temporary) throw new Error('Power mode is unavailable for temporary sessions');
-        if (session.remote) throw new Error('Power mode is unavailable for remote sessions');
-        if (session.status !== 'idle') throw new Error('Stop the selected session before enabling power mode');
-        if (this.blockingLeaseFor(session.id)) throw new Error('A selected session has an active or unconfirmed power lease');
-        if (this.startingSessions.has(session.id)) throw new Error('Power mode is already starting for a selected session');
+        const reason = this.startUnavailableReason(session);
+        if (reason) throw new Error(reason);
       }
       return selected as Session[];
     };

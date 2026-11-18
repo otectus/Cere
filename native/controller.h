@@ -49,6 +49,8 @@ private:
 
 class Controller : public QObject {
     Q_OBJECT
+    // The regression fixture drives a watchdog tick before pending socket notifications.
+    friend class UiCheck;
     Q_PROPERTY(QVariantMap state READ state NOTIFY stateChanged)
     Q_PROPERTY(QVariantList messages READ messages NOTIFY messagesChanged)
     Q_PROPERTY(QAbstractItemModel* transcript READ transcript CONSTANT)
@@ -64,6 +66,8 @@ class Controller : public QObject {
     Q_PROPERTY(QString assetPath READ assetPath CONSTANT)
     Q_PROPERTY(QVariantMap animations READ animations CONSTANT)
     Q_PROPERTY(QVariantList avatars READ avatars CONSTANT)
+    Q_PROPERTY(QVariantList avatarCatalog READ avatarCatalog CONSTANT)
+    Q_PROPERTY(QString defaultAvatar READ defaultAvatar CONSTANT)
     Q_PROPERTY(QVariantMap avatar READ avatar NOTIFY avatarChanged)
     Q_PROPERTY(QVariantMap themes READ themes CONSTANT)
     Q_PROPERTY(QVariantMap theme READ theme NOTIFY themeChanged)
@@ -77,6 +81,9 @@ class Controller : public QObject {
     Q_PROPERTY(bool hasOlderMessages READ hasOlderMessages NOTIFY messagesChanged)
     // Its own signal, so message text bound to it is not filtered again on every state update.
     Q_PROPERTY(bool showMemoryCitations READ showMemoryCitations NOTIFY citationDisplayChanged)
+    // Read from the actual autostart file after every successful change; a failed write must not
+    // leave a settings checkbox claiming that login startup was enabled.
+    Q_PROPERTY(bool autostartEnabled READ autostartEnabled NOTIFY autostartChanged)
 public:
     explicit Controller(QString root, bool overlay, QObject *parent=nullptr);
     ~Controller();
@@ -93,6 +100,8 @@ public:
     QString assetPath() const;
     QVariantMap animations() const { return m_animations; }
     QVariantList avatars() const { return m_avatars; }
+    QVariantList avatarCatalog() const { return m_avatarCatalog; }
+    QString defaultAvatar() const { return m_defaultAvatar; }
     QVariantMap avatar() const;
     QVariantMap themes() const { return m_themes; }
     // The shown avatar's puppet could not draw its atlas (texture as in its definition).
@@ -147,7 +156,7 @@ public:
     Q_INVOKABLE void dockPet(const QString &edge);
     Q_INVOKABLE void notify(const QString &text);
     Q_INVOKABLE void quit(bool stopTasks=false);
-    Q_INVOKABLE void setAutostart(bool enabled);
+    Q_INVOKABLE bool setAutostart(bool enabled);
     Q_INVOKABLE bool autostartEnabled() const;
     Q_INVOKABLE void preview(const QString &state);
     Q_INVOKABLE void setPetHovered(bool hovered);
@@ -174,7 +183,7 @@ public:
     // The pet's current logical placement in global coordinates (diagnostics and tests).
     QPoint petPosition() const { return m_petPosition; }
     // toggle: open (or close) the compact panel once connected, as `cere toggle` does.
-    void start(bool show, bool toggle=false);
+    void start(bool show, bool toggle=false, const QString &conversationFolder={});
     // Shows the workspace in this process even while the broker is unreachable.
     void showWorkspaceLocally();
     // Signals the running interface process named by its instance lock.
@@ -194,21 +203,29 @@ signals:
     void conversationMoodsChanged();
     void moodContextChanged();
     void citationDisplayChanged();
+    void autostartChanged();
     void themeChanged();
     void motionDynamicsChanged();
     void result(int id, const QVariant &value);
     // Editors persist unsaved text before a window hides, expands or quits.
     void flushDrafts();
     void attachmentRequested(const QString &path);
+    void newConversationRequested(const QString &folder);
 private:
     // Pet and output-seam mirror share QML values and one animation sample.
     QQmlEngine m_qmlEngine;
     QString m_root, m_selected, m_toast, m_motion="idle";
+    QString m_pendingConversationFolder;
     bool m_overlay, m_expanded=false, m_dragging=false, m_roamStep=false, m_petHovered=false;
     QLocalSocket m_socket;
+    QHash<QString, QString> m_hydration;
     QByteArray m_buffer;
     QVariantMap m_state, m_animations;
     QVariantList m_avatars;
+    QVariantList m_avatarCatalog;
+    QVariantMap m_avatarAliases;
+    QString m_defaultAvatar;
+    QString canonicalAvatar(const QString &id) const { return m_avatarAliases.value(id,m_defaultAvatar).toString(); }
     QSet<QString> m_brokenAvatars;
     QVariantMap m_themes, m_theme;
     QString m_themeId;
@@ -218,7 +235,7 @@ private:
     QHash<QString,QVariantMap> m_questionDrafts;
     QHash<int,QVariantMap> m_deferredDrafts;
     QHash<QString,QVariantMap> m_offlineDrafts;
-    QHash<int,QString> m_offlineFlushes;
+    QHash<int,QVariantMap> m_offlineFlushes;
     // How long the broker has been unreachable, and when this interface last started one.
     QElapsedTimer m_disconnected, m_lastLaunch;
     bool m_pendingToggle=false;
@@ -286,6 +303,8 @@ private:
     bool managedBroker() const;
     void launchBroker(bool initial);
     void flushOfflineDrafts();
+    void sendHeldDraft(const QVariantMap &draft);
+    void retainDeferredDraft(int request);
     void receive();
     void applyState(const QVariantMap &state);
     void syncPet();
@@ -310,6 +329,7 @@ private:
     void stopRoaming(bool persist);
     void restoreMotion();
     void showWorkspace();
+    void showNewConversation(const QString &folder);
     QQuickView *view(const QString &file, bool layer, const QString &title);
     QString runtimePath() const;
     QPoint cursorPosition() const;

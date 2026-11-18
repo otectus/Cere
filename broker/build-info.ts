@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -8,7 +9,7 @@ import { join } from 'node:path';
  */
 export type BuildIdentity = { version: string; commit: string | null; dirty: boolean | null; source: 'installed' | 'checkout' | 'unknown' };
 let cached: BuildIdentity | undefined;
-export function buildIdentity(root = join(new URL('.', import.meta.url).pathname, '..')): BuildIdentity {
+export function buildIdentity(root = join(fileURLToPath(new URL('.', import.meta.url)), '..')): BuildIdentity {
   if (cached) return cached;
   const read = (path: string) => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
   const version = (() => { try { return String(JSON.parse(read(join(root, 'package.json')) || '{}').version || 'unknown'); } catch { return 'unknown'; } })();

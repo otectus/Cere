@@ -1,6 +1,9 @@
 // Seeds the isolated demo profile used by the documentation screenshots: folders, projects, past
 // conversations across providers, saved scripts and a completion record. Run before the broker starts:
-//   CERE_STATE_DIR=... node tools/screenshots/seed.ts <demo home>
+//   node tools/screenshots/seed.ts <fresh demo home>
+import { closeSync, openSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { privateDir } from '../../broker/paths.ts';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../../broker/store.ts';
 import type { Message, Session, SessionFolder } from '../../broker/types.ts';
@@ -8,7 +11,10 @@ import type { Message, Session, SessionFolder } from '../../broker/types.ts';
 const home = process.argv[2];
 if (!home) throw new Error('Usage: seed.ts <demo home>');
 const projects = `${home}/Projects`, ollamaHost = 'http://127.0.0.1:11434';
-const store = new Store();
+const directory = privateDir(resolve(home, '.local/state/cere'));
+// Claim a new database before Store opens it. A concurrent seeder or an existing profile wins.
+closeSync(openSync(resolve(directory, 'cere.sqlite'), 'wx', 0o600));
+const store = new Store(directory);
 const now = Date.now(), minutes = (n: number) => now - n * 60_000, hours = (n: number) => minutes(n * 60), days = (n: number) => hours(n * 24);
 
 const folder = (name: string, created: number): SessionFolder => ({ id: randomUUID(), name, revision: '1', created, updated: created });

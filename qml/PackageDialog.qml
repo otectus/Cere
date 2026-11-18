@@ -18,7 +18,9 @@ CDialog {
     property string feedback:""
     readonly property int chosenCount:Object.keys(chosen).length
     readonly property var actionLabels:({new:"New",changed:"Updates the saved copy",unchanged:"Already the same"})
-    function reset(){styles=[];recipes=[];chosen=({});preview=null;error="";feedback=""}
+    function discardPreview(){if(preview?.token)App.rpc("packages.discard",{token:preview.token});preview=null}
+    onClosed:discardPreview()
+    function reset(){discardPreview();styles=[];recipes=[];chosen=({});error="";feedback=""}
     function call(method,params){error="";action=method;request=App.rpc(method,params)}
     function openExport(){mode="export";reset();call("presets.list",{});open()}
     function previewFile(path){mode="import";reset();if(path)call("packages.preview",{path:path});open()}
@@ -67,7 +69,7 @@ CDialog {
             if(packages.action==="presets.list"){packages.styles=value.items||[];packages.call("recipes.list",{});return}
             if(packages.action==="recipes.list"){packages.recipes=(value.recipes||[]).filter(recipe=>!recipe.builtin);return}
             if(packages.action==="packages.export"){const path=App.saveTextAs(value.filename,value.text);packages.feedback=path?"Saved "+value.profiles+" styles and "+value.recipes+" recipes to "+path:"Not saved.";return}
-            if(packages.action==="packages.preview"){packages.preview=value;return}
+            if(packages.action==="packages.preview"){packages.preview=value;if(!packages.visible)packages.discardPreview();return}
             if(packages.action==="packages.import"){
                 const changed=[...(value.profiles||[]),...(value.recipes||[])].filter(item=>item.action!=="unchanged").length
                 packages.preview=null;packages.feedback="Imported "+changed+(changed===1?" item":" items")+". Nothing else changed: permissions, bindings and the personality in use stay as they were."

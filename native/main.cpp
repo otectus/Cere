@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "avatarcatalog.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -41,8 +42,17 @@ int main(int argc,char **argv) {
     parser.addOption({"overlay","Run the overlay host"});
     parser.addOption({"show","Open the workspace"});
     parser.addOption({"toggle","Open or close the compact panel"});
+    parser.addOption({"new-conversation","Open conversation creation in a local folder","directory"});
     parser.addOption({"root","Application data directory","directory"});
     parser.process(app);
+    QString conversationFolder;
+    if(parser.isSet("new-conversation")){
+        const QFileInfo folder(parser.value("new-conversation"));
+        if(parser.isSet("overlay")||parser.isSet("toggle")||parser.value("new-conversation").isEmpty()||!folder.isDir()){
+            qCritical("--new-conversation requires an existing local folder and cannot be combined with --overlay or --toggle.");return 1;
+        }
+        conversationFolder=folder.absoluteFilePath();
+    }
     QString runtime=qEnvironmentVariable("CERE_RUNTIME_DIR");
     if(runtime.isEmpty()){const QString base=qEnvironmentVariable("XDG_RUNTIME_DIR");runtime=(base.isEmpty()?QDir::tempPath()+"/cere-"+QString::number(::getuid()):base)+"/cere";}
     QDir().mkpath(runtime);
@@ -53,10 +63,24 @@ int main(int argc,char **argv) {
     if(!instance.tryLock(0)){
         if(!parser.isSet("overlay")){
             QLocalSocket client;client.connectToServer(runtime+"/broker.sock");
-            const QByteArray method=parser.isSet("toggle")?"ui.toggle":"ui.expand";
-            if(client.waitForConnected(1000)&&Controller::trustedBroker(client.socketDescriptor(),::getuid())){client.write("{\"id\":1,\"method\":\""+method+"\"}\n");client.waitForBytesWritten(1000);}
+            const QString method=!conversationFolder.isEmpty()?"ui.newConversation":parser.isSet("toggle")?"ui.toggle":"ui.expand";
+            if(client.waitForConnected(1000)&&Controller::trustedBroker(client.socketDescriptor(),::getuid())){
+                const QJsonObject request{{"id",1},{"method",method},{"params",QJsonObject{{"cwd",conversationFolder}}}};
+                client.write(QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n');client.waitForBytesWritten(1000);
+                if(!conversationFolder.isEmpty()){
+                    QByteArray response=client.readAll();
+                    while(!response.contains('\n')&&client.waitForReadyRead(3000))response+=client.readAll();
+                    const auto reply=QJsonDocument::fromJson(response.split('\n').first()).object();
+                    if(!reply.value("result").toBool()){
+                        qCritical("Could not open conversation creation: %s",qPrintable(reply.value("error").toObject().value("message").toString("Cere did not confirm the request.")));return 1;
+                    }
+                }
+            }
             // Without a broker, the running interface still opens its workspace.
-            else Controller::signalInterface(runtime,SIGUSR1);
+            else {
+                Controller::signalInterface(runtime,SIGUSR1);
+                if(!conversationFolder.isEmpty()){qCritical("Cere is reconnecting. Try opening the folder again once it is connected.");return 1;}
+            }
         }
         return 0;
     }
@@ -81,7 +105,8 @@ int main(int argc,char **argv) {
         qCritical("Cere asset metadata is invalid (assets/%s): %s",qPrintable(name),qPrintable(error.errorString()));
         return false;
     };
-    if(!requireAsset("avatars.json")||!requireAsset("palettes.json"))return 1;
+    const auto catalog=AvatarCatalog::load(root+"/assets/avatars.json");
+    if(!catalog.error.isEmpty()){qCritical("Cere avatar catalog is invalid: %s",qPrintable(catalog.error));return 1;}
     QJsonObject motions;
     if(!loadObject("motions.json",&motions))return 1;
     const QString baseRigName=motions.value("rig").toString("cere-rig.json");
@@ -89,28 +114,15 @@ int main(int argc,char **argv) {
     if(baseRigName.isEmpty()||!loadObject(baseRigName,&baseRig))return 1;
     const QString baseTexture=baseRig.value("texture").toString();
     if(baseTexture.isEmpty()||!requireAsset(baseTexture))return 1;
-    QFile avatarFile(root+"/assets/avatars.json");QJsonParseError avatarError;
-    if(!avatarFile.open(QIODevice::ReadOnly)){qCritical("Cere avatar catalog cannot be read.");return 1;}
-    const auto avatarDocument=QJsonDocument::fromJson(avatarFile.readAll(),&avatarError);
-    if(avatarError.error!=QJsonParseError::NoError||!avatarDocument.isArray()){
-        qCritical("Cere avatar catalog is invalid: %s",qPrintable(avatarError.errorString()));return 1;
-    }
-    QStringList missingIds{"cere","daemona","jade","nova","soap", "brandy","archy","ghost","violet","leafy","cachy","usagi",
-                           "cynthia","genga","kippy","pomni","rem","sarah","sylva", "witty"};
-    for(const auto &value:avatarDocument.array()){
-        if(!value.isObject()){qCritical("Cere avatar catalog contains a non-object entry.");return 1;}
-        const auto entry=value.toObject();const QString id=entry.value("id").toString();
-        if(missingIds.removeAll(id)!=1){qCritical("Cere avatar catalog contains an unsupported or duplicate id: %s",qPrintable(id));return 1;}
+    for(const auto &value:catalog.entries){
+        const auto entry=value.toObject();
         const QString portrait=entry.value("portrait").toString(),rigName=entry.value("rig").toString();
         QJsonObject rig;
         if(portrait.isEmpty()||rigName.isEmpty()||!requireAsset(portrait)||!loadObject(rigName,&rig))return 1;
         const QString texture=rig.value("texture").toString(baseTexture);
         if(texture.isEmpty()||!requireAsset(texture))return 1;
     }
-    if(!missingIds.isEmpty()){
-        qCritical("Cere avatar catalog belongs to an older installation; missing: %s",qPrintable(missingIds.join(", ")));return 1;
-    }
     Controller controller(root,parser.isSet("overlay"));active=&controller;
-    controller.start(parser.isSet("show"),parser.isSet("toggle"));
+    controller.start(parser.isSet("show"),parser.isSet("toggle"),conversationFolder);
     return app.exec();
 }

@@ -282,6 +282,9 @@ public:
         int surfaceLevel = -1;
         int surfaceOriginalFrame = -1;
         int surfaceOriginalLevel = -1;
+        int surfaceWinkFrame = -1;
+        int surfaceWinkLevel = -1;
+        ReferenceArt::WinkSelection surfaceWink;
         QSGTexture *surfaceOriginal = nullptr;
         QSGTexture *surfaceDynamic = nullptr;
     };
@@ -1017,14 +1020,19 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     AvatarSkeleton::channelValue(d->pose, QStringLiteral("blink")),
                     AvatarSkeleton::channelValue(d->pose, QStringLiteral("eyeClose"))),
                     0.0, 1.0);
-            if (images.blinks[frame].isEmpty())
+            surfacePose.wink = std::clamp(
+                    AvatarSkeleton::channelValue(d->pose, QStringLiteral("wink")),
+                    0.0, 1.0);
+            if (images.blinks[frame].isEmpty()) {
                 surfacePose.blink = 0.0;
+                surfacePose.wink = 0.0;
+            }
             if (!renderPart.surfacePoseValid
                     || renderPart.surfacePose != surfacePose
                     || renderPart.surfaceFrame != frame
                     || renderPart.surfaceLevel != level) {
                 const bool rest = !ReferenceArt::hasDeformation(surfacePose)
-                        && surfacePose.blink <= 0.0;
+                        && surfacePose.blink <= 0.0 && surfacePose.wink <= 0.0;
                 if (rest) {
                     if (!renderPart.surfaceOriginal
                             || renderPart.surfaceOriginalFrame != frame
@@ -1049,13 +1057,23 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 } else {
                     const QImage closed = images.blinks[frame].isEmpty()
                             ? QImage() : images.blinks[frame][level];
+                    if (surfacePose.wink > surfacePose.blink
+                            && (renderPart.surfaceWinkFrame != frame
+                                || renderPart.surfaceWinkLevel != level)) {
+                        renderPart.surfaceWink = ReferenceArt::winkSelection(
+                                images.frames[frame][level], closed);
+                        renderPart.surfaceWinkFrame = frame;
+                        renderPart.surfaceWinkLevel = level;
+                    }
                     const QImage image = ReferenceArt::render(
                             images.frames[frame][level], closed,
                             part.rect, surfacePose,
                             QSizeF(frameDefinition.sourceRect.width()
                                            / qreal(1 << level),
                                    frameDefinition.sourceRect.height()
-                                           / qreal(1 << level)));
+                                           / qreal(1 << level)),
+                            surfacePose.wink > surfacePose.blink
+                                    ? &renderPart.surfaceWink : nullptr);
                     QSGTexture *texture = window()->createTextureFromImage(image);
                     if (!texture)
                         continue;

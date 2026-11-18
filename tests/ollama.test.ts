@@ -372,7 +372,8 @@ test('a connection change during creation cannot redirect the new session to ano
 test('CLI bypass enables delegation without desktop bypass or standing grants', async t => {
   const f = await fixture(t), parent = await session(f, true), sent: any[] = [];
   f.core.factory = (s, h) => ({ async send(text) { sent.push({ text, bypass: h.bypassCliPermissions?.() }); h.event({ type: 'complete' }); }, async interrupt() {}, async close() {} });
-  await f.core.updateSettings({ profile: 'manual' });
+  // These calls run outside any parent turn; automatic delegation updates have their own tests.
+  await f.core.updateSettings({ profile: 'manual', delegationUpdates: false });
   const desktopPower=await f.core.power.start({sessionIds:[parent.id],minutes:5,cli:false,computer:true});
   assert.ok(!f.core.toolsFor(parent.id).some(t => t.function.name === 'sessions_start'));
   await f.core.power.end(desktopPower.id);f.core.updateSession(parent.id,{status:'idle'});

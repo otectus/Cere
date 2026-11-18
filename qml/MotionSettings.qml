@@ -16,7 +16,7 @@ ColumnLayout {
         CCheckBox { objectName:"quietMode";text:"Quiet mode";checked:motion.settings.quiet===true;onClicked:motion.update({quiet:checked}) }
         CText { text:"Pause animations, spoken replies and ordinary notifications.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CCheckBox { objectName:"reducedMotion";text:"Reduce motion";checked:motion.settings.reducedMotion===true;onClicked:motion.update({reducedMotion:checked}) }
-        CText { text:"Use still poses for the current state. Breathing, blinking, transitions and roaming stop; permission requests stay visible.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { text:"Use a still neutral pose. Breathing, blinking, transitions and roaming stop; permission requests stay visible.";color:Theme.muted;font.pixelSize:Theme.secondary }
         RowLayout {
             Layout.fillWidth:true
             CText { text:"Motion intensity";font.pixelSize:Theme.secondary;Layout.fillWidth:false }
@@ -28,7 +28,7 @@ ColumnLayout {
             }
             Text { text:Math.round(motion.intensity*100)+"%";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary }
         }
-        CText { text:"From a quiet presence to full personality: soften breathing, gaze, hair sway and gestures together. Zero keeps state poses still.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { text:"Soften breathing, gaze and hair sway. Illustrated gestures keep their full poses; zero uses a still neutral pose.";color:Theme.muted;font.pixelSize:Theme.secondary }
         RowLayout {
             Layout.fillWidth:true
             CText { text:"Idle energy";font.pixelSize:Theme.secondary }
@@ -47,6 +47,7 @@ ColumnLayout {
         description:"Little reactions to how a conversation feels, and a few on request."
         CCheckBox { objectName:"expressiveCues";text:"Respond to conversational tone";checked:motion.settings.expressiveCues!==false;onClicked:motion.update({expressiveCues:checked}) }
         CText { text:"Occasional expressions from clear English conversational cues, interpreted locally. Task results always come from the app.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CText { text:"Some expressions use full poses; others use subtle gaze, tilt and sway.";color:Theme.muted;font.pixelSize:Theme.secondary }
         RowLayout {
             Layout.fillWidth:true
             CComboBox {
@@ -59,7 +60,7 @@ ColumnLayout {
         Flow {
             Layout.fillWidth:true;Layout.minimumWidth:0;Layout.preferredWidth:0;spacing:6
             Repeater {
-                model:[{name:"wave",label:"Say hello"},{name:"nod",label:"A knowing nod"},{name:"giggle",label:"Try to behave"},{name:"stretch",label:"Stretch"},{name:"glassesAdjust",label:"Adjust glasses"},{name:"hairTuck",label:"Tuck hair"},{name:"smallShrug",label:"Who, me?"},{name:"hairToss",label:"A little drama"},{name:"music",label:"Find the rhythm"}]
+                model:[{name:"wave",label:"Say hello"},{name:"nod",label:"A knowing nod"},{name:"giggle",label:"Try to behave"},{name:"thinking",label:"A thoughtful moment"},{name:"explainOpen",label:"Make a point"},{name:"celebrate",label:"Celebrate"},{name:"hoverBlush",label:"A little shy"},{name:"hairToss",label:"A little drama"},{name:"music",label:"Find the rhythm"}]
                 CButton {
                     required property var modelData
                     text:modelData.label

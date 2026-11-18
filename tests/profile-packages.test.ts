@@ -115,3 +115,71 @@ test('RC-12 convention files are redacted before they are cut to size, and a fil
   const cut = await projectConventions(dir);
   assert.doesNotMatch(cut.text, /sk-abc/); assert.equal(cut.redactions, 1); assert.equal(cut.files[0].truncated, true);
 });
+
+test('package review protects changed targets and rolls back mixed imports on a write failure', async t => {
+  const { core } = await broker(t);
+  const style = await core.rpc('presets.save', { label: 'Original', text: 'Original', expectedRevision: '0' });
+  const recipe = { name: 'First recipe', instructions: 'Check', expectedOutput: 'Result', permissions: { description: 'Read only' }, runtime: { maxSeconds: 60, maxTurns: 1 } };
+  const preview = (profiles: any[], recipes: any[] = []) => core.rpc('packages.preview', { text: JSON.stringify({ format: 'cere-package', schema: 1, profiles, recipes }) });
+  const incoming = { label: 'Second', text: 'Text' };
+  const stale = await preview([style, incoming]);
+  await core.rpc('presets.save', { id: style.id, expectedItemRevision: '1', label: 'Original', text: 'Independent edit' });
+  await assert.rejects(core.rpc('packages.import', stale), /Preview the package again/);
+  assert.deepEqual(core.presets.catalog().items.map(item => item.text), ['Independent edit']);
+  await assert.rejects(preview([incoming, { label: 'SECOND', text: 'Duplicate' }]), /already has/);
+  await assert.rejects(preview([{ ...style, label: 'Second' }, incoming]), /already has/);
+  await assert.rejects(preview(Array.from({ length: 50 }, (_, i) => ({ label: 'Other ' + i, text: 'Text' }))), /at most 50/);
+  const mixed = await preview([incoming], [recipe]);
+  core.store.db.exec("CREATE TRIGGER fixture_failure BEFORE INSERT ON meta WHEN NEW.key='workflow:recipe-definitions' BEGIN SELECT RAISE(ABORT,'fixture failure'); END");
+  await assert.rejects(core.rpc('packages.import', mixed), /fixture failure/);
+  assert.deepEqual(core.presets.catalog().items.map(item => item.label), ['Original']);
+  core.store.db.exec('DROP TRIGGER fixture_failure');
+  const again = await preview([incoming], [recipe]);
+  const applied = await core.rpc('packages.import', again);
+  assert.deepEqual(applied, { profiles: again.profiles, recipes: again.recipes });
+  const freshRecipe = (await core.rpc('recipes.list', {})).recipes.find((r: any) => r.id === applied.recipes[0].id);
+  const staleRecipe = await preview([], [{ ...recipe, id: freshRecipe.id }]);
+  await core.rpc('recipes.save', { ...recipe, id: freshRecipe.id, expectedRevision: freshRecipe.revision, instructions: 'Edited recipe' });
+  await assert.rejects(core.rpc('packages.import', staleRecipe), /Preview the package again/);
+});
+
+test('abandoned package previews are bounded and expire without importing', async t => {
+  const { core } = await broker(t);
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const preview = () => core.rpc('packages.preview', { text: '{"format":"cere-package","schema":1}' });
+  const dismissed = await preview();
+  await core.rpc('packages.discard', { token: dismissed.token });
+  await assert.rejects(core.rpc('packages.import', dismissed), /Preview the package again/);
+  const first = await preview();
+  for (let i = 0; i < 8; i++) await preview();
+  await assert.rejects(core.rpc('packages.import', first), /Preview the package again/);
+  const latest = await preview();
+  t.mock.timers.tick(600_001);
+  await assert.rejects(core.rpc('packages.import', latest), /Preview the package again/);
+  t.mock.timers.reset();
+});
+
+test('package preview promptly rejects a named pipe with no writer', async t => {
+  const { core, dir } = await broker(t);
+  const fifo = join(dir, 'fixture.pipe');
+  const { execFileSync } = await import('node:child_process');
+  execFileSync('mkfifo', [fifo]);
+  // Release an original blocking reader even if this regression fails.
+  const rescue = setTimeout(() => { void writeFile(fifo, 'fixture').catch(() => {}); }, 1500);
+  try {
+    const start = performance.now();
+    await assert.rejects(core.rpc('packages.preview', { path: fifo }), /Choose a package file/);
+    assert.ok(performance.now() - start < 1000);
+  } finally { clearTimeout(rescue); }
+});
+
+test('unknown saved formatting checks are ignored on read and refused on new styles and packages', async t => {
+  const { core } = await broker(t);
+  const saved = await core.rpc('presets.save', { label: 'Review', text: 'Style', expectedRevision: '0', constraints: ['no-emoji'] });
+  const replacement = { ...saved, constraints: ['no-emoji', 'toString'] };
+  core.store.set('behaviorPresets', { schema: 2, revision: '1', items: [replacement] });
+  assert.deepEqual(core.presets.catalog().items[0].constraints, ['no-emoji']);
+  await assert.rejects(core.rpc('presets.save', { label: 'Other', text: 'Style', expectedRevision: '1', constraints: ['toString'] }), /supported formatting checks/);
+  await assert.rejects(core.rpc('packages.preview', { text: JSON.stringify({ format: 'cere-package', schema: 1, profiles: [replacement] }) }), /supported formatting checks/);
+  assert.equal(core.presets.catalog().items[0].text, 'Style');
+});

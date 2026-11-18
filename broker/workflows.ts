@@ -329,7 +329,8 @@ export class Workflows {
     // Without a selection, a whole reply becomes one plain line: Markdown marks and line breaks go.
     const excerpt=()=>{const plain=message.text.replace(/```[\s\S]*?```/g,' ').replace(/[*_`#>]+/g,'').replace(/^\s*[-+]\s+/gm,'').replace(/\s+/g,' ').trim();return plain.length>300?plain.slice(0,299)+'…':plain;};
     const value=text(p.text??excerpt(),'task',2_000);if(!value)throw new Error('Describe the task');
-    const origin:TaskOrigin=message.role==='assistant'?'model-suggestion':message.role==='user'?'user':'observed',time=Date.now();
+    // A delegation update is user-role text Cere wrote, so it is an observation, not the user's request.
+    const origin:TaskOrigin=message.role==='assistant'?'model-suggestion':message.role==='user'&&message.kind!=='delegation'?'user':'observed',time=Date.now();
     const task:CapsuleTask={id:randomUUID(),text:value,state:'proposed',origin,sources:[{messageId:message.id,sessionId:session.id,sourceRole:origin==='model-suggestion'?'model-suggestion':'observed'}],files:[],revision:'1',created:time,updated:time};
     const next:Capsule={...current,tasks:[...tasks,task],nextSteps:openTasks(tasks).map(item=>item.text),revision:String(BigInt(current.revision)+1n),updated:time};
     this.core.store.set(key,next);this.core.changed();
@@ -361,16 +362,22 @@ export class Workflows {
    * A06: one recipe from a package, validated like any saved recipe. The same id gets a new version when
    * its content differs; built-in recipes are never replaced. Returns what happened, for the preview.
    */
-  importRecipe(input:any,dryRun:boolean):{id:string;name:string;action:'new'|'changed'|'unchanged'}{
+  planRecipeImport(inputs: any[]) {
+    const stored = this.storedRecipes();
+    const items = inputs.map(input => this.importRecipe(input, stored));
+    if (new Set(items.map(item => item.id)).size !== items.length) throw new Error('A package contains the same recipe more than once');
+    return { items, save: () => this.core.store.set(recipeStoreKey, stored) };
+  }
+  private importRecipe(input: any, stored: RecipeDefinition[]) {
     if(!input||typeof input!=='object')throw new Error('Invalid recipe in package');
     if(builtins.some(recipe=>recipe.id===input.id))throw new Error(`The package replaces the built-in recipe ${input.id}`);
-    const existing=typeof input.id==='string'?this.definitions().filter(item=>item.id===input.id).sort((a,b)=>b.version-a.version)[0]:undefined;
+    const existing=typeof input.id==='string'?stored.filter(item=>item.id===input.id).sort((a,b)=>b.version-a.version)[0]:undefined;
     const id=existing?.id||(typeof input.id==='string'&&/^recipe-[0-9a-f-]{36}$/.test(input.id)?input.id:`recipe-${randomUUID()}`);
     const next=this.definitionPayload(input,id,existing?existing.version+1:1);
     const content=(value:RecipeDefinition)=>stable({name:value.name,description:value.description,inputs:value.inputs,instructions:value.instructions,expectedOutput:value.expectedOutput,permissions:value.permissions,runtime:value.runtime,outputSections:value.outputSections||[]});
     const action=!existing?'new':content(existing)===content(next)?'unchanged':'changed';
-    if(!dryRun&&action!=='unchanged'){this.core.store.set(recipeStoreKey,[...this.storedRecipes(),next]);this.core.changed();}
-    return {id,name:next.name,action};
+    if (action !== 'unchanged') stored.push(next);
+    return {id,name:next.name,action,previousRevision:existing?.revision ?? null};
   }
   private definitions(){return [...builtins,...this.storedRecipes()].sort((a,b)=>a.name.localeCompare(b.name)||b.version-a.version)}
   private latestRecipes(){const latest=new Map<string,RecipeDefinition>();for(const item of this.definitions())if(!latest.has(item.id)||latest.get(item.id)!.version<item.version)latest.set(item.id,item);return [...latest.values()].sort((a,b)=>a.name.localeCompare(b.name))}

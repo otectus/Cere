@@ -54,3 +54,25 @@ test('JSON lines delivers a valid message before rejecting an oversized next one
   assert.throws(() => parser.push('{"ok":true}\n' + stringLine(limit + 1), message => received.push(message)), /exceeds 8 MiB/);
   assert.deepEqual(received, [{ ok: true }]);
 });
+
+test('desktop response decoder may use the fanout limit without widening provider framing', () => {
+  const desktop = new JsonLines(16 * 1024 * 1024), provider = new JsonLines();
+  const line = stringLine(9 * 1024 * 1024), values: unknown[] = [];
+  desktop.push(line + '\n', value => values.push(value));
+  assert.equal((values[0] as string).length, line.length - 2);
+  assert.throws(() => provider.push(line + '\n', () => {}), /exceeds 8 MiB/);
+});
+
+test('AUD-008 close kills an owned descendant after its leader has exited',async t=>{
+  const {RpcProcess}=await import('../broker/wire.ts');
+  const childCode="process.on('SIGTERM',()=>{});setInterval(()=>{},1000)";
+  const leaderCode=`const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{stdio:'ignore'});console.log(JSON.stringify({pid:child.pid}));setTimeout(()=>process.exit(0),100);`;
+  const rpc=new RpcProcess(process.execPath,['-e',leaderCode],process.cwd());
+  rpc.on('fault',()=>{});t.after(()=>rpc.close());
+  const message=await new Promise<any>(resolve=>rpc.once('message',resolve));
+  await new Promise<void>(resolve=>rpc.once('exit',()=>resolve()));
+  const started=Date.now();await rpc.close();await rpc.close();assert.ok(Date.now()-started<5000);
+  const {readFile}=await import('node:fs/promises');
+  const stat=await readFile(`/proc/${message.pid}/stat`,'utf8').catch(()=>'');
+  assert.ok(!stat||stat.slice(stat.lastIndexOf(')')+2).startsWith('Z '));
+});

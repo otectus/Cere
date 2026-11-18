@@ -12,7 +12,10 @@ fun acceptedSendStatus(result: JsonElement): String? =
 
 /** Provider reasoning and tool output belong in Activity, never in reply bubbles. */
 fun Message.isConversationMessage(): Boolean = role in setOf("user", "assistant") &&
-    kind in setOf("text", "message", "", "question", "answer", "queued", "queue-cancelled")
+    kind in setOf("text", "message", "", "question", "answer", "queued", "queue-cancelled", "delegation")
+
+/** A user-role row Cere wrote itself when delegated work reported back; never the user's own words. */
+fun Message.isDelegationUpdate(): Boolean = role == "user" && kind == "delegation"
 
 /** Keep streamed revisions when a slower history request returns an older copy. */
 fun mergeMessages(current: List<Message>, incoming: List<Message>): List<Message> {

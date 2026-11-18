@@ -11,11 +11,13 @@ ColumnLayout {
     property int memoryRequest:-1
     property int extractionRequest:-1
     property int extractionRefreshRequest:-1
-    property var extractionCapability:App.state.capabilities?.ollama||({})
+    property string extractionProvider:memory.extractionProvider||"ollama"
+    property var extractionProviders:[{id:"ollama",label:"Ollama"},{id:"google",label:"Gemini API"},{id:"anthropic",label:"Claude API"}]
+    property var extractionCapability:App.state.capabilities?.[extractionProvider]||({})
     property string selectedExtractionModel:memory.extractionModel||"glm-5.3-flash:cloud"
     function matchesExtraction(id) { return id===selectedExtractionModel||id===selectedExtractionModel+":cloud"||id===selectedExtractionModel+"-cloud" }
     property var extractionChoices: {
-        const models=(extractionCapability.models||[]).filter(m=>m.cloud)
+        const models=(extractionCapability.models||[]).filter(m=>extractionProvider!=="ollama"||m.cloud)
         return models.some(m=>matchesExtraction(m.id))?models:models.concat([{id:selectedExtractionModel,displayName:selectedExtractionModel+" · unavailable"}])
     }
     property int extractionIndex:extractionChoices.findIndex(m=>matchesExtraction(m.id))
@@ -72,10 +74,16 @@ ColumnLayout {
         CCheckBox { objectName:"memoryEnabled";text:"Remember and recall conversations";checked:knowledge.memory.enabled;enabled:knowledge.memoryRequest<0;onClicked:{knowledge.checkAfterSave=false;knowledge.memoryError="";knowledge.memoryRequest=App.rpc("settings.update",{memory:{enabled:checked}})} }
         ColumnLayout {
             visible:knowledge.memory.enabled;Layout.fillWidth:true;spacing:8
+            CComboBox {
+                objectName:"memoryEmbeddingProvider";Layout.fillWidth:true;model:[{id:"ollama",label:"Ollama embeddings"},{id:"google",label:"Gemini API embeddings"}];textRole:"label";valueRole:"id"
+                Accessible.name:"Memory embedding provider";currentIndex:knowledge.memory.embeddingProvider==="google"?1:0;enabled:knowledge.memoryRequest<0
+                onActivated:{knowledge.impact=null;knowledge.checkResult="";knowledge.memoryError="";knowledge.memoryRequest=App.rpc("settings.update",{memory:{embeddingProvider:currentValue,model:currentValue==="google"?"gemini-embedding-001":"nomic-embed-text"}})}
+            }
+            CCheckBox { objectName:"cloudEmbeddingEnabled";visible:knowledge.memory.embeddingProvider==="google";text:"Allow Gemini to embed memory and search queries";checked:knowledge.memory.allowCloudEmbedding===true;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudEmbedding:checked}}) }
             CText { text:"Embedding model";color:Theme.muted;font.pixelSize:Theme.secondary }
             RowLayout {
                 Layout.fillWidth:true
-                CField { id:embedding;objectName:"embeddingModel";Layout.fillWidth:true;Layout.minimumWidth:0;text:knowledge.memory.model;placeholderText:"nomic-embed-text";Accessible.name:"Ollama embedding model" }
+                CField { id:embedding;objectName:"embeddingModel";Layout.fillWidth:true;Layout.minimumWidth:0;text:knowledge.memory.model;placeholderText:"nomic-embed-text";Accessible.name:"Memory embedding model" }
                 CButton {
                     objectName:"memoryCheck";text:knowledge.checkRequest>=0||knowledge.impactRequest>=0?"Checking…":"Check & save";enabled:knowledge.memoryRequest<0&&knowledge.checkRequest<0&&knowledge.impactRequest<0&&embedding.text.trim().length>0
                     onClicked:{
@@ -93,7 +101,13 @@ ColumnLayout {
                     CButton { objectName:"embeddingKeep";Layout.fillWidth:true;text:"Keep "+knowledge.memory.model;onClicked:{embedding.text=knowledge.memory.model;knowledge.impact=null;knowledge.impactError=""} }
                 }
             }
-            CText { text:"Default: nomic-embed-text. Install it with ollama pull nomic-embed-text. Codex and Claude use the Ollama server in Connections for memory. Ollama conversations retain their saved server.";color:Theme.muted;font.pixelSize:Theme.secondary }
+            CText { text:knowledge.memory.embeddingProvider==="google"?"Uses the Gemini API key in Connections. Eligible memories and search queries are sent to Google. Local-only sources keep keyword recall. Switching providers rebuilds vectors in a separate space.":"Default: nomic-embed-text. Install it with ollama pull nomic-embed-text. The Ollama server in Connections is used for memory; Ollama conversations retain their saved server.";color:Theme.muted;font.pixelSize:Theme.secondary }
+            CComboBox {
+                objectName:"memoryExtractionProvider";Layout.fillWidth:true;model:knowledge.extractionProviders;textRole:"label";valueRole:"id"
+                Accessible.name:"Memory extraction provider";currentIndex:knowledge.extractionProviders.findIndex(p=>p.id===knowledge.extractionProvider)
+                enabled:knowledge.extractionRequest<0
+                onActivated:{knowledge.memoryError="";knowledge.extractionRequest=App.rpc("settings.update",{memory:{extractionProvider:currentValue,extractionModel:currentValue==="ollama"?"glm-5.3-flash:cloud":currentValue==="google"?"gemini-2.5-flash":"claude-haiku-4-5"}})}
+            }
             CText { text:"Graph extraction model";color:Theme.muted;font.pixelSize:Theme.secondary }
             RowLayout {
                 Layout.fillWidth:true
@@ -104,13 +118,13 @@ ColumnLayout {
                     currentIndex:knowledge.extractionIndex
                     onActivated:{knowledge.memoryError="";knowledge.extractionRequest=App.rpc("settings.update",{memory:{extractionModel:currentValue}})}
                 }
-                CButton { objectName:"extractionModelsRefresh";text:"Refresh";enabled:App.connected&&knowledge.extractionRefreshRequest<0&&knowledge.extractionCapability.modelsStatus!=="loading";onClicked:{knowledge.memoryError="";knowledge.extractionRefreshRequest=App.rpc("provider.models",{provider:"ollama"})} }
+                CButton { objectName:"extractionModelsRefresh";text:"Refresh";enabled:App.connected&&knowledge.extractionRefreshRequest<0&&knowledge.extractionCapability.modelsStatus!=="loading";onClicked:{knowledge.memoryError="";knowledge.extractionRefreshRequest=App.rpc("provider.models",{provider:knowledge.extractionProvider})} }
             }
-            CText { text:"Extraction uses Nemotron 3 Super on Ollama Cloud by default and runs in the background. Source restrictions apply before sending text. Claims retain exact evidence and correction history.";color:Theme.muted;font.pixelSize:Theme.secondary }
-            CText { visible:knowledge.extractionCapability.modelsStatus==="loading";text:"Loading Ollama Cloud models…";color:Theme.muted;font.pixelSize:Theme.secondary }
+            CText { text:"Extraction runs in the background using the selected provider. API keys are managed in Connections. Source restrictions apply before sending text. Claims retain exact evidence and correction history.";color:Theme.muted;font.pixelSize:Theme.secondary }
+            CText { visible:knowledge.extractionCapability.modelsStatus==="loading";text:"Loading extraction models…";color:Theme.muted;font.pixelSize:Theme.secondary }
             CText { visible:!!knowledge.extractionCapability.modelsError;text:knowledge.extractionCapability.modelsError||"";color:Theme.danger;font.pixelSize:Theme.secondary }
-            CText { visible:knowledge.extractionCapability.modelsStatus==="ready"&&!(knowledge.extractionCapability.models||[]).some(m=>m.cloud);text:"No cloud models are registered on your Ollama server. Add an Ollama Cloud model, then Refresh.";color:Theme.amber;font.pixelSize:Theme.secondary }
-            CCheckBox { objectName:"cloudExtractionEnabled";text:"Allow Ollama Cloud memory extraction";checked:knowledge.memory.allowCloudExtraction===undefined?true:knowledge.memory.allowCloudExtraction;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudExtraction:checked}}) }
+            CText { visible:knowledge.extractionCapability.modelsStatus==="ready"&&!(knowledge.extractionCapability.models||[]).length;text:"No models are available. Configure this provider in Connections, then Refresh.";color:Theme.amber;font.pixelSize:Theme.secondary }
+            CCheckBox { objectName:"cloudExtractionEnabled";text:"Allow cloud memory extraction";checked:knowledge.memory.allowCloudExtraction===undefined?true:knowledge.memory.allowCloudExtraction;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudExtraction:checked}}) }
             CCheckBox { objectName:"cloudMemoryEnabled";text:"Share recalled memory with Codex, Claude and cloud models";checked:knowledge.memory.allowCloudMemory||false;onClicked:knowledge.memoryRequest=App.rpc("settings.update",{memory:{allowCloudMemory:checked}}) }
             CText { text:(knowledge.status.saved||0)+" saved facts · "+Math.max(0,(knowledge.status.total||0)-(knowledge.status.saved||0))+" conversation passages"+((knowledge.status.pending||0)?" · "+knowledge.status.pending+" awaiting embedding":"");color:Theme.muted;font.pixelSize:Theme.secondary }
             CText { visible:!!knowledge.checkResult;text:knowledge.checkResult;color:Theme.accentText;font.pixelSize:Theme.secondary }

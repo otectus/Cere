@@ -50,10 +50,10 @@ def download(url: str, target: Path, expected: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temporary:
         temporary_path = Path(temporary.name)
-        request = urllib.request.Request(url, headers={"User-Agent": "Cere-Kokoro-Setup/1"})
-        with urllib.request.urlopen(request) as response:
-            shutil.copyfileobj(response, temporary)
     try:
+        request = urllib.request.Request(url, headers={"User-Agent": "Cere-Kokoro-Setup/1"})
+        with temporary_path.open("wb") as output, urllib.request.urlopen(request) as response:
+            shutil.copyfileobj(response, output)
         if digest(temporary_path) != expected:
             raise RuntimeError(f"checksum mismatch for {target.name}")
         temporary_path.chmod(0o600)

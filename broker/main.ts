@@ -24,7 +24,9 @@ const path = socketPath();
 // starting holds the lock briefly; a second launcher waits for it instead of racing it.
 await (async () => {
   let native;
-  try { native = linuxNative(); } catch { console.error('Cere broker lock unavailable: the native helper is missing'); return; }
+  try { native = linuxNative(); } catch (cause) {
+    throw new Error('Cere cannot acquire its broker lock. Rebuild or reinstall the native helper before starting the broker.', { cause });
+  }
   for (let attempt = 0; attempt < 50; attempt++) {
     if (native.lock(join(paths().runtime, 'broker.lock')) >= 0) return;
     await new Promise(resolve => setTimeout(resolve, 100));

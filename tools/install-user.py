@@ -11,6 +11,8 @@ parser.add_argument('--prefix', type=Path, default=Path.home() / '.local')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parent.parent
 prefix = args.prefix.resolve()
+if any(character in str(prefix) for character in '\r\n'):
+    parser.error('the installation path cannot contain a newline')
 local = repo / '.local-deps/usr'
 env = os.environ.copy()
 cmake = shutil.which('cmake')
@@ -28,17 +30,28 @@ if (local / 'lib/libLayerShellQtInterface.so.6').exists():
     shutil.copy2(local / 'lib/qt6/plugins/wayland-shell-integration/liblayer-shell.so', plugins)
 
 def desktop_quote(value):
-    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%') + '"'
+    # Apply Exec's argument quoting before encoding the token as a key-file string.
+    token = str(value).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%')
+    return '"' + token.replace('\\', '\\\\') + '"'
 
 launcher = prefix / 'bin/cere'
-desktop = (repo / 'packaging/cere.desktop').read_text().replace('Exec=cere --show', 'Exec=' + desktop_quote(launcher) + ' --show')
+command = desktop_quote(launcher)
+# GIO looks up the executable before expanding literal percent fields. The specification
+# also reserves equals in the executable name. Keep these paths in the argument list.
+if '%' in str(launcher) or '=' in str(launcher):
+    command = '/usr/bin/bash ' + command
+desktop = (repo / 'packaging/cere.desktop').read_text().replace('Exec=cere --show', 'Exec=' + command + ' --show')
 (prefix / 'share/applications/cere.desktop').write_text(desktop)
+service_menu = prefix / 'share/kio/servicemenus/cere-dolphin.desktop'
+service_menu.write_text((repo / 'packaging/cere-dolphin.desktop').read_text().replace(
+    'Exec=cere --new-conversation', 'Exec=' + command + ' --new-conversation'))
+service_menu.chmod(0o755)
 
 # The user data unit directory is in systemd's standard per-user search path.
 units = prefix / 'share/systemd/user'
 units.mkdir(parents=True, exist_ok=True)
 unit = (repo / 'packaging/cere-broker.service').read_text()
-broker = str(prefix / 'share/cere/broker/main.ts').replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%')
+broker = str(prefix / 'share/cere/broker/main.ts').replace('$', '$$').replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%')
 unit = unit.replace('/usr/share/cere/broker/main.ts', '"' + broker + '"')
 (units / 'cere-broker.service').write_text(unit)
 (prefix / 'lib/systemd/user/cere-broker.service').write_text(unit)

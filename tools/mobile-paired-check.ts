@@ -13,13 +13,13 @@
  * :app:installDebugAndroidTest`). The app's data is cleared first, so run it only on a test emulator
  * or a device whose Cere Mobile pairing may be discarded.
  */
+import { fileURLToPath } from 'node:url';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import net from 'node:net';
+import { brokerFrameLimit } from '../broker/fanout.ts';
 import { JsonLines } from '../broker/wire.ts';
 import { parsePairing } from '../broker/remote/crypto.ts';
 import { Store } from '../broker/store.ts';
@@ -28,10 +28,11 @@ const args = process.argv.slice(2);
 const option = (name: string, fallback?: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : fallback; };
 const serial = option('--serial', process.env.ANDROID_SERIAL);
 const appPackage = option('--package', 'dev.otectus.cere.mobile.debug')!;
+if (!/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/.test(appPackage)) throw new Error('Invalid Android package ID');
 const runner = `${appPackage}.test/androidx.test.runner.AndroidJUnitRunner`;
 const evidence = resolve(option('--evidence', join('build', 'mobile-paired', new Date().toISOString().replace(/[:.]/g, '-')))!);
 const keepPairing = args.includes('--keep-pairing');
-const root = resolve(new URL('..', import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const log: string[] = [];
 const note = (line: string) => { const stamped = `[${new Date().toISOString()}] ${line}`; log.push(stamped); console.log(stamped); };
 
@@ -48,12 +49,24 @@ const until = async <T>(what: string, check: () => Promise<T | undefined>, timeo
   for (;;) { const value = await check().catch(() => undefined); if (value !== undefined) return value; if (Date.now() > end) throw new Error(`Timed out after ${timeout / 1000} s waiting for ${what}`); await new Promise(r => setTimeout(r, 500)); }
 };
 async function freePort() { const server = net.createServer(); await new Promise<void>(r => server.listen(0, '127.0.0.1', r)); const port = (server.address() as net.AddressInfo).port; await new Promise<void>(r => server.close(() => r())); return port; }
-const sha256 = (path: string) => new Promise<string>((resolvePromise, reject) => { const hash = createHash('sha256'); createReadStream(path).on('data', chunk => hash.update(chunk)).on('error', reject).on('end', () => resolvePromise(hash.digest('hex'))); });
+async function installedApks(packageId: string) {
+  const paths = (await adb(['shell', 'pm', 'path', packageId])).trim().split(/\r?\n/);
+  const apks = [];
+  for (const line of paths) {
+    const path = /^package:(\/[A-Za-z0-9/_.=+~-]+\.apk)$/.exec(line)?.[1];
+    if (!path) throw new Error('Could not resolve the installed APK for ' + packageId);
+    const output = await adb(['shell', 'sha256sum', path]);
+    const sha256 = /^([a-f0-9]{64})\s/.exec(output)?.[1];
+    if (!sha256) throw new Error('Could not verify the installed APK for ' + packageId);
+    apks.push({ path, sha256 });
+  }
+  return apks;
+}
 
 /** A same-user socket client for the isolated broker only; it never reads the owner's runtime directory. */
 function brokerRequest(socketPath: string, method: string, params: any = {}, timeout = 30_000): Promise<any> {
   return new Promise((resolvePromise, reject) => {
-    const socket = net.createConnection(socketPath), lines = new JsonLines();
+    const socket = net.createConnection(socketPath), lines = new JsonLines(brokerFrameLimit);
     const timer = setTimeout(() => { socket.destroy(); reject(new Error(`${method}: the isolated broker did not respond`)); }, timeout);
     const done = (error?: Error, value?: any) => { clearTimeout(timer); socket.destroy(); error ? reject(error) : resolvePromise(value); };
     socket.setEncoding('utf8'); socket.on('error', error => done(error));
@@ -67,15 +80,19 @@ type Instrumented = { name: string; passed: boolean; statuses: number[]; output:
 function instrument(test: string, extras: Record<string, string>, timeout: number): { done: Promise<Instrumented>; process: ChildProcess } {
   const params = ['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test, ...Object.entries(extras).flatMap(([key, value]) => ['-e', key, value]), runner];
   const child = spawn('adb', [...(serial ? ['-s', serial] : []), ...params], { stdio: ['ignore', 'pipe', 'pipe'] });
+  instrumentation.add(child);
   let output = '';
   child.stdout!.on('data', chunk => { output += chunk; }); child.stderr!.on('data', chunk => { output += chunk; });
   const timer = setTimeout(() => child.kill('SIGTERM'), timeout);
-  const done = new Promise<Instrumented>(resolvePromise => child.on('close', () => {
+  const done = new Promise<Instrumented>((resolvePromise, reject) => { child.once('error', reject); child.once('close', () => {
+    instrumentation.delete(child);
     clearTimeout(timer);
     const statuses = [...output.matchAll(/^INSTRUMENTATION_STATUS_CODE: (-?\d+)/gm)].map(match => Number(match[1])).filter(code => code !== 1);
     const passed = statuses.length === 1 && statuses[0] === 0 && /OK \(1 test\)/.test(output) && !/FAILURES!!!|INSTRUMENTATION_FAILED/.test(output);
     resolvePromise({ name: test, passed, statuses, output });
-  }));
+  }); });
+  // Pairing may fail before the caller awaits this result.
+  void done.catch(() => {});
   return { done, process: child };
 }
 
@@ -86,7 +103,8 @@ const work = await mkdtemp(join(tmpdir(), 'cere-paired-'));
 // The Unix socket path must stay under 108 bytes, so the runtime directory is short.
 const state = join(work, 'state'), runtime = join(work, 'run'), project = join(work, 'project'), home = join(work, 'home');
 const socketPath = join(runtime, 'broker.sock');
-let exitCode = 1;
+let exitCode = 1, reverseAdded = false, appCleared = false;
+const instrumentation = new Set<ChildProcess>();
 try {
   await mkdir(evidence, { recursive: true }); await mkdir(project); await mkdir(home);
   const device = (await adb(['shell', 'getprop', 'ro.build.version.sdk'])).trim();
@@ -94,8 +112,10 @@ try {
   const packageInfo = await adb(['shell', 'dumpsys', 'package', appPackage]);
   summary.versionName = packageInfo.match(/versionName=(\S+)/)?.[1]; summary.versionCode = packageInfo.match(/versionCode=(\d+)/)?.[1];
   if (!summary.versionName) throw new Error(`${appPackage} is not installed; install the debug and instrumentation APKs first`);
-  for (const apk of ['mobile/android/app/build/outputs/apk/debug/app-debug.apk', 'mobile/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'])
-    summary[apk.endsWith('androidTest.apk') ? 'testApkSha256' : 'apkSha256'] = await sha256(join(root, apk)).catch(() => 'not built here');
+  const appApks = await installedApks(appPackage), testApks = await installedApks(appPackage + '.test');
+  summary.installedApks = { application: appApks, instrumentation: testApks };
+  summary.apkSha256 = appApks.find(apk => apk.path.endsWith('/base.apk'))?.sha256 ?? appApks[0].sha256;
+  summary.testApkSha256 = testApks.find(apk => apk.path.endsWith('/base.apk'))?.sha256 ?? testApks[0].sha256;
   note(`Device API ${summary.androidApi} (Android ${summary.androidRelease}), ${appPackage} ${summary.versionName}/${summary.versionCode}`);
 
   // Fixture providers: the Ollama fixture streams fixed replies; Codex uses its fixture CLI; Claude is absent.
@@ -113,8 +133,10 @@ try {
 
   port = await freePort();
   await adb(['logcat', '-c'], { allowFailure: true });
-  await adb(['reverse', `tcp:${port}`, `tcp:${port}`]);
+  await adb(['reverse', '--no-rebind', `tcp:${port}`, `tcp:${port}`]);
+  reverseAdded = true;
   await adb(['shell', 'pm', 'clear', appPackage]);
+  appCleared = true;
   // Instrumentation runs as the app's user; the alert and local-network prompts must not block it.
   for (const permission of ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_LOCAL_NETWORK'])
     await adb(['shell', 'pm', 'grant', appPackage, permission], { allowFailure: true });
@@ -135,9 +157,14 @@ try {
     caps: ['chat.read', 'chat.write', 'approvals.answer', 'providers.execute', 'approvals.provider', 'settings.write', 'desktop.control'], categories: ['timers'], scriptIds: [] });
   await adb(['shell', 'run-as', appPackage, 'touch', 'files/usb-pairing-desktop-confirmed']);
   note(`SAS matched ("${review.sas}"); desktop confirmed device ${phone.deviceId}`);
+  // The setup instrumentation cleans its activity after it reports success, which can race the
+  // status sampling below. Observe the authenticated socket while this pairing is live instead.
+  const connectedAfterPairing = await until('the paired device connection', async () => {
+    const connected = (await brokerRequest(socketPath, 'remote.status')).connected as { id: string }[];
+    return connected.some(entry => entry.id === phone.deviceId) ? true : undefined;
+  }, 30_000);
   results.push(await pairing.done);
-  const connected = (await brokerRequest(socketPath, 'remote.status')).connected as { id: string }[];
-  summary.connectedAfterPairing = connected.some(entry => entry.id === phone.deviceId);
+  summary.connectedAfterPairing = connectedAfterPairing;
 
   const session = await brokerRequest(socketPath, 'session.create', { provider: 'ollama', cwd: project, title: `Cere mobile validation ${Date.now()}`, model: 'fixture-chat:latest', tools: false });
   note(`Created synthetic Ollama conversation ${session.id}`);
@@ -165,17 +192,28 @@ try {
 } finally {
   summary.finished = new Date().toISOString(); summary.passed = exitCode === 0;
   summary.tests = results.map(({ name, passed, statuses }) => ({ name, passed, statuses }));
-  const logcat = await adb(['logcat', '-d', '-v', 'threadtime'], { allowFailure: true, timeout: 30_000 }).catch(() => '');
-  await writeFile(join(evidence, 'logcat.txt'), logcat.split('\n').filter(line => /Cere|cere|System\.out|AndroidRuntime|TestRunner|StrictMode/.test(line)).join('\n'));
-  for (const result of results) await writeFile(join(evidence, result.name.replace(/[^A-Za-z0-9_.#-]/g, '_') + '.txt'), result.output);
-  await writeFile(join(evidence, 'broker.log'), brokerLog);
-  await writeFile(join(evidence, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
-  await writeFile(join(evidence, 'harness.log'), log.join('\n') + '\n');
-  if (port) await adb(['reverse', '--remove', `tcp:${port}`], { allowFailure: true });
-  if (!keepPairing) await adb(['shell', 'pm', 'clear', appPackage], { allowFailure: true });
-  if (broker?.pid) { try { process.kill(-broker.pid, 'SIGTERM'); } catch {} await new Promise(r => setTimeout(r, 1500)); try { process.kill(-broker.pid, 'SIGKILL'); } catch {} }
-  ollama?.kill('SIGTERM');
-  await rm(work, { recursive: true, force: true }).catch(() => {});
+  try {
+    const logcat = await adb(['logcat', '-d', '-v', 'threadtime'], { allowFailure: true, timeout: 30_000 }).catch(() => '');
+    await writeFile(join(evidence, 'logcat.txt'), logcat.split('\n').filter(line => /Cere|cere|System\.out|AndroidRuntime|TestRunner|StrictMode/.test(line)).join('\n'));
+    for (const result of results) await writeFile(join(evidence, result.name.replace(/[^A-Za-z0-9_.#-]/g, '_') + '.txt'), result.output);
+    await writeFile(join(evidence, 'broker.log'), brokerLog);
+    await writeFile(join(evidence, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
+    await writeFile(join(evidence, 'harness.log'), log.join('\n') + '\n');
+  } catch (error) {
+    console.error('Could not write paired test evidence:', error);
+    exitCode = 1;
+  } finally {
+    for (const child of instrumentation) child.kill('SIGTERM');
+    if (reverseAdded) await adb(['reverse', '--remove', 'tcp:' + port], { allowFailure: true });
+    if (appCleared && !keepPairing) await adb(['shell', 'pm', 'clear', appPackage], { allowFailure: true });
+    if (broker?.pid) {
+      try { process.kill(-broker.pid, 'SIGTERM'); } catch {}
+      await new Promise(r => setTimeout(r, 1500));
+      try { process.kill(-broker.pid, 'SIGKILL'); } catch {}
+    }
+    ollama?.kill('SIGTERM');
+    await rm(work, { recursive: true, force: true });
+  }
   console.log(`Evidence: ${evidence}`);
   console.log(exitCode === 0 ? 'PAIRED CHECK PASSED' : 'PAIRED CHECK FAILED');
   process.exit(exitCode);

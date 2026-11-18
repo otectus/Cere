@@ -1,3 +1,4 @@
+import './fixtures/memory-environment.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile, readFile, readdir, symlink, stat, chmod, chown, copyFile, realpath } from 'node:fs/promises';

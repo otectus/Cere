@@ -51,6 +51,13 @@ ColumnLayout {
             }
         }
         CText { text:"Provider orchestration and saved scripts follow the selected profile and grants. A power session can grant temporary access. Native CLI shell access remains outside Cere’s desktop grants.";color:Theme.muted;font.pixelSize:Theme.secondary }
+        CCheckBox {
+            objectName:"delegationUpdates";text:"Report delegated results automatically"
+            Accessible.description:"A finished delegated Codex or Claude task gives its conversation an automatic turn to report the result."
+            checked:assistance.settings.delegationUpdates!==false
+            onClicked:assistance.update({delegationUpdates:checked})
+        }
+        CText { text:"When a delegated Codex or Claude task finishes, this conversation takes an automatic turn to summarize it and to start any follow-up you asked for. Each update is one more model turn, which API providers bill. When off, results stay in the delegated conversation until you ask.";color:Theme.muted;font.pixelSize:Theme.secondary }
         CButton { objectName:"pauseActions";text:assistance.settings.paused?"Resume AI actions":"Pause AI actions";Layout.fillWidth:true;onClicked:assistance.update({paused:!assistance.settings.paused}) }
     }
     CSection {

@@ -3,13 +3,14 @@
 // marked dirty when tracked files differ from it. The installed broker reports this in the mobile
 // welcome and in diagnostics, so evidence and release claims name the exact build that was tested.
 //   node tools/build-info.mjs OUTPUT.json
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 const output = process.argv[2];
 if (!output) { console.error('Usage: build-info.mjs OUTPUT.json'); process.exit(2); }
-const root = resolve(new URL('..', import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const git = (...args) => { try { return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
 const commit = git('rev-parse', 'HEAD');
 const info = {

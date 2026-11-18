@@ -32,6 +32,12 @@ CDialog {
     }
     property var pendingDefaults:null
     closePolicy:requestId>=0?Popup.NoAutoClose:Popup.CloseOnEscape|Popup.CloseOnPressOutside
+    function openFolder(cwd) {
+        if(requestId>=0){App.notify("Finish opening this conversation before choosing another folder.");return}
+        imported={cwd:cwd}
+        if(visible){folder.text=cwd;trust.checked=false}
+        else open()
+    }
     function editProject(value) {
         project=value||({})
         imported=Object.assign({},project.defaults||{},{cwd:project.cwd||"",title:project.name||""})

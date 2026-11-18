@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QImage>
+#include <QPair>
 #include <QPointF>
+#include <QRect>
 #include <QRectF>
 #include <QSizeF>
 #include <QVector>
@@ -25,6 +27,7 @@ struct Pose
     qreal hipDrop = 0.0;
     qreal hairRotation = 0.0;
     qreal blink = 0.0;
+    qreal wink = 0.0;
 
     bool operator==(const Pose &) const = default;
 };
@@ -126,6 +129,147 @@ inline QImage blended(const QImage &open, const QImage &closed, qreal amount)
     return result;
 }
 
+struct WinkSelection
+{
+    QVector<quint8> pixels;
+    // The authored open/closed difference contains either one visible eye or
+    // two horizontally separated eye groups. Zero means there is no blink art.
+    int eyeGroups = 0;
+};
+
+// Derive the eye to wink from the current authored open/closed pair. Dilation
+// joins anti-aliased lid and iris fragments belonging to one eye; a substantial
+// horizontal gap then separates two visible eyes. This stays avatar-agnostic
+// and works for every selected gesture frame and mip level.
+inline WinkSelection winkSelection(const QImage &open, const QImage &closed)
+{
+    WinkSelection result;
+    if (open.isNull() || closed.isNull() || open.size() != closed.size())
+        return result;
+    const int width = open.width(), height = open.height(), count = width * height;
+    QVector<quint8> changed(count, 0), expanded(count, 0);
+    int changedCount = 0, changedLeft = width, changedRight = -1;
+    for (int y = 0; y < height; ++y) {
+        const QRgb *from = reinterpret_cast<const QRgb *>(open.constScanLine(y));
+        const QRgb *to = reinterpret_cast<const QRgb *>(closed.constScanLine(y));
+        for (int x = 0; x < width; ++x) {
+            if (from[x] != to[x]) {
+                changed[y * width + x] = 1;
+                ++changedCount;
+                changedLeft = std::min(changedLeft, x);
+                changedRight = std::max(changedRight, x);
+            }
+        }
+    }
+    if (!changedCount)
+        return result;
+
+    const int radius = std::clamp(std::min(width, height) / 160, 1, 4);
+    for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+        if (!changed[y * width + x])
+            continue;
+        for (int yy = std::max(0, y - radius); yy <= std::min(height - 1, y + radius); ++yy)
+            for (int xx = std::max(0, x - radius); xx <= std::min(width - 1, x + radius); ++xx)
+                expanded[yy * width + xx] = 1;
+    }
+
+    struct Component { int area = 0; qint64 xTotal = 0; };
+    QVector<int> labels(count, -1), queue;
+    QVector<Component> components;
+    for (int start = 0; start < count; ++start) {
+        if (!expanded[start] || labels[start] >= 0)
+            continue;
+        const int label = components.size();
+        components.append(Component{}); queue.clear(); queue.append(start); labels[start] = label;
+        for (int cursor = 0; cursor < queue.size(); ++cursor) {
+            const int at = queue[cursor], x = at % width, y = at / width;
+            ++components[label].area; components[label].xTotal += x;
+            for (int yy = std::max(0, y - 1); yy <= std::min(height - 1, y + 1); ++yy)
+                for (int xx = std::max(0, x - 1); xx <= std::min(width - 1, x + 1); ++xx) {
+                    const int next = yy * width + xx;
+                    if (expanded[next] && labels[next] < 0) {
+                        labels[next] = label; queue.append(next);
+                    }
+                }
+        }
+    }
+
+    int largest = 0;
+    for (const auto &component : components)
+        largest = std::max(largest, component.area);
+    QVector<QPair<qreal, int>> significant;
+    for (int label = 0; label < components.size(); ++label) {
+        const auto &component = components[label];
+        if (component.area * 8 >= largest)
+            significant.append(QPair<qreal, int>(
+                    qreal(component.xTotal) / component.area, label));
+    }
+    std::sort(significant.begin(), significant.end(), [](const auto &left, const auto &right) {
+        return left.first < right.first;
+    });
+
+    qreal split = -1.0, widestGap = 0.0;
+    for (int index = 1; index < significant.size(); ++index) {
+        const qreal gap = significant[index].first - significant[index - 1].first;
+        if (gap > widestGap) {
+            widestGap = gap;
+            split = (significant[index].first + significant[index - 1].first) * 0.5;
+        }
+    }
+    bool twoEyes = split >= 0.0
+            && widestGap > std::max(qreal(radius * 2), width * 0.025);
+    // Close-set authored eyes can have overlapping feathered eyelid regions,
+    // producing one connected, horizontally wide difference component. A
+    // single visible-eye edit occupies less than one eighth of its frame in
+    // the packed reference art; two overlapping edits still exceed that span.
+    if (!twoEyes && (changedRight - changedLeft + 1) * 8 > width) {
+        twoEyes = true;
+        split = (changedLeft + changedRight + 1) * 0.5;
+    }
+    result.eyeGroups = twoEyes ? 2 : 1;
+    result.pixels.resize(count);
+    if (!twoEyes) {
+        result.pixels = changed;
+        return result;
+    }
+    for (int index = 0; index < count; ++index)
+        result.pixels[index] = changed[index] && index % width < split;
+    return result;
+}
+
+inline QImage expressedEyes(const QImage &open, const QImage &closed,
+                            qreal blinkAmount, qreal winkAmount,
+                            const WinkSelection *preparedWink = nullptr)
+{
+    const qreal blink = finiteClamp(blinkAmount, 0.0, 1.0);
+    const qreal wink = finiteClamp(winkAmount, 0.0, 1.0);
+    if (wink <= blink || closed.isNull())
+        return blended(open, closed, blink);
+    WinkSelection derived;
+    if (!preparedWink) {
+        derived = winkSelection(open, closed);
+        preparedWink = &derived;
+    }
+    if (preparedWink->eyeGroups == 0)
+        return blended(open, closed, blink);
+
+    QImage result(open.size(), QImage::Format_ARGB32_Premultiplied);
+    const int blinkWeight = qRound(blink * 256.0);
+    const int winkWeight = qRound(wink * 256.0);
+    for (int y = 0; y < open.height(); ++y) {
+        const QRgb *from = reinterpret_cast<const QRgb *>(open.constScanLine(y));
+        const QRgb *to = reinterpret_cast<const QRgb *>(closed.constScanLine(y));
+        QRgb *output = reinterpret_cast<QRgb *>(result.scanLine(y));
+        for (int x = 0; x < open.width(); ++x) {
+            const int weight = preparedWink->pixels[y * open.width() + x]
+                    ? winkWeight : blinkWeight;
+            output[x] = mixColorLanes(from[x], to[x], weight)
+                    | (mixColorLanes(from[x] >> 8, to[x] >> 8, weight) << 8);
+        }
+    }
+    return result;
+}
+
 inline QRgb bilinear(const QImage &image, qreal x, qreal y)
 {
     const int x0 = int(std::floor(x));
@@ -165,9 +309,11 @@ inline QRgb bilinear(const QImage &image, qreal x, qreal y)
 
 inline QImage render(const QImage &open, const QImage &closed,
                      const QRectF &rect, const Pose &pose,
-                     const QSizeF &contentSize = {})
+                     const QSizeF &contentSize = {},
+                     const WinkSelection *preparedWink = nullptr)
 {
-    const QImage source = blended(open, closed, pose.blink);
+    const QImage source = expressedEyes(open, closed, pose.blink, pose.wink,
+                                        preparedWink);
     if (!hasDeformation(pose))
         return source;
 

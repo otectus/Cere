@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Core } from '../broker/core.ts';
@@ -18,6 +18,20 @@ async function setup(t: any) {
   const session=await core.create({provider:'codex',cwd:directory,trusted:true});
   return{core,session,directory,getHooks:()=>hooks!,sends:()=>sends};
 }
+test('folder activation opens only the creation UI and rejects nonlocal or invalid folders',async t=>{
+  const {core,directory,sends}=await setup(t);
+  const cwd=join(directory,'A project "quoted" $cash; café');await mkdir(cwd);
+  const file=join(directory,'file.txt');await writeFile(file,'test');
+  const events:any[]=[];core.on('ui',event=>events.push(event));
+  const before=core.store.sessions();
+  assert.equal(await core.rpc('ui.newConversation',{cwd}),true);
+  assert.deepEqual(events,[{command:'newConversation',cwd}]);
+  assert.deepEqual(core.store.sessions(),before);assert.equal(sends(),0);
+  for(const path of ['',null,42,'relative','smb://server/folder','file:///tmp',file,join(directory,'missing'),cwd+'\0']){
+    await assert.rejects(core.rpc('ui.newConversation',{cwd:path}));
+  }
+  assert.equal(events.length,1);
+});
 test('personality defaults migrate, edits persist, and invalid patches are atomic',async t=>{
   const {core,directory,session,getHooks}=await setup(t);
   assert.equal(core.settings.personality,defaultPersonality);
@@ -205,6 +219,10 @@ test('permission bypasses default off, validate strictly, and survive broker res
   const inspection=await core.rpc('permissions.inspect',{sessionId:session.id});
   assert.deepEqual(inspection.persistent,{cli:true,computer:true});
   assert.equal(inspection.effective[0].cli,true);assert.equal(inspection.effective[0].computer,true);
+  assert.equal(inspection.effective[0].canStartPower,true);
+  const temporary=await core.create({provider:'codex',cwd:directory,trusted:true,temporary:true});
+  const temporaryInspection=await core.rpc('permissions.inspect',{sessionId:temporary.id});
+  assert.deepEqual([temporaryInspection.effective[0].canStartPower,temporaryInspection.effective[0].powerUnavailableReason],[false,'Power mode is unavailable for temporary sessions']);
   core.remoteAuthority=()=>true;
   const remote=await core.create({provider:'codex',cwd:directory,trusted:true},undefined,{remote:{deviceId:'device',projectId:'project',scopeVersion:'1',expiresAt:Date.now()+60_000,caps:['providers.execute'],categories:[],scriptIds:[]},effectivePolicy:'unknown'});
   assert.equal(core.settingsFor(remote.id).bypassCliPermissions,false);
@@ -463,4 +481,68 @@ test('a turn shows recalling while it waits for memory and goes ahead without it
   core.memory.service.call=call;
   assert.equal(sends(),1);
   await until(()=>!['starting','working','stopping'].includes(core.store.session(session.id).status));
+});
+
+const barrier = () => { let release!: () => void; const promise = new Promise<void>(r => { release=r; }); return {promise,release}; };
+test('AUD-001 delayed validation merges into current policy and rechecks revision at commit',async t=>{
+  const {core}=await setup(t), entered=barrier(), resume=barrier();
+  t.mock.method(core.indextts,'validateDirectory',async()=>{entered.release();await resume.promise;});
+  const first=core.updateSettings({indextts:{...core.settings.indextts},quiet:true});
+  await entered.promise;await core.updateSettings({paused:true});resume.release();await first;
+  assert.equal(core.settings.paused,true);assert.equal(core.settings.quiet,true);
+  const revision=core.store.get('settingsRevision','0');
+  const outcomes=await Promise.allSettled([core.updateSettings({expectedRevision:revision,quiet:false}),core.updateSettings({expectedRevision:revision,quiet:true})]);
+  assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(core.store.get('settingsRevision','0'),String(BigInt(revision)+1n));
+});
+test('AUD-002 Stop fences suspended preflight and retains the unsent draft',async t=>{
+  const {core,session,sends}=await setup(t),entered=barrier(),resume=barrier();
+  core.draft(session.id,'do not send');
+  t.mock.method(core,'preflight',async()=>{entered.release();await resume.promise;});
+  const send=core.send({id:session.id,text:'do not send'});const rejected=assert.rejects(send,/Stopped/);
+  await entered.promise;await core.stop(session.id);resume.release();await rejected;
+  assert.equal(sends(),0);assert.equal(core.store.session(session.id).draft,'do not send');
+  await core.send({id:session.id,text:'new explicit send'});assert.equal(sends(),1);
+});
+test('AUD-003 deletion reserves admission while the owned adapter closes',async t=>{
+  const {core,session,sends}=await setup(t),entered=barrier(),resume=barrier();
+  core.adapters.set(session.id,{async send(){assert.fail('must not dispatch')},async interrupt(){},async close(){entered.release();await resume.promise;}});
+  const deletion=core.deleteSession({id:session.id,confirmed:true});await entered.promise;
+  await assert.rejects(core.send({id:session.id,text:'race'}),/delet/);
+  await assert.rejects(core.configureSession({id:session.id,model:'x'}),/busy/);
+  resume.release();await deletion;assert.equal(sends(),0);assert.equal(core.adapters.has(session.id),false);
+  assert.throws(()=>core.store.session(session.id));
+});
+test('AUD-009 maximum Unicode drafts stay persisted while snapshot summaries remain bounded',async t=>{
+  const {core,session}=await setup(t),text='界'.repeat(100000);
+  for(let i=0;i<210;i++)core.store.saveSession({...session,id:'draft-'+i,draft:text,updated:i});
+  const snapshot=core.snapshot();assert.ok(Buffer.byteLength(JSON.stringify(snapshot))<16*1024*1024);
+  for(let i=0;i<210;i++)assert.equal((await core.rpc('session.hydrate',{id:'draft-'+i})).session.draft,text);
+});
+test('AUD-009 whole-envelope byte budgeting hydrates immutable fields without truncation',async t=>{
+  const {core}=await setup(t),text='界'.repeat(5*1024*1024);
+  core.capabilities={large:{description:text}};
+  const snapshot=core.snapshot();assert.ok(Buffer.byteLength(JSON.stringify({id:1,result:snapshot}))<16*1024*1024);
+  assert.deepEqual(snapshot.hydration.fields,['capabilities']);
+  let offset=0,restored='';
+  for(;;){const page=await core.rpc('state.field',{revision:snapshot.revision,field:'capabilities',offset});assert.ok(Buffer.byteLength(JSON.stringify(page))<256*1024);restored+=page.text;if(page.next===null)break;offset=page.next;}
+  assert.equal(JSON.parse(restored).large.description,text);
+  core.changed();await assert.rejects(core.rpc('state.field',{revision:snapshot.revision,field:'capabilities',offset:0}),/Snapshot changed/);
+  core.capabilities={};
+});
+test('AUD-011 a legacy incomplete operation review cannot be allowed directly',async t=>{
+  const {core}=await setup(t);
+  for(const kind of ['file','extension','custom-tool'] as const){
+    const pending=core.approval('',{kind,title:'Incomplete',detail:'partial',choices:['allow','deny']});
+    const id=[...core.approvals.keys()][0];assert.throws(()=>core.answer({id,choice:'allow'}),/reviewed completely/);
+    core.answer({id,choice:'deny'});assert.equal((await pending).choice,'deny');
+  }
+});
+test('AUD-003 incomplete deletion remains fenced and retry finishes owned cleanup',async t=>{
+  const {core,session}=await setup(t);let attempts=0;
+  core.adapters.set(session.id,{async send(){assert.fail('No dispatch during incomplete deletion')},async interrupt(){},async close(){if(++attempts===1)throw new Error('termination unconfirmed');}});
+  await assert.rejects(core.deleteSession({id:session.id,confirmed:true}),/unconfirmed/);
+  assert.match(core.store.session(session.id).error!,/Retry deletion/);
+  await assert.rejects(core.send({id:session.id,text:'unsafe retry'}),/deleted/);
+  await core.deleteSession({id:session.id,confirmed:true});assert.equal(attempts,2);assert.throws(()=>core.store.session(session.id));
 });

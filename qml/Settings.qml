@@ -18,7 +18,7 @@ ColumnLayout {
     readonly property var hiddenCategories:voiceAvailable?[]:["voice"]
     readonly property var current:Catalog.category(category)||Catalog.category(Catalog.defaultCategory)
     readonly property string query:settingsSearch.text.trim()
-    readonly property var results:Catalog.search(query,hiddenCategories)
+    readonly property var results:Catalog.search(query,hiddenCategories,AvatarCatalog.entries)
     readonly property var pages:({companion:companionPage,personality:personalityPage,voice:voicePage,motion:motionPage,connections:connectionsPage,knowledge:knowledgePage,assistance:assistancePage,scripts:scriptsPage,mobile:mobilePage,telemetry:telemetryPage,application:applicationPage})
     onCategoryChanged:{Catalog.remember(category);settingsScroll.contentY=0}
     // A remembered category can be unavailable when this page is made (Voice before speech is ready).

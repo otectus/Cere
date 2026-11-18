@@ -38,7 +38,16 @@ Item {
             Text { id:caption;anchors.fill:parent;visible:!tool.iconOnly;text:tool.text;font:tool.font;color:tool.enabled?Theme.text:Theme.muted;verticalAlignment:Text.AlignVCenter;horizontalAlignment:Text.AlignHCenter }
         }
     }
-    function focusComposer() { if(composer.enabled)composer.forceActiveFocus() }
+    property string pendingFocusSession:""
+    property var priorFocusItem:null
+    function focusComposer() {
+        pendingFocusSession=""
+        if(!visible||!App.selectedId||linked)return
+        if(composer.enabled){composer.forceActiveFocus();return}
+        priorFocusItem=Window.window?.activeFocusItem||null
+        pendingFocusSession=App.selectedId
+    }
+    onVisibleChanged:if(!visible)pendingFocusSession=""
     readonly property var agents: App.session.agents || []
     readonly property var activeAgents: agents.filter(agent => ["starting", "running", "waiting"].indexOf(agent.status) >= 0)
     property var pendingApprovals: []
@@ -118,6 +127,7 @@ Item {
     property double pendingTime:0
     property string draftSession:""
     property string draftRevision:"0"
+    property bool draftHydrated:false
     property string draftBaseline:""
     property bool loadingDraft:false
     property bool draftConflict:false
@@ -190,7 +200,7 @@ Item {
         default: return App.session.status === "waiting" ? "Waiting for a decision…" : "Working on it…"
         }
     }
-    function loadDraft(){loadingDraft=true;draftRevision=App.session.draftRevision||"0";draftBaseline=App.session.draft||"";if(composer.text!==draftBaseline)composer.text=draftBaseline;attachments=App.session.draftAttachments||[];attachmentBaseline=JSON.stringify(attachmentIds());draftConflict=false;unconfirmedSend=null;loadingDraft=false;draftTimer.stop();recoverable={};inspectRecovery();restoreOfflineDraft()}
+    function loadDraft(){draftHydrated=App.session.draftIncluded!==false;if(!draftHydrated)return;loadingDraft=true;draftRevision=App.session.draftRevision||"0";draftBaseline=App.session.draft||"";if(composer.text!==draftBaseline)composer.text=draftBaseline;attachments=App.session.draftAttachments||[];attachmentBaseline=JSON.stringify(attachmentIds());draftConflict=false;unconfirmedSend=null;loadingDraft=false;draftTimer.stop();recoverable={};inspectRecovery();restoreOfflineDraft()}
     // Text typed in this conversation while the broker was away comes back to its composer.
     function restoreOfflineDraft(){
         const offline=App.takeOfflineDraft(draftSession)
@@ -203,6 +213,7 @@ Item {
     // flush: the surface is hiding or closing, so a save waiting on another hands over to the controller.
     // previous: the selection already moved on, so the reading position comes from the tracked anchor.
     function saveDraft(flush,previous){
+        if(!draftHydrated)return
         if(!draftSession||draftConflict||importingAttachments||holdsOpenSend())return
         if(!App.connected){
             // Held by this window's process until the broker returns or this conversation opens again.
@@ -210,14 +221,16 @@ Item {
             return
         }
         const view=viewState(previous),key=viewKey(view),textDirty=draftDirty()
-        if(!textDirty&&key===viewBaseline)return
         const ids=attachmentIds(),params={id:draftSession,text:composer.text,attachmentIds:ids,scroll:previous?0:scroll.contentY,view:view}
         const inflight=Object.keys(draftRequests).find(id=>draftRequests[id].session===draftSession)
         if(inflight!==undefined){
-            if(flush){App.deferDraft(Number(inflight),params);draftRequests[inflight].deferred=true;saveQueued=false}
+            const prior=draftRequests[inflight]
+            if(!prior.deferred&&prior.text===params.text&&prior.attachments===JSON.stringify(ids)&&prior.view===key)return
+            if(flush){App.deferDraft(Number(inflight),Object.assign({},params,{attachments:attachments,expectedRevision:draftRevision}));prior.deferred=true;saveQueued=false}
             else saveQueued=true
             return
         }
+        if(!textDirty&&key===viewBaseline)return
         params.expectedRevision=draftRevision
         const id=App.rpc("session.draft",params);if(id<0)return
         recordOwn(composer.text,JSON.stringify(ids))
@@ -289,8 +302,9 @@ Item {
         scroll.contentY=Math.max(scroll.originY,Math.min(scroll.originY+scroll.contentHeight-scroll.height,target))
     }
     onSessionIdChanged: {
+        if(pendingFocusSession!==sessionId)pendingFocusSession=""
         submissionRecovery.close()
-        if(draftSession){draftTimer.stop();saveDraft(false,true)}
+        if(draftSession){draftTimer.stop();saveDraft(true,true)}
         draftSession=sessionId;loadDraft();attachmentError="";sendAfterSave=false;saveQueued=false
         activityPanel.expanded=false;trackedAnchor={anchorId:"",anchorOffset:0,atEnd:true}
         restoreView(App.session.view)
@@ -449,7 +463,11 @@ Item {
             id:composerViewport;anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top;anchors.bottom:composerActions.top;anchors.margins:12;clip:true
             contentWidth:availableWidth;ScrollBar.horizontal.policy:ScrollBar.AlwaysOff;ScrollBar.vertical:CScrollBar{}
             TextArea {
-                id: composer; objectName:"composer"; enabled: !!App.session.id && !chat.linked; placeholderText: chat.linked ? "Continue in the linked terminal" : !App.session.id ? "Start a session to send a message" : chat.width>=480 ? "Tell me what you have in mind…" : chat.sendHint
+                id: composer; objectName:"composer"; enabled: !!App.session.id && !chat.linked && chat.draftHydrated; placeholderText: chat.linked ? "Continue in the linked terminal" : !App.session.id ? "Start a session to send a message" : chat.width>=480 ? "Tell me what you have in mind…" : chat.sendHint
+                onEnabledChanged:if(enabled&&chat.pendingFocusSession&&chat.pendingFocusSession===App.selectedId){
+                    chat.pendingFocusSession=""
+                    if(chat.visible&&(!Window.window?.activeFocusItem||Window.window.activeFocusItem===chat.priorFocusItem))forceActiveFocus()
+                }
                 Accessible.description: chat.sendHint
                 color: Theme.text; placeholderTextColor: Theme.muted; selectionColor: Theme.selected; font.pixelSize: Theme.message; font.family: Theme.font
                 // Moving to another control keeps the selection, so it survives switching surfaces too.
@@ -566,7 +584,7 @@ Item {
         if(sendKey==="enter")return true
         return sendKey==="ctrlEnter"&&!!(modifiers&Qt.ControlModifier)
     }
-    function send(){if(!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||sendUnconfirmed||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingTurn=App.session.turnId||"";pendingTime=Date.now();pendingAttachments=JSON.stringify(attachmentIds());recordOwn(pendingText,pendingAttachments);const params={id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision};if(hasTurnPosture)params.posture=turnPosture.id;if(params.webSearch&&hasWebSources)params.webConstraints=webConstraints();sendRequest=App.rpc("session.send",params);follow=true}
+    function send(){if(!draftHydrated||!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||sendUnconfirmed||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingTurn=App.session.turnId||"";pendingTime=Date.now();pendingAttachments=JSON.stringify(attachmentIds());recordOwn(pendingText,pendingAttachments);const params={id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision};if(hasTurnPosture)params.posture=turnPosture.id;if(params.webSearch&&hasWebSources)params.webConstraints=webConstraints();sendRequest=App.rpc("session.send",params);follow=true}
     Timer { id:draftTimer;interval:600;onTriggered:chat.saveDraft(false) }
     Timer { id:anchorTracker;interval:150;onTriggered:chat.trackedAnchor=chat.computeAnchor()||chat.trackedAnchor }
     Timer {
@@ -585,6 +603,11 @@ Item {
         target:App
         function onStateChanged(){
             if(!chat.draftSession||chat.draftSession!==App.selectedId)return
+            if(App.session.draftIncluded===false)return
+            // Hydration carries the saved view too.  Continue into the incoming-view
+            // handling below so a freshly opened surface restores its anchor.
+            if(!chat.draftHydrated)chat.loadDraft()
+            if(!chat.draftHydrated)return
             if(Object.keys(chat.attachmentRequests).some(id=>chat.attachmentRequests[id]===chat.draftSession))return
             if(Object.keys(chat.draftRequests).some(id=>chat.draftRequests[id].session===chat.draftSession))return
             if(chat.unconfirmedSend&&chat.sendRequest<0)chat.settleUnconfirmedSend()
@@ -607,7 +630,9 @@ Item {
             const incoming=chat.viewKey(App.session.view)
             if(incoming!==chat.remoteView){
                 chat.remoteView=incoming
-                if(App.session.view&&chat.viewPristine&&Date.now()-chat.viewRestoredAt<4000)chat.restoreView(App.session.view)
+                // A large transcript can finish laying out after the outgoing save
+                // arrives. Local interaction, rather than elapsed time, owns the view.
+                if(App.session.view&&chat.viewPristine)chat.restoreView(App.session.view)
             }
         }
         function onResult(id,value){

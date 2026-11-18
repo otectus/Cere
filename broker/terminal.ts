@@ -16,7 +16,16 @@ try{
 let id='';
 try{const session=await request('session.link',{provider,cwd:process.cwd(),pid:process.pid,address});id=session.id;}catch(e:any){console.error('Cere link unavailable: '+e.message);}
 let bypass = false;
-try { bypass = (await request('state')).settings.bypassCliPermissions === true; } catch {}
+// Do not require a potentially projected full desktop snapshot merely to read
+// the one policy bit that controls this terminal launch.
+try {
+  bypass = (await request('settings.inspect')).bypassCliPermissions === true;
+} catch (error) {
+  // A terminal can be upgraded while the previous broker is still running.
+  if (error instanceof Error && error.message === 'Unknown Cere method: settings.inspect') {
+    try { bypass = (await request('state')).settings?.bypassCliPermissions === true; } catch {}
+  }
+}
 const child=spawn(provider,[...(bypass ? cliBypassArgs(provider as Provider) : []), ...args],{stdio:'inherit'});
 child.on('error',e=>console.error(e.message));
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>child.kill(signal));

@@ -14,9 +14,9 @@ var groups = [
 var categories = [
     {id: "companion", group: "cere", label: "Companion", icon: "desktop",
         blurb: "How your companion looks, where they sit, and whether they wander. Profiles reduce distractions when you need to focus.",
-        keywords: "appearance avatar character theme color colour cere daemona jade nova soap brandy archy ghost violet leafy cachy usagi cynthia genga kippy pomni rem sarah sylva witty tactical tan pet window desktop size placement position dock home monitor login startup profile always on top",
+        keywords: "appearance avatar character theme color colour pet window desktop size placement position dock home monitor login startup profile always on top",
         settings: [
-            {label: "Avatar & colors", target: "avatarSelection", keywords: "appearance character cere daemona jade nova soap brandy archy ghost violet leafy cachy usagi cynthia genga kippy pomni rem sarah sylva witty portrait skin theme colour color black red crimson blue violet purple tactical tan olive cyan bone green teal iridescent"},
+            {label: "Avatar & colors", target: "avatarSelection", keywords: "appearance character portrait skin theme colour color"},
             {label: "Desktop profile", target: "desktopProfile", keywords: "normal focus gaming presentation mode"},
             {label: "Always on top", target: "alwaysOnTop", keywords: "topmost above fullscreen windows"},
             {label: "Show or hide companion", target: "hideCere", keywords: "hidden visible pet cere"},
@@ -87,7 +87,9 @@ var categories = [
             {label: "Web search", target: "webSearchEnabled", keywords: "internet online lookup sources"},
             {label: "Search provider", target: "webSearchProvider", keywords: "duckduckgo brave mojeek searxng"},
             {label: "Remember and recall conversations", target: "memoryEnabled", keywords: "memory recall shared"},
-            {label: "Embedding model", target: "embeddingModel", keywords: "nomic embed ollama"},
+            {label: "Embedding provider", target: "memoryEmbeddingProvider", keywords: "gemini google api ollama memory"},
+            {label: "Embedding model", target: "embeddingModel", keywords: "nomic embed ollama gemini google api"},
+            {label: "Extraction provider", target: "memoryExtractionProvider", keywords: "gemini google claude anthropic api memory"},
             {label: "Graph extraction model", target: "extractionModel", keywords: "glm cloud extraction"},
             {label: "Share recalled memory with cloud models", target: "cloudMemoryEnabled", keywords: "codex claude cloud privacy"},
             {label: "Show memory citations in replies", target: "showMemoryCitations", keywords: "evidence markers references"},
@@ -97,13 +99,14 @@ var categories = [
         ]},
     {id: "assistance", group: "assistant", label: "AI assistance", icon: "shield",
         blurb: "What your companion may do on your desktop, and when permission is required.",
-        keywords: "permissions bypass approvals desktop control categories grants power profile pause",
+        keywords: "permissions bypass approvals desktop control categories grants power profile pause delegation",
         settings: [
             {label: "Skip CLI permission prompts", target: "bypassCliPermissions", keywords: "bypass approvals cli"},
             {label: "Skip computer permission prompts", target: "bypassComputerPermissions", keywords: "bypass approvals desktop"},
             {label: "Permission Center and power sessions", target: "openPermissionCenter", keywords: "power lease temporary access"},
             {label: "Desktop assistance profile", target: "assistanceProfile", keywords: "manual scoped broad control"},
             {label: "Desktop categories", target: "assistanceCategories", keywords: "apps files windows audio media capture timers scripts providers"},
+            {label: "Report delegated results automatically", target: "delegationUpdates", keywords: "delegation update codex claude provider orchestration subagent finished report back follow-up chain automatic turn"},
             {label: "Pause AI actions", target: "pauseActions", keywords: "stop resume tools"},
             {label: "Standing grants", target: "grantHour", keywords: "one hour project grant revoke broad"},
             {label: "Tool servers (MCP)", target: "addToolServer", keywords: "mcp model context protocol extensions integrations plugins github tools servers"},
@@ -159,8 +162,16 @@ function group(id) {
     return null
 }
 // Categories offered right now; `hidden` lists ids that are unavailable (Voice without speech).
-function visibleCategories(hidden) {
-    return categories.filter(function (entry) { return !hidden || hidden.indexOf(entry.id) < 0 })
+function visibleCategories(hidden, avatars) {
+    var words = (avatars || []).map(function (entry) {
+        return [entry.id, entry.label, entry.description, entry.themeLabel, (entry.aliases || []).join(" ")].join(" ")
+    }).join(" ")
+    return categories.filter(function (entry) { return !hidden || hidden.indexOf(entry.id) < 0 }).map(function (entry) {
+        if (entry.id !== "companion") return entry
+        return Object.assign({}, entry, {keywords: entry.keywords + " " + words, settings: entry.settings.map(function (setting) {
+            return setting.target === "avatarSelection" ? Object.assign({}, setting, {keywords: setting.keywords + " " + words}) : setting
+        })})
+    })
 }
 // The category whose page holds a control, by the control's objectName.
 function categoryOf(target) {
@@ -192,11 +203,11 @@ function rank(label, text, words) {
     return 40
 }
 // Matches for every word of the query, best first: {category, setting (null for a category), score}.
-function search(query, hidden) {
+function search(query, hidden, avatars) {
     var words = String(query || "").toLowerCase().split(/\s+/).filter(function (word) { return word.length > 0 })
     if (!words.length) return []
     var results = []
-    visibleCategories(hidden).forEach(function (entry) {
+    visibleCategories(hidden, avatars).forEach(function (entry) {
         var own = rank(entry.label, (entry.label + " " + entry.keywords).toLowerCase(), words)
         if (own) results.push({category: entry, setting: null, score: own === 100 ? 95 : own >= 70 ? 50 : 20, order: results.length})
         entry.settings.forEach(function (setting) {

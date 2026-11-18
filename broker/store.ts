@@ -9,6 +9,7 @@ const activeAgent=(agent:AgentActivity)=>['starting','running','waiting'].includ
 function withoutRetiredAvatarAppearance(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const { avatarRenderer: _avatarRenderer, avatarModel: _avatarModel, avatarQuality: _avatarQuality, ...settings } = value as Record<string, unknown>;
+  if (settings.avatar === 'cere') settings.avatar = 'cere_default';
   return settings;
 }
 /**
@@ -18,6 +19,10 @@ function withoutRetiredAvatarAppearance(value: unknown): unknown {
  * the same way the mobile transport bounds it; the store keeps the complete record.
  */
 export function snapshotRow(s:Session,full:boolean):Session {
+  // Only selected conversations carry composer content. Full text stays in storage and
+  // session.hydrate; active/temporary status never opts a large draft into every snapshot.
+  if (!full) s = {...s, draft: '', draftAttachments: [], view: undefined, draftIncluded: false} as Session;
+  else s = {...s, draftIncluded: true} as Session;
   if(!s.agents?.length)return s;
   const busy=['starting','working','waiting','stopping'].includes(s.status);
   const agents=(full||busy?s.agents:s.agents.filter(activeAgent)).map(a=>{
@@ -97,7 +102,11 @@ export class Store {
     this.sessionsRevision++; this.catalogRevision++;
   }
   settings(): Settings {
-    const saved = withoutRetiredAvatarAppearance(this.get<Partial<Settings>>('settings', {})) as Partial<Settings>;
+    const raw = this.get<Omit<Partial<Settings>, 'avatar'> & { avatar?: Settings['avatar'] | 'cere' }>('settings', {});
+    const saved = withoutRetiredAvatarAppearance(raw) as Partial<Settings>;
+    // Rewrite the old public avatar id once it is read so subsequent clients and
+    // snapshots see only the canonical catalog id.
+    if (raw.avatar === 'cere') this.set('settings', saved);
     return { ...structuredClone(defaultSettings), ...saved, ...assistantIdentity(saved),
       speechProviders: { ...defaultSettings.speechProviders, ...saved.speechProviders },
       indextts: { ...defaultSettings.indextts, ...saved.indextts },
@@ -126,7 +135,7 @@ export class Store {
     const result=[...unique.values()].sort((a,b)=>b.updated-a.updated||b.id.localeCompare(a.id)).map(s=>snapshotRow(s,full.has(s.id)));
     this.snapshotCache={revision:this.sessionsRevision,selected:key,rows:result};return result;
   }
-  sessionPage(p: any = {}): { sessions: Session[]; next?: {updated:number;id:string}; total: number } {
+  sessionPage(p: any = {}): { sessions: Session[]; next?: {updated:number;id:string;revision:number}; total: number } {
     const limit = p.limit === undefined ? 100 : p.limit;
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('Session page size must be 1–200');
     const where: string[] = [], values: (string|number)[] = [];
@@ -146,14 +155,15 @@ export class Store {
     const countSql='SELECT count(*) AS n FROM sessions WHERE '+where.join(' AND ');
     const total = Number(this.db.prepare(countSql).get(...values)!.n)+Number(this.volatile.prepare(countSql).get(...values)!.n);
     if (p.before) {
+      if(p.before.revision!==undefined&&p.before.revision!==this.sessionsRevision)throw Object.assign(new Error('Conversation order changed. Reload the list.'),{code:'REVISION_CONFLICT'});
       if (!Number.isFinite(p.before.updated) || typeof p.before.id !== 'string') throw new Error('Invalid session cursor');
       where.push("(json_extract(data,'$.updated')<? OR (json_extract(data,'$.updated')=? AND id<?))");
       values.push(p.before.updated,p.before.updated,p.before.id);
     }
     const sql="SELECT data FROM sessions WHERE "+where.join(' AND ')+" ORDER BY json_extract(data,'$.updated') DESC,id DESC LIMIT ?";
     const rows = [...this.db.prepare(sql).all(...values,limit+1),...this.volatile.prepare(sql).all(...values,limit+1)].map(r=>JSON.parse(String(r.data)) as Session).sort((a,b)=>b.updated-a.updated||b.id.localeCompare(a.id));
-    const sessions = rows.slice(0,limit), last = sessions.at(-1);
-    return {sessions,total,...(rows.length>limit && last ? {next:{updated:last.updated,id:last.id}} : {})};
+    const sessions = rows.slice(0,limit).map(s=>snapshotRow(s,false)), last = sessions.at(-1);
+    return {sessions,total,...(rows.length>limit && last ? {next:{updated:last.updated,id:last.id,revision:this.sessionsRevision}} : {})};
   }
   folders(): SessionFolder[] { return this.db.prepare('SELECT data FROM session_folders ORDER BY lower(json_extract(data,\'$.name\')),id').all().map(r=>JSON.parse(String(r.data))); }
   saveFolder(folder: SessionFolder) { this.db.prepare('INSERT INTO session_folders VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(folder.id,JSON.stringify(folder)); }

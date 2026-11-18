@@ -20,10 +20,11 @@ async function fixture(t:any){
   delete env.INVOCATION_ID;delete env.SYSTEMD_EXEC_PID;
   const children:ChildProcess[]=[];
   const output={text:''};
-  const launch=(systemd=false)=>{
+  const launch=(systemd=false,extraEnv:NodeJS.ProcessEnv={})=>{
+    const launchEnv={...env,...extraEnv};
     const child=systemd
-      ? spawn('bash',['-c','export SYSTEMD_EXEC_PID=$$ INVOCATION_ID=cere-test; exec "$0" broker/main.ts',process.execPath],{cwd:resolve('.'),env,detached:true,stdio:'ignore'})
-      : spawn(process.execPath,['broker/main.ts'],{cwd:resolve('.'),env,detached:true,stdio:['ignore','pipe','pipe']});
+      ? spawn('bash',['-c','export SYSTEMD_EXEC_PID=$$ INVOCATION_ID=cere-test; exec "$0" broker/main.ts',process.execPath],{cwd:resolve('.'),env:launchEnv,detached:true,stdio:'ignore'})
+      : spawn(process.execPath,['broker/main.ts'],{cwd:resolve('.'),env:launchEnv,detached:true,stdio:['ignore','pipe','pipe']});
     child.stdout?.on('data',chunk=>{output.text+=chunk;});child.stderr?.on('data',chunk=>{output.text+=chunk;});
     children.push(child);return child;
   };
@@ -77,6 +78,22 @@ test('a second broker for the same runtime leaves the running broker serving',{t
   const second=launch();
   assert.equal(await exited(second),0);
   assert.equal(first.exitCode,null);assert.equal(await answers(),true);
+});
+
+test('an unavailable lock helper stops startup before opening the database or socket',async t=>{
+  const {directory,state,runtime,launch,output}=await fixture(t);
+  const preload=join(directory,'missing-lock.cjs');
+  await writeFile(preload,`const load=require.extensions['.node'];
+require.extensions['.node']=(module,path)=>{
+  if(path.endsWith('cere-telemetry.node'))throw new Error('fixture: lock helper unavailable');
+  return load(module,path);
+};`);
+  const broker=launch(false,{NODE_OPTIONS:'--require='+preload});
+  await until(async()=>broker.exitCode!==null||await exists(join(runtime,'broker.sock')));
+  assert.equal(broker.exitCode,1);
+  assert.match(output.text,/cannot acquire its broker lock/);
+  assert.equal(await exists(join(runtime,'broker.sock')),false);
+  assert.equal(await exists(state),false);
 });
 
 test('W04 SIGTERM during running work ends within the deadline, records the shutdown and never reaches a closed store',{timeout:60000},async t=>{

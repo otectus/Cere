@@ -165,7 +165,18 @@
       "settings.patch",
       "memory.save",
       "attachments.begin",
-      "attachments.commit"
+      "attachments.commit",
+      "sessions.handoffCreate",
+      "sessions.import",
+      "sessions.focusTerminal",
+      "captures.start",
+      "captures.attach",
+      "memory.forget",
+      "memory.clear",
+      "memory.correct",
+      "memory.resolveConflict",
+      "memory.identity",
+      "memory.freezeEpisode"
     ]
   },
   "request": {
@@ -260,7 +271,7 @@
     },
     "sessions.create": {
       "params": {
-        "provider": "ollama|codex|claude",
+        "provider": "codex|claude|ollama|openai|anthropic|google|compatible",
         "projectId": "uuid",
         "title": "optional",
         "model": "optional",
@@ -355,7 +366,7 @@
     },
     "providers.models": {
       "params": {
-        "provider": "ollama|codex|claude",
+        "provider": "codex|claude|ollama|openai|anthropic|google|compatible",
         "sessionId": "optional"
       },
       "result": []
@@ -560,7 +571,7 @@
         "sourceDigest": "hash",
         "draft": "1..100000 UTF16 units",
         "projectId": "uuid",
-        "provider": "codex|ollama",
+        "provider": "codex|claude|ollama|openai|anthropic|google|compatible",
         "model": "optional",
         "effort": "optional",
         "tools": false
@@ -915,7 +926,7 @@
       "sessionId": "uuid",
       "turnId": "optional uuid",
       "role": "assistant",
-      "kind": "text",
+      "kind": "conversation kinds: text, message, empty, question, answer, queued, queue-cancelled, or delegation (user role, written by Cere when a delegated session reports back to its parent); other kinds are activity",
       "text": "whole accumulated text",
       "time": 0,
       "revision": "1",

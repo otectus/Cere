@@ -372,7 +372,7 @@ Rectangle {
                 CButton {
                     required property string modelData
                     objectName: "approval_" + card.approvalId + "_" + modelData
-                    enabled: App.connected && card.requestId < 0
+                    enabled: App.connected && card.requestId < 0 && (modelData !== "allow" || (["file","extension","custom-tool"].indexOf(card.approval.kind)<0 || card.approval.fields?.reviewComplete === true))
                     width: Math.min(implicitWidth, parent.width)
                     text: modelData === "allow" ? (card.approval.url ? "I've completed it" : "Allow once") : modelData === "answer" ? "Send answers" : modelData === "deny" ? "Decline" : "Cancel turn"
                     primary: modelData === "allow" || modelData === "answer"

@@ -1,3 +1,4 @@
+import { proseLines } from './markdown-prose.ts';
 /**
  * M17: completion gates and output contracts for workflow results. A required check is satisfied
  * only by its latest broker-observed exit for that result, run with the check's current definition:
@@ -45,12 +46,7 @@ const bare = (line: string) => {
  * prefers missing a problem to raising a false alarm.
  */
 export function checkSections(text: string, sections: string[]): SectionCheck[] {
-  const lines: string[] = [];
-  let fenced = false;
-  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
-    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
-    if (!fenced) lines.push(line);
-  }
+  const lines = [...proseLines(text)];
   const heads = lines.map(bare), prose = fold(lines.join('\n').replace(/\*\*|__|[*`]/g, ''));
   return sections.map(name => {
     const wanted = escaped(fold(name));

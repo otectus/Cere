@@ -13,7 +13,7 @@ CDialog {
     property string error:""
     property double clock:Date.now()
     readonly property var selectedAccess:(inspection.effective||[]).find(row=>row.sessionId===sessionId)||({})
-    readonly property bool selectedIdle:selectedAccess.status==="idle"
+    readonly property bool canStartPower:selectedAccess.canStartPower===true
 
     function inspect(){
         if(inspectRequest>=0||!App.connected)return
@@ -76,8 +76,8 @@ CDialog {
         color:Theme.amber;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;wrapMode:Text.Wrap
     }
     CText {
-        visible:!!center.sessionId&&!center.selectedIdle&&!center.selectedAccess.leaseId
-        text:"Stop the provider turn before starting power access. Linked, historical, and remote sessions are excluded."
+        visible:!!center.sessionId&&!center.canStartPower&&!center.selectedAccess.leaseId
+        text:center.selectedAccess.powerUnavailableReason||"Power access is unavailable for this session."
         color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap
     }
     CCheckBox { id:cliAccess;objectName:"powerCliAccess";text:"CLI full access";checked:false;enabled:!center.selectedAccess.leaseId }
@@ -93,7 +93,7 @@ CDialog {
     CButton {
         objectName:"startPower";Layout.fillWidth:true;primary:true
         text:center.actionRequest>=0&&center.action==="power.start"?"Starting…":"Start power access"
-        enabled:center.actionRequest<0&&!!center.sessionId&&center.selectedIdle&&!center.selectedAccess.leaseId&&(cliAccess.checked||computerAccess.checked)
+        enabled:center.actionRequest<0&&!!center.sessionId&&center.canStartPower&&!center.selectedAccess.leaseId&&(cliAccess.checked||computerAccess.checked)
         onClicked:center.call("power.start",{sessionIds:[center.sessionId],minutes:duration.value,cli:cliAccess.checked,computer:computerAccess.checked})
     }
 

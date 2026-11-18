@@ -64,7 +64,7 @@ jobs:
       - run: tools/ci-user.sh run npm ci
       - run: tools/ci-user.sh run npm run build
       - name: Native and QML component tests
-        # The offscreen platform creates the avatar check's OpenGL context through an X display.
+        # The GPU check inherits this private X display; software checks select offscreen explicitly.
         run: tools/ci-user.sh run xvfb-run -a ctest --test-dir build --output-on-failure --output-junit "$GITHUB_WORKSPACE/reports/ctest.xml"
       - name: Test report
         if: ${{ !cancelled() }}
@@ -99,6 +99,10 @@ jobs:
           QT_QUICK_BACKEND: software
           QT_QUICK_CONTROLS_STYLE: Basic
           CERE_TTS_DISABLED: '1'
+          # connectedSurfacePoses deliberately validates every avatar, scale and route. Keep
+          # QtTest's per-function watchdog above the observed slow-CPU duration; the job timeout
+          # remains the outer bound for the whole gate.
+          QTEST_FUNCTION_TIMEOUT: '900000'
         # Every assertion slot plus the scale review; the other review slots only record screenshots.
         # Slots that need the live Hyprland compositor or desktop session skip themselves offscreen;
         # the report lists each of those skips. The workspace expression names the host path in a

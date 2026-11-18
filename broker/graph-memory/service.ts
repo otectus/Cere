@@ -4,6 +4,8 @@ import { readFile, realpath } from "node:fs/promises";
 import { GraphMemory, pointId } from "./client.ts";
 import { Neo4jGraphRepository } from "./adapters/neo4j.ts";
 import { QdrantVectorRepository } from "./adapters/qdrant.ts";
+import { ApiExtractionAdapter, googleEmbeddings } from './adapters/api.ts';
+import { ProviderCredentials } from '../credentials.ts';
 import { OllamaExtractionAdapter, ExtractionPolicyError } from "./adapters/ollama.ts";
 import { LiveWorkspaceState } from "./adapters/live.ts";
 import { HyprlandCollector } from "./adapters/hyprland.ts";
@@ -33,6 +35,9 @@ export interface MemoryConfiguration {
   host: string;
   embedding_model: string;
   extraction_model: string;
+  embedding_provider?: 'ollama' | 'google';
+  allow_cloud_embedding?: boolean;
+  extraction_provider?: 'ollama' | 'google' | 'anthropic';
   allow_cloud_extraction: boolean;
   allow_cloud_memory: boolean;
 }
@@ -52,7 +57,8 @@ export class MemoryService {
   collectorRpc?: CollectorRpc;
   graph?: Neo4jGraphRepository;
   vectors = new Map<string, QdrantVectorRepository>();
-  extractor?: OllamaExtractionAdapter;
+  extractor?: OllamaExtractionAdapter | ApiExtractionAdapter;
+  credentials: ProviderCredentials;
   timer: NodeJS.Timeout;
   busy = false;
   recoveryFrozen = false;
@@ -77,6 +83,7 @@ export class MemoryService {
   livePolicy: { policy: Row; roots: string[] } = { policy: { enabled: false }, roots: [] };
   constructor(directory: string, notify: (event: Row) => void = () => {}) {
     this.notify = notify;
+    this.credentials = new ProviderCredentials(join(directory, 'credentials'));
     this.canonical = new GraphMemory(directory, (event) => {
       // Expired retention does not cancel extraction or projection in flight; an erasure or
       // policy change does, since their stale epoch would reject the work anyway.
@@ -93,7 +100,7 @@ export class MemoryService {
   }
   async configure(p: MemoryConfiguration) {
     const changed = JSON.stringify(this.configuration) !== JSON.stringify(p);
-    const extractionChanged = ["host", "extraction_model", "allow_cloud_extraction"].some(
+    const extractionChanged = ["host", "extraction_model", "extraction_provider", "allow_cloud_extraction"].some(
       (key) => (this.configuration as any)[key] !== (p as any)[key],
     );
     this.configuration = { ...p };
@@ -248,6 +255,11 @@ export class MemoryService {
    * user-configured remote Ollama server remains supported; it is not cloud.
    */
   async identity(host: string, signal: AbortSignal, model = this.configuration.embedding_model) {
+    if (this.configuration.embedding_provider === 'google') {
+      if (!this.configuration.allow_cloud_embedding) fail('POLICY_DENIED', 'Enable cloud memory embeddings before using Gemini');
+      const digest = createHash('sha256').update(JSON.stringify(['google-embedding-route-v1', model])).digest('hex');
+      return { key: JSON.stringify(['google-api', model, digest, 'unit', 'Cosine', 'retrieval-tasks-v1', 'codepoint-chunks-480-v1']), digest };
+    }
     const tags = await ollamaJson(host, "tags", undefined, signal);
     const m = tags.models?.find((m: Row) =>
       [model, model + ":latest"].includes(m.name || m.model),
@@ -280,6 +292,8 @@ export class MemoryService {
     signal: AbortSignal,
     model = this.configuration.embedding_model,
   ) {
+    const cloud = this.configuration.embedding_provider === 'google';
+    if (cloud && !this.configuration.allow_cloud_embedding) fail('POLICY_DENIED', 'Enable cloud memory embeddings before using Gemini');
     const prompts = embeddingPrompts(model),
       prefix = kind === "query" ? prompts.query : prompts.document;
     const chunks = texts.map((t) => {
@@ -292,7 +306,7 @@ export class MemoryService {
     const flat = chunks.flat(),
       vectors: number[][] = [];
     for (let i = 0; i < flat.length; i += 16) {
-      const result = await ollamaJson(
+      const result = cloud ? { embeddings: await googleEmbeddings({ key: () => this.credentials.key('google') }, model, flat.slice(i, i + 16), kind, signal) } : await ollamaJson(
         host,
         "embed",
         {
@@ -420,6 +434,7 @@ export class MemoryService {
         }
         const byHost = new Map<string, Row[]>();
         for (const artifact of data.artifacts) {
+          if (this.configuration.embedding_provider === 'google' && artifact.sensitivity !== 'cloud_allowed') continue;
           const host = artifact.embedding_host || this.configuration.host;
           const group = byHost.get(host) || [];
           group.push(artifact);
@@ -536,7 +551,7 @@ export class MemoryService {
       signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(30000)]);
     try {
       const space = await this.space(host, signal);
-      const batch: Row[] = await this.canonical.call("vector_backlog", { host, fingerprint: space.fingerprint, limit: 16 });
+      const batch: Row[] = await this.canonical.call("vector_backlog", { host, fingerprint: space.fingerprint, limit: 16, cloud: this.configuration.embedding_provider === 'google' });
       if (!batch.length) return false;
       const vectors = await this.embed(host, batch.map((a) => a.text), "document", signal);
       for (const [index, a] of batch.entries()) {
@@ -571,8 +586,9 @@ export class MemoryService {
     if (!run) return;
     try {
       const extractionHost=run.embedding_host||this.configuration.host;
-      if(this.extractor?.config.endpoint!==extractionHost)this.extractor=undefined;
-      this.extractor ??= new OllamaExtractionAdapter({
+      if(this.extractor instanceof OllamaExtractionAdapter && this.extractor.config.endpoint!==extractionHost)this.extractor=undefined;
+      const provider = this.configuration.extraction_provider || 'ollama';
+      this.extractor ??= provider !== 'ollama' ? new ApiExtractionAdapter({ provider, model: this.configuration.extraction_model, allowCloud: this.configuration.allow_cloud_extraction }, { key: () => this.credentials.key(provider) }) : new OllamaExtractionAdapter({
         endpoint: extractionHost,
         model: this.configuration.extraction_model,
         allowCloud: this.configuration.allow_cloud_extraction,
@@ -690,7 +706,7 @@ export class MemoryService {
         fingerprint = this.fingerprint(identity, vector.length);
       const pending = await this.canonical.call("pending_artifacts", {
         scope_id: p.scope_id,
-        fingerprint,
+        fingerprint, cloud: this.configuration.embedding_provider === 'google',
       }, guard);
       if (pending.length) {
         const vectors = await this.embed(
@@ -876,6 +892,9 @@ export class MemoryService {
       return {
         ...(await this.canonical.call("health")),
         extraction_model: this.configuration.extraction_model,
+        extraction_provider: this.configuration.extraction_provider || 'ollama',
+        embedding_model: this.configuration.embedding_model,
+        embedding_provider: this.configuration.embedding_provider || 'ollama',
         extraction_error: this.lastError,
         embedding_error: this.embeddingError,
         maintenance_error: this.maintenanceError,
