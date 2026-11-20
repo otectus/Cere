@@ -16,11 +16,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Core } from './core.ts';
 
 export type When = { kind: 'once' | 'daily' | 'weekdays' | 'weekly'; time: string; days?: number[]; date?: string };
-export type Envelope = { cwd: string; provider: string; configRevision: string; model: string; effort: string; bypassCli: boolean; bypassComputer: boolean; profile: string; categories: string[] };
+export type Envelope = { cwd: string; provider: string; configRevision: string; model: string; effort: string; bypassCli: boolean; bypassComputer: boolean; profile: string; categories: string[];
+  /** Present when the conversation uses the Workbench: its families, folders and their policies, image backends and Code Lab. Any change pauses the schedule. */
+  workbench?: Record<string, unknown> };
 export type Schedule = {
   id: string; label: string; enabled: boolean; revision: string; created: number;
   recipeId: string; recipeVersion: number; recipeRevision: string; authorizationRevision: string;
-  inputs: Record<string, string | number | boolean>; sourceSessionId: string; promptDigest: string;
+  inputs: Record<string, string | number | boolean | Record<string, unknown>>; sourceSessionId: string; promptDigest: string;
   envelope: Envelope; when: When; timeZone: string;
   next?: number; lastOccurrence?: number;
   lastRun?: { at: number; outcome: 'started' | 'missed' | 'skipped' | 'paused' | 'failed'; reason?: string; sessionId?: string };
@@ -84,8 +86,9 @@ export class Schedules {
   /** The permission state a run would execute under, for the session the recipe runs with. */
   envelope(sessionId: string): Envelope {
     const session = this.core.store.session(sessionId), settings = this.core.settings;
+    const workbench = this.core.workbench.envelope(session);
     return { cwd: session.cwd, provider: session.provider, configRevision: session.configRevision || '0', model: session.model || '', effort: session.effort || '',
-      bypassCli: settings.bypassCliPermissions, bypassComputer: settings.bypassComputerPermissions, profile: settings.profile, categories: [...settings.categories].sort() };
+      bypassCli: settings.bypassCliPermissions, bypassComputer: settings.bypassComputerPermissions, profile: settings.profile, categories: [...settings.categories].sort(), ...(workbench ? { workbench } : {}) };
   }
   /** Creates a schedule from a reviewed preview, which it consumes; the user confirms unattended runs explicitly. */
   create(p: any) {

@@ -152,9 +152,10 @@ Rectangle {
                 smooth: true; mipmap: true; cache: true
                 property bool loaded: status === Image.Ready
                 onLoadedChanged: portrait.loadedFaces += loaded ? 1 : -1
-                opacity: portrait.face === index ? 1 : 0
-                visible: opacity > 0
-                Behavior on opacity { NumberAnimation { duration: portrait.animated ? (portrait.blinking || faceImage.index === 11 ? 65 : 220) : 0; easing.type: Easing.InOutQuad } }
+                // Exactly one full cell is drawn. Crossfading whole transparent
+                // cells doubles their antialiased matte and can dip if a second
+                // expression interrupts the first transition.
+                visible: portrait.face === index
             }
         }
     }

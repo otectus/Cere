@@ -13,6 +13,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
 #include "avatar-registration.h"
+#include "avatar-appearance.h"
 #include "avatar-interpolation.h"
 
 #include <algorithm>
@@ -227,6 +228,43 @@ std::string outputName(const std::string &prefix, int index, int steps)
 
 int main(int argc, char **argv)
 {
+    if (argc == 8 && std::string(argv[1]) == "--stabilize-route") {
+        try {
+            cv::setNumThreads(2);
+            const std::string prefix(argv[3]), name(argv[4]);
+            const auto neutral = cv::imread(argv[2], cv::IMREAD_UNCHANGED);
+            const cv::Point2f eyes(std::stof(argv[5]), std::stof(argv[6]));
+            const float ground = std::stof(argv[7]);
+            if (neutral.empty() || neutral.type() != CV_8UC4 || !std::isfinite(ground) ||
+                !(eyes.x > 0 && eyes.x < neutral.cols && eyes.y > 0 && eyes.y < ground &&
+                  ground < neutral.rows))
+                throw std::runtime_error("invalid neutral or eye/ground landmarks");
+            std::vector<AvatarAppearance::Drawing> drawings;
+            for (int i = 0; i < 16; ++i) {
+                auto path = outputName(prefix, i, 16);
+                AvatarAppearance::Drawing frame;
+                frame.open = cv::imread(path, cv::IMREAD_UNCHANGED);
+                bool held = i == 15 || (name == "shy" && i == 6);
+                if (held)
+                    frame.closed = cv::imread(path + ".blink.png", cv::IMREAD_UNCHANGED);
+                if (frame.open.type() != CV_8UC4 || frame.open.size() != neutral.size() ||
+                    (held && (frame.closed.type() != CV_8UC4 || frame.closed.size() != neutral.size())))
+                    throw std::runtime_error("invalid registered drawing: " + path);
+                drawings.push_back(frame);
+            }
+            AvatarAppearance::stabilize(neutral, drawings, eyes, ground, name == "carry");
+            for (int i = 0; i < int(drawings.size()); ++i) {
+                auto path = outputName(prefix + "-stable", i, 16);
+                if (!cv::imwrite(path, drawings[i].open) ||
+                    (!drawings[i].closed.empty() && !cv::imwrite(path + ".blink.png", drawings[i].closed)))
+                    throw std::runtime_error("could not write stabilized drawing: " + path);
+            }
+            return 0;
+        } catch (const std::exception &error) {
+            std::cerr << "Appearance registration error: " << error.what() << '\n';
+            return 1;
+        }
+    }
     if (argc == 10 && std::string(argv[1]) == "--register") {
         try {
             cv::setNumThreads(2);
@@ -271,7 +309,8 @@ int main(int argc, char **argv)
         std::cerr << "Usage: " << argv[0]
                   << " FROM.png TO.png OUTPUT_PREFIX STEPS [GROUND_Y]\n"
                   << "       " << argv[0]
-                  << " --register NEUTRAL.png OPEN.png BLINK.png OUTPUT_PREFIX EYE_X EYE_Y grounded|carried v1\n";
+                  << " --register NEUTRAL.png OPEN.png BLINK.png OUTPUT_PREFIX EYE_X EYE_Y grounded|carried v1\n"
+                  << "       " << argv[0] << " --stabilize-route NEUTRAL.png FRAME_PREFIX ROUTE EYE_X EYE_Y GROUND_Y\n";
         return 2;
     }
 

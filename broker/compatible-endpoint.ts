@@ -33,8 +33,11 @@ export const endpointOrigin = (baseUrl: string) => baseUrl ? new URL(baseUrl).or
 /** A validated endpoint after applying a settings patch; fields left out keep their values. */
 export function validEndpoint(patch: unknown, current: CompatibleEndpoint): CompatibleEndpoint {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid compatible endpoint settings');
-  for (const key of Object.keys(patch)) if (!['baseUrl', 'label', ...flags, ...Object.keys(limits)].includes(key)) throw new Error(`Unknown compatible endpoint setting: ${key}`);
+  for (const key of Object.keys(patch)) if (!['baseUrl', 'label', 'processing', ...flags, ...Object.keys(limits)].includes(key)) throw new Error(`Unknown compatible endpoint setting: ${key}`);
   const next = { ...current, ...(patch as Partial<CompatibleEndpoint>) };
+  // Where the endpoint processes requests is the user's statement; a loopback URL proves nothing about it.
+  // Absent means not declared, which is treated as unknown.
+  if (next.processing !== undefined && !['local', 'remote', 'cloud', 'unknown'].includes(next.processing)) throw new Error('Choose where the endpoint processes requests: this computer, your own server, a cloud service, or not sure');
   for (const key of flags) if (typeof next[key] !== 'boolean') throw new Error(`Choose whether the endpoint ${key === 'requiresKey' ? 'needs a key' : `supports ${key}`}`);
   if (typeof next.label !== 'string' || next.label.trim().length > 60 || /[\x00-\x1f\x7f]/.test(next.label)) throw new Error('Name the endpoint with up to 60 printable characters');
   next.label = next.label.trim();
@@ -46,5 +49,5 @@ export function validEndpoint(patch: unknown, current: CompatibleEndpoint): Comp
 
 /** The declaration as the interface shows it: what is sent, and that none of it is verified. */
 export function declared(endpoint: CompatibleEndpoint) {
-  return { tools: endpoint.tools, images: endpoint.images, streaming: endpoint.streaming, usage: endpoint.usage, contextLength: endpoint.contextLength, maxOutputTokens: endpoint.maxOutputTokens, verified: false };
+  return { tools: endpoint.tools, images: endpoint.images, streaming: endpoint.streaming, usage: endpoint.usage, contextLength: endpoint.contextLength, maxOutputTokens: endpoint.maxOutputTokens, processing: endpoint.processing || 'unknown', verified: false };
 }

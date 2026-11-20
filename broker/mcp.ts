@@ -1,4 +1,5 @@
 import { request } from './client.ts';
+import { buildIdentity } from './build-info.ts';
 import { brokerFrameLimit } from './fanout.ts';
 import { JsonLines } from './wire.ts';
 import net from 'node:net';
@@ -40,7 +41,7 @@ async function handle(m: any) {
   if (m.id === undefined) return;
   try {
     let result: any;
-    if (m.method === 'initialize') {initialized=true;result={protocolVersion:'2024-11-05',capabilities:{tools:{listChanged:true}},serverInfo:{name:'cere',version:'0.1.0'}};}
+    if (m.method === 'initialize') {initialized=true;result={protocolVersion:'2024-11-05',capabilities:{tools:{listChanged:true}},serverInfo:{name:'cere',version:buildIdentity().version}};}
     else if (m.method === 'ping') result={};
     else if (m.method === 'tools/list') {
       const defs = await request('mcp.tools',{token});

@@ -33,6 +33,8 @@ constexpr int maximumTextureLevel = 4;
 constexpr int minimumLevelSide = 4;
 // Five gesture routes plus an authored carried loop, decoded one atlas at a time.
 constexpr int maximumSurfaceFrames = 384;
+constexpr qreal heldSurfaceDeformationScale = 0.35;
+constexpr int surfaceDeformationTransitionFrames = 8;
 
 struct RawBone
 {
@@ -47,6 +49,7 @@ struct Part
     {
         QRect sourceRect;
         QRect blinkSourceRect;
+        qreal deformationScale = 1.0;
     };
 
     QString name;
@@ -644,7 +647,7 @@ void AvatarPuppet::rebuild()
             }
 
             part.surfaceFrames.append(Part::SurfaceFrame{
-                    part.sourceRect, part.blinkSourceRect});
+                    part.sourceRect, part.blinkSourceRect, 1.0});
             const auto surfaceFramesValue = map.constFind(QStringLiteral("surfaceFrames"));
             if (surfaceFramesValue != map.cend()) {
                 if (!part.surfaceMotion) {
@@ -738,6 +741,42 @@ void AvatarPuppet::rebuild()
                 }
             }
             d->parts.append(part);
+        }
+    }
+
+    if (validationError.isEmpty()) {
+        // Authored routes start at connected neutral and retrace the same
+        // frames on return. Ease secondary deformation down over the opening
+        // frames instead of applying the full neutral warp to a drawing that
+        // already contains its own body, hair, light and shade.
+        const QVariantMap routes = d->definition.value(QStringLiteral("surfaceSequences"))
+                                           .toMap().value(QStringLiteral("routes"))
+                                           .toMap();
+        for (auto route = routes.cbegin(); route != routes.cend(); ++route) {
+            const QVariantList frames = route.value().toMap()
+                                                .value(QStringLiteral("frames"))
+                                                .toList();
+            const int transition = std::min(surfaceDeformationTransitionFrames,
+                                            int(frames.size()) - 1);
+            if (transition <= 0)
+                continue;
+            for (int index = 1; index < frames.size(); ++index) {
+                bool frameOk = false;
+                const int frame = frames[index].toInt(&frameOk);
+                if (!frameOk)
+                    continue;
+                const qreal progress = ReferenceArt::smoothStep(
+                        0.0, 1.0, qreal(std::min(index, transition)) / transition);
+                const qreal scale = 1.0
+                        - (1.0 - heldSurfaceDeformationScale) * progress;
+                for (Part &part : d->parts) {
+                    if (part.surfaceMotion && frame > 0
+                            && frame < part.surfaceFrames.size()) {
+                        part.surfaceFrames[frame].deformationScale = std::min(
+                                part.surfaceFrames[frame].deformationScale, scale);
+                    }
+                }
+            }
         }
     }
 
@@ -1016,6 +1055,7 @@ QSGNode *AvatarPuppet::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             surfacePose.hairRotation = ReferenceArt::finiteClamp(
                     AvatarSkeleton::channelValue(d->pose, QStringLiteral("hairRotation")),
                     -2.0, 2.0);
+            surfacePose.deformationScale = frameDefinition.deformationScale;
             surfacePose.blink = std::clamp(std::max(
                     AvatarSkeleton::channelValue(d->pose, QStringLiteral("blink")),
                     AvatarSkeleton::channelValue(d->pose, QStringLiteral("eyeClose"))),

@@ -23,7 +23,7 @@ export type PingOutcome = {
 };
 export type FollowUp = { provider: 'codex' | 'claude'; prompt: string; model?: string; effort?: string };
 export type Ping = {
-  id: string; parentId: string; childId: string;
+  id: string; parentId: string; parentTurnId?: string; childId: string;
   /** The child turn this record follows, once known. */
   childTurnId?: string;
   provider: 'codex' | 'claude'; title: string;
@@ -165,7 +165,7 @@ export class DelegationPings {
     const list = this.list(parent.id);
     // A busy child refuses sessions_send, so an earlier registration for it can only be stale.
     for (const ping of list) if (ping.childId === child.id && ping.state === 'registered') Object.assign(ping, { state: 'dropped', reason: 'Superseded by a newer delegated turn' });
-    const ping: Ping = { id: randomUUID(), parentId: parent.id, childId: child.id, provider: child.provider, title: child.title,
+    const ping: Ping = { id: randomUUID(), parentId: parent.id, parentTurnId: parent.turnId, childId: child.id, provider: child.provider, title: child.title,
       tool: tool === 'sessions.send' ? 'sessions.send' : 'sessions.start', prompt: clip(args.prompt, 500),
       ...(args.followUp ? { followUp: structuredClone(args.followUp) } : {}), state: 'registered', registered: Date.now() };
     list.push(ping); this.save(parent.id);
@@ -188,12 +188,6 @@ export class DelegationPings {
     if (!parentId) return undefined;
     const list = this.list(parentId), ping = list.find(p => p.childId === before.id && p.state === 'registered');
     if (!ping) return undefined;
-    let parent: Session;
-    try { parent = this.core.store.session(parentId); } catch { this.forget(parentId); return undefined; }
-    if (parent.status === 'stopping' || parent.status === 'interrupted') {
-      Object.assign(ping, { state: 'dropped', reason: 'parent stopped' }); this.save(parentId);
-      return undefined;
-    }
     // Stop paths change the status before they flush; the reply must include the last streamed text.
     this.core.flush();
     const turnId = before.turnId;
@@ -233,11 +227,11 @@ export class DelegationPings {
   }
   private exhausted(parentId: string) { return (this.automatic.get(parentId) || 0) >= pingLimits.automaticTurns; }
   /**
-   * Whether the parent's next turn will carry its ready updates. Core then releases a completion held for
-   * running siblings and leaves the earlier reply's notice to that turn; the send queue lets it go first.
+   * Whether the parent can announce a ready update. An originating turn can defer its own notice
+   * when its result is already in, while an unrelated chat reply keeps its normal notification.
    */
-  announcing(parentId: string) {
-    if (!this.ready(parentId).length || this.exhausted(parentId)) return false;
+  announcing(parentId: string, parentTurnId?: string) {
+    if (!this.ready(parentId).some(p => !parentTurnId || p.parentTurnId === parentTurnId) || this.exhausted(parentId)) return false;
     try { return !this.refusal(this.core.store.session(parentId)); } catch { return false; }
   }
   /** Whether a delegated child's just-captured result will be reported by its parent. */
@@ -246,6 +240,13 @@ export class DelegationPings {
   }
   /** A turn the user started (typed, queued, phone or schedule) resets the run of automatic turns. */
   userTurn(parentId: string) { this.automatic.delete(parentId); this.held.delete(parentId); }
+  /** Ending the parent's power lease cancels automatic dispatch even if a child closes later. */
+  endAuthorization(parentId: string) {
+    const pending = this.list(parentId).filter(ping => ping.state === 'registered');
+    for (const ping of pending) Object.assign(ping, { state: 'dropped', reason: 'Power access ended' });
+    if (pending.length) this.save(parentId);
+    this.dropReady(parentId, 'Power access ended');
+  }
   /** Ready updates that will not be delivered, with one note that keeps their results visible. */
   dropReady(parentId: string, reason: string) {
     const ready = this.ready(parentId);
@@ -278,7 +279,7 @@ export class DelegationPings {
     if (core.closed || core.recovery.pending || core.sending.has(parentId) || core.stopping.has(parentId)) return;
     let parent: Session;
     try { parent = core.store.session(parentId); } catch { this.forget(parentId); return; }
-    if (busy(parent) || (parent.status !== 'idle' && parent.status !== 'error')) return;
+    if (busy(parent) || (parent.status !== 'idle' && parent.status !== 'error' && parent.status !== 'interrupted')) return;
     const ready = this.ready(parentId);
     if (!ready.length) return;
     const refusal = this.refusal(parent);

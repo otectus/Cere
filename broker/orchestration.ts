@@ -23,7 +23,7 @@ export const orchestrationDefinitions: ToolDefinition[] = [
 // With automatic delegation updates off, results arrive only by waiting or reading, as before they existed,
 // and no next task can be declared, since no delegation update would carry it.
 const withoutUpdates: Record<string, string> = {
-  'sessions.start': 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; use sessions_wait for results.',
+  'sessions.start': 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; use sessions_read to check results later.',
   'sessions.send': 'Send a follow-up to an idle delegated session after user approval. Returns immediately.',
   'sessions.wait': 'Wait up to 60 seconds for a delegated turn, then return status and recent messages. Waiting sessions need user input in Cere.',
 };
@@ -115,13 +115,13 @@ export async function orchestrate(core: Core, parentId: string, name: string, ar
     await core.disconnect(child.id);
     child = core.updateSession(child.id,{remote:structuredClone(parent.remote),effectivePolicy:'unknown'});
   }
-  const active = core.delegations.get(parentId) || new Set<string>(); active.add(child.id); core.delegations.set(parentId, active);
+  permitted();
   // Registered before dispatch, so a child that finishes before send() returns still reports back.
   const ping = core.pings.register(parent, child, name, args);
   try { await core.send({ id: child.id, text: args.prompt }); }
   catch (error) { if (ping) core.pings.drop(ping.id, 'Dispatch failed'); throw error; }
   if (ping) core.pings.attachTurn(ping.id, core.store.session(child.id).turnId);
-  if (signal.aborted) { await core.stop(child.id); signal.throwIfAborted(); }
+  signal.throwIfAborted();
   core.store.activity({ action: name, sessionId: parentId, childId: child.id, status: 'completed' }); core.changed();
   return summary(core.store.session(child.id));
 }

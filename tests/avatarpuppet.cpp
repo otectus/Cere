@@ -193,6 +193,10 @@ QVariantMap surfaceDefinition()
             {QStringLiteral("referenceSize"), QVariantList{32, 32}},
             {QStringLiteral("bones"), QVariantList{
                  bone(QStringLiteral("root"), {}, 0, 0)}},
+            {QStringLiteral("surfaceSequences"), QVariantMap{
+                 {QStringLiteral("routes"), QVariantMap{
+                      {QStringLiteral("test"), QVariantMap{
+                           {QStringLiteral("frames"), QVariantList{0, 1, 2}}}}}}}},
             {QStringLiteral("parts"), QVariantList{QVariantMap{
                  {QStringLiteral("name"), QStringLiteral("reference")},
                  {QStringLiteral("bone"), QStringLiteral("root")},
@@ -318,6 +322,14 @@ bool referenceSurfaceImageChecks()
     }
     ok &= check(largest <= 1.900001 && sharpestStep < 0.12,
                 "surface displacement must stay bounded and spatially smooth");
+    const QPointF fullDisplacement = ReferenceArt::displacement({8, 8}, rect, extreme);
+    extreme.deformationScale = 0.35;
+    const QPointF heldDisplacement = ReferenceArt::displacement({8, 8}, rect, extreme);
+    ok &= check(std::abs(heldDisplacement.x() - fullDisplacement.x() * 0.35) < 0.000001
+                        && std::abs(heldDisplacement.y() - fullDisplacement.y() * 0.35) < 0.000001
+                        && ReferenceArt::hasDeformation(extreme),
+                "authored holds must retain a proportional connected deformation");
+    extreme.deformationScale = 1.0;
     for (int x = 0; x <= 32; ++x)
         ok &= check(std::hypot(ReferenceArt::displacement({qreal(x), 32}, rect,
                                                           extreme).x(),
@@ -1044,9 +1056,14 @@ bool productionRenderChecks(QQuickWindow &window, AvatarPuppet &puppet,
             routePainter.setPen(Qt::white);
             routePainter.drawText(routeIndex * 192 + 4, 18, routeName);
             routePainter.drawImage(routeIndex * 192, 24, endpoint);
-            puppet.setPose({{QStringLiteral("blink"), 1.0}, {QStringLiteral("bodyTilt"), 3.0},
-                            {QStringLiteral("hipX"), 2.0}});
-            ok &= check(!synchronizedGrab(window).isNull(), "held route must support secondary motion and blink");
+            puppet.setPose({{QStringLiteral("bodyTilt"), 3.0},
+                            {QStringLiteral("headTilt"), -7.0},
+                            {QStringLiteral("hipX"), 2.0},
+                            {QStringLiteral("hairRotation"), 1.5}});
+            const QImage livingEndpoint = synchronizedGrab(window);
+            ok &= check(!livingEndpoint.isNull() && livingEndpoint != endpoint,
+                        QStringLiteral("%1 authored hold must retain eased continuous motion")
+                                .arg(routeName));
             puppet.setSurfaceFrame(0);
             puppet.setPose({});
             ok &= check(synchronizedGrab(window) == neutral,
@@ -1599,6 +1616,23 @@ QRect alphaBounds(const QImage &image)
     return bounds;
 }
 
+qint64 imageDifference(const QImage &left, const QImage &right)
+{
+    if (left.size() != right.size())
+        return std::numeric_limits<qint64>::max();
+    qint64 difference = 0;
+    for (int y = 0; y < left.height(); ++y) {
+        for (int x = 0; x < left.width(); ++x) {
+            const QRgb a = left.pixel(x, y), b = right.pixel(x, y);
+            difference += std::abs(qRed(a) - qRed(b))
+                    + std::abs(qGreen(a) - qGreen(b))
+                    + std::abs(qBlue(a) - qBlue(b))
+                    + std::abs(qAlpha(a) - qAlpha(b));
+        }
+    }
+    return difference;
+}
+
 bool surfaceRenderChecks(const QUrl &firstSource, const QUrl &secondSource)
 {
     bool ok = true;
@@ -1615,14 +1649,15 @@ bool surfaceRenderChecks(const QUrl &firstSource, const QUrl &secondSource)
 
     const QImage rest = synchronizedGrab(window);
     const QRect restBounds = alphaBounds(rest);
-    puppet.setPose({{QStringLiteral("breathLift"), -2.0},
-                    {QStringLiteral("bodyTilt"), 4.0},
-                    {QStringLiteral("headTilt"), -9.0},
-                    {QStringLiteral("headX"), 3.0},
-                    {QStringLiteral("headY"), -3.0},
-                    {QStringLiteral("hipX"), 2.5},
-                    {QStringLiteral("hipDrop"), 3.0},
-                    {QStringLiteral("hairRotation"), 2.0}});
+    const QVariantMap continuousPose{{QStringLiteral("breathLift"), -2.0},
+                                     {QStringLiteral("bodyTilt"), 4.0},
+                                     {QStringLiteral("headTilt"), -9.0},
+                                     {QStringLiteral("headX"), 3.0},
+                                     {QStringLiteral("headY"), -3.0},
+                                     {QStringLiteral("hipX"), 2.5},
+                                     {QStringLiteral("hipDrop"), 3.0},
+                                     {QStringLiteral("hairRotation"), 2.0}};
+    puppet.setPose(continuousPose);
     const QImage moving = synchronizedGrab(window);
     const QRect movingBounds = alphaBounds(moving);
     ok &= check(!rest.isNull() && !moving.isNull() && moving != rest,
@@ -1644,6 +1679,21 @@ bool surfaceRenderChecks(const QUrl &firstSource, const QUrl &secondSource)
     const QImage posed = synchronizedGrab(window);
     ok &= check(puppet.surfaceFrame() == 1 && !posed.isNull() && posed != rest,
                 "selecting a surface frame must visibly replace neutral pixels");
+    puppet.setPose(continuousPose);
+    const QImage posedWithContinuousChannels = synchronizedGrab(window);
+    const qint64 easedDifference = imageDifference(posed, posedWithContinuousChannels);
+    QVariantMap fullWarpDefinition = surfaceDefinition();
+    fullWarpDefinition.remove(QStringLiteral("surfaceSequences"));
+    puppet.setDefinition(fullWarpDefinition);
+    puppet.setSurfaceFrame(1);
+    puppet.setPose(continuousPose);
+    const qint64 fullDifference = imageDifference(
+            posed, synchronizedGrab(window));
+    ok &= check(easedDifference > 0 && easedDifference * 5 < fullDifference * 4,
+                QStringLiteral("authored frames must retain eased continuous motion without the full secondary warp (%1 versus %2 difference)")
+                        .arg(easedDifference).arg(fullDifference));
+    puppet.setDefinition(surfaceDefinition());
+    puppet.setSurfaceFrame(1);
     puppet.setPose({{QStringLiteral("blink"), 1.0}});
     const QImage posedBlink = synchronizedGrab(window);
     ok &= check(!posedBlink.isNull() && posedBlink != posed,

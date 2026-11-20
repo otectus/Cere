@@ -24,7 +24,7 @@ async function fixture(t: test.TestContext, maximumMilliseconds = 60_000) {
     appendFileSync(${JSON.stringify(log)},JSON.stringify({tool:'whisper',args,pid:process.pid})+'\\n');
     if(process.env.TRANSCRIPTION_FAIL){console.error('fixture engine failure');process.exit(9)}
     if(process.env.TRANSCRIPTION_HOLD){for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>process.exit(0));setInterval(()=>{},1000)}
-    else writeFileSync(prefix+'.txt',process.env.TRANSCRIPTION_TEXT||'Local transcript');`);
+    else{writeFileSync(prefix+'.txt',process.env.TRANSCRIPTION_TEXT||'Local transcript');if(args.includes('--output-vtt'))writeFileSync(prefix+'.vtt','WEBVTT\\n\\n00:00:00.000 --> 00:00:02.000\\n'+(process.env.TRANSCRIPTION_TEXT||'Local transcript')+'\\n')}`);
   const model = join(directory, 'model.bin'); await writeFile(model, 'fixture model');
   const settings = { executable: whisper, model }, env = { ...process.env };
   let changes = 0;
@@ -127,6 +127,7 @@ test('M20 an imported recording is converted, transcribed for review with its so
   f.env.TRANSCRIPTION_TEXT = 'We agreed to ship on Tuesday.';
   const result = await f.transcription.importFile({ sessionId: 'session-a', path: source });
   assert.equal(result.text, 'We agreed to ship on Tuesday.');
+  assert.equal(result.vtt, 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nWe agreed to ship on Tuesday.\n', 'a file import keeps segment timestamps for its transcript artifact');
   assert.deepEqual([result.source!.name, result.source!.durationSeconds, result.source!.truncated], ['standup.mp3', 2, false]);
   assert.equal(result.source!.sha256, createHash('sha256').update(await readFile(source)).digest('hex'));
   const whisper = (await f.calls()).filter(call => call.tool === 'whisper').at(-1);

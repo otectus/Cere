@@ -372,11 +372,12 @@ Rectangle {
                 CButton {
                     required property string modelData
                     objectName: "approval_" + card.approvalId + "_" + modelData
-                    enabled: App.connected && card.requestId < 0 && (modelData !== "allow" || (["file","extension","custom-tool"].indexOf(card.approval.kind)<0 || card.approval.fields?.reviewComplete === true))
+                    enabled: App.connected && card.requestId < 0 && (modelData !== "allow" || (["file","extension","custom-tool","changeset","media-job","execution"].indexOf(card.approval.kind)<0 || card.approval.fields?.reviewComplete === true))
                     width: Math.min(implicitWidth, parent.width)
-                    text: modelData === "allow" ? (card.approval.url ? "I've completed it" : "Allow once") : modelData === "answer" ? "Send answers" : modelData === "deny" ? "Decline" : "Cancel turn"
+                    // A change set is accepted only from its full review, where every diff is visible.
+                    text: modelData === "allow" ? (card.approval.kind === "changeset" ? "Review changes" : card.approval.url ? "I've completed it" : "Allow once") : modelData === "answer" ? "Send answers" : modelData === "deny" ? "Decline" : "Cancel turn"
                     primary: modelData === "allow" || modelData === "answer"
-                    onClicked: card.submit(modelData)
+                    onClicked: { if (modelData === "allow" && card.approval.kind === "changeset") { App.selectedId = card.approval.sessionId; WorkbenchState.openReview(card.approval.fields.changeSetId); return } card.submit(modelData) }
                 }
             }
         }

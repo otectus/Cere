@@ -1,5 +1,37 @@
 # Validation record
 
+## Workbench: files, images and API expansion — November 20, 2026
+
+Implemented `Cere_Workbench_Files_Images_and_API_Expansion_Handoff.md` for the 0.1.1 release on `ui-overhaul`. It was committed together with the earlier uncommitted work in the tree, which was preserved. The user guide is [docs/WORKBENCH.md](docs/WORKBENCH.md). The phone dispositions are the Workbench rows in [docs/FEATURE-MATRIX.md](docs/FEATURE-MATRIX.md). Evidence is under `build/workbench-validation/`; logs are in `~/.cache/cere-workbench/`.
+
+| Check | Result |
+| --- | --- |
+| Baseline before any edit: `tools/test-virtual-desktop.sh npm test` | 892 tests: 890 passed, 1 skipped, 1 failed. The failure is the shell-hook check (`tests/telemetry-shells.py`), which failed the same way throughout; `baseline-npm-test.log`. |
+| `tools/test-virtual-desktop.sh npm test`, final tree | 956 tests: 953 passed, 1 skipped, 2 failed; `final-npm-test-2.log`. The failures are the same shell-hook check as the baseline, and `M20 imports share the one voice job…` ("Voice input was cancelled"), a cancellation-timing check that passed 3/3 alone. The first full run (951 tests) also failed three checks caused by this work: a colour literal for the crop outline and mask overlay, and two assertions that expected the old built-in recipe list and MCP image text. Those were fixed and rerun. |
+| `npm run typecheck` | Exit 0 on the final tree. |
+| `tools/test-virtual-desktop.sh npm run build` | Exit 0 in 4 min 15 s; `final-build.log`. Existing unchecked-`QFile::open` warnings in `tests/ui.cpp` remain. |
+| `tools/test-virtual-desktop.sh ctest --test-dir build --output-on-failure` | 6/6 passed, including the GPU `avatar` case, in 666 s; `final-ctest.log`. |
+| `cere-ui-check workbenchAcceptance` in the private desktop | Passed. The slot covers: browse, preview, edit, review, apply and undo; Images grid and editor; Runs and Code Lab; Shelf; `@` picker by keyboard, chip, send and the "Referenced" line; and the compact sheet with its way back. It also checks that panes fit the Workbench width. Screenshots are in `build/workbench-validation/ui-final/tmp/cere-ui-evidence/workbench-*.png` (final run, Shelf included) and `ui-workbench-6/tmp/cere-ui-evidence/`. |
+| Full `cere-ui-check` in the private desktop | 108 passed, 5 failed, 9 skipped (the skips need the live compositor or Spotify) in 42 min; `ui-full.log`. Alone or with their neighbours, `projectAndDraft`, `compactPanelFitsEveryOutput` and `roamingPlacementIsContinuousAcrossOutputs` passed (`ui-rerun.log`, `ui-rerun-2.log`). `compactPanelFitsEveryOutput` alone places the panel at 0,0, because it relies on the previous slot. `reviewTransitions` fails on both trees, as recorded on October 17. `workbenchAcceptance` failed only directly after `offlineDraftSurvivesBrokerRelaunch`. Two fixes followed. In code, Workbench requests made while disconnected, or still waiting when the broker restarted, now answer with an error, so a pane is never left busy and unrefreshed. In the test, the flow now selects Files explicitly. The pair then passed (`ui-final.log`). The same screenshots showed an empty Shelf (its `data` property hid the pane's children). The Shelf now renders, and the test checks its recipe group. |
+| Staged install: `python3 tools/install-user.py --prefix ~/.cache/cere-workbench/stage`, then `node tools/check-install.ts` | Every component was found, including `native/cere-workspacefs` and `node_modules/@modelcontextprotocol/sdk`. Its only problem was "source tree was modified when it was built", which is expected for an uncommitted tree. |
+| Live, local Ollama `hf.co/empero-ai/Qwen3.8-4B-Distill-GGUF:Q8_0` (4.33B, tools), synthetic folder | With `files_replace_text`, the model read `notes.txt` and proposed a `patch_text` change set that waited for review. Accepting it changed the file to `Status: final`. Before that tool existed, this model and `Spark-X2.5-4B` could not pick `patch_text` out of the general change-set schema: they trashed or made folders, were refused, and Spark made no calls. `build/workbench-validation/live/live-smoke.json`. |
+| Live Code Lab run (bubblewrap, systemd scope) | Completed with output `65` from the CSV input. Python 3.14.10, numpy 2.5.5, matplotlib 3.11.2, pillow 13.0.0. Memory and process limits were enforced by the systemd scope. |
+| Live manual path without tools | Import plus extraction of a CSV completed. |
+
+Findings fixed during validation:
+
+- Closing Cere during a Code Lab run let the run write to the closed database and crash the process. Runs are now tracked, and closing waits for them to record `interrupted`. Covered by `tests/workbench-codelab.test.ts`.
+- A refused, never-retryable call could be repeated in a loop. The same call is now short-circuited for the rest of the turn with an instruction to stop. Covered by `tests/workspace-files.test.ts`.
+- Restores did not carry saved connections, so a restored conversation could have fallen back to the Settings endpoint. Connections are now carried as machine configuration, and a missing connection is refused rather than replaced. Covered by `tests/connections.test.ts`.
+- Visual issues found in screenshots:
+  - The Files toolbar kept empty-state button widths and pushed panes past the Workbench edge.
+  - Checkboxes were 200 px wide.
+  - The image grid did not reload after imports.
+  - The compact sheet left the composer reachable behind it.
+  - "Transparency" was shown for opaque images that only have an alpha channel.
+
+Not run: live OpenAI, Google or ComfyUI image calls; API dialect turns; and Ollama Cloud models. Those are billed or account-metered and were not opted in; fixture tests cover them. OCR was not exercised live because Tesseract is not installed here, and the interface reports it as unavailable. Android was not rebuilt: no phone protocol or client code changed, and phones get no new operations.
+
 ## Cere variants and complete avatar audit — October 21, 2026
 
 The source catalog started with **21** entries and now has **24**: Cere (Default), Cere (Gothic), Cere (Punk), Cere (Punk - No Mask), Daemona, Jade, Nova, Soap, Brandy, Archy, Ghost, Violet, Leafy, Cachy, Usagi, Cynthia, Genga, Kippy, Pomni, Rem, Sarah, Sylva, Witty and Alia. The reference directory was listed before implementation. The four exact filenames are `reference/cere_default.png`, `cere_gothic.png`, `cere_punk.png` and `cere_punk_unmasked.png`; visual inspection confirmed the unmasked fitted black/cyan outfit, lace dress, masked respirator outfit and unmasked punk outfit respectively. The user's explicit migration decision resolved the old Cere/default appearance conflict.

@@ -19,13 +19,15 @@ export type SessionActivity = 'recalling' | 'thinking' | 'speaking' | 'working' 
 export type AgentActivity = {
   id: string; name: string; task?: string;
   status: 'starting' | 'running' | 'waiting' | 'completed' | 'failed' | 'interrupted' | 'closed';
-  detail?: string; parentId?: string; updated: number;
+  detail?: string; parentId?: string; delegatedTurnId?: string; updated: number;
 };
 export type Session = {
   id: string; provider: Provider; nativeId: string | null; title: string; cwd: string;
   mode: 'managed' | 'linked' | 'historical'; status: Status; created: number; updated: number;
   draft: string; scroll: number; model: string; effort?: string; error?: string; activity?: SessionActivity;
   ollama?: { host: string; tools: boolean }; parentId?: string;
+  /** The named connection this conversation was created on (connections.ts) and its revision then. */
+  connectionId?: string; connectionRevision?: number;
   api?: { tools: boolean };
   revision?: string; draftRevision?: string; configRevision?: string; turnId?: string;
   remote?: RemoteExecution; effectivePolicy?: 'restricted' | 'unknown';
@@ -37,7 +39,17 @@ export type Session = {
   view?: DraftView;
   /** M01: this conversation's own style, pinned posture and standing instructions. Style only, never authority. */
   behavior?: { profileId?: string; postureId?: string; instructions?: string };
+  /**
+   * Workbench families this managed conversation selected: Files, Images, Analysis. Absent is off, so
+   * conversations from before the Workbench gain nothing on upgrade. Independent of `tools`, which keeps
+   * meaning desktop tools and delegation.
+   */
+  capabilities?: import('./tools/contracts.ts').SessionCapabilities;
+  /** Per-conversation model options, sent only where the provider supports them. */
+  modelOptions?: ModelOptions;
 };
+/** Overrides of a provider's defaults; an absent field keeps the provider's default. */
+export type ModelOptions = { temperature?: number; maxOutputTokens?: number; contextTokens?: number; keepAlive?: string };
 /** Desktop composer and reading position, carried between the compact panel and the workspace. */
 export type DraftView = {
   cursor: number; selectionStart: number; selectionEnd: number;
@@ -62,7 +74,13 @@ export type Source = { title: string; url: string };
  */
 export type Message = { id: string; sessionId: string; role: string; text: string; time: number; kind?: string; sources?: Source[]; revision?: string; turnId?: string;
   /** M02: formatting checks this reply did not meet. A note only: the text is never changed. */
-  styleNotes?: { constraint: string; label: string; count: number }[] };
+  styleNotes?: { constraint: string; label: string; count: number }[];
+  /** Broker-issued artifact versions this row produced or refers to; cards resolve them through the broker. */
+  artifacts?: import('./tools/contracts.ts').ArtifactRef[];
+  /** A durable Workbench operation (image job, change set, run) this row reports on. */
+  operationId?: string;
+  /** A change set this row asks the user to review. */
+  changeSetId?: string };
 export type RunCompletion = {
   id: string; sessionId: string; turnId?: string; title: string; provider: Provider; cwd: string; time: number;
   message: Message & { truncated?: boolean };
@@ -98,6 +116,8 @@ export type Settings = {
   extensions: import('./extensions.ts').ExtensionServer[];
   /** M23: declarative HTTP and command tools. Credentials live in the owner-only secrets file. */
   customTools: import('./custom-tools.ts').CustomTool[];
+  /** Workbench: image connections, the vision helper, OCR, Code Lab and the low-memory profile. No secrets. */
+  workbench: import('./workbench.ts').WorkbenchSettings;
   /** M10: chosen microphone and speaker IDs ("pw:<node>" or "alsa:<device>"); empty is the system default. */
   audio: { input: string; output: string };
   /** M21: spoken commands from the allowlist; off by default and shown before running unless confirm is off. */
@@ -130,6 +150,8 @@ export type Approval = {
 };
 export type ProviderEvent = { type: string; id?: string; text?: string; data?: any };
 export type SendOptions = {
+  /** Sources the user referenced with @, resolved and re-authorized by the Workbench; kept apart from the user's words. */
+  references?: { text: string; images: string[]; restricted?: import('./tools/contracts.ts').DestinationPolicy };
   webSearch?: boolean;
   /** M12: site and date constraints for this message's web search. */
   webConstraints?: import('./web-plan.ts').SearchConstraints;
@@ -167,11 +189,13 @@ export const defaultSettings: Settings = {
   topmost: true, scale: 1, roaming: false, quiet: false, reducedMotion: false, motionIntensity: .7, expressiveCues: true, idleEnergy: 'lively', hidden: false,
   showMemoryCitations: false, sendKey: 'enter', notesVault: { path: '', enabled: false, allowCloud: false },
   compatible: { baseUrl: '', label: '', requiresKey: true, tools: false, images: false, streaming: true, usage: false, contextLength: 0, maxOutputTokens: 0 },
-  extensions: [], customTools: [], audio: { input: '', output: '' }, voiceCommands: { enabled: false, confirm: true, speakFeedback: false }, responsiveness: false, delegationUpdates: true,
+  extensions: [], customTools: [], workbench: { imageConnections: [], vision: { provider: '', model: '' }, helper: { provider: '', model: '' }, ocr: { languages: 'eng' }, codeLab: { enabled: false }, lowMemory: false }, audio: { input: '', output: '' }, voiceCommands: { enabled: false, confirm: true, speakFeedback: false }, responsiveness: false, delegationUpdates: true,
   profile: 'scoped', paused: false, bypassCliPermissions: false, bypassComputerPermissions: false, categories: [], grants: [],
   position: { output: '', x: 0.86, y: 0.78 }, roamArea: { left: 0.05, right: 0.95, top: 0.5, bottom: 0.95 },
   onboarding: true, scripts: [],
 };
 
-export type CompatibleEndpoint = { baseUrl: string; label: string; requiresKey: boolean; tools: boolean; images: boolean; streaming: boolean; usage: boolean; contextLength: number; maxOutputTokens: number };
+export type CompatibleEndpoint = { baseUrl: string; label: string; requiresKey: boolean; tools: boolean; images: boolean; streaming: boolean; usage: boolean; contextLength: number; maxOutputTokens: number;
+  /** Where the endpoint processes requests, as the user declared it; 'unknown' is never treated as local. */
+  processing?: import('./tools/contracts.ts').ProcessingRoute };
 export type ToolDefinition = { name: string; title: string; category: string; description: string; schema: Record<string, any>; required?: string[]; readOnly?: boolean };

@@ -49,6 +49,10 @@ export type CollectionContext = { text: string; detail: Record<string, any>; aut
 
 export const collectionLimits = { collections: 20, sources: 50, files: 2000, fileBytes: 2 * 1024 * 1024, depth: 12, chunkChars: 1200, overlap: 150, perTurnCollections: 4 };
 const textTypes = new Set(['.md', '.markdown', '.mdx', '.txt', '.text', '.rst', '.adoc', '.asciidoc', '.org']);
+/** Documents read through the Workbench extractor; their chunks keep page, sheet, row or section locators. */
+export const documentTypes = new Set(['.pdf', '.docx', '.xlsx', '.csv', '.tsv', '.html', '.htm', '.json', '.xml']);
+const indexable = (name: string) => textTypes.has(extname(name).toLowerCase()) || documentTypes.has(extname(name).toLowerCase());
+const documentBytes = 25 * 1024 * 1024;
 const markdownTypes = new Set(['.md', '.markdown', '.mdx']);
 /** Revision of the notes-vault privacy rules a Markdown file was last checked under. */
 const privacyRules = 1;
@@ -249,7 +253,7 @@ export class KnowledgeCollections {
     if (path === '/' || path === homedir()) throw new Error('Choose a specific folder, not the whole home directory or disk');
     if (path.split(sep).some(part => part.startsWith('.'))) throw new Error('Hidden files and folders are not added to collections');
     if (path === state || path.startsWith(state + sep)) throw new Error('Cere’s own state cannot be a collection source');
-    if (!info.isDirectory() && !(info.isFile() && textTypes.has(extname(path).toLowerCase()))) throw new Error('Add a folder, or a Markdown or text file');
+    if (!info.isDirectory() && !(info.isFile() && indexable(path))) throw new Error('Add a folder, or a Markdown, text, PDF, Word, Excel, CSV, HTML, JSON or XML file');
     return this.catalog(() => {
       const collection = this.find(p.id); this.available(collection); this.expect(collection, p.expectedRevision);
       if (collection.sources.some(source => source.path === path)) throw new Error('This source is already in the collection');
@@ -322,7 +326,7 @@ export class KnowledgeCollections {
         if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
         const path = join(folder, entry.name);
         if (entry.isDirectory()) { if (!skippedFolders.has(entry.name)) await walk(path, depth + 1); }
-        else if (entry.isFile() && textTypes.has(extname(entry.name).toLowerCase()) && files.length < collectionLimits.files) files.push(path);
+        else if (entry.isFile() && indexable(entry.name) && files.length < collectionLimits.files) files.push(path);
       }
     };
     for (const source of collection.sources) {
@@ -370,10 +374,19 @@ export class KnowledgeCollections {
           const info = await stat(path), markdown = markdownTypes.has(extname(path).toLowerCase());
           // Markdown checked under older privacy rules is read again once, even when unchanged.
           if (old && !old.error && (!markdown || old.privacy === privacyRules) && old.size === info.size && old.mtimeMs === info.mtimeMs) { files.push(old); continue; }
-          if (info.size > collectionLimits.fileBytes) throw new Error('Larger than 2 MB');
+          const document = documentTypes.has(extname(path).toLowerCase());
+          if (info.size > (document ? documentBytes : collectionLimits.fileBytes)) throw new Error(document ? 'Larger than 25 MB' : 'Larger than 2 MB');
           const bytes = await readFile(path), sha256 = createHash('sha256').update(bytes).digest('hex');
-          if (bytes.includes(0)) throw new Error('Not a text file');
-          const text = bytes.toString('utf8'), checked = markdown ? { privacy: privacyRules } : {};
+          if (!document && bytes.includes(0)) throw new Error('Not a text file');
+          let text = bytes.toString('utf8');
+          const checked = markdown ? { privacy: privacyRules } : {};
+          if (document) {
+            // Documents go through the Workbench extractor; an empty or partial reading is reported, never indexed as complete.
+            const { mimeFor } = await import('./artifacts/store.ts'), { Extractor } = await import('./artifacts/extract.ts');
+            const parsed = await this.core.workbench.extractor.parseFile(bytes, basename(path), mimeFor(basename(path), bytes), signal);
+            if (!parsed.units.length) throw new Error(parsed.warnings[0] || 'No text was found');
+            text = Extractor.asCollectionText({ ...parsed, schema: 1, extractor: '', extractorVersion: '', source: { artifactId: '', versionId: '', sha256, mime: '', name: basename(path) }, options: {}, derivedSha256: '' });
+          }
           // The notes vault's rules apply to Markdown here too: private or unreadable front matter is never indexed.
           if (markdown && privateNote(frontMatter(text))) throw Object.assign(new Error('Private note, not indexed'), { private: true });
           if (old && !old.error && old.sha256 === sha256) { files.push({ ...old, size: info.size, mtimeMs: info.mtimeMs, ...checked }); continue; }
@@ -429,9 +442,10 @@ export class KnowledgeCollections {
    * The excerpts a turn receives from its bound collections, within its token budget. Cloud-hosted
    * models see only collections that allow it. Returns the delimited packet and what was kept or left out.
    */
-  async context(session: Session, text: string, budget: number, route: ModelRoute, signal: AbortSignal): Promise<CollectionContext> {
+  async context(session: Session, text: string, budget: number, route: ModelRoute, signal: AbortSignal, only?: string[]): Promise<CollectionContext> {
     await this.reconcile(); signal.throwIfAborted();
-    const bound = this.bound(session).slice(0, collectionLimits.perTurnCollections);
+    // A composer reference narrows retrieval to the collections the user picked.
+    const bound = this.bound(session).filter(collection => !only || only.includes(collection.id)).slice(0, collectionLimits.perTurnCollections);
     const usable = bound.filter(collection => route === 'local' || collection.allowCloud);
     const detail = { collections: usable.map(collection => collection.name), withheld: bound.filter(collection => !usable.includes(collection)).map(collection => collection.name), kept: 0, dropped: 0, sources: [] as string[] };
     if (!usable.length || budget < 200 || !text.trim()) return { text: '', detail };

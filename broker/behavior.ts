@@ -19,7 +19,9 @@ export type Traits = Partial<Record<TraitName, number>>;
  * false withholds that family of Cere tools; absent leaves it as the conversation has it. `recall`
  * false also skips automatic memory recall; capture still follows the memory settings.
  */
-export type ToolCeiling = { desktop?: boolean; delegation?: boolean; web?: boolean; memory?: boolean; extensions?: boolean; recall?: boolean };
+export type ToolCeiling = { desktop?: boolean; delegation?: boolean; web?: boolean; memory?: boolean; extensions?: boolean; recall?: boolean;
+  /** Workbench families. fileChanges withholds proposing edits while leaving file reading as the conversation has it. */
+  files?: boolean; fileChanges?: boolean; images?: boolean; analysis?: boolean };
 export type BehaviorProfile = {
   id: string; label: string; text: string; traits: Traits; instructions: string; ceiling: ToolCeiling; posture: boolean;
   revision: string; created: number; updated: number; builtin?: boolean;
@@ -39,8 +41,8 @@ const traitText: Record<TraitName, Record<string, string>> = {
 /** Built-in postures for one turn or a pinned stretch of a conversation. */
 export const builtinPostures: BehaviorProfile[] = [
   { id: 'posture:research', label: 'Research', text: '', traits: { directness: 1 }, instructions: 'Research posture: separate what sources say from your own inference, cite sources for factual claims, and say what you could not verify.', ceiling: {}, posture: true },
-  { id: 'posture:review', label: 'Review', text: '', traits: { directness: 1 }, instructions: 'Review posture: critique the work in front of you. Lead with the most serious problems, give evidence, and do not make changes or take desktop actions.', ceiling: { desktop: false, delegation: false, extensions: false }, posture: true },
-  { id: 'posture:plan', label: 'Plan', text: '', traits: {}, instructions: 'Planning posture: produce an ordered plan with dependencies, risks and how each step will be checked. Do not carry the plan out or take desktop actions.', ceiling: { desktop: false, delegation: false, extensions: false }, posture: true },
+  { id: 'posture:review', label: 'Review', text: '', traits: { directness: 1 }, instructions: 'Review posture: critique the work in front of you. Lead with the most serious problems, give evidence, and do not make changes or take desktop actions.', ceiling: { desktop: false, delegation: false, extensions: false, fileChanges: false, images: false, analysis: false }, posture: true },
+  { id: 'posture:plan', label: 'Plan', text: '', traits: {}, instructions: 'Planning posture: produce an ordered plan with dependencies, risks and how each step will be checked. Do not carry the plan out or take desktop actions.', ceiling: { desktop: false, delegation: false, extensions: false, fileChanges: false, images: false, analysis: false }, posture: true },
   { id: 'posture:explain', label: 'Explain', text: '', traits: { verbosity: 1, warmth: 1 }, instructions: 'Teaching posture: explain step by step, define terms, and check understanding with a short summary.', ceiling: {}, posture: true },
   { id: 'posture:brief', label: 'Brief', text: '', traits: { verbosity: -2 }, instructions: 'Brief posture: answer in as few words as accuracy allows.', ceiling: {}, posture: true },
   { id: 'posture:no-memory', label: 'Without memory', text: '', traits: {}, instructions: 'Answer from this conversation alone; do not rely on stored memory.', ceiling: { recall: false, memory: false }, posture: true },
@@ -58,9 +60,9 @@ export function validTraits(value: unknown): Traits {
 }
 export function validCeiling(value: unknown): ToolCeiling {
   if (value === undefined || value === null) return {};
-  const keys = ['desktop', 'delegation', 'web', 'memory', 'extensions', 'recall'];
+  const keys = ['desktop', 'delegation', 'web', 'memory', 'extensions', 'recall', 'files', 'fileChanges', 'images', 'analysis'];
   if (typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key)) || Object.values(value).some(flag => typeof flag !== 'boolean'))
-    throw new Error('Tool limits can only withhold desktop, delegation, web, memory or extension tools, or automatic memory recall');
+    throw new Error('Tool limits can only withhold desktop, delegation, web, memory, extension, file, file-change, image or analysis tools, or automatic memory recall');
   // Only withholding is stored: a true value cannot grant anything, so it is dropped.
   return Object.fromEntries(Object.entries(value as Record<string, boolean>).filter(([, flag]) => flag === false)) as ToolCeiling;
 }
@@ -125,7 +127,7 @@ export function behaviorInstructions(resolved: ResolvedBehavior, name: string): 
   if (resolved.instructions) block += '\nStanding instructions for this conversation, from the user (they never grant permissions or tools):\n' + resolved.instructions + '\n';
   if (resolved.posture) block += `\nCurrent posture: ${resolved.posture.label}, ${resolved.posture.pinned ? 'pinned to this conversation until the user changes it' : 'for this turn only'}. ${resolved.posture.instructions}\n`;
   block += constraintInstructions(resolved.constraints);
-  const withheld = Object.entries(resolved.ceiling).filter(([key, flag]) => flag === false && key !== 'recall').map(([key]) => key === 'extensions' ? 'extension' : key);
+  const withheld = Object.entries(resolved.ceiling).filter(([key, flag]) => flag === false && key !== 'recall').map(([key]) => ({ extensions: 'extension', files: 'file', fileChanges: 'file-change', images: 'image' } as Record<string, string>)[key] || key);
   if (withheld.length) block += `\nThis style withholds Cere's ${withheld.join(', ')} tools for now; do not ask for them. The user can change the style.\n`;
   if (resolved.ceiling.recall === false) block += '\nThis style withholds automatic memory recall: no stored memory is supplied, so do not rely on it.\n';
   return block;

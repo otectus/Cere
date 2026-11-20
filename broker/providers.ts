@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { buildIdentity } from './build-info.ts';
 import { fileURLToPath } from 'node:url';
 import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -229,7 +230,7 @@ export class CodexAdapter implements Adapter {
   }
   async initialize(personality: string, assistantName: string, memory: boolean) {
     // requestUserInput and the richer subagent item fields are experimental app-server APIs.
-    await this.process.request('initialize', { clientInfo: { name: 'cere', title: 'Cere', version: '0.1.0' }, capabilities: { experimentalApi: true, optOutNotificationMethods: codexQuietNotifications } });
+    await this.process.request('initialize', { clientInfo: { name: 'cere', title: 'Cere', version: buildIdentity().version }, capabilities: { experimentalApi: true, optOutNotificationMethods: codexQuietNotifications } });
     this.process.write({ method: 'initialized', params: {} });
     // Resolve the configured policy afresh on resume: turn overrides persist in Codex.
     const { config } = await this.process.request('config/read', { cwd: this.session.cwd });

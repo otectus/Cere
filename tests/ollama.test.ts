@@ -327,7 +327,7 @@ test('revoking orchestration during approval prevents sending, and Stop cancels 
   await until(()=>f.core.approvals.size===1);controller.abort();f.core.cancelApprovals(s.id);await assert.rejects(pending,/declined/);assert.equal(f.core.store.sessions().length,1);
 });
 
-test('stopping an orchestrator also stops its active delegated turn and clears approvals',async t=>{
+test('stopping an orchestrator leaves its active delegated turn running and clears approvals',async t=>{
   const f=await fixture(t,(body,res,index)=>{
     if(index===0)reply(res,'',{tool_calls:[{function:{name:'sessions_start',arguments:{provider:'codex',prompt:'Long task'}}}]});
     else reply(res,'',{tool_calls:[{function:{name:'sessions_wait',arguments:{id:JSON.parse(body.messages.at(-1).content).id}}}]});
@@ -336,7 +336,7 @@ test('stopping an orchestrator also stops its active delegated turn and clears a
   f.core.factory=(s,h)=>s.provider==='ollama'?actual(s,h):{async send(){childHooks=h;},async interrupt(){h.event({type:'complete',text:'interrupted'});},async close(){}};
   const s=await session(f,true);await f.core.updateSettings({categories:['providers']});await f.core.send({id:s.id,text:'Delegate'});await until(()=>f.core.approvals.size===1);f.core.answer({id:f.core.snapshot().approvals[0].id,choice:'allow'});
   await until(()=>f.requests.length===2&&!!childHooks);
-  await f.core.stop(s.id);assert.equal(f.core.store.session(s.id).status,'interrupted');assert.equal(f.core.store.sessions().find(c=>c.parentId===s.id)?.status,'interrupted');assert.equal(f.core.approvals.size,0);
+  await f.core.stop(s.id);assert.equal(f.core.store.session(s.id).status,'interrupted');assert.equal(f.core.store.sessions().find(c=>c.parentId===s.id)?.status,'working');assert.equal(f.core.approvals.size,0);
 });
 
 test('a recovered tool request is marked unknown and never automatically re-executed',async t=>{
@@ -347,15 +347,14 @@ test('a recovered tool request is marked unknown and never automatically re-exec
 });
 
 
-test('new turns cannot race with a delegated child still acknowledging Stop',async t=>{
-  const f=await fixture(t),s=await session(f,true),child=await f.core.create({provider:'codex',cwd:f.directory,trusted:true});
+test('new turns cannot race with a provider still acknowledging Stop',async t=>{
+  const f=await fixture(t),s=await session(f,true);
   let release!:()=>void;
-  f.core.adapters.set(s.id,{async send(){},async interrupt(){f.core.event(s.id,{type:'complete',text:'interrupted'});},async close(){}});
-  f.core.adapters.set(child.id,{async send(){},async interrupt(){await new Promise<void>(r=>release=r);f.core.event(child.id,{type:'complete',text:'interrupted'});},async close(){}});
-  f.core.updateSession(s.id,{status:'working'});f.core.updateSession(child.id,{status:'working'});f.core.delegations.set(s.id,new Set([child.id]));
+  f.core.adapters.set(s.id,{async send(){},async interrupt(){f.core.event(s.id,{type:'complete',text:'interrupted'});await new Promise<void>(r=>release=r);},async close(){}});
+  f.core.updateSession(s.id,{status:'working'});
   const stopping=f.core.stop(s.id);await until(()=>!!release);
   await assert.rejects(f.core.send({id:s.id,text:'Too early'}),/busy/);
-  release();await stopping;assert.equal(f.core.stopping.size,0);assert.equal(f.core.delegations.size,0);
+  release();await stopping;assert.equal(f.core.stopping.size,0);
 });
 
 test('a connection change during creation cannot redirect the new session to another host',async t=>{

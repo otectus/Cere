@@ -1,6 +1,6 @@
 {
   "name": "cere-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -20,6 +20,7 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "canonicalize": "2.1.0",
     "linkedom": "0.18.13",
     "neo4j-driver": "6.2.0",

@@ -78,7 +78,11 @@ var categories = [
             {label: "OpenAI API key", target: "apiKey_openai", keywords: "gpt"},
             {label: "Claude API key", target: "apiKey_anthropic", keywords: "anthropic"},
             {label: "Google AI API key", target: "apiKey_google", keywords: "gemini"},
-            {label: "Compatible endpoint", target: "compatibleBaseUrl", keywords: "openai compatible lm studio llama.cpp vllm localai gateway base url custom server chat completions"}
+            {label: "Compatible endpoint", target: "compatibleBaseUrl", keywords: "openai compatible lm studio llama.cpp vllm localai gateway base url custom server chat completions"},
+            {label: "Image backends", target: "imageConnections", keywords: "images generate edit openai gpt-image gemini comfyui workflow budget picture"},
+            {label: "Vision helper", target: "visionProvider", keywords: "vision describe image ocr look see helper"},
+            {label: "Code Lab", target: "codeLabEnabled", keywords: "python analysis charts csv sandbox bubblewrap run code"},
+            {label: "Low-memory mode", target: "lowMemory", keywords: "gpu vram memory serialize image"}
         ]},
     {id: "knowledge", group: "assistant", label: "Knowledge", icon: "memory",
         blurb: "What your companion can look up and remember across your projects.",

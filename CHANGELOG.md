@@ -4,11 +4,25 @@ Notable changes to Cere, the desktop application and its broker, and to Cere Mob
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-20
+
+The Workbench: files, images and analysis for Ollama and API conversations, built from `Cere_Workbench_Files_Images_and_API_Expansion_Handoff.md`. The user guide is [docs/WORKBENCH.md](docs/WORKBENCH.md), and [VALIDATION.md](VALIDATION.md) records its checks. This release also carries the work listed below, which was previously unreleased.
+
 Repository remediation adds revision-safe policy commits, cancellable turn preparation, consent-bound private context, journaled collection ingestion, complete bounded operation review, process-group cleanup, byte-bounded desktop hydration, and Android stale-response fencing. Zod is pinned to 4.6.7. See [implementation and remaining gates](docs/remediation-2026-11-17.md); exhaustive audit and release validation are not complete.
 
 The desktop and mobile review, implemented in October 2026 as work packages W01–W16. Finding IDs F01–F18 are the review's; [docs/REVIEW-VALIDATION.md](docs/REVIEW-VALIDATION.md) records the commit, tests and evidence for each, and [docs/FEATURE-MATRIX.md](docs/FEATURE-MATRIX.md) shows what the phone and the desktop each offer. The phone build from this source has not been published; a stable phone release still needs the device gates in [docs/mobile/TESTING.md](docs/mobile/TESTING.md).
 
 ### Added
+
+- **Workbench.** Files, Preview, Changes, Images, Runs and Shelf tabs beside the conversation (**Ctrl+Shift+W**). In the compact panel they appear as one sheet. **Files**, **Images** and **Analysis** switches decide what the model is offered; you can always use the Workbench yourself. Temporary and phone-controlled conversations stay text-only.
+- **Workspace folders and reviewed changes.** Each conversation can have up to 8 folders with their own permissions and processing destinations. A confined helper (`cere-workspacefs`) refuses `..`, symlinks and paths outside the folder. Browse, search, preview and edit files. Changes are applied only after review, with per-operation results, version checks, a private trash, and an undo that never overwrites a newer edit. Edit permissions can be granted for a set time.
+- **Conversation files.** Imports, images, extractions and run outputs are kept as immutable, hashed versions with provenance, thumbnails, pins, project sharing and reviewed exports. Documents are extracted with locations: PDF pages, DOCX paragraphs and tables, XLSX cells, CSV, JSON, XML and HTML. Macros never run and links are never fetched. Recordings transcribed from a file also keep a timestamped WebVTT transcript.
+- **Images.** Generation and edits through OpenAI, Google and your own ComfyUI server, as durable jobs. Billing must be acknowledged, and daily budgets apply. A job whose outcome is unknown is never resubmitted. An editor offers crop, annotations, masks, comparison, resize, format conversion, and versions that never change the original. A vision helper, local OCR with Tesseract, and a review helper for narrow document, change-set and research reviews are also available.
+- **Code Lab, commands and Git.** Python runs isolated with bubblewrap, without network, on read-only inputs; its outputs become conversation files. Commands in a folder always ask. Git inspection is read-only. The Runs tab shows which limits are enforced on this computer.
+- **References with @.** The composer's `@` picker references files, folders, conversation files, project shares, collections and other conversations in the project. Each reference is resolved and authorized at send time, with a preview line before sending. Referenced content travels apart from your words, so a later model that may not receive it loses the content but keeps your message.
+- **Project shelf and Workbench recipes.** The Shelf lists what the project has collected. Eight new recipes take typed folder, file, artifact and collection inputs: Explain this project, Review configuration change, Folder cleanup plan, Document briefing, Image asset kit, Screenshot to issue report, Data to report, and Release materials.
+- **Saved connections.** More Ollama hosts and OpenAI-compatible endpoints can be kept under names. Each conversation stays on its connection; moving one asks you to confirm the new destination. Per-conversation model controls cover temperature, maximum reply, context window and keep-alive.
+- **HTTP tool servers.** MCP servers can be reached over Streamable HTTP, with an origin-bound bearer token and an address policy. Resources and prompt templates are browsed by the user. Image results from tools become conversation files.
 
 - **Mobile protocol 1.1.** The desktop's welcome names the protocol (1.1), the features it offers and its exact build (version, commit and whether the source was modified). The phone uses a new option only when the desktop offers its feature, so with an older desktop those options stay hidden; a version mismatch says which side to update, and drafts stay on the phone. Response and event frames recorded from a real gateway are decoded by the Android tests, and `node tools/mobile-contract.ts --check` fails when `protocol/mobile/v1/CONTRACT.json` leaves out an operation or feature (F17).
 - **Screen capture from the phone.** With Desktop control and the capture category, the phone's Desktop tab starts a capture of the desktop display (**Capture now**, or **Capture and edit on the desktop** to finish it in Satty there), previews a reduced copy and attaches exactly that image to one conversation. Nothing reaches a provider until the message is sent.
@@ -27,6 +41,13 @@ The desktop and mobile review, implemented in October 2026 as work packages W01�
 - **Checks for installs and providers.** `node tools/check-install.ts DIR [commit]` checks a staged install against its source. `node tools/check-codex-protocol.ts` and `node tools/check-claude-protocol.ts` check the installed CLIs' methods, flags and handshake without a billed turn. `node tools/mobile-paired-check.ts` pairs an emulator or device with an isolated broker and fails unless every paired test passes.
 
 ### Changed
+
+- Backups with content include conversation files and verify their hashes on restore. Folder access, pending changes, runs and grants are never restored. Restores keep this computer's image-backend keys, usage records and saved connections. Forgetting a memory also removes conversation files whose text holds it.
+- The Settings Ollama host and compatible endpoint become default named connections, migrated once without moving any key.
+- Schedules for conversations that use the Workbench also check its folders, policies, image backends and Code Lab. Any change pauses the schedule.
+- The broker identifies itself to Codex, Claude and MCP servers with the version from `package.json`.
+- Every avatar's portrait and surface atlases were regenerated with two consistency passes. The first keeps painted details registered to the neutral illustration as the head turns and the arms and legs move (`tools/avatar-appearance.h`). The second keeps expression changes within the face (`tools/portrait-consistency.mjs`).
+- New dependency: `@modelcontextprotocol/sdk` 1.32.2, pinned and loaded only for HTTP tool servers. The package lists the Workbench's optional system packages (bubblewrap, ripgrep, poppler, tesseract, numpy, matplotlib).
 
 - **Providers are described in one place.** `broker/provider-catalog.ts` holds each provider's traits (models, effort, images, tools, web search, history import, queueing, billing and how a turn from a phone runs). The desktop and the phone build their controls and explanations from it, in the order the broker sends.
 - **Faster avatar startup (F13).** The interface checks the avatar catalog from each atlas's PNG header instead of decoding all twenty atlases at startup. Offscreen on the development machine, building the interface's controller (catalog, avatars and themes) took 8.4–10.0 s with a 783 MiB memory peak before, and 9–13 ms with 42 MiB after. The shown avatar is decoded when it is displayed; artwork that then fails is set aside only after a full load confirms the failure, the next usable avatar is shown with a notice, and chat is unaffected.
@@ -62,6 +83,10 @@ The desktop and mobile review, implemented in October 2026 as work packages W01�
 - The workspace card, memory health and the list of missing programs leave out window titles, commands, paths outside the project, endpoints, model names and error text.
 
 ### Known limitations
+
+- The Workbench's live OpenAI, Google and ComfyUI image paths and its API chat turns were verified with fixtures only; they were not run against the billed services. Small local models need the focused `files_replace_text` tool to make edits.
+- Tool servers that need an OAuth sign-in are not supported; use a bearer token. Interactive HTML previews need an optional isolated module that is not included, so HTML files show their source.
+- Budgets cover images per day only. There are no call, token or concurrency budgets and no price estimates.
 
 - Device-only gates have not run: biometrics, network moves, desktop sleep and Doze, notifications, TalkBack and large text, camera and picker uploads, behavior without Google Play services, and the upgrade from the published 0.1.3 development build. Process-death fault injection on a device is not built.
 - Memory remains experimental (F16): predicate precision is 88.9% against a 95% gate, and a representative evaluation is still needed.

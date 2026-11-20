@@ -60,7 +60,7 @@ const startAndReply = (prompt = 'Review the project', provider = 'codex') => (bo
   delegationTurn(body) ? { content: 'The delegated review is done.' }
   : body.messages.at(-1).role === 'tool' ? { content: 'Started it; I will report back.' } : call('sessions_start', { provider, prompt });
 const idle = (f: Fixture, id: string) => until(() => f.core.store.session(id).status === 'idle');
-const waiting = (f: Fixture, id: string, children: number) => until(() => f.prompts.filter(p => f.core.store.session(p.id).parentId === id).length === children && f.core.store.session(id).activity === 'waitingForAgents');
+const parentFree = (f: Fixture, id: string, children: number) => until(() => f.prompts.filter(p => f.core.store.session(p.id).parentId === id).length === children && f.core.store.session(id).status === 'idle');
 const update = (body: any) => JSON.parse(String(body.messages.filter((m: any) => m.role === 'user').at(-1).content).split('\n')[2]);
 const completes = (notices: any[], id: string) => notices.filter(n => n.kind === 'complete' && n.sessionId === id).length;
 
@@ -72,7 +72,7 @@ test('DU-0 a delegated turn registers before dispatch, resolves with its reply a
   let [ping] = records(f, parent.id);
   assert.deepEqual([ping.state, ping.childId, ping.provider, ping.tool, ping.prompt], ['registered', child, 'codex', 'sessions.start', 'Review the project']);
   assert.equal(ping.title, f.core.store.session(child).title);
-  await until(() => f.core.store.session(parent.id).activity === 'waitingForAgents');
+  await until(() => f.core.store.session(parent.id).status === 'idle');
   assert.equal(records(f, parent.id)[0].childTurnId, f.core.store.session(child).turnId);
   f.finish(child, 'Found two flaky tests in the login suite.');
   [ping] = records(f, parent.id);
@@ -91,7 +91,7 @@ test('DU-0 failed and interrupted delegated turns are captured with their outcom
     : index === 0 ? call('sessions_start', { provider: 'codex', prompt: 'First task' }) : index === 1 ? call('sessions_start', { provider: 'claude', prompt: 'Second task' }) : { content: 'Both started.' });
   const parent = await conversation(f);
   await f.core.send({ id: parent.id, text: 'Delegate two tasks' });
-  await until(() => f.prompts.length === 2 && f.core.store.session(parent.id).activity === 'waitingForAgents');
+  await until(() => f.prompts.length === 2 && f.core.store.session(parent.id).status === 'idle');
   const [first, second] = [childOf(f, parent.id, 0), childOf(f, parent.id, 1)];
   // An approval or question holds the child in waiting; that is not the end of its turn.
   const approval = f.hooks.get(second)!.approve({ kind: 'question', title: 'Which branch?', detail: '', choices: ['answer'], questions: [{ id: 'q', question: 'Which branch?' }] });
@@ -138,7 +138,7 @@ test('DU-2 a result the turn already read with sessions_wait or sessions_read is
   }
 });
 
-test('DU-0 a failed dispatch ends its record quietly, and Stop on the parent drops its children’s updates', async t => {
+test('DU-0 a failed dispatch ends its record quietly, and an accepted child reports after the parent stops', async t => {
   const f = await fixture(t, (body, index) => [
     () => call('sessions_start', { provider: 'codex', prompt: 'Doomed task' }),
     () => ({ content: 'The task could not start.' }),
@@ -159,7 +159,21 @@ test('DU-0 a failed dispatch ends its record quietly, and Stop on the parent dro
   await f.core.stop(parent.id);
   assert.equal(f.core.store.session(parent.id).status, 'interrupted');
   const stopped = records(f, parent.id).find(p => p.prompt === 'Long task')!;
-  assert.deepEqual([stopped.state, stopped.reason], ['dropped', 'parent stopped']);
+  assert.equal(stopped.state, 'registered');
+  f.finish(stopped.childId, 'Finished independently.');
+  await until(() => f.requests.length === 5); await idle(f, parent.id);
+  assert.equal(update(f.requests.at(-1)).events[0].reply, 'Finished independently.');
+});
+
+test('ending the parent’s power authorization prevents a later child result from dispatching a turn', async t => {
+  const f = await fixture(t, startAndReply()), parent = await conversation(f);
+  await f.core.send({ id: parent.id, text: 'Delegate a review' });
+  await parentFree(f, parent.id, 1);
+  await f.core.stopAndClose(parent.id);
+  f.finish(childOf(f, parent.id), 'Late result.');
+  await settle();
+  assert.equal(f.requests.length, 2);
+  assert.equal(records(f, parent.id)[0].reason, 'Power access ended');
 });
 
 test('DU-6 with the setting off nothing is registered and everything behaves as before, the child’s own notice included', async t => {
@@ -168,22 +182,21 @@ test('DU-6 with the setting off nothing is registered and everything behaves as 
   assert.equal(f.core.settings.delegationUpdates, true, 'on by default');
   await f.core.updateSettings({ delegationUpdates: false });
   await f.core.send({ id: parent.id, text: 'Delegate a review' });
-  await waiting(f, parent.id, 1);
+  await parentFree(f, parent.id, 1);
   const child = childOf(f, parent.id);
   f.finish(child, 'The review result.');
   await idle(f, parent.id); await settle();
   assert.deepEqual(records(f, parent.id), []);
   assert.equal(f.requests.length, 2, 'no automatic turn');
   assert.deepEqual(delegationRows(f, parent.id), []);
-  // The parent's held completion is released as it always was, with its notice and inbox entry.
   assert.deepEqual(f.core.completions.filter(c => c.sessionId === parent.id).map(c => c.message.text), ['Started it; I will report back.']);
   assert.equal(completes(notices, parent.id), 1);
   assert.equal(completes(notices, child), 1);
   assert.notEqual(f.core.store.session(parent.id).agents?.find(a => a.id === child)?.detail, 'The review result.');
-  // The model was told to wait for results, as before.
-  assert.match(f.requests[0].messages[0].content, /Use sessions_wait to await results\.\n/);
+  // With automatic updates off, the model can check results on request.
+  assert.match(f.requests[0].messages[0].content, /Use sessions_read when the user asks for results\.\n/);
   assert.doesNotMatch(f.requests[0].messages[0].content, /reports back by itself/);
-  assert.equal(f.requests[0].tools.find((t: any) => t.function.name === 'sessions_start').function.description, 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; use sessions_wait for results.');
+  assert.equal(f.requests[0].tools.find((t: any) => t.function.name === 'sessions_start').function.description, 'Start a visible Codex or Claude conversation in the current project after user approval. Returns its ID immediately; use sessions_read to check results later.');
   await assert.rejects(f.core.updateSettings({ delegationUpdates: 'yes' }), /Invalid delegationUpdates/);
 });
 
@@ -328,11 +341,11 @@ test('forgetting content after an automatic turn is prepared fences its provider
   assert.ok(!JSON.stringify(records(f, parent.id)).includes('orchid'));
 });
 
-test('DU-1 a finished delegated turn reaches its parent as one automatic turn that replaces the stale completion', async t => {
+test('DU-1 a finished delegated turn reaches its parent as one automatic turn', async t => {
   const f = await fixture(t, startAndReply()), parent = await conversation(f), notices: any[] = [];
   f.core.on('notice', notice => notices.push(notice));
   await f.core.send({ id: parent.id, text: 'Delegate a review' });
-  await waiting(f, parent.id, 1);
+  await parentFree(f, parent.id, 1);
   const userTurn = f.core.store.session(parent.id).turnId, child = childOf(f, parent.id);
   f.core.draft(parent.id, 'A draft the user is still writing');
   f.finish(child, 'Found two flaky tests in the login suite.');
@@ -347,9 +360,8 @@ test('DU-1 a finished delegated turn reaches its parent as one automatic turn th
   assert.equal(rows.length, 1); assert.equal(rows[0].role, 'user');
   assert.match(rows[0].text, /^Codex finished “Delegated · Review the project” after \d+ s\.\n\nFound two flaky tests in the login suite\.$/);
   assert.equal(f.core.store.get<any[]>('ollama:' + parent.id, []).find(m => m.sourceId === rows[0].id)?.content, text);
-  // The reply written before the result made no notice or inbox entry; the summary made one of each.
-  assert.deepEqual(f.core.completions.filter(c => c.sessionId === parent.id).map(c => c.message.text), ['The delegated review is done.']);
-  assert.equal(completes(notices, parent.id), 1);
+  assert.deepEqual(f.core.completions.filter(c => c.sessionId === parent.id).map(c => c.message.text), ['Started it; I will report back.', 'The delegated review is done.']);
+  assert.equal(completes(notices, parent.id), 2);
   assert.equal(completes(notices, child), 0, 'the parent reports the child’s result');
   assert.equal(f.core.store.session(parent.id).unread, true);
   const [ping] = records(f, parent.id);
@@ -362,7 +374,7 @@ test('DU-1 a finished delegated turn reaches its parent as one automatic turn th
 test('DU-1 a Delegation update keeps Cere’s authorship in exports, on the phone and in project tasks', async t => {
   const f = await fixture(t, startAndReply()), parent = await conversation(f);
   await f.core.send({ id: parent.id, text: 'Delegate a review' });
-  await waiting(f, parent.id, 1);
+  await parentFree(f, parent.id, 1);
   f.finish(childOf(f, parent.id), 'Found two flaky tests.');
   await until(() => f.requests.length === 3); await idle(f, parent.id); await settle();
   const [row] = delegationRows(f, parent.id);
@@ -383,21 +395,18 @@ test('DU-3 a sibling that finishes first is reported while the other runs on, st
   const parent = await conversation(f), notices: any[] = [];
   f.core.on('notice', notice => notices.push(notice));
   await f.core.send({ id: parent.id, text: 'Run two tasks' });
-  await waiting(f, parent.id, 2);
+  await parentFree(f, parent.id, 2);
   const [a, b] = [childOf(f, parent.id, 0), childOf(f, parent.id, 1)];
   f.finish(a, 'A is done.');
-  // A's update goes out at once; that turn's own completion then waits for B, as the parent's always does.
-  await until(() => f.requests.length === 4 && f.core.store.session(parent.id).activity === 'waitingForAgents');
+  await until(() => f.requests.length === 4 && f.core.store.session(parent.id).status === 'idle');
   assert.deepEqual(update(f.requests[3]).events.map((e: any) => e.task), ['Task A']);
   assert.deepEqual(f.core.store.session(parent.id).agents?.map(agent => [agent.id, agent.status]), [[b, 'running']]);
-  assert.ok(f.core.delegations.get(parent.id)?.has(b));
-  assert.equal(f.core.completions.filter(c => c.sessionId === parent.id).length, 0);
+  assert.equal(f.core.completions.filter(c => c.sessionId === parent.id).length, 2);
   f.finish(b, 'B is done.');
   await until(() => f.requests.length === 5); await idle(f, parent.id); await settle();
   assert.deepEqual(update(f.requests[4]).events.map((e: any) => e.task), ['Task B']);
-  // Each summary keeps its inbox entry and notice; the reply that only started the work has none.
-  assert.deepEqual(f.core.completions.filter(c => c.sessionId === parent.id).map(c => c.message.text), ['Reported Task A.', 'Reported Task B.']);
-  assert.equal(completes(notices, parent.id), 2);
+  assert.deepEqual(f.core.completions.filter(c => c.sessionId === parent.id).map(c => c.message.text), ['Both are running.', 'Reported Task A.', 'Reported Task B.']);
+  assert.equal(completes(notices, parent.id), 3);
   assert.equal(completes(notices, a) + completes(notices, b), 0);
   assert.deepEqual(records(f, parent.id).map(p => p.state), ['delivered', 'delivered']);
 });
@@ -419,7 +428,7 @@ test('DU-4 Stop on the parent drops its ready updates with a note and starts no 
   assert.equal(records(f, parent.id)[0].state, 'ready');
   await f.core.stop(parent.id); await settle();
   assert.equal(f.core.store.session(parent.id).status, 'interrupted');
-  assert.deepEqual(records(f, parent.id).map(p => [p.prompt, p.state, p.reason]), [['Quick task', 'dropped', 'Stopped by the user'], ['Long task', 'dropped', 'parent stopped']]);
+  assert.deepEqual(records(f, parent.id).map(p => [p.prompt, p.state, p.reason]), [['Quick task', 'dropped', 'Stopped by the user'], ['Long task', 'registered', undefined]]);
   const notes = delegationRows(f, parent.id);
   assert.equal(notes.length, 1);
   assert.match(notes[0].text, /^Stopped by the user\. This delegation update was not delivered:\n\nCodex finished “Delegated · Quick task” after \d+ s\.\n\nQuick result\.$/);
@@ -431,7 +440,7 @@ test('DU-4 a child stopped from its own conversation is reported as interrupted,
   const f = await fixture(t, startAndReply()), parent = await conversation(f), notices: any[] = [];
   f.core.on('notice', notice => notices.push(notice));
   await f.core.send({ id: parent.id, text: 'Delegate a review' });
-  await waiting(f, parent.id, 1);
+  await parentFree(f, parent.id, 1);
   const child = childOf(f, parent.id);
   await f.core.stop(child);
   await until(() => f.requests.length === 3); await idle(f, parent.id); await settle();
@@ -456,7 +465,7 @@ test('DU-7 after eight automatic turns in a row updates wait for the user, and t
   const parent = await conversation(f);
   await f.core.send({ id: parent.id, text: 'Run the chain' });
   for (let step = 1; step <= 9; step++) {
-    await waiting(f, parent.id, step);
+    await parentFree(f, parent.id, step);
     f.finish(childOf(f, parent.id, step - 1), `Step ${step} done.`);
   }
   await idle(f, parent.id); await settle();
@@ -496,7 +505,7 @@ test('DU-9 a delegation turn neither recalls memory nor is captured into it', as
   f.core.memory.context = async (session, text) => { if (session.id === parent.id) recalls.push(text); return ''; };
   f.core.memory.capture = async (session, text, answer) => { if (session.id === parent.id) captures.push(text + ' → ' + answer); return { outcome: 'captured' }; };
   await f.core.send({ id: parent.id, text: 'Delegate a review' });
-  await waiting(f, parent.id, 1);
+  await parentFree(f, parent.id, 1);
   f.finish(childOf(f, parent.id), 'Reviewed.');
   await until(() => f.requests.length === 3); await idle(f, parent.id); await settle();
   assert.deepEqual(recalls, ['Delegate a review']);
@@ -505,7 +514,7 @@ test('DU-9 a delegation turn neither recalls memory nor is captured into it', as
   assert.deepEqual([outcome.outcome, outcome.reason, outcome.turnId], ['disabled', 'delegation_turn', f.core.store.session(parent.id).turnId]);
 });
 
-test('DU-10 a delegation turn keeps a running sibling listed, and Stop during it stops the sibling', async t => {
+test('DU-10 a delegation turn keeps a running sibling listed, and stopping the report leaves the sibling running', async t => {
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   const f = await fixture(t, async (body, index) => {
@@ -515,18 +524,17 @@ test('DU-10 a delegation turn keeps a running sibling listed, and Stop during it
   try {
     const parent = await conversation(f);
     await f.core.send({ id: parent.id, text: 'Run two tasks' });
-    await waiting(f, parent.id, 2);
+    await parentFree(f, parent.id, 2);
     const [a, b] = [childOf(f, parent.id, 0), childOf(f, parent.id, 1)];
     f.finish(a, 'A is done.');
     await until(() => f.requests.length === 4);
     const session = f.core.store.session(parent.id);
     assert.equal(session.status, 'working');
     assert.deepEqual(session.agents?.map(agent => [agent.id, agent.status]), [[b, 'running']]);
-    assert.deepEqual([...f.core.delegations.get(parent.id) || []].sort(), [a, b].sort());
     await f.core.stop(parent.id); await settle();
     assert.equal(f.core.store.session(parent.id).status, 'interrupted');
-    assert.equal(f.core.store.session(b).status, 'interrupted');
-    assert.deepEqual(records(f, parent.id).map(p => [p.prompt, p.state, p.reason]), [['Task A', 'delivered', undefined], ['Task B', 'dropped', 'parent stopped']]);
+    assert.equal(f.core.store.session(b).status, 'working');
+    assert.deepEqual(records(f, parent.id).map(p => [p.prompt, p.state, p.reason]), [['Task A', 'delivered', undefined], ['Task B', 'registered', undefined]]);
     assert.equal(f.requests.length, 4);
   } finally { release(); }
 });
@@ -547,14 +555,14 @@ test('DU-12 a phone-controlled parent is updated under the device’s authority,
   await f.core.updateSettings({ categories: ['providers'] });
   f.core.updateSession(parent.id, { remote: { deviceId: 'phone', projectId: 'project', scopeVersion: '1', expiresAt: Date.now() + 600000, caps: ['chat.write', 'providers.execute', 'approvals.provider'], categories: ['providers'], scriptIds: [] }, effectivePolicy: 'restricted' });
   await f.core.send({ id: parent.id, text: 'Delegate a review' });
-  await waiting(f, parent.id, 1);
+  await parentFree(f, parent.id, 1);
   f.finish(childOf(f, parent.id, 0), 'First review.');
   await until(() => f.requests.length === 3); await idle(f, parent.id); await settle();
   assert.equal(records(f, parent.id)[0].state, 'delivered');
   // A phone-controlled parent cannot plan a Claude task its own policy would refuse later.
   await assert.rejects(f.core.callTool(parent.id, 'sessions_start', { provider: 'codex', prompt: 'Check', followUp: { provider: 'claude', prompt: 'Explain' } }, new AbortController().signal), /Claude native policy is unverified/);
   await f.core.send({ id: parent.id, text: 'Delegate another' });
-  await waiting(f, parent.id, 2);
+  await parentFree(f, parent.id, 2);
   authorized = false;
   f.finish(childOf(f, parent.id, 1), 'Second review.');
   await idle(f, parent.id); await settle();
@@ -568,7 +576,7 @@ test('DU-6 turning the setting off while an update is pending drops it with a no
   const f = await fixture(t, startAndReply()), parent = await conversation(f), notices: any[] = [];
   f.core.on('notice', notice => notices.push(notice));
   await f.core.send({ id: parent.id, text: 'Delegate a review' });
-  await waiting(f, parent.id, 1);
+  await parentFree(f, parent.id, 1);
   await f.core.updateSettings({ delegationUpdates: false });
   f.finish(childOf(f, parent.id), 'The review result.');
   await idle(f, parent.id); await settle();
@@ -606,7 +614,7 @@ test('DU-13 a declared next task is validated, shown for approval, carried by th
   assert.match(first.detail, /\n\nList the three largest files\n\nAfter it finishes, the next task is planned for Claude\. Allowing this task does not allow that one:\nExplain why each file is large$/);
   assert.deepEqual(f.requests[0].tools.find((tool: any) => tool.function.name === 'sessions_start').function.parameters.properties.followUp.required, ['provider', 'prompt']);
   f.core.answer({ id: first.id, choice: 'allow' });
-  await waiting(f, parent.id, 1);
+  await parentFree(f, parent.id, 1);
   assert.deepEqual(records(f, parent.id)[0].followUp, { provider: 'claude', prompt: 'Explain why each file is large' });
   f.finish(childOf(f, parent.id, 0), 'The three largest files are a.bin, b.bin and c.bin.');
   // The update carries the declaration; starting it is a new delegation that asks again.
@@ -618,7 +626,7 @@ test('DU-13 a declared next task is validated, shown for approval, carried by th
   assert.equal(second.title, 'Send this task to Claude?');
   assert.match(second.detail, /Explain why each file is large\n\nContext: The three largest files are a\.bin, b\.bin and c\.bin\.$/);
   f.core.answer({ id: second.id, choice: 'allow' });
-  await waiting(f, parent.id, 2);
+  await parentFree(f, parent.id, 2);
   assert.deepEqual(records(f, parent.id).map(p => [p.provider, p.state, p.followUp?.provider]), [['codex', 'delivered', 'claude'], ['claude', 'registered', undefined]]);
   // The chained task reports back in turn, with nothing further to start.
   f.finish(childOf(f, parent.id, 1), 'Each one is a build artifact.');

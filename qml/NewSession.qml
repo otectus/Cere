@@ -57,7 +57,18 @@ CDialog {
     readonly property bool apiTools:providerName!=="compatible"||App.state.settings?.compatible?.tools===true
     property bool isConversation:providerTrait.tools?providerTrait.tools==="cere":isOllama||isApi
     property string savedDefault:App.state.settings?.ollama?.model||""
-    property var capability:(App.state.capabilities||{})[providerName]||({})
+    // 11.1: named connections for Ollama hosts and compatible endpoints; the first choice is Settings' default.
+    property var connections:[]
+    readonly property var providerConnections:connections.filter(c=>c.kind===providerName&&!c.migrated)
+    property string connectionId:""
+    property var connectionModels:({status:"unknown",models:[]})
+    RpcClient { id:connectionRpc }
+    function loadConnections(){connectionRpc.call("connections.list",{},value=>{if(!value.error)popup.connections=value})}
+    function chooseConnection(index){
+        connectionId=index>0?providerConnections[index-1].id:"";connectionModels={status:connectionId?"loading":"unknown",models:[]}
+        if(connectionId){const asked=connectionId;connectionRpc.call("connections.models",{id:asked},value=>{if(popup.connectionId!==asked)return;popup.connectionModels=value.error?{status:"error",models:[],error:value.error}:{status:"ready",models:value.models||[]}})}
+    }
+    property var capability:connectionId?({modelsStatus:connectionModels.status,models:connectionModels.models,modelsError:connectionModels.error||""}):(App.state.capabilities||{})[providerName]||({})
     property var modelOptions:[{id:"",displayName:isApi?"Choose a model":isOllama?(savedDefault?"Default · "+savedDefault:"Choose a model"):"CLI default",description:isApi?"Select from the catalog or enter a model ID below":isOllama?"Choose a default in Settings → Connections":"Use the model configured by the CLI",efforts:[],defaultEffort:"",isDefault:true}].concat(capability.models||[]).concat((projectSettings||prefilled)&&desiredModel&&!(capability.models||[]).some(m=>m.id===desiredModel)?[{id:desiredModel,displayName:desiredModel+" · saved",description:"Saved selection. Availability is checked when you open a session.",efforts:[],defaultEffort:""}]:[])
     property var effectiveModel:isOllama?(capability.models||[]).find(m=>m.id===(modelName.currentValue||savedDefault)):selectedModel
     property var selectedModel:modelName.currentIndex>=0&&modelName.currentIndex<modelOptions.length?modelOptions[modelName.currentIndex]:modelOptions[0]
@@ -79,6 +90,7 @@ CDialog {
     }
     function refreshModels() {
         if(!App.connected)return
+        if(connectionId){chooseConnection(connectionBox.currentIndex);return}
         modelError=""
         const id=App.rpc("provider.models",{provider:providerName})
         const requests=Object.assign({},modelRequests);requests[id]=providerName;modelRequests=requests
@@ -87,6 +99,7 @@ CDialog {
     // Each opening starts at the top, where the heading and the saved-defaults note are.
     onAboutToShow:scrollToTop()
     onOpened:{
+        popup.loadConnections();popup.connectionId="";connectionBox.currentIndex=0
         const saved=general?App.state.settings?.conversationDefaults:null
         prefilled=!!saved
         const start=saved||imported
@@ -110,7 +123,12 @@ CDialog {
     CText { text:"Provider";color:Theme.muted;font.pixelSize:Theme.secondary }
     CComboBox {
         id:provider;objectName:"sessionProvider";Layout.fillWidth:true;model:popup.providerOrder.map(id=>id==="compatible"?(App.state.settings?.compatible?.label||popup.traits[id]?.label||"Compatible endpoint"):(popup.traits[id]?.label||({codex:"Codex",claude:"Claude Code",ollama:"Ollama",antigravity:"AntiGravity",openai:"OpenAI API",anthropic:"Claude API",google:"Google AI API"})[id]||id));enabled:!popup.imported.nativeId;Accessible.name:"Session provider"
-        onActivated:{customModel.text="";tools.checked=false;if(popup.projectSettings)trust.checked=false;popup.desiredModel="";popup.desiredEffort="";popup.chooseModel("");popup.refreshModels()}
+        onActivated:{customModel.text="";tools.checked=false;if(popup.projectSettings)trust.checked=false;popup.desiredModel="";popup.desiredEffort="";popup.connectionId="";connectionBox.currentIndex=0;popup.chooseModel("");popup.refreshModels()}
+    }
+    CComboBox {
+        id:connectionBox;objectName:"sessionConnection";Layout.fillWidth:true;visible:!popup.projectSettings&&popup.providerConnections.length>0
+        model:[(popup.isOllama?"Ollama in Settings":"Endpoint in Settings")+" (default)"].concat(popup.providerConnections.map(c=>c.name+" · "+(c.host||c.endpoint?.baseUrl||"")))
+        Accessible.name:"Connection";onActivated:index=>{popup.desiredModel="";popup.chooseConnection(index)}
     }
     CText { text:!popup.projectSettings&&popup.isConversation&&!tools.checked?"Project folder (optional)":"Project folder";color:Theme.muted;font.pixelSize:Theme.secondary }
     RowLayout {
@@ -143,6 +161,20 @@ CDialog {
     CText { visible:temporary.checked;text:"Cere keeps this text conversation in broker memory until you close it or the broker exits. Files, memory and Cere tools are unavailable. Native CLIs and external providers may retain their own histories.";color:Theme.amber;font.pixelSize:Theme.secondary }
     CCheckBox { id:tools;objectName:"sessionTools";visible:popup.isConversation;text:"Enable desktop tools and delegation";enabled:!temporary.checked&&(popup.isApi&&popup.apiTools||!!popup.effectiveModel?.capabilities?.includes("tools")) }
     CText { visible:popup.isConversation;text:tools.checked?"Uses categories enabled in Settings → AI assistance. Delegated tasks ask for review unless CLI permission bypass is enabled.":"Web search and memory follow Settings. Desktop access stays off.";color:Theme.muted;font.pixelSize:Theme.secondary }
+    // Workbench families are chosen separately: Files needs no CLI trust, delegation or computer control.
+    ColumnLayout {
+        visible:popup.isConversation&&!popup.projectSettings&&!temporary.checked;Layout.fillWidth:true;spacing:2
+        CText { text:"Workbench";color:Theme.muted;font.pixelSize:Theme.secondary }
+        Flow {
+            Layout.fillWidth:true;spacing:12
+            readonly property bool toolCapable:popup.isApi&&popup.apiTools||!!popup.effectiveModel?.capabilities?.includes("tools")
+            CCheckBox { id:capFiles;objectName:"sessionFiles";width:implicitContentWidth + leftPadding + rightPadding;text:"Files";enabled:parent.toolCapable;Accessible.description:"Let the model read and propose changes in folders you choose" }
+            CCheckBox { id:capImages;objectName:"sessionImages";width:implicitContentWidth + leftPadding + rightPadding;text:"Images";enabled:parent.toolCapable;Accessible.description:"Let the model create and edit images with a backend you set up" }
+            CCheckBox { id:capAnalysis;objectName:"sessionAnalysis";width:implicitContentWidth + leftPadding + rightPadding;text:"Analysis";enabled:parent.toolCapable;Accessible.description:"Let the model run isolated Python in Code Lab" }
+        }
+        CText { visible:capFiles.checked;text:"After the conversation opens, choose the folders it may use in the Workbench, or use a private conversation workspace. Nothing outside them is visible, and every change is reviewed.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CText { visible:!capFiles.enabled&&popup.isConversation;text:"This model does not call tools, so the Workbench is yours to use by hand.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    }
     CCheckBox { id:trust;objectName:"sessionTrust";visible:(popup.projectSettings||!App.state.settings?.bypassCliPermissions)&&(!popup.isConversation||tools.checked);text:popup.projectSettings?(popup.isConversation?"Allow desktop tools for new sessions in this project":"Trust this project’s CLI configuration for new sessions"):popup.isApi?"Allow this conversation to use the enabled desktop tool categories":"I trust this project’s CLI configuration and hooks" }
     CText { visible:popup.projectSettings&&trust.visible;text:"Saved trust applies to this project’s new sessions. Tool approval settings still apply.";color:Theme.muted;font.pixelSize:Theme.caption }
     CText { visible:popup.projectSettings;text:"Conversation style";color:Theme.muted;font.pixelSize:Theme.secondary }
@@ -168,7 +200,7 @@ CDialog {
                 const defaults={provider:popup.providerName,trusted:trust.checked,temporary:temporary.visible&&temporary.checked,tools:popup.isConversation&&tools.checked,model:popup.isApi&&customModel.text.trim()?customModel.text.trim():modelName.currentValue||"",effort:popup.isConversation?"":reasoningEffort.currentValue||""}
                 popup.error=""
                 popup.pendingDefaults=popup.general&&saveDefaults.checked?{provider:defaults.provider,model:defaults.model,effort:defaults.effort,tools:defaults.tools,temporary:defaults.temporary}:null
-                popup.requestId=popup.projectSettings?App.rpc("projects.save",{cwd:folder.text.trim(),name:sessionTitle.text.trim(),favorite:favorite.checked,expectedRevision:popup.project.revision||"0",defaults:defaults}):App.rpc("session.create",Object.assign(defaults,{cwd:folder.text.trim(),nativeId:popup.imported.nativeId||"",handoffConfirmed:handoff.checked,title:sessionTitle.text.trim()||"Untitled session"}))
+                popup.requestId=popup.projectSettings?App.rpc("projects.save",{cwd:folder.text.trim(),name:sessionTitle.text.trim(),favorite:favorite.checked,expectedRevision:popup.project.revision||"0",defaults:defaults}):App.rpc("session.create",Object.assign(defaults,popup.connectionId?{connectionId:popup.connectionId}:{},{cwd:folder.text.trim(),nativeId:popup.imported.nativeId||"",handoffConfirmed:handoff.checked,title:sessionTitle.text.trim()||"Untitled session"},popup.isConversation&&!(temporary.visible&&temporary.checked)?{capabilities:{files:capFiles.checked&&capFiles.enabled,images:capImages.checked&&capImages.enabled,analysis:capAnalysis.checked&&capAnalysis.enabled}}:{}))
             }
         }
     } }
@@ -185,6 +217,6 @@ CDialog {
         }
         if(id===popup.requestId&&popup.projectSettings&&!value?.error&&popup.nextProjectStep(value))return
         if(id===popup.requestId&&popup.projectStage&&value?.error){popup.requestId=-1;popup.error="The defaults were saved, but not the "+popup.projectStage+": "+value.error;popup.projectStage="";return}
-        if(id===popup.requestId){popup.requestId=-1;popup.projectStage="";if(value?.error)popup.error=value.error;else{if(popup.pendingDefaults)App.rpc("settings.update",{conversationDefaults:popup.pendingDefaults});popup.pendingDefaults=null;popup.imported={};popup.close();if(popup.projectSettings)popup.projectSaved(value);else popup.sessionOpened()}}
+        if(id===popup.requestId){popup.requestId=-1;popup.projectStage="";if(value?.error)popup.error=value.error;else{if(popup.pendingDefaults)App.rpc("settings.update",{conversationDefaults:popup.pendingDefaults});popup.pendingDefaults=null;popup.imported={};popup.close();if(popup.projectSettings)popup.projectSaved(value);else{popup.sessionOpened();if(value?.capabilities?.files){App.selectedId=value.id;WorkbenchState.show("files")}}}}
     } }
 }

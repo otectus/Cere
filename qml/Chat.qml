@@ -6,6 +6,8 @@ import QtQuick.Shapes
 Item {
     id: chat
     objectName:"chatView"
+    // Change sets of this conversation waiting for the user's review (counts only, from the snapshot).
+    readonly property int pendingChanges:(App.state.workbench?.pendingChanges||[]).filter(p=>p.sessionId===App.selectedId).length
     signal createRequested()
     signal backRequested()
     signal navigateRequested(string target)
@@ -39,6 +41,17 @@ Item {
         }
     }
     property string pendingFocusSession:""
+    // @ references: picked with the composer's picker, kept per conversation until sent.
+    readonly property var references:WorkbenchState.referencesFor(App.selectedId)
+    readonly property bool referencesSupported:["ollama","openai","anthropic","google","compatible"].includes(App.session.provider||"")&&!App.session.temporary&&!App.session.remote
+    property string pendingReferences:"[]"
+    property string referenceError:""
+    property int mentionStart:-1
+    property string referencePreview:""
+    onReferencesChanged:referencePreviewTimer.restart()
+    Timer { id:referencePreviewTimer;interval:250;onTriggered:{if(!chat.references.length||!App.selectedId){chat.referencePreview="";return}
+        referenceRpc.call("references.preview",{sessionId:App.selectedId,references:chat.references,text:composer.text},value=>{if(value.error){chat.referencePreview="";return}
+            chat.referencePreview=value.ok?"Adds about "+Math.max(1,Math.round(value.characters/1000))+" thousand characters"+(value.images?" and "+value.images+" image"+(value.images===1?"":"s"):"")+" from "+value.labels.join(", ")+(value.notes.length?". "+value.notes.join("; "):"")+".":"Cannot send these references: "+value.problem}) } }
     property var priorFocusItem:null
     function focusComposer() {
         pendingFocusSession=""
@@ -65,7 +78,7 @@ Item {
         if (JSON.stringify(next) !== JSON.stringify(pendingApprovals)) pendingApprovals = next
     }
     Component.onCompleted: syncApprovals()
-    property bool busy: ["starting","working","waiting","stopping"].indexOf(App.session.status)>=0 || activeAgents.length>0 || pendingApprovals.length>0
+    property bool busy: ["starting","working","waiting","stopping"].indexOf(App.session.status)>=0 || pendingApprovals.some(approval => approval.sessionId === App.selectedId)
     // A provider whose follow-ups queue while a turn runs (the broker's provider description says which).
     readonly property bool canSendWhileBusy: ((App.state.providerTraits || {})[App.session.provider]?.queue ?? App.session.provider === "ollama") && App.session.status !== "stopping"
     property bool linked: App.session.mode==="linked"
@@ -453,6 +466,27 @@ Item {
             }
         }
     }
+    // @ references for the next message: structured picks the broker resolves and re-checks at send.
+    Flow {
+        objectName:"referenceChips";visible:chat.references.length>0;Layout.fillWidth:true;spacing:6
+        Repeater {
+            model:chat.references
+            Rectangle {
+                required property var modelData;required property int index
+                objectName:"referenceChip_"+index
+                width:Math.min(chipLabel.implicitWidth+48,260);height:32;radius:Theme.radiusChip;color:Theme.surface;border.color:Theme.border
+                Accessible.role:Accessible.StaticText;Accessible.name:"Reference "+modelData.label
+                CIcon { x:8;anchors.verticalCenter:parent.verticalCenter;width:16;height:16;name:modelData.kind==="folder"?"projects":modelData.kind==="artifact"?"image":modelData.kind==="collection"?"memory":modelData.kind==="conversation"?"chat":"file" }
+                Text { id:chipLabel;x:28;anchors.verticalCenter:parent.verticalCenter;width:parent.width-x-28;text:"@"+parent.modelData.label;elide:Text.ElideMiddle;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.caption }
+                CButton { anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;text:"×";quiet:true;implicitWidth:28;implicitHeight:28;Accessible.name:"Remove reference "+parent.modelData.label
+                    onClicked:WorkbenchState.setReferences(App.selectedId,chat.references.filter((r,i)=>i!==parent.index)) }
+            }
+        }
+    }
+    // What the references would add to the message, checked now and again when it is sent.
+    CText { objectName:"referencePreview";visible:chat.references.length>0&&!!chat.referencePreview;Layout.fillWidth:true;font.pixelSize:Theme.caption
+        color:chat.referencePreview.startsWith("Cannot")?Theme.amber:Theme.muted;text:chat.referencePreview }
+    CText { objectName:"referenceError";visible:!!chat.referenceError;text:chat.referenceError;color:Theme.danger;Layout.fillWidth:true;font.pixelSize:Theme.secondary;Accessible.role:Accessible.AlertMessage }
     Rectangle {
         visible: !!App.session.id
         id:composerCard;objectName:"composerCard"
@@ -472,12 +506,16 @@ Item {
                 color: Theme.text; placeholderTextColor: Theme.muted; selectionColor: Theme.selected; font.pixelSize: Theme.message; font.family: Theme.font
                 // Moving to another control keeps the selection, so it survives switching surfaces too.
                 wrapMode: TextEdit.Wrap; selectByMouse: true; persistentSelection: true; background: null
-                onTextChanged: { if(App.session.id&&!chat.loadingDraft)draftTimer.restart() }
-                onCursorPositionChanged: if(!chat.restoringView&&!chat.loadingDraft)chat.viewPristine=false
+                onTextChanged: { if(App.session.id&&!chat.loadingDraft)draftTimer.restart();if(!chat.loadingDraft)chat.updateMention() }
+                onCursorPositionChanged: { if(!chat.restoringView&&!chat.loadingDraft)chat.viewPristine=false;if(!chat.loadingDraft)chat.updateMention() }
                 // Tab and Shift+Tab move on to the composer's buttons and back; they never insert a tab.
-                Keys.onTabPressed: event => { const next=composer.nextItemInFocusChain(true); if(next&&next!==composer)next.forceActiveFocus(Qt.TabFocusReason); event.accepted=true }
+                Keys.onTabPressed: event => { if(referencePicker.opened){referencePicker.accept();event.accepted=true;return} const next=composer.nextItemInFocusChain(true); if(next&&next!==composer)next.forceActiveFocus(Qt.TabFocusReason); event.accepted=true }
                 Keys.onBacktabPressed: event => { const previous=composer.nextItemInFocusChain(false); if(previous&&previous!==composer)previous.forceActiveFocus(Qt.BacktabFocusReason); event.accepted=true }
                 Keys.onPressed: event => {
+                    if(referencePicker.opened&&[Qt.Key_Up,Qt.Key_Down,Qt.Key_Return,Qt.Key_Enter,Qt.Key_Escape].includes(event.key)){
+                        if(event.key===Qt.Key_Up)referencePicker.move(-1);else if(event.key===Qt.Key_Down)referencePicker.move(1);else if(event.key===Qt.Key_Escape)referencePicker.close();else referencePicker.accept()
+                        event.accepted=true;return
+                    }
                     if(event.matches(StandardKey.Paste)){chat.pasteClipboard();event.accepted=true}
                     // Settings › Application chooses the send key; an unhandled Return inserts a line.
                     else if((event.key===Qt.Key_Return||event.key===Qt.Key_Enter)&&!composer.inputMethodComposing&&chat.sendsOn(event.modifiers)){
@@ -544,6 +582,7 @@ Item {
             ConversationTool { objectName:"chatHandoff";text:"Handoff";iconName:"arrow";help:"Continue with another provider";onClicked:handoffDialog.open() }
             ConversationTool { objectName:"chatInbox";text:"Inbox · "+(App.state.completions||[]).length;iconName:"inbox";badge:(App.state.completions||[]).length>0;onClicked:inbox.open() }
             ConversationTool { objectName:"chatMemoryReview";text:"Memory review";iconName:"memory";onClicked:memoryReview.open() }
+            ConversationTool { objectName:"chatWorkbench";text:"Workbench"+(chat.pendingChanges?" · "+chat.pendingChanges:"");iconName:"projects";badge:chat.pendingChanges>0;help:"Files, previews, changes, images and runs (Ctrl+Shift+W)";onClicked:WorkbenchState.open?WorkbenchState.hide():WorkbenchState.show("") }
             ConversationTool { objectName:"contextDrawerButton";text:"Context";iconName:"context";onClicked:contextDrawer.open() }
             ConversationTool { objectName:"chatStyle";text:"Style";iconName:"settings";help:"Style, posture and standing instructions for this conversation";onClicked:sessionBehavior.openFor(App.selectedId,chat.hasTurnPosture?chat.turnPosture.id:"") }
             ConversationTool { id:extraTools;objectName:"chatMoreTools";text:"More";iconName:"more";help:"Export, transcribe a recording or ground answers in documents";onClicked:extraMenu.popup(extraTools,0,extraTools.height) }
@@ -559,6 +598,7 @@ Item {
         CMenuItem { objectName:"menuHandoff";text:"Handoff";onTriggered:handoffDialog.open() }
         CMenuItem { objectName:"menuInbox";text:"Inbox · "+(App.state.completions||[]).length;onTriggered:inbox.open() }
         CMenuItem { objectName:"menuMemoryReview";text:"Memory review";onTriggered:memoryReview.open() }
+        CMenuItem { objectName:"menuWorkbench";text:"Workbench"+(chat.pendingChanges?" · "+chat.pendingChanges+" to review":"");onTriggered:WorkbenchState.show("") }
         CMenuItem { objectName:"menuContext";text:"Context";onTriggered:contextDrawer.open() }
         CMenuItem { objectName:"menuStyle";text:"Style and posture…";onTriggered:sessionBehavior.openFor(App.selectedId,chat.hasTurnPosture?chat.turnPosture.id:"") }
         CMenuItem { objectName:"menuExportFolded";text:"Export conversation…";onTriggered:exportDialog.openFor(App.selectedId,[]) }
@@ -579,12 +619,43 @@ Item {
     readonly property string sendKeyName:sendKey==="ctrlEnter"?"Ctrl+Enter":"Enter"
     readonly property string newLineHint:sendKey==="enter"?"Shift+Enter new line":"Enter new line"
     readonly property string sendHint:sendKey==="button"?"Send button sends · Enter new line":sendKeyName+" sends · "+newLineHint
+    RpcClient { id:referenceRpc }
+    Connections { target:WorkbenchState;function onInsertIntoComposer(sessionId,text){if(sessionId!==App.selectedId||!composer.enabled)return;composer.insert(composer.cursorPosition,(composer.text&&!/\s$/.test(composer.text.slice(0,composer.cursorPosition))?"\n":"")+text)} }
+    ReferencePicker {
+        id:referencePicker;parent:composerCard;sessionId:App.selectedId
+        x:0;y:-height-6;width:Math.min(composerCard.width,440)
+        onChosen:candidate=>chat.chooseReference(candidate)
+    }
+    // An @ at the start of a word opens the picker; the text after it filters the suggestions.
+    function updateMention(){
+        if(!chat.referencesSupported||!composer.activeFocus){if(referencePicker.opened)referencePicker.close();mentionStart=-1;return}
+        const match=/(^|\s)@([^\s@]{0,60})$/.exec(composer.text.slice(0,composer.cursorPosition))
+        if(!match){if(referencePicker.opened)referencePicker.close();mentionStart=-1;return}
+        mentionStart=composer.cursorPosition-match[2].length-1;referencePicker.query=match[2]
+        if(!referencePicker.opened)referencePicker.open()
+    }
+    // The pick becomes a structured reference; the text keeps a readable @name in place of what was typed.
+    function chooseReference(candidate){
+        const sessionId=App.selectedId,start=mentionStart,end=composer.cursorPosition
+        referencePicker.close();mentionStart=-1
+        if(start<0||end<start)return
+        const label="@"+candidate.label.replace(/\s+/g," ")+" "
+        composer.remove(start,end);composer.insert(start,label);composer.cursorPosition=start+label.length
+        referenceRpc.call("references.pin",{sessionId:sessionId,ref:candidate.ref},value=>{
+            if(value.error){chat.referenceError=value.error;return}
+            chat.referenceError=""
+            const current=WorkbenchState.referencesFor(sessionId)
+            if(current.length>=8){chat.referenceError="Reference up to 8 items in one message.";return}
+            const key=JSON.stringify(Object.assign({},value,{label:"",version:""}))
+            if(!current.some(r=>JSON.stringify(Object.assign({},r,{label:"",version:""}))===key))WorkbenchState.setReferences(sessionId,current.concat([value]))
+        })
+    }
     function sendsOn(modifiers){
         if(modifiers&Qt.ShiftModifier)return false
         if(sendKey==="enter")return true
         return sendKey==="ctrlEnter"&&!!(modifiers&Qt.ControlModifier)
     }
-    function send(){if(!draftHydrated||!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||sendUnconfirmed||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingTurn=App.session.turnId||"";pendingTime=Date.now();pendingAttachments=JSON.stringify(attachmentIds());recordOwn(pendingText,pendingAttachments);const params={id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision};if(hasTurnPosture)params.posture=turnPosture.id;if(params.webSearch&&hasWebSources)params.webConstraints=webConstraints();sendRequest=App.rpc("session.send",params);follow=true}
+    function send(){if(!draftHydrated||!App.connected||sendRequest>=0||!App.session.id||(busy&&!canSendWhileBusy)||linked||draftConflict||importingAttachments||sendUnconfirmed||!composer.text.trim())return;if(Object.keys(draftRequests).some(id=>draftRequests[id].session===draftSession)){sendAfterSave=true;return}draftTimer.stop();pendingText=composer.text;pendingSession=App.selectedId;pendingTurn=App.session.turnId||"";pendingTime=Date.now();pendingAttachments=JSON.stringify(attachmentIds());recordOwn(pendingText,pendingAttachments);const params={id:App.selectedId,text:composer.text,attachmentIds:attachmentIds(),webSearch:searchThisTurn.visible&&searchThisTurn.checked,expectedDraftRevision:draftRevision};if(hasTurnPosture)params.posture=turnPosture.id;if(params.webSearch&&hasWebSources)params.webConstraints=webConstraints();if(references.length)params.references=references.map(r=>{const ref=Object.assign({},r);return ref});pendingReferences=JSON.stringify(references);referenceError="";sendRequest=App.rpc("session.send",params);follow=true}
     Timer { id:draftTimer;interval:600;onTriggered:chat.saveDraft(false) }
     Timer { id:anchorTracker;interval:150;onTriggered:chat.trackedAnchor=chat.computeAnchor()||chat.trackedAnchor }
     Timer {
@@ -663,7 +734,7 @@ Item {
     onPendingQuestionsChanged: if (follow && pendingQuestions.length) Qt.callLater(() => {
         if (scroll.footerItem) scroll.contentY = Math.max(scroll.originY, Math.min(scroll.footerItem.y, scroll.originY + scroll.contentHeight - scroll.height))
     })
-    Connections { target:App;function onResult(id,value){if(id!==chat.sendRequest)return;chat.sendRequest=-1;if(value?.error&&value.code==="CONNECTION_LOST")chat.unconfirmedSend={text:chat.pendingText,attachments:chat.pendingAttachments,session:chat.pendingSession,turn:chat.pendingTurn,time:chat.pendingTime,connectedAt:0};else if(value?.error&&chat.pendingSession===chat.draftSession&&chat.draftDirty())draftTimer.restart();if(chat.pendingSession===App.selectedId&&!value?.error){chat.unconfirmedSend=null;if(composer.text===chat.pendingText)composer.text="";if(JSON.stringify(chat.attachmentIds())===chat.pendingAttachments)chat.attachments=[];chat.draftRevision=App.session.draftRevision||"0";chat.draftBaseline=App.session.draft||"";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));chat.draftConflict=false;searchThisTurn.checked=false}if(!value?.error&&chat.turnPosture.session===chat.pendingSession)chat.turnPosture=({id:"",label:"",session:""});if(!value?.error&&chat.webSources.session===chat.pendingSession)chat.webSources=({session:"",sites:[],exclude:[],recency:""})} }
+    Connections { target:App;function onResult(id,value){if(id!==chat.sendRequest)return;chat.sendRequest=-1;if(value?.error&&value.code==="CONNECTION_LOST")chat.unconfirmedSend={text:chat.pendingText,attachments:chat.pendingAttachments,session:chat.pendingSession,turn:chat.pendingTurn,time:chat.pendingTime,connectedAt:0};else if(value?.error&&chat.pendingSession===chat.draftSession&&chat.draftDirty())draftTimer.restart();if(value?.error&&chat.pendingReferences!=="[]")chat.referenceError=String(value.error);if(!value?.error&&JSON.stringify(WorkbenchState.referencesFor(chat.pendingSession))===chat.pendingReferences)WorkbenchState.setReferences(chat.pendingSession,[]);if(chat.pendingSession===App.selectedId&&!value?.error){chat.unconfirmedSend=null;if(composer.text===chat.pendingText)composer.text="";if(JSON.stringify(chat.attachmentIds())===chat.pendingAttachments)chat.attachments=[];chat.draftRevision=App.session.draftRevision||"0";chat.draftBaseline=App.session.draft||"";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));chat.draftConflict=false;searchThisTurn.checked=false}if(!value?.error&&chat.turnPosture.session===chat.pendingSession)chat.turnPosture=({id:"",label:"",session:""});if(!value?.error&&chat.webSources.session===chat.pendingSession)chat.webSources=({session:"",sites:[],exclude:[],recency:""})} }
     Connections { target:App;function onAttachmentRequested(path){chat.importAttachment(path)} }
     Connections { target:App;function onResult(id,value){if(!(id in chat.attachmentRequests))return;const owner=chat.attachmentRequests[id],next=Object.assign({},chat.attachmentRequests);delete next[id];chat.attachmentRequests=next;if(owner!==App.selectedId){if(!value?.error){App.rpc("attachments.keepInDraft",{sessionId:owner,attachmentId:value.id});App.notify("Attachment saved in its original conversation’s draft.")}return}if(value?.error)chat.attachmentError=String(value.error.message||value.error);else {if(!chat.attachments.some(a=>a.id===value.id))chat.attachments=chat.attachments.concat([value]);chat.draftRevision=App.session.draftRevision||"0";chat.attachmentBaseline=JSON.stringify((App.session.draftAttachments||[]).map(a=>a.id));if((App.session.draft||"")!==chat.draftBaseline&&!chat.ownsBrokerDraft())chat.draftConflict=true;else{if((App.session.draft||"")!==chat.draftBaseline)chat.draftBaseline=App.session.draft||"";chat.saveDraft()}}} }
     ContextDrawer { id:contextDrawer;sessionId:App.selectedId;draftText:composer.text;attachmentIds:chat.attachmentIds() }

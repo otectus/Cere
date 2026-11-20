@@ -1,4 +1,4 @@
-import { readFileSync,unlinkSync } from 'node:fs';
+import { readFileSync,unlinkSync,readdirSync } from 'node:fs';
 import { resolve,join } from 'node:path';
 import type { Store } from './store.ts';
 import type { Session } from './types.ts';
@@ -37,4 +37,37 @@ export function eraseWorkingCopies(store:Store,session:Session,matches:ErasureMa
   }
   const runKey='workflow-run:'+session.id,run=store.get<any>(runKey,null);if(run)store.set(runKey,{...scrub(run),...(identified(run.messageId,run.turnId,run.sourceEventId)?{prompt:removedText}:{})});
   store.set('workflow:results',store.get<any[]>('workflow:results',[]).flatMap(row=>row.sessionId===session.id?(identified(row.messageId,row.turnId,row.sourceEventId)?[]:[scrub(row)]):[row]));
+  eraseArtifactCopies(store,session,matches,scrub);
+}
+/**
+ * Text Cere keeps as files (extractions, OCR text, analysis output) is a working copy too: a file whose
+ * text matches leaves this conversation and its project, and its bytes and thumbnails go once nothing
+ * else holds it. Prompts recorded with an image are scrubbed; the image itself stays.
+ */
+function eraseArtifactCopies(store:Store,session:Session,matches:ErasureMatcher,scrub:(value:any)=>any){
+  if(!store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifact_refs'").get())return;
+  const objects=join(store.directory,'artifacts','objects'),erased=new Set<string>();
+  const held=store.db.prepare("SELECT DISTINCT artifact_id AS id FROM artifact_refs WHERE owner_kind='session' AND owner_id=?").all(session.id).map(row=>String(row.id));
+  for(const id of held){
+    let hit=false;
+    for(const row of store.db.prepare('SELECT id,sha256,data FROM artifact_versions WHERE artifact_id=?').all(id)){
+      const version=JSON.parse(String(row.data));
+      if(version.provenance&&matches(JSON.stringify(version.provenance))){version.provenance=scrub(version.provenance);store.db.prepare('UPDATE artifact_versions SET data=? WHERE id=?').run(JSON.stringify(version),String(row.id));}
+      if(hit||!/^(text\/|application\/(json|xml))/.test(version.mime||'')||version.bytes>16*1024*1024)continue;
+      try{hit=matches(readFileSync(join(objects,String(row.sha256).slice(0,2),String(row.sha256)),'utf8'));}catch{}
+    }
+    if(hit)erased.add(id);
+  }
+  for(const id of erased){
+    store.db.prepare("DELETE FROM artifact_refs WHERE artifact_id=? AND ((owner_kind='session' AND owner_id=?) OR (owner_kind='project' AND owner_id=?))").run(id,session.id,session.cwd);
+    if(store.db.prepare('SELECT 1 FROM artifact_refs WHERE artifact_id=?').get(id))continue;
+    const hashes=store.db.prepare('SELECT DISTINCT sha256 FROM artifact_versions WHERE artifact_id=?').all(id).map(row=>String(row.sha256));
+    for(const version of store.db.prepare('SELECT id FROM artifact_versions WHERE artifact_id=?').all(id))store.db.prepare('DELETE FROM artifact_derivations WHERE source_version_id=? OR derived_version_id=?').run(String(version.id),String(version.id));
+    store.db.prepare('DELETE FROM artifact_versions WHERE artifact_id=?').run(id);store.db.prepare('DELETE FROM artifacts WHERE id=?').run(id);
+    // Like draft attachments: removing the bytes sooner is the privacy-preserving failure mode.
+    for(const hash of hashes)if(/^[0-9a-f]{64}$/.test(hash)&&!store.db.prepare('SELECT 1 FROM artifact_versions WHERE sha256=?').get(hash)){
+      try{unlinkSync(join(objects,hash.slice(0,2),hash));}catch{}
+      try{for(const name of readdirSync(join(store.directory,'artifacts','thumbnails')))if(name.startsWith(hash))unlinkSync(join(store.directory,'artifacts','thumbnails',name));}catch{}
+    }
+  }
 }

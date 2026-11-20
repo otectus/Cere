@@ -30,6 +30,10 @@ export const avatarAuthoringSchema = z.object({
   normalizedRoutes: z.array(route).optional(),
   heldEyeSource: z.array(ellipse).min(1).max(2).optional(),
   heldEyes: z.partialRecord(z.enum([...avatarRoutes, 'shyHover']), eyePose).optional(),
+  portraitFace: z.object({
+    cx: z.number().min(0).max(255), cy: z.number().min(0).max(255),
+    rx: z.number().positive().max(128), ry: z.number().positive().max(128),
+  }).strict().optional(),
   portraitComponents: z.boolean().optional(),
   portraitCoreThreshold: z.number().int().min(0).max(255).optional(),
   portraitCoreErode: z.number().int().min(0).max(4).optional(),

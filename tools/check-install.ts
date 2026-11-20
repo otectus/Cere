@@ -31,6 +31,7 @@ executable(join(share, 'broker/graph-memory/adapters/fish/cere-memory-emitter.py
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 for (const name of Object.keys(manifest.dependencies || {})) need(join(share, 'node_modules', name, 'package.json'), 'runtime package');
 for (const module of ['cere-peercred.node', 'cere-telemetry.node']) need(join(share, 'native', module), 'native module');
+executable(join(share, 'native', 'cere-workspacefs'));
 const tts = join(share, 'tts');
 if (!existsSync(tts) || !readdirSync(tts, { recursive: true }).some(entry => String(entry).endsWith('.onnx'))) problems.push('missing speech resources: share/cere/tts has no voice model');
 for (const program of ['bin/cere', 'bin/cere-report', 'bin/cere-run', 'bin/cere-telemetry-hooks', 'lib/cere/cere']) executable(join(prefix, program));

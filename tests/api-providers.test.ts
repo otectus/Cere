@@ -254,3 +254,43 @@ test('switching API models continues the same conversation with portable history
     assert.equal(calls,1);assert.equal(core.store.session(s.id).status,'idle');assert.equal(core.store.session(s.id).model,'second-model');
   }
 });
+
+test('Claude API accepts another message while Claude Code runs and reports its result after that reply', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'cere-api-delegation-'));
+  const core = new Core(new Store(directory)), factory = core.factory, original = globalThis.fetch;
+  const requests: any[] = [];
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  globalThis.fetch = async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)));
+    if (requests.length === 1) return sse([
+      {type:'content_block_start', index:0, content_block:{type:'tool_use', id:'start', name:'sessions_start', input:{}}},
+      {type:'content_block_delta', index:0, delta:{type:'input_json_delta', partial_json:'{"provider":"claude","prompt":"Review the project"}'}},
+      {type:'message_delta', delta:{stop_reason:'tool_use'}}, {type:'message_stop'},
+    ]);
+    if (requests.length === 3) await held;
+    return sse(events('anthropic'));
+  };
+  core.factory = (s, h) => s.provider === 'claude' ? { async send() {}, async interrupt() {}, async close() {} } : factory(s, h);
+  t.after(async () => { release(); await core.close(); globalThis.fetch = original; await rm(directory, {recursive:true, force:true}); });
+  await core.rpc('provider.credentials', {provider:'anthropic', key:'fixture-key'});
+  await core.updateSettings({bypassCliPermissions:true});
+  const parent = await core.create({provider:'anthropic', cwd:directory, model:'fixture-model', tools:true, trusted:true});
+  await core.send({id:parent.id, text:'Have Claude Code review the project'});
+  const adapter = core.adapters.get(parent.id) as ApiAdapter;
+  await adapter.task;
+  assert.equal(core.store.session(parent.id).status, 'idle');
+  const child = core.store.sessions().find(s => s.parentId === parent.id)!;
+  assert.equal(child.status, 'working');
+  await core.send({id:parent.id, text:'A separate question'});
+  await t.waitFor(() => assert.equal(requests.length, 3));
+  assert.equal(core.store.session(parent.id).agents?.find(a => a.id === child.id)?.status, 'running');
+  core.event(child.id, {type:'message', id:'result', text:'Child review finished.'});
+  core.event(child.id, {type:'complete'});
+  assert.equal(core.store.session(parent.id).status, 'working');
+  assert.equal(requests.length, 3);
+  release(); await adapter.task;
+  await t.waitFor(() => { assert.equal(requests.length, 4); assert.equal(core.store.session(parent.id).status, 'idle'); });
+  assert.match(JSON.stringify(requests[3].messages.at(-1)), /Child review finished/);
+  assert.equal(core.store.messages(parent.id).filter(m => m.kind === 'delegation').length, 1);
+});

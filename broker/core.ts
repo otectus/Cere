@@ -1,4 +1,5 @@
 import { ElevenLabs, validateElevenConfig } from './elevenlabs.ts';
+import { buildIdentity } from './build-info.ts';
 import { EventEmitter } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID, randomBytes } from 'node:crypto';
@@ -56,6 +57,8 @@ import { Projects } from './projects.ts';
 import { providerIds, isApiProvider, providerLabels, providerTraits } from './provider-catalog.ts';
 import { ProviderCredentials } from './credentials.ts';
 import { ApiAdapter, apiLabel, apiModels, portableApiHistory, type ApiAccess } from './api-providers.ts';
+import { ChatConnections } from './connections.ts';
+import { clearRouteCache } from './workspace/policy.ts';
 import { declared, endpointOrigin, validEndpoint } from './compatible-endpoint.ts';
 import { Extensions, validServers } from './extensions.ts';
 import { CustomTools, validTemplates } from './custom-tools.ts';
@@ -68,6 +71,8 @@ import { AntigravityAdapter } from './antigravity.ts';
 import { IndexTTS } from './indextts.ts';
 import { IndexError, indexPrefix, validateIndexConfig } from './indextts-config.ts';
 import { TelemetryService } from './telemetry/service.ts';
+import { Workbench, validWorkbenchSettings } from './workbench.ts';
+import { validCapabilities, workbenchFamilies } from './tools/contracts.ts';
 import { configuration as telemetryConfiguration } from './telemetry/paths.ts';
 
 const untitledSession = 'Untitled session';
@@ -126,6 +131,9 @@ export class Core extends EventEmitter {
   jobs = new BackgroundJobs(this);
   /** M14: reviewed recipes at set times. */
   schedules = new Schedules(this);
+  /** Files, artifacts, images and runs attached to conversations. */
+  workbench!: Workbench;
+  chatConnections!: ChatConnections;
   private turnTimers = new Map<string, { started: number; provider: string; first: boolean }>();
   private stopRequests = new Map<string, number>();
   approvals = new Map<string, { value: Approval; resolve: (value: any) => void }>();
@@ -150,7 +158,7 @@ export class Core extends EventEmitter {
   /** Delegated turns report back to the conversation that started them. */
   pings: DelegationPings;
   stopping = new Map<string, Promise<boolean>>();
-  delegations = new Map<string, Set<string>>(); closed = false;
+  closed = false;
   web = new WebSearch(); webController = new AbortController(); memory: Memory;
   panels = { ui: false, overlay: false };
   attention: Record<'ui'|'overlay',{owner:'ui'|'overlay';sessionId:string;listening:boolean;mood?:{mood:string;moodConfidence:number;reactive:boolean;messageId:string;time:number}}> = {
@@ -215,6 +223,10 @@ export class Core extends EventEmitter {
       search: (query, signal, constraints) => { if (!this.settingsFor(s.id).webSearch.enabled) throw new Error('Web scope denied'); return this.webCall('web_search', { query, ...(constraints || {}) }, signal, s.id); },
       plan: plan => this.recordPlan(s.id, plan),
       delegationUpdates: () => this.settings.delegationUpdates,
+      prepareTools: signal => this.workbench.prepare(s.id, signal),
+      restrict: (messages, signal) => this.workbench.restrict(s.id, messages, signal),
+      media: (refs, signal) => this.workbench.mediaFor(s.id, refs, signal),
+      options: () => this.store.session(s.id).modelOptions || {},
       conventions: async () => {
         const row = this.store.db.prepare('SELECT data FROM projects WHERE cwd=?').get(this.store.session(s.id).cwd);
         return row && JSON.parse(String(row.data)).conventions ? projectConventions(this.store.session(s.id).cwd) : { text: '', files: [] };
@@ -247,25 +259,38 @@ export class Core extends EventEmitter {
       s.agents = s.agents?.map(a => this.agentActive(a) ? {...a, status:'interrupted', updated:Date.now()} : a); s.error = 'Cere restarted. The previous turn was not replayed.'; store.saveSession(s);
       for (const agent of s.agents || []) if (agent.status === 'interrupted') this.recordAgent(s.id,agent);
     }
+    // Idle parents can also have children that were running when the broker exited.
+    for (const s of store.sessions()) if (s.agents?.some(a => a.delegatedTurnId && this.agentActive(a))) {
+      for (const agent of s.agents) if (agent.delegatedTurnId && this.agentActive(agent)) {
+        agent.status = 'interrupted'; agent.updated = Date.now(); this.recordAgent(s.id, agent);
+      }
+      store.saveSession(s);
+    }
     for (const s of store.sessions()) this.sendQueue.recover(s.id);
     this.pings.recover();
     this.completions=store.get<any[]>('completionInbox',[]).flatMap(row=>{const message=store.messageById(row.messageId);try{const s=store.session(row.sessionId);return[{...row,message:message||{id:'',sessionId:s.id,role:'assistant',text:'This run finished without a final message.',time:row.time}}];}catch{return[];}});
+    // Last, so its restart recovery can describe state that every other service already provides.
+    this.chatConnections=new ChatConnections(this);
+    this.workbench=new Workbench(this);
     this.flush();
     this.ticker = setInterval(() => void this.checkTimers(), 1000); this.ticker.unref();
     void this.telemetry.configure(this.settings.telemetry);
   }
   /** How an API adapter reaches its provider. A compatible endpoint's key is used only for its own origin. */
-  apiAccess(provider: import('./provider-catalog.ts').ApiProvider): ApiAccess {
+  apiAccess(provider: import('./provider-catalog.ts').ApiProvider, sessionId?: string): ApiAccess {
     if (provider !== 'compatible') return { key: () => this.credentials.key(provider) };
-    return { key: () => this.credentials.key('compatible', endpointOrigin(this.settings.compatible.baseUrl)), endpoint: () => this.settings.compatible };
+    // A conversation on a named connection always reads that connection, as it is now.
+    const endpoint = () => this.chatConnections.endpoint(sessionId ? this.store.session(sessionId) : undefined);
+    return { key: () => this.credentials.key('compatible', endpointOrigin(endpoint().baseUrl)), endpoint };
   }
+  endpointAccess(endpoint: import('./types.ts').CompatibleEndpoint): ApiAccess { return { key: () => this.credentials.key('compatible', endpointOrigin(endpoint.baseUrl)), endpoint: () => endpoint }; }
   /** M13: whether a conversation's provider takes tool calls; a compatible endpoint only if declared. */
-  toolCalling(s: Session) { return s.provider !== 'compatible' || this.settings.compatible.tools; }
+  toolCalling(s: Session) { if (s.provider !== 'compatible') return true; try { return this.chatConnections.endpoint(s).tools; } catch { return false; } }
   conversationAdapter(s: Session, h: Hooks, context: import('./ollama.ts').OllamaContext): Adapter {
     if (isApiProvider(s.provider)) {
       const provider=s.provider,model:ModelOption|undefined=this.capabilities[provider]?.models?.find((m:ModelOption)=>m.id===s.model);
-      const limits=provider==='compatible'?{contextLength:this.settings.compatible.contextLength||undefined,maxOutputTokens:this.settings.compatible.maxOutputTokens||undefined}:{contextLength:model?.contextLength,maxOutputTokens:model?.maxOutputTokens};
-      return new ApiAdapter(s,h,context,this.apiAccess(provider),limits);
+      const endpoint=this.chatConnections.endpoint(s),limits=provider==='compatible'?{contextLength:endpoint.contextLength||undefined,maxOutputTokens:endpoint.maxOutputTokens||undefined}:{contextLength:model?.contextLength,maxOutputTokens:model?.maxOutputTokens};
+      return new ApiAdapter(s,h,context,this.apiAccess(provider,s.id),limits);
     }
     if (s.provider === 'ollama') return new OllamaAdapter(s,h,context);
     throw new Error('Unsupported conversation provider');
@@ -318,7 +343,7 @@ export class Core extends EventEmitter {
     if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;
     return {version:1,revision:p.revision,field:p.field,offset:p.offset,text:text.slice(p.offset,end),next:end<text.length?end:null};
   }
-  private snapshotData() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), jobs:this.jobs.snapshot(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, providerTraits, providerOrder: [...providerIds], actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
+  private snapshotData() { this.completions=this.completions.map(c=>{let message=this.store.messageById(c.message.id)||c.message;if(message.text.length>16000){let end=16000;if(/[\uD800-\uDBFF]/.test(message.text[end-1]))end--;message={...message,text:message.text.slice(0,end)+'\n\n[Long reply — open the conversation to read more.]',truncated:true} as RunCompletion['message'];}return{...c,message}});return { version: 1, revision:this.stateRevision, sessions: this.store.snapshotSessions(Object.values(this.attention).map(a=>a.sessionId)), sessionCount:this.store.sessionCount(),sessionCatalogRevision:this.store.catalogRevision,recoveryWarning:this.recovery.warning,recoveryPending:this.recovery.pending, power:this.power.snapshot(), folders:this.store.folders(), bookmarks:this.store.bookmarks(),navigation:this.store.get('navigation',{favorites:[],recents:[]}), settings: this.settings, telemetry: this.telemetry.status, speech: this.speech.snapshot(), indextts:this.indextts.snapshot(), elevenlabs:{...this.elevenlabs.snapshot(),credential:this.credentials.status().elevenlabs}, transcription:this.transcription.status(), settingsRevision:this.store.get('settingsRevision','0'), remote: this.remoteStatus, personality: { defaultText: defaultPersonality, maxLength: personalityMaxLength }, behaviorPresets:this.presets.summary(), modelPull:this.localModels.snapshot(), collectionJob:this.collections.snapshot(), extensions:this.extensions.snapshot(), customTools:this.customTools.snapshot(), jobs:this.jobs.snapshot(), workbench:this.workbench.summary(), memory: this.memory.summary(), approvals: [...this.approvals.values()].map(a => a.value), completions: this.completions, companionReplies: this.companionReplies, capabilities: this.capabilities, providerTraits, providerOrder: [...providerIds], actions: actionDefinitions, timers: this.store.timers(), activity: this.store.activities(), panels: {...this.panels}, attention: structuredClone(this.attention) }; }
   settingsFor(id: string): Settings {
     const session = this.store.session(id), execution = session.remote;
     if (execution && (!this.remoteAuthority?.(execution, session) || execution.expiresAt <= Date.now())) throw remoteError('AUTH_REVOKED', 'Remote authority expired or was revoked. Detach locally to continue.');
@@ -427,10 +452,10 @@ export class Core extends EventEmitter {
   }
   agentActive(agent: AgentActivity) { return ['starting','running','waiting'].includes(agent.status); }
   recordAgent(id: string, agent: AgentActivity) {
-    const session = this.store.session(id), key = `${id}:agent:${session.turnId || 'initial'}:${agent.id}`;
+    const session = this.store.session(id), key = `${id}:agent:${agent.delegatedTurnId || session.turnId || 'initial'}:${agent.id}`;
     const existing = this.partials.get(key) || this.store.messageById(key);
     const text = [agent.name + ' · ' + agent.status, agent.task, agent.detail].filter(Boolean).join('\n');
-    this.partials.set(key,{id:key,sessionId:id,role:'tool',kind:'agent',text,time:existing?.time || Date.now(),turnId:session.turnId});
+    this.partials.set(key,{id:key,sessionId:id,role:'tool',kind:'agent',text,time:existing?.time || Date.now(),turnId:existing?.turnId || session.turnId});
     if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(),80);
   }
   updateSession(id: string, patch: Partial<Session>) {
@@ -448,7 +473,7 @@ export class Core extends EventEmitter {
         this.completions = this.completions.filter(c => c.sessionId !== id || c.turnId !== this.store.session(id).turnId);
       this.persistCompletions();
       patch = {...patch, agents:(patch.agents || this.store.session(id).agents)?.map(a => {
-        if (!this.agentActive(a)) return a;
+        if (a.delegatedTurnId || !this.agentActive(a)) return a;
         const interrupted: AgentActivity = {...a,status:'interrupted',updated:Date.now()}; interruptedAgents.push(interrupted); return interrupted;
       })};
     }
@@ -461,13 +486,19 @@ export class Core extends EventEmitter {
       const status = ({idle:'completed',starting:'starting',working:'running',waiting:'waiting',stopping:'running',error:'failed',interrupted:'interrupted',disconnected:'closed'} as const)[s.status];
       // A finished delegated turn shows the start of its reply on the parent's agent card.
       const result = delegated?.outcome?.status === 'completed' && delegated.outcome.reply ? boundedText(delegated.outcome.reply, 2000).text : undefined;
-      this.event(s.parentId,{type:'agent',id:s.id,data:{name:s.provider.toUpperCase(),task:s.title,status,detail:result || s.error || (s.activity ? s.activity : undefined)}});
+      this.event(s.parentId,{type:'agent',id:s.id,data:{delegatedTurnId:s.turnId || 'initial',name:s.provider.toUpperCase(),task:s.title,status,detail:result || s.error || (s.activity ? s.activity : undefined)}});
     }
     return s;
   }
   async create(p: any, authorize?: () => void, initial?:Pick<Session,'remote'|'effectivePolicy'> & {draft?:string}) {
+    // A named connection supplies the host or endpoint; without one, Settings' default applies as before.
+    const connection = p.connectionId !== undefined ? this.chatConnections.get(p.connectionId, p.provider === 'ollama' ? 'ollama' : p.provider === 'compatible' ? 'compatible' : undefined) : undefined;
+    if (connection && p.provider !== connection.kind) throw new Error('That connection is for another provider');
+    if (connection && initial?.remote) throw new Error('Phones use the connections their pairing allows');
+    if (connection?.kind === 'ollama') p = { ...p, ollamaHost: connection.ollama!.host };
     const ollamaConfig = {...this.settings.ollama,...(p.provider==='ollama'&&p.ollamaHost?{host:ollamaHost(p.ollamaHost)}:{})};
-    let ollamaCatalog: ModelOption[] | undefined = this.capabilities.ollama?.modelsStatus === 'ready' ? this.capabilities.ollama.models : undefined;
+    // The default host's cached list says nothing about another host's models.
+    let ollamaCatalog: ModelOption[] | undefined = this.capabilities.ollama?.modelsStatus === 'ready' && ollamaHost(ollamaConfig.host) === ollamaHost(this.settings.ollama.host) ? this.capabilities.ollama.models : undefined;
     if (!(providerIds as readonly string[]).includes(p.provider)) throw new Error('Choose a supported provider');
     // A phone runs a hosted API provider only when its authorized execution carries that provider's grant.
     if(initial?.remote && (p.provider==='antigravity'||isApiProvider(p.provider)&&!(initial.remote.caps.includes('providers.api')&&initial.remote.apiProviders?.includes(p.provider))))throw new Error('This provider is currently available on the desktop only');
@@ -476,6 +507,10 @@ export class Core extends EventEmitter {
     if(p.temporary&&this.store.sessions().filter(s=>s.temporary).length>=10)throw new Error('Close a temporary conversation before opening another');
     if ((p.provider === 'ollama' || isApiProvider(p.provider)) && p.nativeId) throw new Error('API and Ollama conversations are stored by Cere; CLI imports are not supported');
     if (p.tools !== undefined && typeof p.tools !== 'boolean') throw new Error('Invalid assistance mode');
+    // Workbench families are chosen separately from desktop tools; selecting Files needs no CLI trust or computer control.
+    const capabilities = validCapabilities(p.capabilities);
+    if (Object.keys(capabilities).length && !(p.provider === 'ollama' || isApiProvider(p.provider))) throw new Error('Files, Images and Analysis apply to Ollama and API conversations');
+    if (Object.keys(capabilities).length && (p.temporary || initial?.remote)) throw new Error('Temporary and phone-started conversations stay without Files, Images and Analysis');
     if (!p.trusted && !this.settings.bypassCliPermissions && (!isApiProvider(p.provider) && p.provider !== 'ollama' || p.tools)) throw new Error(isApiProvider(p.provider) ? 'Confirm desktop tool access for this conversation' : 'Confirm that you trust this project before its CLI configuration is loaded');
     if ((p.provider === 'ollama' || isApiProvider(p.provider)) && !p.tools && !p.cwd) p = {...p, cwd:homedir()};
     if (typeof p.cwd !== 'string' || !isAbsolute(p.cwd)) throw new Error('Choose an absolute project folder');
@@ -493,9 +528,9 @@ export class Core extends EventEmitter {
     if(isApiProvider(p.provider)){
       if(!model)throw new Error('Choose an API model or enter its model ID');if(effort)throw new Error('API conversations use the model’s default reasoning settings');
       if(p.provider==='compatible'){
-        const endpoint=this.settings.compatible;
+        const endpoint=connection?.compatible||this.settings.compatible,access=this.endpointAccess(endpoint);
         if(!endpoint.baseUrl)throw new Error('Set the compatible endpoint in Settings → Connections');
-        if(endpoint.requiresKey&&!this.apiAccess('compatible').key())throw new Error(`Add a key for ${apiLabel('compatible',this.apiAccess('compatible'))} in Settings → Connections`);
+        if(endpoint.requiresKey&&!access.key())throw new Error(`Add a key for ${apiLabel('compatible',access)} in Settings → Connections`);
         if(p.tools===true&&!endpoint.tools)throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
       }else if(!this.credentials.key(p.provider))throw new Error('Add an API key in Settings → Connections');
     }
@@ -509,6 +544,8 @@ export class Core extends EventEmitter {
     if (p.provider === 'ollama' && p.tools && !catalog.find(m => m.id === model)?.capabilities?.includes('tools')) throw new Error('Choose a model with tool support or use Conversation mode');
     const s: Session = { ...(isApiProvider(p.provider)?{api:{tools:p.tools===true}}:{}), ...(p.provider === 'ollama' ? {ollama:{host:ollamaHost(ollamaConfig.host),tools:p.tools === true}} : {}), id: randomUUID(), provider: p.provider, nativeId: p.nativeId || null, title: sessionTitle(p.title), cwd, mode: 'managed', status: 'idle', created: Date.now(), updated: Date.now(), draft: '', scroll: 0, model, effort };
     if(p.temporary)s.temporary=true;
+    if(Object.keys(capabilities).length)s.capabilities=capabilities;
+    if(connection){s.connectionId=connection.id;s.connectionRevision=connection.revision;}
     if(initial){s.remote=initial.remote;s.effectivePolicy=initial.effectivePolicy;if(initial.draft!==undefined)s.draft=initial.draft;}
     authorize?.();
     if(p.nativeId&&this.store.sessions().some(other=>other.provider===p.provider&&other.nativeId===p.nativeId))throw new Error('This session is already in Cere');
@@ -592,22 +629,28 @@ export class Core extends EventEmitter {
     }
     if (e.type === 'agent') {
       const session = this.store.session(id);
-      if (this.terminal.has(id) || ['stopping','error','interrupted','disconnected'].includes(session.status) || !e.id) return;
+      const delegatedTurnId = e.data?.delegatedTurnId;
+      if (!e.id || (!delegatedTurnId && (this.terminal.has(id) || ['stopping','error','interrupted','disconnected'].includes(session.status)))) return;
       const data = e.data || {}, agents = [...session.agents || []], index = agents.findIndex(a => a.id === e.id);
       const previous = index < 0 ? undefined : agents[index];
       if (!['starting','running','waiting','completed','failed','interrupted','closed'].includes(data.status)) return;
       const bounded = (value: unknown, length: number) => typeof value === 'string' ? value.slice(0, length) : undefined;
       const agent: AgentActivity = { ...previous, id:e.id, name:bounded(data.name,200) || previous?.name || 'Agent', status:data.status, updated:Date.now() };
       for (const field of ['task','detail','parentId'] as const) if (typeof data[field] === 'string') agent[field] = bounded(data[field], field === 'parentId' ? 200 : 12000);
+      if (delegatedTurnId) agent.delegatedTurnId = delegatedTurnId;
       if (index < 0) agents.push(agent); else agents[index] = agent;
       // Keep current work plus recent results bounded in each state snapshot.
       const retained = agents.length > 100 ? [...agents.filter(a => this.agentActive(a)), ...agents.filter(a => !this.agentActive(a)).slice(-80)] : agents;
-      const active = retained.some(a => this.agentActive(a));
+      if (delegatedTurnId) {
+        this.updateSession(id, { agents: retained });
+        this.recordAgent(id, agent);
+        return;
+      }
+      const active = retained.some(a => !a.delegatedTurnId && this.agentActive(a));
       const waiting = [...this.approvals.values()].some(a => a.value.sessionId === id);
       this.updateSession(id, { agents:retained, status:waiting ? 'waiting' : 'working', activity:waiting ? undefined : active ? 'delegating' : 'thinking' });
       this.recordAgent(id,agent);
-      // A delegation update ready to go out releases the held completion even while siblings still run.
-      if ((!active || this.pings.announcing(id)) && this.pendingCompletions.has(id)) { const completion = this.pendingCompletions.get(id)!; this.pendingCompletions.delete(id); this.event(id,completion); }
+      if (!active && this.pendingCompletions.has(id)) { const completion = this.pendingCompletions.get(id)!; this.pendingCompletions.delete(id); this.event(id,completion); }
       return;
     }
     if (e.type === 'activity') {
@@ -629,6 +672,12 @@ export class Core extends EventEmitter {
       const key = `${id}:${e.id || randomUUID()}`;
       const existing = this.partials.get(key) || this.store.messageById(key);
       const message: Message = { id: key, sessionId: id, role: e.type === 'tool' ? 'tool' : 'assistant', kind: e.type === 'tool' ? 'tool' : 'text', text: e.type === 'delta' ? (existing?.text || '') + (e.text || '') : e.text || '', time: existing?.time || Date.now(), sources: e.data?.sources || existing?.sources };
+      // Artifact references come only from Cere's own tool results, never from model text.
+      const refs = e.type === 'tool' && Array.isArray(e.data?.artifacts) ? e.data.artifacts.filter((ref: any) => ref && /^[0-9a-f-]{36}$/.test(ref.artifactId) && /^[0-9a-f-]{36}$/.test(ref.versionId)).slice(0, 16).map((ref: any) => ({ artifactId: ref.artifactId, versionId: ref.versionId, purpose: String(ref.purpose || '').slice(0, 200) })) : [];
+      if (refs.length) message.artifacts = refs; else if (existing?.artifacts) message.artifacts = existing.artifacts;
+      if (e.type === 'tool' && typeof e.data?.operationId === 'string' && /^[0-9a-f-]{36}$/.test(e.data.operationId)) message.operationId = e.data.operationId; else if (existing?.operationId) message.operationId = existing.operationId;
+      // Files a tool produced also appear in the conversation as cards; an operation keeps its own single card.
+      if (refs.length && !message.operationId && !existing) this.putMessage({ id: key + ':artifacts', sessionId: id, role: 'workbench', kind: 'artifacts', text: String(e.text || '').split('\n')[0].replaceAll('_', ' ').slice(0, 120), time: Date.now(), artifacts: refs });
       if (!notice && (e.type === 'tool' || e.data?.phase === 'commentary')) this.speechResponses.delete(id);
       else if (!notice) this.speechResponses.set(id, message.text.slice(0, 100000));
       this.partials.set(key, message);
@@ -647,7 +696,7 @@ export class Core extends EventEmitter {
     } else if (['error','complete','interrupted','cancelled','stopped'].includes(e.type)) {
       const session = this.store.session(id);
       if ((this.terminal.has(id) && e.type !== 'error') || ['error','interrupted','disconnected'].includes(session.status)) return;
-      if (e.type === 'complete' && !['interrupted','cancelled','canceled','stopped'].includes((e.text || '').toLowerCase()) && session.status !== 'stopping' && (session.agents || []).some(a => this.agentActive(a)) && !this.pings.announcing(id)) {
+      if (e.type === 'complete' && !['interrupted','cancelled','canceled','stopped'].includes((e.text || '').toLowerCase()) && session.status !== 'stopping' && (session.agents || []).some(a => !a.delegatedTurnId && this.agentActive(a))) {
         this.pendingCompletions.set(id,e);
         if (session.status !== 'waiting') this.updateSession(id,{status:'working',activity:'waitingForAgents'});
         return;
@@ -665,7 +714,7 @@ export class Core extends EventEmitter {
       const reply = this.turnReplies.get(id);
       // This reply predates a delegated result that the next turn announces at once; it stays unread but
       // makes no notice, inbox entry or speech of its own. A delegation turn's reply is never superseded.
-      const superseded = status === 'idle' && this.pings.announcing(id) && !this.pings.isDelegationTurn(id, session.turnId);
+      const superseded = status === 'idle' && this.pings.announcing(id, session.turnId) && !this.pings.isDelegationTurn(id, session.turnId);
       if (status === 'idle') {
         if (reply && !superseded) this.finishReply(session,reply);
         if (!superseded) this.queueCompletion(session,reply);
@@ -689,8 +738,7 @@ export class Core extends EventEmitter {
       this.settledReplies.delete(id); this.deliveredReplies.delete(id);
       if (status === 'idle') this.sendQueue.kick(id);
       else this.sendQueue.cancel(id, 'The previous turn ended; copy this message to send it again');
-      // Ready delegation updates follow a finished or failed turn; after a Stop they are dropped, never sent.
-      if (status === 'interrupted') this.pings.dropReady(id, 'Stopped by the user'); else this.pings.kick(id);
+      this.pings.kick(id);
     }
   }
   automaticallyApprove(id: string, approval: Pick<Approval, 'kind' | 'choices'>): boolean {
@@ -720,7 +768,9 @@ export class Core extends EventEmitter {
   }
   answer(p: any, automatic = false) {
     const approval = this.approvals.get(p.id); if (!approval) throw new Error('This request has already ended');
-    if(p.choice==='allow' && (['file','extension','custom-tool'].includes(approval.value.kind) && approval.value.fields?.reviewComplete!==true)) throw new Error('This operation cannot be reviewed completely');
+    if(p.choice==='allow' && (['file','extension','custom-tool','changeset','media-job','execution'].includes(approval.value.kind) && approval.value.fields?.reviewComplete!==true)) throw new Error('This operation cannot be reviewed completely');
+    if(approval.value.kind==='changeset'&&p.operations!==undefined&&(!Array.isArray(p.operations)||p.operations.length>100||p.operations.some((index:unknown)=>!Number.isInteger(index))))throw new Error('Choose operations from this change set');
+    if(approval.value.kind==='changeset'&&p.choice==='allow'&&p.digest!==undefined&&p.digest!==approval.value.fields?.digest)throw new Error('This review changed; open it again before accepting');
     if (!approval.value.choices.includes(p.choice)) throw new Error('Invalid approval response');
     if (approval.value.kind === 'question' && p.choice === 'answer') {
       p = {...p, answers:validateAnswers(approval.value,p.answers)};
@@ -789,6 +839,12 @@ export class Core extends EventEmitter {
     authorizeDispatch();
     let providerText=userText+attached.text;
     if(providerText.length>100000)throw new Error('Message and text attachments exceed 100,000 characters');
+    // @ references are resolved and re-authorized now; a source this model may not receive stops the send.
+    // A recipe draft sends exactly the references it was reviewed with.
+    if(p.references===undefined){const pinned=this.workflows.pinnedReferences(s.id);if(pinned)p={...p,references:pinned};}
+    const referenced=p.references===undefined||(Array.isArray(p.references)&&!p.references.length)?null:await this.workbench.references.resolve(s,p.references,userText,signal);
+    authorizeDispatch();
+    const referenceNote=referenced?.labels.length?'\n\nReferenced: '+referenced.labels.join(', '):'';
     const images: string[] = [];
     images.push(...attached.images);
     if(p.images!==undefined&&(!Array.isArray(p.images)||!p.images.every((v:any)=>typeof v==='string')))throw new Error('Invalid image attachments');
@@ -813,25 +869,23 @@ export class Core extends EventEmitter {
     // A very fast provider can emit and flush its first reply before its start
     // acknowledgement returns. Reserve an earlier timestamp for the deferred
     // remote user row so transcript ordering still reflects the turn.
-    this.workflows.beforeSend(s.id,userText,[...attached.assets,...images],{webSearch:p.webSearch});
+    this.workflows.beforeSend(s.id,userText,[...attached.assets,...images],{webSearch:p.webSearch,references:p.references});
     // A turn-only posture applies to this turn's requests and ends with it.
     if (p.posture !== undefined) this.turnPostures.set(s.id, p.posture); else this.turnPostures.delete(s.id);
     this.turnBehavior.set(s.id, this.resolvedBehavior(s.id));
     const userTime=Date.now()-1;
-    // Children still running stay stoppable and listed through a delegation turn.
-    if (s.provider === 'ollama' && !delegation) this.delegations.delete(s.id);
     if (!delegation) this.pings.userTurn(s.id);
     this.terminal.delete(s.id); this.pendingCompletions.delete(s.id); this.speechResponses.delete(s.id); this.turnReplies.delete(s.id);
     this.settledReplies.delete(s.id); this.deliveredReplies.delete(s.id);
     const remoteAcceptance=!!onAccepted;
     // A turn that recalls memory says so until its context is ready, then it is thinking.
-    s = this.updateSession(s.id, { status: 'starting', activity: !delegation && effective.memory.enabled && this.memory.active() ? 'recalling' : 'thinking', error: undefined, agents:delegation ? (s.agents || []).filter(a => this.agentActive(a)) : [], turnId:p.turnId || randomUUID() });
+    s = this.updateSession(s.id, { status: 'starting', activity: !delegation && effective.memory.enabled && this.memory.active() ? 'recalling' : 'thinking', error: undefined, agents:(this.store.session(s.id).agents || []).filter(a => a.delegatedTurnId && this.agentActive(a)), turnId:p.turnId || randomUUID() });
     if (this.spans.enabled) this.turnTimers.set(s.id, { started: performance.now(), provider: s.provider, first: false });
     const submittedDraftRevision=s.draftRevision;
     if(!remoteAcceptance && !delegation)this.store.set('submission:'+s.id,{text:userText,attachmentIds:attached.assets.map(a=>a.id),turnId:s.turnId,time:Date.now(),state:'dispatching'});
     const userMessageId=randomUUID();
     if(delegation)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', kind: 'delegation', text: delegation.summary, time: Date.now() });
-    else if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', text: p.text + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
+    else if(!remoteAcceptance && !p.queuedMessageId)this.putMessage({ id: userMessageId, sessionId: s.id, role: 'user', text: p.text + referenceNote + (attached.assets.length ? '\n\nAttached files: ' + attached.assets.map(a=>a.name).join(', ') : '') + (images.length ? '\n\nAttached: ' + images.join(', ') : ''), time: Date.now() });
     // HTTP providers and AntiGravity accept a turn from their stream, after send() returns.
     const tracked=!remoteAcceptance&&!p.queuedMessageId&&!delegation&&(s.provider==='ollama'||s.provider==='antigravity'||isApiProvider(s.provider));
     if(tracked)this.unacknowledged.set(s.id,{turnId:s.turnId!,messageId:userMessageId,text:userText,attachmentIds:attached.assets.map(a=>a.id)});
@@ -841,7 +895,7 @@ export class Core extends EventEmitter {
     const sentAttachments=JSON.stringify(attached.assets.map(a=>a.id));
     const acceptedByProvider=remoteAcceptance?()=>{if(accepted)return;onAccepted!();accepted=true;if(p.queuedMessageId)return;
       s=this.updateSession(s.id,{draft:'',view:undefined,...(attached.assets.length&&JSON.stringify((this.store.session(s.id).draftAttachments||[]).map(a=>a.id))===sentAttachments?{draftAttachments:[]}:{})});
-      this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+(attached.assets.length?'\n\nAttached files: '+attached.assets.map(a=>a.name).join(', '):'')+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
+      this.putMessage({id:randomUUID(),sessionId:s.id,role:'user',text:p.text+referenceNote+(attached.assets.length?'\n\nAttached files: '+attached.assets.map(a=>a.name).join(', '):'')+(images.length?'\n\nAttached: '+images.join(', '):''),time:userTime});}:undefined;
     try {
       let memorySignal: AbortSignal | undefined, memoryText = '', documents: { text: string; detail?: Record<string, any>; authorization?: CollectionAuthorization } = { text: '' };
       if (s.provider !== 'ollama' && !isApiProvider(s.provider) && !(effective.memory.enabled && this.memory.active())) this.memory.recordOutcome(s.id, { outcome: 'disabled', reason: this.memoryOffReason(s.id), route: 'cloud' });
@@ -881,7 +935,7 @@ export class Core extends EventEmitter {
       }
       if(s.remote&&s.provider!=='ollama'&&this.settingsFor(s.id).paused)throw remoteError('POLICY_PAUSED','Native provider execution is paused.');
       authorizeDispatch();
-      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, ...(p.webConstraints !== undefined ? { webConstraints: validConstraints(p.webConstraints) } : {}), messageId: !remoteAcceptance && !p.queuedMessageId ? userMessageId : undefined, beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();if(documents.text&&!this.collections.authorizeContext(this.store.session(s.id),documents.authorization,'cloud'))throw new Error('Collection access changed before dispatch');}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:tracked?acknowledged:undefined });
+      await this.adapters.get(s.id)!.send(providerText, images, { webSearch: p.webSearch, ...(p.webConstraints !== undefined ? { webConstraints: validConstraints(p.webConstraints) } : {}), messageId: !remoteAcceptance && !p.queuedMessageId ? userMessageId : undefined, ...(referenced?.text ? { references: { text: referenced.text, images: referenced.images, ...(referenced.restricted ? { restricted: referenced.restricted } : {}) } } : {}), beforeAccept:()=>{memorySignal?.throwIfAborted();authorizeDispatch();if(documents.text&&!this.collections.authorizeContext(this.store.session(s.id),documents.authorization,'cloud'))throw new Error('Collection access changed before dispatch');}, onDispatched:remoteAcceptance?onDispatched:undefined, onAccepted:acceptedByProvider, onRejected:remoteAcceptance?onRejected:undefined, acknowledged:tracked?acknowledged:undefined });
       if(!accepted)throw new Error('Provider did not confirm that it accepted the turn.');
       if(!remoteAcceptance && !delegation){
         const turn=this.unacknowledged.get(s.id),returned=!!turn&&turn.turnId===s.turnId&&turn.returned===true;
@@ -955,15 +1009,16 @@ export class Core extends EventEmitter {
   async stop(id: string): Promise<boolean> {
     if (this.spans.enabled && this.turnTimers.has(id) && !this.stopRequests.has(id)) this.stopRequests.set(id, performance.now());
     this.sendQueue.cancel(id, 'Stopped before sending; copy this message to send it again');
-    // No automatic turn follows a Stop, including one for updates that were about to go out.
+    // Keep already-ready results as transcript notes. Running children can still report later.
     this.pings.dropReady(id, 'Stopped by the user');
     this.speech.stopSession(id);
     const existing = this.stopping.get(id); if (existing) return existing;
-    const pending = Promise.resolve().then(() => this.stopTurn(id)).finally(() => this.stopping.delete(id));
+    const pending = Promise.resolve().then(() => this.stopTurn(id)).finally(() => { this.stopping.delete(id); this.pings.kick(id); });
     this.stopping.set(id, pending); return pending;
   }
   async stopAndClose(id:string) {
     this.sendQueue.cancel(id, 'Authorization ended before sending');
+    this.pings.endAuthorization(id);
     const wasActive=busy(this.store.session(id));
     const adapter=this.adapters.get(id);
     this.cancelApprovals(id);this.abortActions(id,new Error('Power access ended'));
@@ -1024,8 +1079,7 @@ export class Core extends EventEmitter {
         resolve();
       },this.stopDeadlineMs);this.stopTimers.add(timer);timer.unref();
     });
-    await Promise.race([Promise.allSettled([this.adapters.get(id)?.interrupt(), ...[...(this.delegations.get(id) || [])].map(child => this.stop(child))]), forced]);
-    this.delegations.delete(id);
+    await Promise.race([Promise.allSettled([this.adapters.get(id)?.interrupt()]), forced]);
     return true;
   }
   /** Bounded force-close: a close that itself hangs cannot keep the session stopping. */
@@ -1039,7 +1093,7 @@ export class Core extends EventEmitter {
     if(this.store.session(id).status!=='stopping')return;
     const text=confirmed?'Managed process-group termination confirmed; detached descendants and remote work are unconfirmed.':'Provider termination is unconfirmed. Cere revoked this session’s tools; inspect the provider before retrying.';
     this.updateSession(id,{status:'interrupted',error:text});
-    this.finishInterruptedTurn(id);this.pings.dropReady(id,'The turn was stopped');
+    this.finishInterruptedTurn(id);
     if(confirmed)this.attachments.prune(id);
     this.emit('notice',{kind:'interrupted',sessionId:id,text});
   }
@@ -1123,6 +1177,7 @@ export class Core extends EventEmitter {
     if ('compatible' in patch) next.compatible = validEndpoint(patch.compatible, next.compatible);
     if ('extensions' in patch) next.extensions = await validServers(patch.extensions);
     if ('customTools' in patch) next.customTools = await validTemplates(patch.customTools);
+    if ('workbench' in patch) next.workbench = validWorkbenchSettings(patch.workbench, next.workbench);
     if ('voiceCommands' in patch) {
       const value = patch.voiceCommands;
       if (!value || typeof value !== 'object' || Array.isArray(value) || Object.entries(value).some(([key, flag]) => !['enabled', 'confirm', 'speakFeedback'].includes(key) || typeof flag !== 'boolean')) throw new Error('Invalid voice command settings');
@@ -1212,6 +1267,9 @@ export class Core extends EventEmitter {
       this.store.set('settingsRevision',String(BigInt(this.store.get('settingsRevision','0'))+1n));
     });
     const previous = this.settings; this.settings = next;
+    // The Settings endpoint and host are the default connections; editing them is editing those records.
+    if (hostChanged) this.chatConnections.syncDefault('ollama', next);
+    if (endpointChanged) this.chatConnections.syncDefault('compatible', next);
     if (JSON.stringify(next.webSearch) !== JSON.stringify(previous.webSearch) || next.paused !== previous.paused) { this.webController.abort(new Error('Web search settings changed')); this.webController = new AbortController(); }
     if (JSON.stringify(next.memory) !== JSON.stringify(previous.memory) || hostChanged || next.paused !== previous.paused) this.memory.invalidate();
     this.noteRoutes.clear();
@@ -1341,7 +1399,7 @@ export class Core extends EventEmitter {
       const offer = orchestrationDefinitions.includes(d) ? orchestrationOffer(d, settings.delegationUpdates) : d;
       return { type: 'function' as const, function: { name: d.name.replaceAll('.', '_'), description: offer.description,
         parameters: { type: 'object', properties: offer.schema, required: offer.required || Object.keys(offer.schema), additionalProperties: false } } };
-    }), ...extensions];
+    }), ...extensions, ...this.workbench.tools(id)];
   }
   memoryToolsFor(id: string) {
     const s = this.store.session(id), settings = this.settingsFor(id);
@@ -1468,6 +1526,7 @@ export class Core extends EventEmitter {
     signal.throwIfAborted();
     const nativeMemory = this.store.session(id).provider !== 'ollama' && (this.memoryToolsFor(id).some(d => d.name.replaceAll('.', '_') === name) || this.notesToolsFor(id).some(d => d.name.replaceAll('.', '_') === name));
     if (!nativeMemory && !this.toolsFor(id).some(t => t.function.name === name)) throw new Error('This tool is disabled in Cere settings');
+    if (this.workbench.registry.has(name)) return this.workbench.call(id, name, args, signal);
     if (name.startsWith('ext_')) return this.extensions.call(id, name, args, signal);
     if (name.startsWith('custom_')) return this.customTools.call(id, name, args, signal);
     const notes = notesDefinitions.find(d => d.name.replaceAll('.', '_') === name);
@@ -1517,6 +1576,32 @@ export class Core extends EventEmitter {
     const result = name === 'web_search' ? await this.web.search(query, settings, guard, sessionId ? trace => this.recordWebTrace(sessionId, trace) : undefined, Object.keys(constraints).length ? constraints : undefined) : await this.web.read(args.url, guard);
     guard.throwIfAborted(); return result;
   }
+  /**
+   * Per-conversation model options. Each one is accepted only for providers that take it, and an empty
+   * value returns to the provider's default; nothing is sent optimistically to an endpoint.
+   */
+  setModelOptions(p: any) {
+    const s = this.store.session(p.id), value = p.options;
+    if (s.provider !== 'ollama' && !isApiProvider(s.provider)) throw new Error('These options apply to Ollama and API conversations; CLIs keep their own settings');
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['temperature', 'maxOutputTokens', 'contextTokens', 'keepAlive'].includes(key))) throw new Error('Invalid model options');
+    const next: Record<string, unknown> = {};
+    if (value.temperature !== undefined && value.temperature !== null) { if (typeof value.temperature !== 'number' || value.temperature < 0 || value.temperature > 2) throw new Error('Temperature is 0–2'); next.temperature = Math.round(value.temperature * 100) / 100; }
+    if (value.maxOutputTokens !== undefined && value.maxOutputTokens !== null) { if (!Number.isInteger(value.maxOutputTokens) || value.maxOutputTokens < 256 || value.maxOutputTokens > 1_000_000) throw new Error('Maximum output is 256–1,000,000 tokens'); next.maxOutputTokens = value.maxOutputTokens; }
+    if (value.contextTokens !== undefined && value.contextTokens !== null) { if (s.provider !== 'ollama') throw new Error('Context allocation applies to Ollama models'); if (!Number.isInteger(value.contextTokens) || value.contextTokens < 2048 || value.contextTokens > 10_000_000) throw new Error('Context allocation is 2,048 tokens or more'); next.contextTokens = value.contextTokens; }
+    if (value.keepAlive !== undefined && value.keepAlive !== null && value.keepAlive !== '') { if (s.provider !== 'ollama') throw new Error('Keep-alive applies to Ollama models'); if (typeof value.keepAlive !== 'string' || !/^(-1|0|\d{1,5}[smh])$/.test(value.keepAlive)) throw new Error('Keep-alive is a duration such as 10m, 0 to unload after each reply, or -1 to keep loaded'); next.keepAlive = value.keepAlive; }
+    return this.updateSession(s.id, { modelOptions: Object.keys(next).length ? next as any : undefined });
+  }
+  /** Turns Workbench families on or off for one conversation. Narrowing applies to the next request at once. */
+  setCapabilities(p: any) {
+    const s = this.store.session(p.id), capabilities = validCapabilities(p.capabilities);
+    if (s.provider !== 'ollama' && !isApiProvider(s.provider)) throw new Error('Files, Images and Analysis apply to Ollama and API conversations');
+    if (s.temporary || s.remote) throw new Error('Temporary and phone-started conversations stay without Files, Images and Analysis');
+    if (s.mode !== 'managed') throw new Error('Hand this conversation to Cere first');
+    if (p.expectedConfigRevision !== undefined && p.expectedConfigRevision !== (s.configRevision || '0')) throw remoteError('REVISION_CONFLICT', 'Conversation settings changed. Reopen them and try again.');
+    const next = Object.fromEntries(workbenchFamilies.filter(family => capabilities[family]).map(family => [family, true]));
+    this.store.activity({ action: 'session.capabilities', sessionId: s.id, capabilities: Object.keys(next) });
+    return this.updateSession(s.id, { capabilities: Object.keys(next).length ? next : undefined });
+  }
   async configureSession(p: any, authorize?: () => void, remoteExecution?: RemoteExecution) {
     if (this.deleting.has(p.id) || this.sending.has(p.id) || this.stopping.has(p.id)) throw new Error('This session is busy');
     this.sending.add(p.id);
@@ -1530,11 +1615,16 @@ export class Core extends EventEmitter {
       const check=()=>{authorize?.();const current=this.store.session(s.id);if(remoteNative&&(!current.remote||current.remote.deviceId!==remoteExecution!.deviceId||current.remote.scopeVersion!==remoteExecution!.scopeVersion||!this.remoteAuthority?.(remoteExecution!,current)))throw remoteError('AUTH_REVOKED','Remote authority changed.');if((current.configRevision||'0')!==revision||(p.expectedConfigRevision!==undefined&&p.expectedConfigRevision!==revision))throw remoteError('REVISION_CONFLICT','Conversation settings changed. Reopen Model and try again.');};
       check();
       if(typeof p.model!=='string'||p.model.length>512||/[\x00-\x1f\x7f]/.test(p.model))throw new Error('Choose a valid model');
+      // Moving to another named connection changes where the history goes: a reviewed change only.
+      const target=p.connectionId!==undefined&&p.connectionId!==s.connectionId?this.chatConnections.get(p.connectionId,local?'ollama':s.provider==='compatible'?'compatible':undefined):undefined;
+      if(p.connectionId!==undefined&&p.connectionId!==s.connectionId&&!local&&s.provider!=='compatible')throw new Error('Only Ollama and compatible conversations use named connections');
+      if(target&&p.destinationReviewed!==true)throw new Error('Moving a conversation to another connection changes where its history is sent. Review the destination and confirm.');
+      if(target&&s.remote)throw new Error('Detach this conversation from mobile control before moving it');
       const modelId=p.model.trim(),oldTools=s.ollama?.tools||s.api?.tools||false;
       const tools=p.tools===undefined?oldTools:p.tools;
       if(typeof tools!=='boolean'||(!api&&!local&&tools))throw new Error('Choose a valid assistance mode');
       if(s.temporary&&tools)throw new Error('Cere tools are unavailable in temporary conversations');
-      if(tools&&!this.toolCalling(s))throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
+      if(tools&&!this.toolCalling(target?{...s,connectionId:target.id}:s))throw new Error('This endpoint is not declared to support tools. Turn on tool calling for it in Settings → Connections if it does.');
       if(tools&&!oldTools&&!p.trusted&&!this.settings.bypassCliPermissions)throw new Error('Confirm that you trust this project before enabling delegation');
       if((local||api)&&!modelId)throw new Error('Choose a model or enter its API model ID');
       const effort=p.effort===undefined?(modelId===s.model?s.effort||'':''):p.effort;
@@ -1542,7 +1632,7 @@ export class Core extends EventEmitter {
       if((local||api)&&effort)throw new Error('This provider uses the model’s default reasoning settings');
       if(local){
         if(!s.ollama)throw new Error('Missing Ollama connection settings');
-        const models=await ollamaModels(s.ollama.host),model=models.find(m=>m.id===modelId);
+        const models=await ollamaModels(target?target.ollama!.host:s.ollama.host),model=models.find(m=>m.id===modelId);
         if(!model)throw new Error('Choose an available Ollama model');
         if(tools&&!model.capabilities?.includes('tools'))throw new Error('This model does not support tools');
         if(!model.capabilities?.includes('vision')&&this.store.get<OllamaMessage[]>('ollama:'+s.id,[]).some(m=>m.images?.length))throw new Error('This conversation contains images. Choose a model with Images, or start a new conversation.');
@@ -1553,12 +1643,13 @@ export class Core extends EventEmitter {
         if(effort&&!selected?.efforts.some(e=>e.id===effort))throw new Error('Choose an effort available for this model');
       }
       check();
-      if(modelId===s.model&&effort===(s.effort||'')&&tools===oldTools)return this.store.session(s.id);
+      if(modelId===s.model&&effort===(s.effort||'')&&tools===oldTools&&!target)return this.store.session(s.id);
       // Invalidate callbacks before closing; late events from the old adapter cannot
       // overwrite the newly chosen model, transcript, or completion status.
       await this.disconnect(s.id);check();
-      if(api&&modelId!==s.model)this.store.set('api:'+s.id,portableApiHistory(this.store.get<OllamaMessage[]>('api:'+s.id,[])));
-      return this.updateSession(s.id,{model:modelId,effort,...(local?{ollama:{...s.ollama!,tools}}:api?{api:{tools}}:{}),error:undefined});
+      if(api&&(modelId!==s.model||target))this.store.set('api:'+s.id,portableApiHistory(this.store.get<OllamaMessage[]>('api:'+s.id,[])));
+      if(target)clearRouteCache();
+      return this.updateSession(s.id,{model:modelId,effort,...(local?{ollama:{...s.ollama!,...(target?{host:target.ollama!.host}:{}),tools}}:api?{api:{tools}}:{}),...(target?{connectionId:target.id,connectionRevision:target.revision}:{}),error:undefined});
     } finally { this.sending.delete(p.id); this.pings.kick(p.id); }
   }
   /**
@@ -1581,9 +1672,9 @@ export class Core extends EventEmitter {
     this.sendQueue.cancel(s.id, 'Conversation deleted');
     this.workflows.finish(s.id); this.workflows.forgetSession(s.id);
     this.attachments.removeSession(s.id);
+    this.workbench.removeSession(s.id);
     this.store.deleteSession(s.id);
-    for (const map of [this.settledReplies, this.deliveredReplies, this.turnReplies, this.speechResponses, this.pendingCompletions, this.unacknowledged, this.delegations, this.generations]) map.delete(s.id);
-    for (const children of this.delegations.values()) children.delete(s.id);
+    for (const map of [this.settledReplies, this.deliveredReplies, this.turnReplies, this.speechResponses, this.pendingCompletions, this.unacknowledged, this.generations]) map.delete(s.id);
     this.pings.forget(s.id); this.pings.forgetChild(s);
     this.terminal.delete(s.id); this.memory.packets.delete(s.id); this.webTraces.delete(s.id); this.collections.forgetSession(s.id);
     this.completions = this.completions.filter(c => c.sessionId !== s.id); this.persistCompletions(); this.clearCompanion(s.id);
@@ -1625,7 +1716,7 @@ export class Core extends EventEmitter {
       process.on('fault', () => {});
       const abort=()=>{void process.close().catch(() => {});};signal?.addEventListener('abort',abort,{once:true});
       try {
-        await process.request('initialize', { clientInfo: { name: 'cere-history', version: '0.1.0' } }); process.write({ method: 'initialized' });
+        await process.request('initialize', { clientInfo: { name: 'cere-history', version: buildIdentity().version } }); process.write({ method: 'initialized' });
         const r = await process.request('thread/list', { limit: 100, useStateDbOnly: true });
         signal?.throwIfAborted();return (r.data || []).map((t: any) => ({ nativeId: t.id, title: t.name || t.preview || t.id, cwd: t.cwd, provider, mode: 'historical' }));
       } finally { signal?.removeEventListener('abort',abort);await process.close(); }
@@ -1651,7 +1742,7 @@ export class Core extends EventEmitter {
     return entries;
   }
   async rpc(method: string, p: any = {}) : Promise<any> {
-    const readOnly=['state.field','session.hydrate','state','settings.inspect','projects.list','session.messages','session.messageText','session.recovery','session.context','navigation.search','sessions.list','session.search','bookmarks.list','capsules.get','recipes.list','recipes.versions','results.list','memoryReview.list','memoryReview.recalled','recovery.status','diagnostics.preview','utility.list','utility.calculate','utility.convert','ui.panel','ui.attention','session.stop','approval.answer','power.end','personality.preview','presets.list','behavior.postures','behavior.resolve','behavior.preview','session.export','models.local','memory.embeddingImpact','collections.list','notes.status','notes.search','notes.read','packages.export','packages.preview','extensions.status','audio.devices','diagnostics.spans','diagnostics.uiLag','schedules.list'].includes(method);
+    const readOnly=['state.field','session.hydrate','state','settings.inspect','projects.list','session.messages','session.messageText','session.recovery','session.context','navigation.search','sessions.list','session.search','bookmarks.list','capsules.get','recipes.list','recipes.versions','results.list','memoryReview.list','memoryReview.recalled','recovery.status','diagnostics.preview','utility.list','utility.calculate','utility.convert','ui.panel','ui.attention','session.stop','approval.answer','power.end','personality.preview','presets.list','behavior.postures','behavior.resolve','behavior.preview','session.export','models.local','memory.embeddingImpact','collections.list','notes.status','notes.search','notes.read','packages.export','packages.preview','extensions.status','audio.devices','diagnostics.spans','diagnostics.uiLag','schedules.list'].includes(method)||Workbench.readOnly.includes(method);
     if(readOnly||method==='recovery.activate'||method==='recovery.cancel')return this.rpcInner(method,p);
     return this.withMutation(()=>this.rpcInner(method,p));
   }
@@ -1683,6 +1774,9 @@ export class Core extends EventEmitter {
       this.changed(); return result;
     }
     if(method.startsWith('projects.'))return this.projects.dispatch(method,p);
+    if(['workspace.','files.','changes.','artifacts.','images.','operations.','codelab.','commands.','references.','shelf.'].some(prefix=>method.startsWith(prefix)))return this.workbench.dispatch(method,p);
+    if(method==='session.capabilities')return this.setCapabilities(p);
+    if(method==='session.modelOptions')return this.setModelOptions(p);
     if(['capsules.','recipes.','results.'].some(prefix=>method.startsWith(prefix)))return this.workflows.dispatch(method,p);
     if(method.startsWith('memoryReview.'))return this.memoryReview.dispatch(method,p);
     if(method.startsWith('presets.'))return this.presets.dispatch(method,p);
@@ -1769,7 +1863,7 @@ export class Core extends EventEmitter {
       case 'provider.credentials': {
         if (!isApiProvider(p.provider)) throw new Error('Choose an API provider');
         // M13: a compatible endpoint's key is saved for the endpoint's current origin only.
-        const origin=p.provider==='compatible'?endpointOrigin(this.settings.compatible.baseUrl):undefined;
+        const origin=p.provider==='compatible'?endpointOrigin((p.connectionId!==undefined?this.chatConnections.get(p.connectionId,'compatible').compatible!:this.settings.compatible).baseUrl):undefined;
         const status=this.credentials.update(p.provider,p.key,origin);
         this.memory.service.controller.abort(new Error('API credentials changed'));
         this.memory.service.controller = new AbortController();
@@ -1854,7 +1948,15 @@ export class Core extends EventEmitter {
       case 'transcription.importFile': {
         const session=this.store.session(p.sessionId);if(session.temporary)throw new Error('Transcribing a file creates temporary audio files. Use a saved conversation.');
         const listed=this.jobs.add('transcription','Transcribing a recording',()=>void this.transcription.cancel());
-        try{return await this.transcription.importFile({sessionId:session.id,path:p.path});}finally{listed();}
+        try{
+          const result=await this.transcription.importFile({sessionId:session.id,path:p.path});
+          // 12.6: the timestamped transcript is kept as a file of this conversation, local-only like its audio.
+          if(!result.vtt)return result;
+          const {vtt,...rest}=result;
+          const version=await this.workbench.artifacts.install({sessionId:session.id,bytes:Buffer.from(vtt),name:(result.source?.name||'recording').replace(/\.[^.]+$/,'')+' (transcript).vtt',mime:'text/vtt',source:'derived',label:'transcript',
+            provenance:{kind:'transcription',engine:'whisper.cpp',source:result.source?.name||'',sha256:result.source?.sha256||'',durationSeconds:result.source?.durationSeconds??null,truncated:!!result.source?.truncated}});
+          return {...rest,artifact:{artifactId:version.artifactId,versionId:version.versionId,name:version.name}};
+        }finally{listed();}
       }
       case 'jobs.cancel': return this.jobs.cancel(p.id);
       case 'schedules.list': return this.schedules.list();
@@ -1904,6 +2006,19 @@ export class Core extends EventEmitter {
       case 'diagnostics.clearSpans': this.spans.clear(); this.turnTimers.clear(); this.stopRequests.clear(); return this.spans.summary();
       case 'extensions.restart': return this.extensions.restart(p.id);
       case 'extensions.secret': return this.extensions.setSecret(p);
+      case 'connections.list': return this.chatConnections.snapshot();
+      case 'connections.save': return this.chatConnections.save(p);
+      case 'connections.remove': return this.chatConnections.remove(p.id);
+      case 'connections.models': {
+        const connection = this.chatConnections.get(p.id);
+        if (connection.kind === 'ollama') return { models: await this.modelLoader('ollama', connection.ollama!.host) };
+        return { models: await apiModels('compatible', this.endpointAccess(connection.compatible!)) };
+      }
+      // Resources and prompt templates are the user's own operations; models never invoke them.
+      case 'extensions.resources': return this.extensions.resources(p.id, p.cursor);
+      case 'extensions.resource': return this.extensions.readResource(p);
+      case 'extensions.prompts': return this.extensions.prompts(p.id);
+      case 'extensions.prompt': return this.extensions.prompt(p);
       case 'customTools.credential': return this.customTools.setCredential(p);
       case 'notes.search': return this.vault.search(p.query);
       case 'notes.read': return this.vault.read(p.path);
@@ -2014,7 +2129,7 @@ export class Core extends EventEmitter {
     if (this.stateTimer) { clearTimeout(this.stateTimer); this.stateTimer=undefined; }
     for (const session of this.store.sessions()) this.sendQueue.cancel(session.id, 'Cere closed before sending');
     await this.telemetry.close();
-    this.jobs.cancelAll();this.workflows.close();this.utilities.close();this.localModels.cancel();this.collections.cancel();this.packages.close();await this.extensions.close().catch(error=>this.emit('notice',{kind:'error',text:error.message}));await this.transcription.close();await this.power.close();
+    this.jobs.cancelAll();await this.workbench.close();this.workflows.close();this.utilities.close();this.localModels.cancel();this.collections.cancel();this.packages.close();await this.extensions.close().catch(error=>this.emit('notice',{kind:'error',text:error.message}));await this.transcription.close();await this.power.close();
     const speechClosed = this.speech.close(); this.speechResponses.clear();
     this.memory.invalidate(); this.webController.abort(new Error('Cere is closing'));
     clearInterval(this.ticker); this.flush();

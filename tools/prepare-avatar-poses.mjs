@@ -124,6 +124,37 @@ function removeFlowSpecks(data,w,h){
  }
  return data;
 }
+
+// The pose preparer supplies registered key drawings and reviewed blink pairs.
+// Stabilize the keys before computing flow so interpolated strands, fingers and
+// clothes travel between their corrected positions throughout each route.
+async function bakeSurfaceRoute({cache, name, neutralPath, targetX, targetY, ground}) {
+  const prefix = cache + '/' + name, carried = name === 'carry';
+  await run(
+      interpolate,
+      ['--stabilize-route', neutralPath, prefix, name, String(targetX), String(targetY), String(ground)]);
+  const frames = [];
+  let previous = neutralPath;
+  for (let n = 0; n < 16; n++) {
+    const index = String(n).padStart(2, '0'), next = prefix + '-stable-' + index + '.png';
+    const steps = n === 0 ? 5 : 2, betweenPrefix = cache + '/inbetweens/' + name + '-' + index;
+    await run(
+        interpolate, [previous, next, betweenPrefix, String(steps), ...(carried ? [] : [String(ground)])]);
+    for (let s = 1; s <= steps; s++) {
+      const {data, info} =
+          await sharp(betweenPrefix + '-' + String(s).padStart(2, '0') + '.png').raw().toBuffer({
+            resolveWithObject: true
+          });
+      frames.push({name, data: carried ? removeFlowSpecks(data, info.width, info.height) : data});
+    }
+    const closed =
+        n === 15 || (name === 'shy' && n === 6) ? await sharp(next + '.blink.png').raw().toBuffer() : null;
+    frames.push({name, data: await sharp(next).raw().toBuffer(), closed});
+    previous = next;
+  }
+  return frames;
+}
+
 function topline(image){
  const {data,info:{width:w,height:h}}=image;
  for(let y=0;y<h;y++){let count=0;for(let x=0;x<w;x++)if(data[(y*w+x)*4+3]>180)count++;if(count>3)return y;}
@@ -178,7 +209,11 @@ for(const id of ids){
   }
  }
  const cache=`build/avatar-frames/${id}`;await mkdir(cache+'/inbetweens',{recursive:true});
- const neutralPath=`${cache}/neutral.png`;await sharp(neutral.data,{raw:neutral.info}).png().toFile(neutralPath);
+ // Sharp reports whether the resize used premultiplication internally. Its
+ // returned raw RGBA pixels are straight. Reusing that flag as an input option
+ // unpremultiplies the hair and translucent highlights a second time.
+ const neutralPath=`${cache}/neutral.png`;
+ await sharp(neutral.data,{raw:{width:W,height:H,channels:4}}).png().toFile(neutralPath);
  for(const name of carryOnly?['carry']:avatarRoutes){
   // Isolate the connected figure for every avatar. The legacy rectangular
   // crops also admitted faint sheet rules and detached background debris.
@@ -233,7 +268,6 @@ for(const id of ids){
   }
   const scaleY=scaleX;
   registration.routes[name]={scaleX,scaleY,grounded:!carried,normalizedHeight:!!normalizeHeight,frames:[]};
-  let previous=neutralPath;
   for(let n=0;n<16;n++){
    const {cell,left,right,sole}=cells[n],foundEyes=hasEyes(cells[n]),mid=foundEyes?eyeCenter(cells[n]).x:fallbackX;
    const frameScaleX=scaleX*cells[n].sizeFactor,frameScaleY=scaleY*cells[n].sizeFactor;
@@ -273,15 +307,9 @@ for(const id of ids){
    });
    await sharp(data,{raw:{width:W,height:H,channels:4}}).png().toFile(next);
    await sharp(shut,{raw:{width:W,height:H,channels:4}}).png().toFile(next+'.blink.png');
-   const steps=n===0?5:2,prefix=`${cache}/inbetweens/${name}-${String(n).padStart(2,'0')}`;
-   await run(interpolate,[previous,next,prefix,String(steps),...(carried?[]:[String(visibleBaseline(neutral))])]);
-   for(let s=1;s<=steps;s++){
-    const between=(await raw(`${prefix}-${String(s).padStart(2,'0')}.png`)).data;
-    frames.push({name,data:carried?removeFlowSpecks(between,W,H):between});
-   }
-   frames.push({name,data,closed:n===15||(name==='shy'&&n===6)?shut:null});
-   registration.routes[name].frames.push({n,tx,ty,sole,scaleX:frameScaleX,scaleY:frameScaleY,eyes:foundEyes,...(bodyRegistration?{bodyRegistration}:{}),...(cfg?.sheetLandmarks?.[name]?{landmarks:[left,right].filter(Boolean),authoredClosed:cells[n].authoredClosed}:{}),...(carried?{source:cells[n].source}:{})});previous=next;
+   registration.routes[name].frames.push({n,tx,ty,sole,scaleX:frameScaleX,scaleY:frameScaleY,eyes:foundEyes,...(bodyRegistration?{bodyRegistration}:{}),...(cfg?.sheetLandmarks?.[name]?{landmarks:[left,right].filter(Boolean),authoredClosed:cells[n].authoredClosed}:{}),...(carried?{source:cells[n].source}:{})});
   }
+  frames.push(...await bakeSurfaceRoute({cache,name,neutralPath,targetX,targetY,ground:registration.ground}));
   console.log(`${id}/${name}: registered and interpolated`);
  }
  const columns=16,atlasW=W*columns,atlasH=fullH+Math.ceil((frames.length+7)/columns)*H,atlas=Buffer.alloc(atlasW*atlasH*4);

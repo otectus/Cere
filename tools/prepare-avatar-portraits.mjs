@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Normalize the authored 4x3 expression grids to the runtime's 256px cells.
 import sharp from 'sharp';
+import {rename} from 'node:fs/promises';
 import {sheetComponents} from './avatar-sheet.mjs';
+import {stabilizePortraitCells} from './portrait-consistency.mjs';
 import {authoringAvatars} from '../broker/avatars.ts';
 for(const {id,authoring:config,portrait} of authoringAvatars(process.argv.slice(2))){
- const source=`artwork/avatars/${id}/portrait-sheet.png`,meta=await sharp(source).metadata(),cells=[];
+ const source=`artwork/avatars/${id}/portrait-sheet.png`,meta=await sharp(source).metadata(),sourceCells=[];
  // Uneven gutters can leave another portrait's shoulders inside a square crop.
  // Separate the actual figures, then pack them at one shared scale with margin.
  let portraits=null,scale=1;
@@ -28,8 +30,13 @@ for(const {id,authoring:config,portrait} of authoringAvatars(process.argv.slice(
    data=await sharp({create:{width:256,height:256,channels:4,background:'#00000000'}}).composite([{input,left:Math.floor((256-w)/2),top:Math.floor((256-h)/2)}]).raw().toBuffer();
   }else data=await sharp(source).extract({left,top,width,height}).resize(256,256).ensureAlpha().raw().toBuffer();
   for(let p=3;p<data.length;p+=4)if(data[p]<12)data[p]=0;
-  cells.push({input:await sharp(data,{raw:{width:256,height:256,channels:4}}).png().toBuffer(),left:col*256,top:row*256});
+  sourceCells.push({data,info:{width:256,height:256,channels:4}});
  }
- await sharp({create:{width:1024,height:768,channels:4,background:'#00000000'}}).composite(cells).png().toFile(`assets/${portrait}`);
- console.log(`${id}: twelve expression portraits packed`);
+ const stabilized=stabilizePortraitCells(sourceCells,config.portraitFace),cells=[];
+ for(let i=0;i<12;i++)cells.push({input:await sharp(stabilized.cells[i].data,{raw:stabilized.cells[i].info}).png().toBuffer(),left:i%4*256,top:Math.floor(i/4)*256});
+ const destination=`assets/${portrait}`, temporary=destination+'.'+process.pid+'.tmp';
+ await sharp({create:{width:1024,height:768,channels:4,background:'#00000000'}}).composite(cells).png().toFile(temporary);
+ await rename(temporary,destination);
+ const movement=Math.max(...stabilized.registrations.map(({tx,ty})=>Math.hypot(tx,ty))).toFixed(1);
+ console.log(`${id}: twelve expression portraits registered (maximum correction ${movement}px)`);
 }

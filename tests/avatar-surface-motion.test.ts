@@ -13,6 +13,21 @@ const catalog = {
 };
 const tick = (state: any, seconds = .02) => director.sample(state, seconds, true);
 
+function upperHeadColor(pixels: Buffer, stride: number, left: number, top: number, width: number, height: number) {
+  const sum = [0, 0, 0];
+  let count = 0;
+  for (let y = 0; y < height; y += 4) {
+    for (let x = 0; x < width; x += 4) {
+      const i = ((top + y) * stride + left + x) * 4;
+      if (pixels[i + 3] < 200) continue;
+      for (let c = 0; c < 3; c++) sum[c] += pixels[i + c];
+      count++;
+    }
+  }
+  assert.ok(count > 0, 'visible artwork above the eyes');
+  return sum.map(value => value / count);
+}
+
 test('new and repaired portrait cells have transparent gutters without neighboring-row fragments', async () => {
   for(const id of ['cere_default','cere_gothic','cere_punk','cere_punk_unmasked','nova','soap']){
     const {data,info}=await sharp(`assets/${id}-portraits.png`).ensureAlpha().raw().toBuffer({resolveWithObject:true});
@@ -26,6 +41,28 @@ test('new and repaired portrait cells have transparent gutters without neighbori
         if(alpha>180)painted++;
       }
       assert.ok(painted>5000,`${id}/${cell}: portrait remains visible`);
+    }
+  }
+});
+
+test('portrait expressions preserve the neutral silhouette, hair and costume outside the face', async () => {
+  for(const {id,portrait,authoring} of avatarCatalog){
+    const {data,info}=await sharp(`assets/${portrait}`).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+    const neutral=Buffer.alloc(256*256*4);
+    for(let y=0;y<256;y++)data.copy(neutral,y*256*4,(y*info.width)*4,(y*info.width+256)*4);
+    // The preparation mask is deliberately generous enough for surprise and
+    // closed eyes; the outer corners still cover hair, shoulders and costume.
+    const {cx,cy,rx,ry}=authoring.portraitFace || {cx:128,cy:120,rx:100,ry:95};
+    for(let cell=1;cell<12;cell++){
+      let changed=0;
+      for(let y=0;y<256;y++)for(let x=0;x<256;x++){
+        const a=(y*256+x)*4,b=((Math.floor(cell/4)*256+y)*info.width+(cell%4)*256+x)*4;
+        if(data[b+3]!==neutral[a+3])assert.fail(`${id}/${cell}: silhouette changed at ${x},${y}`);
+        if(data.readUInt32LE(b)===neutral.readUInt32LE(a))continue;
+        if(Math.hypot((x-cx)/rx,(y-cy)/ry)>=1)assert.fail(`${id}/${cell}: outer artwork changed at ${x},${y}`);
+        if(data[b+3]>200 && Math.max(...[0,1,2].map(c=>Math.abs(data[b+c]-neutral[a+c])))>15)changed++;
+      }
+      assert.ok(changed>100,`${id}/${cell}: expression must remain visible`);
     }
   }
 });
@@ -318,6 +355,14 @@ test('every manifest surface atlas preserves neutral art, planted gestures and f
         assert.equal(data[((y + yy) * info.width + x + xx) * 4 + 3], data[((by + yy) * info.width + bx + xx) * 4 + 3], avatar.id + ': blinking preserves pose silhouette');
     }
     const rects = [part.sourceRect, ...part.surfaceFrames.map((frame: any) => frame.sourceRect)];
+    // Use the top edge of the visible eye boxes, so expressions do not change
+    // the sample. Measure the shipped textures even without the authoring PNGs.
+    const cfg = avatar.authoring;
+    const offsetY = cfg.originalOffset?.[1] ?? nh - 8 - (cfg.bounds[3] + 1);
+    const eyeTop = Math.min(...cfg.eyes.map((box: number[]) => box[1]));
+    const crownHeight = Math.floor((eyeTop - cfg.crop[1] + offsetY) * frameHeight / nh);
+    const neutralColor = upperHeadColor(neutral, frameWidth, 0, 0, frameWidth, crownHeight);
+    let avatarColorDrift = 0;
     for (const [name, route] of Object.entries<any>(rig.surfaceSequences.routes)) {
       assert.equal(route.frames[0], 0, avatar.id + '/' + name + ': neutral entry');
       assert.equal(route.frames.length, 52, avatar.id + '/' + name + ': neutral plus 51 prepared frames');
@@ -325,9 +370,12 @@ test('every manifest surface atlas preserves neutral art, planted gestures and f
       const endpoint = part.surfaceFrames[route.frames.at(-1) - 1];
       assert.ok(endpoint.blinkSourceRect, avatar.id + '/' + name + ': held pose blink');
       const baselines:number[]=[];
+      let colorDrift = 0;
       for (const id of route.frames.slice(1)) {
         assert.ok(Number.isInteger(id) && rects[id]);
         const [x, y, w, h] = rects[id];
+        const color = upperHeadColor(data, info.width, x, y, w, crownHeight);
+        colorDrift += color.reduce((sum, channel, c) => sum + Math.abs(channel - neutralColor[c]), 0) / 3;
         let bottom = -1, edge = 0;
         for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
           const alpha = data[((y + yy) * info.width + x + xx) * 4 + 3];
@@ -337,11 +385,18 @@ test('every manifest surface atlas preserves neutral art, planted gestures and f
         if(name!=='carry')assert.equal(bottom, ground, avatar.id + '/' + name + '/' + id + ': planted baseline');
         assert.equal(edge, 0, avatar.id + '/' + name + '/' + id + ': no clipped opaque edge');
       }
+      // Allow highlights and composition to change as the head tilts, while
+      // catching a sustained exposure or palette change across the route.
+      const meanColorDrift = colorDrift / baselines.length;
+      assert.ok(meanColorDrift < 8, `${avatar.id}/${name}: mean upper-head RGB drift ${meanColorDrift.toFixed(2)}/255`);
+      avatarColorDrift += colorDrift;
       if(name==='carry'){
         assert.equal(route.loopMode,'pingPong');assert.ok(route.loopStart>0&&route.loopStart<route.frames.length-1);
         const suspended=baselines.slice(route.loopStart);
         assert.ok(Math.max(...suspended)-Math.min(...suspended)>3, avatar.id+': carried limbs are not pinned to the floor');
       }
     }
+    const meanAvatarDrift = avatarColorDrift / part.surfaceFrames.length;
+    assert.ok(meanAvatarDrift < 4, `${avatar.id}: mean upper-head RGB drift ${meanAvatarDrift.toFixed(2)}/255 across all gestures`);
   }
 });

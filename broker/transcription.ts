@@ -21,7 +21,9 @@ export type TranscriptionStatus = {
 };
 /** Where an imported transcript came from; a microphone transcript has no source file. */
 export type TranscriptSource = { name: string; size: number; sha256: string; durationSeconds: number | null; truncated: boolean };
-export type TranscriptionResult = { sessionId: string; revision: number; text: string; source?: TranscriptSource };
+export type TranscriptionResult = { sessionId: string; revision: number; text: string; source?: TranscriptSource;
+  /** File imports: the same transcript with segment timestamps (WebVTT), kept by Cere as a transcript artifact. */
+  vtt?: string };
 export type RecorderCommand = { command: string; args: string[] };
 export type TranscriptionOptions = {
   changed(): void;
@@ -230,9 +232,11 @@ export class Transcription {
       const text = (await readFile(prefix + '.txt', 'utf8')).trim();
       if (!text) throw new Error('whisper.cpp returned an empty transcript');
       if (text.length > transcriptLimit) throw new Error('The transcript exceeded 100,000 characters');
+      // Segment timestamps, when whisper.cpp wrote them; the plain text above stays the draft.
+      const vtt = (await readFile(prefix + '.vtt', 'utf8').catch(() => '')).slice(0, transcriptLimit * 3);
       await this.cleanup(job); this.current = undefined;
       this.update({ state: this.configured() ? 'idle' : 'unavailable', sessionId: '', revision, error: '', file: undefined });
-      return { sessionId: input.sessionId, revision, text, source: { name: basename(source), size: info.size, sha256, ...converted } };
+      return { sessionId: input.sessionId, revision, text, source: { name: basename(source), size: info.size, sha256, ...converted }, ...(vtt.startsWith('WEBVTT') ? { vtt } : {}) };
     } catch (error: any) {
       if (job) await this.cleanup(job);
       if (controller.signal.aborted || this.generation !== revision) throw new Error('Voice input was cancelled');
@@ -298,7 +302,7 @@ export class Transcription {
     return path;
   }
   private async whisper(job: Job, prefix: string, limit = 5 * 60_000) {
-    const child = spawn(job.executable, ['-m', job.model, '-f', job.audio, '--output-txt', '--output-file', prefix, '--no-timestamps'], {
+    const child = spawn(job.executable, ['-m', job.model, '-f', job.audio, '--output-txt', '--output-vtt', '--output-file', prefix, '--no-timestamps'], {
       env: this.options.env || process.env, stdio: ['ignore', 'ignore', 'pipe'],
     });
     // A04: transcribing a file is background work; dictation keeps normal priority.

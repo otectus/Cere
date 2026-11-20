@@ -22,8 +22,11 @@ const contrast = (palette: Record<string, string>, a: string, b: string) => {
   return (light + 0.05) / (dark + 0.05);
 };
 
+// Colours the image editor writes into the user's pixels (annotation ink, the exported mask, the default
+// background when flattening, the transparency checkerboard behind an image) are content, not interface.
+const contentColours: Record<string, string[]> = { 'ImageWorkbench.qml': ['"#ff3b30"', '"#ffcc00"', '"#34c759"', '"#0a84ff"', '"#ffffff"', '"#000000"', '"#cccccc"'] };
 test('interface colours come from Theme tokens, not literals', () => {
-  const literals = files.flatMap(name => [...source(name).matchAll(/"#[0-9a-fA-F]{3,8}"/g)].map(match => `${name}: ${match[0]}`));
+  const literals = files.flatMap(name => [...source(name).matchAll(/"#[0-9a-fA-F]{3,8}"/g)].filter(match => !contentColours[name]?.includes(match[0])).map(match => `${name}: ${match[0]}`));
   assert.deepEqual(literals, []);
 });
 

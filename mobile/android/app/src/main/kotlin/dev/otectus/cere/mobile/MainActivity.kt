@@ -611,7 +611,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
     val attachments = state.attachments.filter { it.sessionId == session.id }
     val activeAgents = session.agents.filter(Agent::isActive)
     val waitingApprovals = state.approvals.filter { it.sessionId == session.id || session.id in it.parentSessionIds || activeAgents.any { agent -> agent.id == it.sessionId } }
-    val busy = session.status in setOf("starting", "working", "waiting", "stopping") || activeAgents.isNotEmpty() || waitingApprovals.isNotEmpty()
+    val busy = session.status in setOf("starting", "working", "waiting", "stopping") || waitingApprovals.any { it.sessionId == session.id }
     val attachmentsReady = attachments.all { it.reviewedAt != null && it.readyAt(now) }
     // A desktop draft's attachments are part of the draft: shown, reviewable and sent with it, never queued.
     val desktopAttachments = session.draftAttachments

@@ -63,6 +63,12 @@
       "petShadow": "#36070c13"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 133,
+        "cy": 152,
+        "rx": 76,
+        "ry": 55
+      },
       "crop": [
         0,
         125,
@@ -1150,6 +1156,12 @@
       "petShadow": "#36070c13"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 129,
+        "cy": 146,
+        "rx": 73,
+        "ry": 55
+      },
       "crop": [
         0,
         125,
@@ -2241,6 +2253,12 @@
       "petShadow": "#36070c13"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 130,
+        "cy": 141,
+        "rx": 73,
+        "ry": 39
+      },
       "crop": [
         0,
         170,
@@ -2358,6 +2376,12 @@
       "petShadow": "#36070c13"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 129,
+        "cy": 150,
+        "rx": 74,
+        "ry": 52
+      },
       "crop": [
         0,
         170,
@@ -3482,6 +3506,12 @@
       "petShadow": "#4d0a0103"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 128,
+        "cy": 164,
+        "rx": 91,
+        "ry": 58
+      },
       "crop": [
         0,
         65,
@@ -3614,6 +3644,12 @@
       "petShadow": "#4d090103"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 124,
+        "cy": 155,
+        "rx": 78,
+        "ry": 57
+      },
       "crop": [
         0,
         80,
@@ -3764,6 +3800,12 @@
       "petShadow": "#4d06010e"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 131,
+        "cy": 164,
+        "rx": 78,
+        "ry": 57
+      },
       "crop": [
         0,
         110,
@@ -3870,6 +3912,12 @@
       "petShadow": "#360d0c0a"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 130,
+        "cy": 157,
+        "rx": 81,
+        "ry": 64
+      },
       "crop": [
         15,
         100,
@@ -3964,6 +4012,12 @@
       "petShadow": "#360a0b09"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 151,
+        "cy": 157,
+        "rx": 81,
+        "ry": 60
+      },
       "crop": [
         0,
         95,
@@ -4077,6 +4131,12 @@
       "petShadow": "#3605090e"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 131,
+        "cy": 151,
+        "rx": 78,
+        "ry": 54
+      },
       "crop": [
         0,
         100,
@@ -4283,6 +4343,12 @@
       "petShadow": "#360a0a0a"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 126,
+        "cy": 141,
+        "rx": 74,
+        "ry": 41
+      },
       "crop": [
         0,
         85,
@@ -4434,6 +4500,12 @@
       "petShadow": "#360a070d"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 119,
+        "cy": 154,
+        "rx": 77,
+        "ry": 57
+      },
       "crop": [
         0,
         75,
@@ -4639,6 +4711,12 @@
       "petShadow": "#36080c07"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 123,
+        "cy": 158,
+        "rx": 77,
+        "ry": 57
+      },
       "crop": [
         0,
         105,
@@ -4859,6 +4937,12 @@
       "petShadow": "#36040b0a"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 130,
+        "cy": 162,
+        "rx": 81,
+        "ry": 61
+      },
       "crop": [
         0,
         100,
@@ -5064,6 +5148,12 @@
       "petShadow": "#360b0810"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 128,
+        "cy": 174,
+        "rx": 69,
+        "ry": 61
+      },
       "crop": [
         0,
         25,
@@ -5300,6 +5390,12 @@
       "petShadow": "#36060404"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 129,
+        "cy": 152,
+        "rx": 73,
+        "ry": 54
+      },
       "crop": [
         0,
         10,
@@ -5394,6 +5490,12 @@
       "petShadow": "#36060407"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 128,
+        "cy": 162,
+        "rx": 67,
+        "ry": 47
+      },
       "crop": [
         0,
         65,
@@ -5579,6 +5681,12 @@
       "petShadow": "#36030507"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 127,
+        "cy": 166,
+        "rx": 68,
+        "ry": 55
+      },
       "crop": [
         0,
         50,
@@ -5800,6 +5908,12 @@
       "petShadow": "#36040307"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 130,
+        "cy": 151,
+        "rx": 79,
+        "ry": 59
+      },
       "crop": [
         0,
         85,
@@ -5990,6 +6104,12 @@
       "petShadow": "#36040407"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 149,
+        "cy": 162,
+        "rx": 65,
+        "ry": 51
+      },
       "crop": [
         0,
         85,
@@ -6151,6 +6271,12 @@
       "petShadow": "#36050406"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 130,
+        "cy": 147,
+        "rx": 73,
+        "ry": 47
+      },
       "crop": [
         0,
         110,
@@ -6543,6 +6669,12 @@
       "petShadow": "#36070405"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 124,
+        "cy": 161,
+        "rx": 65,
+        "ry": 50
+      },
       "crop": [
         0,
         55,
@@ -6650,6 +6782,12 @@
       "petShadow": "#3605090c"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 140,
+        "cy": 149,
+        "rx": 33,
+        "ry": 36
+      },
       "crop": [
         0,
         55,
@@ -7539,6 +7677,12 @@
       "petShadow": "#360b0908"
     },
     "authoring": {
+      "portraitFace": {
+        "cx": 130,
+        "cy": 131,
+        "rx": 75,
+        "ry": 54
+      },
       "crop": [
         20,
         30,

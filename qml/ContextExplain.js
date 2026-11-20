@@ -102,7 +102,8 @@ var layerReasons = {
     no_match: "nothing relevant",
     already_supplied: "already supplied earlier",
     timed_out: "memory timed out",
-    degraded: "memory unavailable"
+    degraded: "memory unavailable",
+    withheld_for_route: "some earlier file or image content withheld: its folder does not allow this model"
 }
 function tokens(value) { return value === null || value === undefined ? "unknown" : "≈" + Number(value).toLocaleString(Qt.locale(), "f", 0) + " tokens" }
 function planSummary(plan) {

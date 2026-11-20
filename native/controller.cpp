@@ -1196,6 +1196,11 @@ QVariantMap Controller::clipboardContent(){
 QString Controller::chooseFolder(){return QFileDialog::getExistingDirectory(nullptr,"Choose a trusted project folder",QDir::homePath());}
 QString Controller::chooseImage(){return QFileDialog::getOpenFileName(nullptr,"Attach an image",QDir::homePath(),"Images (*.png *.jpg *.jpeg *.webp)");}
 QString Controller::chooseFile(){return QFileDialog::getOpenFileName(nullptr,"Open a local file",QDir::homePath());}
+QString Controller::chooseSavePath(const QString &suggestedName){
+    const QString name=QFileInfo(suggestedName).fileName().isEmpty()?QStringLiteral("export"):QFileInfo(suggestedName).fileName();
+    return QFileDialog::getSaveFileName(nullptr,"Save a copy",QDir::home().filePath(name));
+}
+QString Controller::chooseWorkflow(){return QFileDialog::getOpenFileName(nullptr,"Import a ComfyUI workflow (Export (API))",QDir::homePath(),"ComfyUI API workflow (*.json)");}
 QString Controller::saveTextAs(const QString &suggestedName,const QString &text){
     // The dialog confirms overwriting; QSaveFile replaces the file only once the whole text is written.
     const auto filter=suggestedName.endsWith(".json")?QStringLiteral("Cere package (*.json)"):suggestedName.endsWith(".md")?QStringLiteral("Markdown (*.md);;Text (*.txt)"):QStringLiteral("Text (*.txt);;Markdown (*.md)");

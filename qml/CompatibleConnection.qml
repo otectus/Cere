@@ -16,7 +16,7 @@ ColumnLayout {
     property int refreshRequest:-1
     property string error:""
     property string feedback:""
-    function load(){baseUrl.text=saved.baseUrl||"";label.text=saved.label||"";requiresKey.checked=saved.requiresKey!==false;tools.checked=saved.tools===true;images.checked=saved.images===true;streaming.checked=saved.streaming!==false;usage.checked=saved.usage===true;contextLength.text=saved.contextLength?String(saved.contextLength):"";maxOutput.text=saved.maxOutputTokens?String(saved.maxOutputTokens):""}
+    function load(){baseUrl.text=saved.baseUrl||"";label.text=saved.label||"";requiresKey.checked=saved.requiresKey!==false;tools.checked=saved.tools===true;images.checked=saved.images===true;streaming.checked=saved.streaming!==false;usage.checked=saved.usage===true;processing.currentIndex=["unknown","local","remote","cloud"].indexOf(saved.processing||"unknown");contextLength.text=saved.contextLength?String(saved.contextLength):"";maxOutput.text=saved.maxOutputTokens?String(saved.maxOutputTokens):""}
     function number(text){const value=text.trim();return value?Number(value):0}
     Component.onCompleted:load()
     CText {
@@ -31,6 +31,8 @@ ColumnLayout {
     Flow {
         Layout.fillWidth:true;spacing:8
         CCheckBox { id:requiresKey;objectName:"compatibleRequiresKey";text:"Needs a key" }
+        CComboBox { id:processing;objectName:"compatibleProcessing";Layout.fillWidth:true;model:["Not sure where it processes requests","Processes on this computer","Processes on my own server","A cloud service"];Accessible.name:"Where the endpoint processes requests" }
+        CText { text:"Cere cannot tell where a compatible server sends your content: a local address may still forward to the cloud. Workspace folders and images limited to local processing are withheld unless you say it runs on this computer.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
         CCheckBox { id:tools;objectName:"compatibleTools";text:"Tool calling" }
         CCheckBox { id:images;objectName:"compatibleImages";text:"Image input" }
         CCheckBox { id:streaming;objectName:"compatibleStreaming";text:"Streaming replies" }
@@ -51,7 +53,7 @@ ColumnLayout {
     CButton {
         objectName:"compatibleSave";text:endpoint.saveRequest>=0?"Saving…":"Save endpoint";primary:true;Layout.fillWidth:true
         enabled:App.connected&&endpoint.saveRequest<0
-        onClicked:{endpoint.error="";endpoint.feedback="";endpoint.saveRequest=App.rpc("settings.update",{compatible:{baseUrl:baseUrl.text.trim(),label:label.text.trim(),requiresKey:requiresKey.checked,tools:tools.checked,images:images.checked,streaming:streaming.checked,usage:usage.checked,contextLength:endpoint.number(contextLength.text),maxOutputTokens:endpoint.number(maxOutput.text)}})}
+        onClicked:{endpoint.error="";endpoint.feedback="";endpoint.saveRequest=App.rpc("settings.update",{compatible:{baseUrl:baseUrl.text.trim(),label:label.text.trim(),requiresKey:requiresKey.checked,tools:tools.checked,images:images.checked,streaming:streaming.checked,usage:usage.checked,contextLength:endpoint.number(contextLength.text),maxOutputTokens:endpoint.number(maxOutput.text),processing:["unknown","local","remote","cloud"][processing.currentIndex]}})}
     }
     CText {
         objectName:"compatibleKeyNote";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:Theme.secondary

@@ -40,4 +40,14 @@ ColumnLayout {
         description:"One OpenAI-compatible chat server of your choice, local or hosted."
         CompatibleConnection {}
     }
+    CSection {
+        title:"Saved connections"
+        description:"More Ollama computers and compatible endpoints under names; each conversation keeps the one it started on."
+        NamedConnections {}
+    }
+    CSection {
+        title:"Images & analysis"
+        description:"Image backends any conversation can use, the vision helper, OCR and Code Lab. Each image request shows its backend and whether it may be billed."
+        ImageConnections {}
+    }
 }

@@ -31,7 +31,7 @@ test('M01 resolution is deterministic: conversation, then project, then global; 
   // A posture overlays traits and adds limits; a true ceiling value is never stored, so it cannot grant.
   const review = builtinPostures.find(item => item.id === 'posture:review')!;
   const withPosture = resolveBehavior({ personality: 'Global.', profiles, projectProfileId: 'project', postureId: review.id, pinned: true });
-  assert.deepEqual(withPosture.ceiling, { web: false, desktop: false, delegation: false, extensions: false }, 'review also withholds extension tools (A02)');
+  assert.deepEqual(withPosture.ceiling, { web: false, desktop: false, delegation: false, extensions: false, fileChanges: false, images: false, analysis: false }, 'review also withholds extension tools (A02) and Workbench changes, images and runs');
   assert.deepEqual(withPosture.posture!.pinned, true);
   assert.deepEqual(validCeiling({ desktop: true, web: false }), { web: false });
   // A missing style falls back visibly to the next level.
@@ -40,7 +40,7 @@ test('M01 resolution is deterministic: conversation, then project, then global; 
   // Rendering names the posture's duration and the withheld tools; neutral traits emit nothing.
   const block = behaviorInstructions(withPosture, 'Cere');
   assert.match(block, /Current posture: Review, pinned to this conversation until the user changes it\./);
-  assert.match(block, /withholds Cere's web, desktop, delegation, extension tools/);
+  assert.match(block, /withholds Cere's web, desktop, delegation, extension, file-change, image, analysis tools/);
   assert.doesNotMatch(behaviorInstructions(resolveBehavior({ personality: 'x', profiles: [profile({ traits: validTraits({ verbosity: 0, humor: 0 }) })], sessionProfileId: 'p' }), 'Cere'), /Conversation preferences/);
   assert.throws(() => validTraits({ verbosity: 3 }), /-2 to 2/);
   assert.throws(() => validTraits({ charm: 1 }), /Traits are/);

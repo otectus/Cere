@@ -16,10 +16,12 @@ Rectangle {
     readonly property bool noProgress: message.role==="tool"&&String(message.text||"").startsWith("No progress detected\n")
     // Cere's own Delegation update (broker/delegation-pings.ts): a user-role row, but never the user's words.
     readonly property bool delegation: message.kind==="delegation"
+    // A Workbench row is Cere's own record of a change set, artifact or run: plain text, never the model's words.
+    readonly property bool workbench: message.role==="workbench"
     property bool collapsed: message.role==="tool"&&!noProgress
     // The stored reply keeps its memory citations; while they are hidden this card leaves them out of
     // what it shows, copies, quotes, speaks and branches. Tool output stays as it was produced.
-    readonly property bool hidesCitations: message.role!=="tool"&&!App.showMemoryCitations
+    readonly property bool hidesCitations: message.role!=="tool"&&!workbench&&!App.showMemoryCitations
     readonly property string displayText: hidesCitations?App.displayText(message.text,false):message.text
     // A hidden host (the other Cere window) skips document formatting while a reply streams and
     // formats once when it is shown again.
@@ -29,14 +31,14 @@ Rectangle {
         target: App
         function onThemeChanged() { Qt.callLater(body.formatDocument) }
     }
-    color: delegation ? Theme.surface : message.role==="user" ? Theme.userBubble : message.role==="tool" ? Theme.input : Theme.surface
+    color: delegation||workbench ? Theme.surface : message.role==="user" ? Theme.userBubble : message.role==="tool" ? Theme.input : Theme.surface
     radius: Theme.radius
-    border.color: noProgress ? Theme.amber : delegation ? Theme.activeBorder : message.role==="user" ? Theme.userBubbleBorder : Theme.subtle
+    border.color: noProgress ? Theme.amber : delegation||workbench ? Theme.activeBorder : message.role==="user" ? Theme.userBubbleBorder : Theme.subtle
     implicitHeight: contents.implicitHeight+32
     ColumnLayout {
         id:contents;anchors.fill:parent;anchors.margins:16;spacing:12
         RowLayout {
-            Text { objectName:"messageAuthor";text:card.delegation ? App.assistantName+" · Delegation update" : card.message.role==="user" ? "You" : card.noProgress ? "No progress detected" : card.message.role==="tool" ? "Tool activity" : App.assistantName;elide:Text.ElideRight;textFormat:Text.PlainText;color:card.message.role==="user"&&!card.delegation?Theme.muted:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;Layout.fillWidth:true }
+            Text { objectName:"messageAuthor";text:card.workbench ? "Workbench" : card.delegation ? App.assistantName+" · Delegation update" : card.message.role==="user" ? "You" : card.noProgress ? "No progress detected" : card.message.role==="tool" ? "Tool activity" : App.assistantName;elide:Text.ElideRight;textFormat:Text.PlainText;color:card.message.role==="user"&&!card.delegation?Theme.muted:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.secondary;font.weight:Font.DemiBold;Layout.fillWidth:true }
             CButton{objectName:"noProgressStop";visible:card.noProgress&&card.message.sessionId===App.selectedId&&["starting","working","waiting"].indexOf(App.session.status)>=0;danger:true;text:"Stop";implicitHeight:28;help:"Stop this turn";enabled:App.connected;onClicked:App.rpc("session.stop",{id:card.message.sessionId})}
             CButton{visible:card.message.role==="tool";quiet:true;text:card.collapsed?"Show":"Hide";implicitHeight:28;onClicked:card.collapsed=!card.collapsed}
             // A display copy shortened for transport copies the complete stored text instead.
@@ -61,7 +63,7 @@ Rectangle {
                 // Prose is formatted to the visible width; only code and tables reach past it.
                 function formatDocument(){
                     // A deferred call can run after its window (and App) is gone.
-                    if(formatting||card.message.role==="tool"||typeof App==="undefined"||!card.hostVisible)return
+                    if(formatting||card.message.role==="tool"||card.workbench||typeof App==="undefined"||!card.hostVisible)return
                     formatting=true;App.formatMessage(textDocument,messageViewport.width);formatting=false
                 }
                 onTextChanged:{if(!formatting)overflowWidth=0;formatDocument()}
@@ -74,7 +76,7 @@ Rectangle {
                 // Long URLs and paths break where they must instead of widening the message. Table
                 // columns still keep their longest word, so a table too wide for the view scrolls.
                 readOnly:true;selectByMouse:true;wrapMode:TextEdit.Wrap
-                textFormat:card.message.role==="tool"?TextEdit.PlainText:TextEdit.MarkdownText
+                textFormat:card.message.role==="tool"||card.workbench?TextEdit.PlainText:TextEdit.MarkdownText
                 color:Theme.text;selectionColor:Theme.selected;selectedTextColor:Theme.text
                 font.pixelSize:Theme.message;font.family:card.message.role==="tool"?"monospace":Theme.font
                 padding:0;background:null
@@ -88,6 +90,16 @@ Rectangle {
         Repeater {
             model:card.collapsed?[]:(card.message.sources||[])
             CButton { required property var modelData;Layout.fillWidth:true;text:"↗ "+modelData.title;help:modelData.url;Accessible.description:modelData.url;onClicked:if(/^https?:\/\//.test(modelData.url))Qt.openUrlExternally(modelData.url) }
+        }
+        CButton {
+            objectName:"reviewChanges_"+card.message.id;visible:card.message.kind==="changes"&&!!card.message.changeSetId
+            text:"Review changes";iconName:"edit";primary:true;Layout.alignment:Qt.AlignLeft
+            onClicked:{App.selectedId=card.message.sessionId;WorkbenchState.openReview(card.message.changeSetId)}
+        }
+        // Broker-issued artifact references only; a path printed in a reply is never a file card.
+        Repeater {
+            model:card.collapsed?[]:(card.message.artifacts||[])
+            ArtifactCard { required property var modelData;Layout.fillWidth:true;reference:modelData;sessionId:card.message.sessionId }
         }
         // M02: a formatting check the reply missed. The reply's text is never changed.
         Text {

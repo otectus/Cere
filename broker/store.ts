@@ -72,6 +72,52 @@ export class Store {
       CREATE INDEX IF NOT EXISTS sessions_order ON sessions(json_extract(data,'$.updated') DESC,id DESC);
       CREATE INDEX IF NOT EXISTS sessions_folder ON sessions(json_extract(data,'$.folderId'));
       CREATE INDEX IF NOT EXISTS sessions_project ON sessions(json_extract(data,'$.cwd'));`);
+    this.migrateWorkbench();
+  }
+  /**
+   * Workbench tables, added once and only ever extended. The migration is additive: no existing row is
+   * rewritten and no content is copied, so it needs no data backup; the schema it started from is kept
+   * in meta for inspection. Nothing here grants authority: new roots, grants and connections start empty.
+   */
+  private migrateWorkbench() {
+    const current = Number(this.get<string | number>('workbenchSchema', 0));
+    if (current > 1) throw new Error('This Cere state was written by a newer version (Workbench schema ' + current + ')');
+    if (current === 1) return;
+    this.transaction(() => {
+      const before = this.db.prepare("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").all();
+      this.db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('schema-before-workbench', JSON.stringify({ at: Date.now(), objects: before }));
+      this.db.exec(`CREATE TABLE IF NOT EXISTS workspace_roots (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS workspace_roots_session ON workspace_roots(session_id);
+        CREATE TABLE IF NOT EXISTS workspace_policies (root_id TEXT NOT NULL, revision INTEGER NOT NULL, created INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(root_id, revision));
+        CREATE TABLE IF NOT EXISTS change_sets (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, status TEXT NOT NULL, created INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS change_sets_session ON change_sets(session_id, created DESC);
+        CREATE INDEX IF NOT EXISTS change_sets_status ON change_sets(status);
+        CREATE TABLE IF NOT EXISTS change_operations (change_set_id TEXT NOT NULL, idx INTEGER NOT NULL, data TEXT NOT NULL, outcome TEXT, PRIMARY KEY(change_set_id, idx));
+        CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', updated INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS artifacts_session ON artifacts(session_id, updated DESC);
+        CREATE INDEX IF NOT EXISTS artifacts_project ON artifacts(project, updated DESC);
+        CREATE TABLE IF NOT EXISTS artifact_versions (id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL, sha256 TEXT NOT NULL, created INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS artifact_versions_artifact ON artifact_versions(artifact_id, created);
+        CREATE INDEX IF NOT EXISTS artifact_versions_sha ON artifact_versions(sha256);
+        CREATE TABLE IF NOT EXISTS artifact_refs (id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL, version_id TEXT, owner_kind TEXT NOT NULL, owner_id TEXT NOT NULL, created INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS artifact_refs_owner ON artifact_refs(owner_kind, owner_id);
+        CREATE INDEX IF NOT EXISTS artifact_refs_artifact ON artifact_refs(artifact_id);
+        CREATE TABLE IF NOT EXISTS artifact_derivations (id TEXT PRIMARY KEY, source_version_id TEXT NOT NULL, derived_version_id TEXT, kind TEXT NOT NULL, created INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS artifact_derivations_source ON artifact_derivations(source_version_id);
+        CREATE INDEX IF NOT EXISTS artifact_derivations_derived ON artifact_derivations(derived_version_id);
+        CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS operations_session ON operations(session_id, updated DESC);
+        CREATE INDEX IF NOT EXISTS operations_state ON operations(state);
+        CREATE TABLE IF NOT EXISTS operation_events (id INTEGER PRIMARY KEY, operation_id TEXT NOT NULL, time INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS operation_events_operation ON operation_events(operation_id, id);
+        CREATE TABLE IF NOT EXISTS provider_connections (id TEXT PRIMARY KEY, kind TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS usage_records (id TEXT PRIMARY KEY, session_id TEXT NOT NULL DEFAULT '', operation_id TEXT NOT NULL DEFAULT '', time INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS usage_records_session ON usage_records(session_id, time);
+        CREATE INDEX IF NOT EXISTS usage_records_operation ON usage_records(operation_id);
+        CREATE TABLE IF NOT EXISTS budget_reservations (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL, state TEXT NOT NULL, created INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS budget_reservations_operation ON budget_reservations(operation_id);`);
+      this.db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('workbenchSchema', '1');
+    });
   }
   get<T>(key: string, fallback: T): T {
     const row = this.volatile.prepare('SELECT value FROM meta WHERE key=?').get(key)||this.db.prepare('SELECT value FROM meta WHERE key=?').get(key);
@@ -118,6 +164,7 @@ export class Store {
       compatible: { ...defaultSettings.compatible, ...saved.compatible },
       extensions: Array.isArray(saved.extensions) ? saved.extensions : [],
       customTools: Array.isArray(saved.customTools) ? saved.customTools : [],
+      workbench: { ...defaultSettings.workbench, ...saved.workbench, imageConnections: Array.isArray(saved.workbench?.imageConnections) ? saved.workbench.imageConnections : [] },
       audio: { ...defaultSettings.audio, ...saved.audio },
       voiceCommands: { ...defaultSettings.voiceCommands, ...saved.voiceCommands },
       memory: { ...defaultSettings.memory, ...saved.memory } };

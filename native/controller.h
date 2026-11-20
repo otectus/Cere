@@ -151,6 +151,9 @@ public:
     Q_INVOKABLE QString chooseFile();
     /** M15: saves exported text where the user chooses, atomically; returns the path or an empty string. */
     Q_INVOKABLE QString saveTextAs(const QString &suggestedName,const QString &text);
+    /** A path the user chose in a save dialog (which already confirmed any overwrite); nothing is written here. */
+    Q_INVOKABLE QString chooseSavePath(const QString &suggestedName);
+    Q_INVOKABLE QString chooseWorkflow();
     Q_INVOKABLE void saveHomePosition();
     Q_INVOKABLE void goHomePosition();
     Q_INVOKABLE void dockPet(const QString &edge);

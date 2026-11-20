@@ -56,7 +56,7 @@ Rectangle {
     border.width: expanded ? 0 : 1
     implicitWidth: expanded ? 1040 : 440; implicitHeight: expanded ? 780 : 860
     focus: true
-    Keys.onEscapePressed: { if(page!==0)page=0;else App.closePanel() }
+    Keys.onEscapePressed: { if(WorkbenchState.open&&page===0)WorkbenchState.hide();else if(page!==0)page=0;else App.closePanel() }
     Shortcut { sequence: "Ctrl+K"; onActivated: commandPalette.openPalette() }
     Shortcut { sequence: "Ctrl+N"; onActivated: shell.page===4?projectsPage.newProjectSession():newSession.open() }
     Shortcut { sequence: "Ctrl+,"; onActivated: shell.navigate(3) }
@@ -222,7 +222,9 @@ Rectangle {
                 id:pageViewport
                 Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumWidth:0;Layout.minimumHeight:120;clip:true
                 StackLayout {
-                    anchors.fill:parent;currentIndex:shell.page
+                    // Under the compact Workbench sheet the conversation is hidden, not just covered, so
+                    // Tab and screen readers cannot reach a composer the person cannot see.
+                    anchors.fill:parent;currentIndex:shell.page;visible:!workbenchSheet.visible
                     transform:Translate { x:shell.pageOffset }
                     Chat { id:conversation;showBackButton:!shell.wide;onBackRequested:shell.showSessions();onCreateRequested:newSession.open()
                         onNavigateRequested:target=>{if(target==="settings")shell.navigate(3);else if(target==="sessions")shell.showSessions();else if(target==="desktop")shell.navigate(2);else if(target==="new")newSession.open();else shell.navigate(0)} }
@@ -242,6 +244,8 @@ Rectangle {
                     Text { id:toastText;anchors.fill:parent;anchors.margins:10;text:App.toast;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;maximumLineCount:5;elide:Text.ElideRight }
                     HoverHandler { id:toastHover }
                 }
+                // The compact panel shows the Workbench as one focused sheet over the conversation.
+                Item { id:workbenchSheet;objectName:"workbenchSheet";anchors.fill:parent;z:5;visible:!shell.wide&&WorkbenchState.open&&shell.page===0;onVisibleChanged:if(visible)Qt.callLater(()=>workbench.forceActiveFocus()) }
             }
             RowLayout {
                 visible:shell.wide;Layout.fillWidth:true;spacing:8
@@ -280,7 +284,30 @@ Rectangle {
                 CButton { objectName:"shellPermissionCenter";visible:shell.wide;text:"Permissions";quiet:true;implicitHeight:30;onClicked:permissionCenter.open() }
             }
         }
+        // The expanded workspace shows the Workbench beside the conversation, resizable from its edge.
+        Item {
+            id:workbenchSide;objectName:"workbenchSide"
+            visible:shell.wide&&WorkbenchState.open&&shell.page===0
+            Layout.preferredWidth:Math.max(360,Math.min(shell.width*.55,WorkbenchState.paneWidth));Layout.fillHeight:true
+            Rectangle { anchors.left:parent.left;width:1;height:parent.height;color:Theme.subtle }
+            MouseArea {
+                objectName:"workbenchResize";anchors.left:parent.left;width:8;height:parent.height;cursorShape:Qt.SplitHCursor;z:2
+                property real startX:0;property real startWidth:0
+                onPressed:mouse=>{startX=mapToItem(shell,mouse.x,0).x;startWidth=workbenchSide.width}
+                onPositionChanged:mouse=>{if(pressed)WorkbenchState.paneWidth=Math.max(360,Math.min(shell.width*.55,startWidth-(mapToItem(shell,mouse.x,0).x-startX)))}
+            }
+        }
     }
+    // One Workbench per window, moved between the side pane and the compact sheet so its panes, scroll
+    // positions and drafts survive a resize; the other window shares the same state through WorkbenchState.
+    Workbench {
+        id:workbench
+        parent:shell.wide?workbenchSide:workbenchSheet
+        anchors.fill:parent;anchors.leftMargin:shell.wide?8:0
+        compact:!shell.wide
+        onCloseRequested:{WorkbenchState.hide();Qt.callLater(()=>conversation.focusComposer())}
+    }
+    Connections { target:WorkbenchState;function onRequested(){if(shell.page!==0)shell.page=0} }
     Connections { target:App;function onAttachmentRequested(path){shell.page=0} }
     // M16: while responsiveness is measured, the window samples how late its own timer fires and sends an
     // aggregate every thirty seconds. When off, the timer is stopped.
@@ -312,6 +339,7 @@ Rectangle {
         onDesktopRequested:query=>{shell.page=2;Qt.callLater(()=>desktop.focusSearch())}
         onWorkflowsRequested:workflows.openRecipes()
     }
+    Shortcut { sequence:"Ctrl+Shift+W";onActivated:WorkbenchState.open?WorkbenchState.hide():WorkbenchState.show("") }
     CDialog {
         id: welcome; closePolicy: Popup.NoAutoClose
         visible: App.connected && settings.onboarding === true

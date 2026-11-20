@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Deterministic provider protocol fixture; never calls a model or executes a tool.
+import { watchFile, unwatchFile } from 'node:fs';
 import { createInterface } from 'node:readline';
 if(process.argv.includes('--version')){console.log('codex-ui-fixture');process.exit(0)}
 const send = value => process.stdout.write(JSON.stringify(value)+'\n');
@@ -79,8 +80,16 @@ createInterface({input:process.stdin}).on('line',line=>{
       event('item/completed',{item:{id:`comment-${turn}`,type:'agentMessage',phase:'commentary',text:'Still working.'}});
       event('item/completed',{item:{id:`tool-${turn}`,type:'commandExecution',aggregatedOutput:'A tool trace, not the final answer.'}});
       const text=prompt==='completion-long'?'# Final report\n\n'+('Completed work with a readable explanation.\n\n'.repeat(700)):'**'+prompt+' finished.**\n\nThe final reply belongs to this conversation.\n\n- Changes are ready.\n- Checks passed.';
-      event('item/completed',{item:{id:`reply-${turn}`,type:'agentMessage',phase:'final_answer',text}});
-      event('turn/completed',{turn:{id:`turn-${turn}`,status:'completed'}});
+      const finish = () => {
+        event('item/completed',{item:{id:`reply-${turn}`,type:'agentMessage',phase:'final_answer',text}});
+        event('turn/completed',{turn:{id:`turn-${turn}`,status:'completed'}});
+      };
+      if (prompt === 'completion-delegation') {
+        const marker = 'finish-delegation-ui-check';
+        watchFile(marker, {interval:50}, stat => {
+          if (stat.nlink) { unwatchFile(marker); finish(); }
+        });
+      } else finish();
     }else if(prompt==='activity'){
       for(let i=0;i<3;i++){
         event('item/started',{item:{id:`tool-${turn}-${i}`,type:'commandExecution',command:'Test activity '+i}});

@@ -232,8 +232,28 @@ CDialog {
                     visible:modelData.type==="boolean";text:modelData.label;checked:workflow.recipeValues[modelData.name]===true
                     onClicked:{const values=Object.assign({},workflow.recipeValues);values[modelData.name]=checked;workflow.recipeValues=values;workflow.preview=null}
                 }
+                // Typed Workbench inputs: a reference picked from this conversation's folders, files or collections, never typed text.
+                ColumnLayout {
+                    id:refInput
+                    readonly property bool typed:["file","folder","artifact","collection"].includes(modelData.type)
+                    property var candidates:[]
+                    visible:typed;Layout.fillWidth:true;spacing:4
+                    RpcClient { id:refRpc }
+                    function search(text){refRpc.call("references.search",{sessionId:App.selectedId,query:text},value=>refInput.candidates=value.error?[]:(value.candidates||[]).filter(c=>c.kind===modelData.type))}
+                    Component.onCompleted:if(typed&&App.selectedId)search("")
+                    CField { objectName:"recipeRefSearch_"+modelData.name;Layout.fillWidth:true;placeholderText:"Find a "+(modelData.type==="artifact"?"conversation file":modelData.type)+"…";Accessible.name:"Find "+modelData.label;onTextEdited:refInput.search(text) }
+                    CComboBox {
+                        objectName:"recipeRef_"+modelData.name;Layout.fillWidth:true;Accessible.name:modelData.label
+                        model:["Choose…"].concat(refInput.candidates.map(c=>c.label+" · "+c.detail))
+                        onActivated:index=>{const values=Object.assign({},workflow.recipeValues);if(index<=0){delete values[modelData.name];workflow.recipeValues=values;workflow.preview=null;return}
+                            refRpc.call("references.pin",{sessionId:App.selectedId,ref:refInput.candidates[index-1].ref},value=>{if(value.error){workflow.error=value.error;return}const next=Object.assign({},workflow.recipeValues);next[modelData.name]=value;workflow.recipeValues=next;workflow.preview=null})}
+                    }
+                    CText { visible:!!workflow.recipeValues[modelData.name]&&typeof workflow.recipeValues[modelData.name]==="object";text:"Chosen: "+(workflow.recipeValues[modelData.name]?.label||"");font.pixelSize:Theme.caption;color:Theme.accentText }
+                }
             }
         }
+        CText { visible:!!workflow.selectedRecipe?.workbench;Layout.fillWidth:true;color:Theme.muted;font.pixelSize:Theme.caption
+            text:workflow.selectedRecipe?.workbench?"Needs "+workflow.selectedRecipe.workbench.capabilities.join(" and ")+" in an Ollama or API conversation. Produces: "+workflow.selectedRecipe.workbench.outputs.join(", ")+". Changes and paid images still wait for you.":"" }
         CButton { objectName:"prepareRecipe";Layout.fillWidth:true;text:"Preview exact draft";primary:true;enabled:workflow.requestId<0&&!!workflow.selectedRecipe&&!!App.selectedId;onClicked:workflow.call("recipes.prepare",{sessionId:App.selectedId,recipeId:workflow.selectedRecipe.id,version:workflow.selectedRecipe.version,inputs:workflow.inputPayload()}) }
         CSection {
             visible:!!workflow.preview;title:"Reviewed preview";description:"One turn · up to "+(workflow.preview?.limits?.maxSeconds||0)+" seconds"

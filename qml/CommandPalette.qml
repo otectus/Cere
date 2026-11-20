@@ -45,6 +45,13 @@ Popup {
             {id:"page:settings",kind:"page",title:"Settings",detail:"Configure Cere",page:3},
             {id:"page:projects",kind:"page",title:"Projects",detail:"Project folders, defaults and quick sessions",page:4},
             // Opens the recipe chooser only: choosing, previewing and sending stay separate, reviewed steps.
+            // Workbench: opens a pane of the current conversation's Workbench; nothing runs from here.
+            {id:"workbench:open",kind:"workbench",title:"Open Workbench",detail:"Files, previews, changes, images and runs for this conversation",search:"workbench files images runs",value:""},
+            {id:"workbench:files",kind:"workbench",title:"Browse project files",detail:"Workbench › Files",search:"browse project files folder workspace",value:"files"},
+            {id:"workbench:changes",kind:"workbench",title:"Review pending changes",detail:"Workbench › Changes",search:"review pending changes diff edits",value:"changes"},
+            {id:"workbench:create",kind:"workbench",title:"Create image",detail:"Workbench › Images › Create",search:"create image generate picture draw",value:"create"},
+            {id:"workbench:artifacts",kind:"workbench",title:"Show artifacts",detail:"Workbench › Images (all files)",search:"artifacts produced files outputs gallery",value:"images"},
+            {id:"workbench:runs",kind:"workbench",title:"Show active runs",detail:"Workbench › Runs",search:"active runs jobs operations code lab",value:"runs"},
             {id:"page:recipes",kind:"workflow",title:"Project recipes",detail:"Reviewed one-turn recipes: compare options, review a plan, prepare a handoff…",search:"project recipes workflows starters compare options review plan handoff explain subsystem diff crash release error"}
         ]
         entries=entries.concat((App.state.sessions||[]).map(session=>({
@@ -70,7 +77,7 @@ Popup {
         let matches=allEntries.filter(entry=>{
             if(seen[entry.id])return false
             seen[entry.id]=true
-            if(!query){const destination=destinationId(entry);return favorites.indexOf(destination)>=0||recents.indexOf(destination)>=0||entry.kind==="page"||entry.kind==="workflow"||entry.kind==="bookmark"}
+            if(!query){const destination=destinationId(entry);return favorites.indexOf(destination)>=0||recents.indexOf(destination)>=0||entry.kind==="page"||entry.kind==="workflow"||entry.kind==="workbench"||entry.kind==="bookmark"}
             return (entry.search||entry.title+" "+entry.detail+" "+entry.kind).toLowerCase().indexOf(query)>=0
         })
         matches.sort((a,b)=>{
@@ -121,6 +128,7 @@ Popup {
         else if(entry.kind==="settings")settingsRequested(entry.value.category,entry.value.target)
         else if(entry.kind==="page")pageRequested(entry.page)
         else if(entry.kind==="workflow")workflowsRequested()
+        else if(entry.kind==="workbench"){pageRequested(0);WorkbenchState.createRequested=entry.value==="create";WorkbenchState.show(entry.value==="create"?"images":entry.value)}
         else if(entry.kind==="script"){
             scriptReview.script=entry.value
             close();Qt.callLater(()=>scriptReview.open())

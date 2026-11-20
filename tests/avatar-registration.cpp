@@ -1,5 +1,6 @@
 #include "../tools/avatar-registration.h"
 #include "../tools/avatar-interpolation.h"
+#include "../tools/avatar-appearance.h"
 #include <iostream>
 
 int main() {
@@ -22,6 +23,31 @@ int main() {
     const auto require = [](bool condition, const char *message) {
         if (!condition) { std::cerr << message << '\n'; std::exit(1); }
     };
+    // A misregistered key used to send the entire head sideways and back
+    // within two frames. Neutral and the reviewed held eyelids are anchors.
+    std::vector<AvatarAppearance::Drawing> keys(16);
+    keys[4].shift.x = 18;
+    keys[6].closed = reference;
+    keys[6].shift.x = -3;
+    keys[15].shift.x = 6;
+    const auto track = AvatarAppearance::headPath(keys);
+    require(std::abs(track.at<double>(5, 0)) < 6, "a single outlier must not throw the head sideways");
+    require(std::abs(track.at<double>(0, 0)) < 1e-8 && std::abs(track.at<double>(7, 0) + 3) < 1e-8
+                && std::abs(track.at<double>(16, 0) - 6) < 1e-8, "neutral and held pose anchors must survive smoothing");
+    cv::Mat cast = reference.clone();
+    for (auto &pixel : cv::Mat_<cv::Vec4b>(cast)) if (pixel[3]) {
+        pixel[0] = cv::saturate_cast<uchar>(pixel[0] + 18);
+        pixel[1] = cv::saturate_cast<uchar>(pixel[1] - 12);
+    }
+    const cv::Mat matched(reference.size(), CV_32F, cv::Scalar(1));
+    const auto palette = AvatarAppearance::lighting(reference, cast, matched);
+    const cv::Mat corrected = AvatarAppearance::paint(cast, AvatarAppearance::coordinates(cast.size()),
+        palette, cv::Mat::zeros(cast.size(), CV_32FC3));
+    require(cv::norm(corrected, reference, cv::NORM_L1) < .1 * cv::norm(cast, reference, cv::NORM_L1),
+            "matching material colours must recover after an exposure or tint change");
+    for (int y = 0; y < reference.rows; ++y) for (int x = 0; x < reference.cols; ++x)
+        require(corrected.at<cv::Vec4b>(y,x)[3] == reference.at<cv::Vec4b>(y,x)[3],
+                "colour correction must preserve matte coverage");
     const cv::Vec4f opaque(.2f, .4f, .8f, 1.f), transparent(0, 0, 0, 0);
     const auto fading = AvatarInterpolation::blend(opaque, transparent, 1, 0, 5.f/6);
     require(std::abs(fading[3] - 1.f/6) < 1e-6f,

@@ -26,6 +26,7 @@ struct Pose
     qreal hipX = 0.0;
     qreal hipDrop = 0.0;
     qreal hairRotation = 0.0;
+    qreal deformationScale = 1.0;
     qreal blink = 0.0;
     qreal wink = 0.0;
 
@@ -45,10 +46,11 @@ inline qreal smoothStep(qreal edge0, qreal edge1, qreal value)
 
 inline bool hasDeformation(const Pose &pose)
 {
-    return pose.breathLift != 0.0 || pose.bodyTilt != 0.0
+    return pose.deformationScale > 0.0
+            && (pose.breathLift != 0.0 || pose.bodyTilt != 0.0
             || pose.headTilt != 0.0 || pose.headX != 0.0
             || pose.headY != 0.0 || pose.hipX != 0.0
-            || pose.hipDrop != 0.0 || pose.hairRotation != 0.0;
+            || pose.hipDrop != 0.0 || pose.hairRotation != 0.0);
 }
 
 inline quint32 mixColorLanes(quint32 left, quint32 right, int amount)
@@ -104,6 +106,9 @@ inline QPointF displacement(const QPointF &point, const QRectF &rect,
         dx *= scale;
         dy *= scale;
     }
+    const qreal deformationScale = finiteClamp(pose.deformationScale, 0.0, 1.0);
+    dx *= deformationScale;
+    dy *= deformationScale;
     return {dx, dy};
 }
 

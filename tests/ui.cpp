@@ -1403,6 +1403,14 @@ Unicode: café ✦ 日本語
         QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
         const auto parent=created.value("id").toString();app->select(parent);click("tab_Chat");
         QVERIFY(!call("session.send",{{"id",parent},{"text","delegation-ui-check"}}).contains("error"));
+        QTRY_VERIFY(app->session().value("status").toString()=="idle" && !app->session().value("agents").toList().isEmpty());
+        QVERIFY(!item("stopMessage"));
+        auto composer=item("composer");QVERIFY(composer);
+        composer->setProperty("text","A separate question");
+        QTRY_VERIFY(item("sendMessage") && item("sendMessage")->isEnabled());click("sendMessage");
+        auto answered=[&]{for(const auto &m:app->messages())if(m.toMap().value("text").toString().contains("Hello from Ollama."))return true;return false;};
+        QTRY_VERIFY(answered());
+        QFile marker(data.path()+"/finish-delegation-ui-check");QVERIFY(marker.open(QIODevice::WriteOnly));marker.close();
         auto delegationRow=[&]{for(const auto &m:app->messages())if(m.toMap().value("kind").toString()=="delegation")return m.toMap();return QVariantMap{};};
         auto replied=[&]{for(const auto &m:app->messages())if(m.toMap().value("text").toString().startsWith("The delegated check finished"))return true;return false;};
         QTRY_VERIFY_WITH_TIMEOUT(!delegationRow().isEmpty()&&replied(),15000);
@@ -4924,6 +4932,85 @@ private slots:
         QCOMPARE(item("composer")->property("text").toString(),QString("Typed while the broker was down"));
         QFile relaunched(data.path()+"/runtime/broker.pid");QVERIFY(relaunched.open(QIODevice::ReadOnly));
         QVERIFY(relaunched.readAll().trimmed().toInt()!=pid);
+    }
+    // The Workbench end to end through the real broker: browse a folder, preview and edit a file, review and
+    // apply the change, open an image in the editor and the runs pane, in the workspace and the compact panel.
+    void workbenchAcceptance(){
+        window=reviewWorkspace();QVERIFY(window);
+        const QString project=data.path()+"/workbench-project";
+        QVERIFY(QDir().mkpath(project+"/src"));
+        writeFile(project+"/src/app.ts","const a = 1;\n// TODO fix\nexport { a };\n");
+        writeFile(project+"/README.md","# Demo\n\nA Workbench check.\n");
+        writeFile(project+QString::fromUtf8("/naïve name ünicode.txt"),"line one\r\nline two");
+        QImage picture(320,200,QImage::Format_ARGB32);picture.fill(QColor(40,120,200));
+        QPainter painter(&picture);painter.fillRect(40,40,120,80,QColor(240,200,40));painter.end();
+        QVERIFY(picture.save(project+"/picture.png"));
+        const auto created=call("session.create",{{"provider","ollama"},{"model","fixture-chat:latest"},{"cwd",project},{"title","Workbench check"},{"capabilities",QVariantMap{{"files",true},{"images",true},{"analysis",true}}}});
+        QVERIFY2(!created.contains("error"),qPrintable(created.value("error").toString()));
+        const auto id=created.value("id").toString();
+        const auto root=call("workspace.addRoot",{{"sessionId",id},{"path",project},{"policy",QVariantMap{{"write",true},{"organize",true}}}});
+        QVERIFY2(!root.contains("error"),qPrintable(root.value("error").toString()));
+        const auto imported=call("artifacts.import",{{"sessionId",id},{"path",project+"/picture.png"}});
+        QVERIFY2(!imported.contains("error"),qPrintable(imported.value("error").toString()));
+        app->select(id);QTest::qWait(400);
+        tool("chatWorkbench","menuWorkbench");
+        // The Workbench reopens on the last tab used anywhere in the app; this flow starts on Files.
+        QTRY_VERIFY_WITH_TIMEOUT(item("workbench"),5000);click("workbenchTab_files");QTRY_VERIFY_WITH_TIMEOUT(item("workspaceEntry_README.md"),8000);
+        QVERIFY(item("workspaceEntry_src"));QVERIFY(item(QString::fromUtf8("workspaceEntry_naïve name ünicode.txt")));
+        QVERIFY(item("chatView"));
+        // Every pane fits the Workbench: nothing is cut off at its right edge.
+        const auto fits=[&](const QString &name){auto bench=item("workbench"),child=item(name);if(!bench||!child)return QString("missing "+name);
+            const auto right=child->mapToItem(bench,QPointF(child->width(),0)).x();return right<=bench->width()+.5?QString():QString("%1 ends at %2 in a %3 wide Workbench").arg(name).arg(right).arg(bench->width());};
+        for(const auto &name:{"workspaceEntries","workspaceSearchRun","workspaceFolderSettings","capabilityAnalysis"})QVERIFY2(fits(name).isEmpty(),qPrintable(fits(name)));
+        capture("workbench-files-expanded");
+        click("workspaceEntry_README.md");
+        QTRY_COMPARE_WITH_TIMEOUT(item("previewPath")?item("previewPath")->property("text").toString():QString(),QString("README.md"),5000);
+        capture("workbench-preview");
+        click("previewEdit");QTRY_VERIFY(item("previewEditor"));
+        item("previewEditor")->setProperty("text","# Demo\n\nEdited through the Workbench review.\n");
+        click("previewProposeEdit");
+        QTRY_VERIFY_WITH_TIMEOUT(item("changeAcceptAll"),5000);QTRY_VERIFY(item("changeAcceptAll")->isEnabled());
+        capture("workbench-review");
+        click("changeAcceptAll");
+        QTRY_COMPARE_WITH_TIMEOUT(([&]{QFile f(project+"/README.md");return f.open(QIODevice::ReadOnly)?QString::fromUtf8(f.readAll()):QString();})(),QString("# Demo\n\nEdited through the Workbench review.\n"),5000);
+        QTRY_VERIFY(item("changeUndo"));
+        capture("workbench-review-applied");
+        click("workbenchTab_images");
+        const auto browserState=[&]{auto b=item("artifactBrowser"),g=item("artifactGrid");return QString("browser %1, %2 items, error '%3', grid %4x%5").arg(b?"shown":"hidden").arg(b?b->property("items").toList().size():-1)
+            .arg(b?b->property("error").toString():QString()).arg(g?g->width():-1).arg(g?g->height():-1);};
+        QTRY_VERIFY2_WITH_TIMEOUT(item("artifactTile_0"),qPrintable(browserState()),5000);
+        QVERIFY2(fits("artifactGrid").isEmpty(),qPrintable(fits("artifactGrid")));
+        QTest::qWait(400);capture("workbench-images");
+        click("artifactTile_0");QTRY_VERIFY(item("imageView"));click("imageView");
+        QTRY_VERIFY_WITH_TIMEOUT(item("imageWorkbench"),5000);QTest::qWait(500);
+        click("imageTool_rect");capture("workbench-image-editor");
+        click("imageEditorBack");QTRY_VERIFY(item("artifactGrid"));
+        click("workbenchTab_runs");QTRY_VERIFY(item("runsPane"));click("codeLabToggle");QTest::qWait(300);
+        capture("workbench-runs");
+        click("workbenchTab_shelf");QTRY_VERIFY_WITH_TIMEOUT(item("projectShelf"),5000);
+        // The shelf shows its groups, including the built-in recipes, not an empty pane.
+        QTRY_VERIFY_WITH_TIMEOUT(item("shelfRecipes")&&item("shelfRecipes")->height()>60,5000);QTest::qWait(400);
+        capture("workbench-shelf");
+        click("workbenchTab_files");QTRY_VERIFY(item("workspaceEntries"));
+        // @ in the composer: the picker offers workspace files by keyboard; the pick is a structured chip, not text.
+        click("composer");for(const QChar c:QString("Please check @READ"))QTest::keyClick(window,c.toLatin1());
+        QTRY_VERIFY_WITH_TIMEOUT(item("referenceCandidate_0"),5000);
+        capture("workbench-reference-picker");
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(item("referenceChip_0"),5000);
+        QCOMPARE(item("composer")->property("text").toString(),QString("Please check @README.md "));
+        QVERIFY(!item("referencePicker")||!item("referencePicker")->isVisible());
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!item("referenceChip_0"),10000);
+        // The sent message names what it referenced; the resolved content went to the model separately.
+        QTRY_VERIFY_WITH_TIMEOUT(([&]{for(const auto &m:app->messages())if(m.toMap().value("role").toString()=="user"&&m.toMap().value("text").toString().contains("Referenced: workbench-project/README.md"))return true;return false;})(),10000);
+        // The compact panel shows the same Workbench state as one sheet with a way back.
+        window=reviewCompact();QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(item("workbench"),5000);QTRY_VERIFY(item("workbenchBack"));QVERIFY(!item("chatView")||!item("composer"));
+        capture("workbench-compact");
+        click("workbenchBack");QTRY_VERIFY(!item("workbench"));QTRY_VERIFY(item("composer"));
+        capture("workbench-compact-back");
+        window=reviewWorkspace();QVERIFY(window);QVERIFY(!item("workbench"));
     }
     void cleanupTestCase(){
         QString runtime=data.path()+"/runtime";

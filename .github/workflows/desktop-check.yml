@@ -21,7 +21,9 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install test dependencies (root)
-        run: pacman -Syu --noconfirm --needed git nodejs npm python fish zsh sox
+        # gcc builds the confined file helper the Workbench tests use; bubblewrap, ripgrep and poppler cover
+        # Code Lab isolation, regex search and PDF extraction (their tests skip with a reason when absent).
+        run: pacman -Syu --noconfirm --needed git nodejs npm python fish zsh sox gcc bubblewrap ripgrep poppler
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:

@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { buildIdentity } from './build-info.ts';
 import { randomUUID } from 'node:crypto';
 import { RpcProcess } from './wire.ts';
 import { ollamaModels } from './ollama.ts';
@@ -40,7 +41,7 @@ async function codexModels(command: string): Promise<ModelOption[]> {
   const process = new RpcProcess(command, ['app-server'], homedir());
   process.on('fault', () => {});
   try {
-    await process.request('initialize', { clientInfo: { name: 'cere', title: 'Cere', version: '0.1.0' }, capabilities: { experimentalApi: false } }, 20000);
+    await process.request('initialize', { clientInfo: { name: 'cere', title: 'Cere', version: buildIdentity().version }, capabilities: { experimentalApi: false } }, 20000);
     process.write({ method: 'initialized', params: {} });
     const values: unknown[] = []; let cursor: string | null = null;
     do {

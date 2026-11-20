@@ -19,6 +19,7 @@ CDialog {
     property var efforts:[{id:"",displayName:"Provider default"}].concat(selected.efforts||[])
     property int loadRequest:-1
     property int saveRequest:-1
+    property int optionsRequest:-1
     property string error:""
     property string loadError:""
     function choose(model,effort){
@@ -33,6 +34,7 @@ CDialog {
         sessionId=App.selectedId;original=App.session;error="";loadError=""
         models=original.model?[{id:original.model,displayName:original.model,efforts:original.effort?[{id:original.effort,displayName:original.effort}]:[]}]:[]
         custom.text="";assistance.checked=!!(original.ollama?.tools||original.api?.tools);trust.checked=false
+        const o=original.modelOptions||{};temperature.text=o.temperature!==undefined?String(o.temperature):"";maxOutput.text=o.maxOutputTokens?String(o.maxOutputTokens):"";contextTokens.text=o.contextTokens?String(o.contextTokens):"";keepAlive.text=o.keepAlive||""
         choose(original.model||"",original.effort||"");refresh()
     }
     onClosed:{loadRequest=-1;saveRequest=-1}
@@ -54,6 +56,20 @@ CDialog {
     CText { visible:!dialog.isNative;text:"Uses categories enabled in Settings → AI assistance. Web search and memory follow Settings.";color:Theme.muted;font.pixelSize:Theme.secondary }
     CCheckBox { id:trust;visible:!dialog.isNative&&!App.state.settings?.bypassCliPermissions&&assistance.checked&&!(dialog.original.ollama?.tools||dialog.original.api?.tools);text:"I trust this project and its enabled tool access" }
     CText { visible:trust.visible;text:dialog.original.cwd||"";color:Theme.accentText;font.pixelSize:Theme.secondary }
+    // Model options: sent only when set, each in the field this provider takes; empty keeps its default.
+    ColumnLayout {
+        visible:!dialog.isNative;Layout.fillWidth:true;spacing:6
+        CText { text:"Options (empty keeps the model’s default)";color:Theme.muted;font.pixelSize:Theme.secondary }
+        GridLayout {
+            columns:2;Layout.fillWidth:true;columnSpacing:8;rowSpacing:4
+            CText { text:"Temperature";Layout.fillWidth:false } CField { id:temperature;objectName:"optionTemperature";Layout.fillWidth:true;placeholderText:"0–2";validator:DoubleValidator{bottom:0;top:2;decimals:2} Accessible.name:"Temperature" }
+            CText { text:"Maximum reply";Layout.fillWidth:false } CField { id:maxOutput;objectName:"optionMaxOutput";Layout.fillWidth:true;placeholderText:"tokens";validator:IntValidator{bottom:256} Accessible.name:"Maximum reply tokens" }
+            CText { visible:dialog.isOllama;text:"Context window";Layout.fillWidth:false } CField { id:contextTokens;objectName:"optionContext";visible:dialog.isOllama;Layout.fillWidth:true;placeholderText:"tokens (smaller uses less memory)";validator:IntValidator{bottom:2048} Accessible.name:"Context window tokens" }
+            CText { visible:dialog.isOllama;text:"Keep loaded";Layout.fillWidth:false } CField { id:keepAlive;objectName:"optionKeepAlive";visible:dialog.isOllama;Layout.fillWidth:true;placeholderText:"e.g. 10m, 0 to unload, -1 to keep";Accessible.name:"Keep the model loaded" }
+        }
+        CText { visible:dialog.original.provider==="openai";text:"Some OpenAI reasoning models reject a temperature; leave it empty for them.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+        CText { visible:dialog.isOllama;text:"A smaller context window uses less GPU memory and answers sooner, but older parts of the conversation drop out sooner.";color:Theme.muted;font.pixelSize:Theme.caption;wrapMode:Text.Wrap;Layout.fillWidth:true }
+    }
     CText { visible:!!dialog.loadError;text:dialog.loadError;color:Theme.amber;font.pixelSize:Theme.secondary }
     CText { visible:!!dialog.error;text:dialog.error;color:Theme.danger;font.pixelSize:Theme.secondary }
     RowLayout {
@@ -74,6 +90,10 @@ CDialog {
                 if(!dialog.isOllama&&selectedId&&!catalog.some(m=>m.id===selectedId))catalog.push({id:selectedId,displayName:selectedId+" (current)",efforts:effort?[{id:effort,displayName:effort}]:[]})
                 dialog.models=catalog;dialog.choose(selectedId,effort)
             }
-        } else if(id===dialog.saveRequest){dialog.saveRequest=-1;if(value?.error)dialog.error=value.error;else dialog.close()}
+        } else if(id===dialog.saveRequest){dialog.saveRequest=-1;if(value?.error){dialog.error=value.error;return}
+            if(dialog.isNative){dialog.close();return}
+            const options={};if(temperature.text.trim())options.temperature=Number(temperature.text);if(maxOutput.text.trim())options.maxOutputTokens=Number(maxOutput.text);if(dialog.isOllama&&contextTokens.text.trim())options.contextTokens=Number(contextTokens.text);if(dialog.isOllama&&keepAlive.text.trim())options.keepAlive=keepAlive.text.trim()
+            dialog.optionsRequest=App.rpc("session.modelOptions",{id:dialog.sessionId,options:options})
+        } else if(id===dialog.optionsRequest){dialog.optionsRequest=-1;if(value?.error)dialog.error=value.error;else dialog.close()}
     } }
 }
