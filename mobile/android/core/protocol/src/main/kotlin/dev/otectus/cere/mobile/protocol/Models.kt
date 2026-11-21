@@ -147,7 +147,19 @@ data class Session(
     val updated: Long = 0,
     val activity: String? = null,
     val parentId: String? = null,
+    /** The stored choice for Cere's desktop tools (Ollama, and hosted APIs with feature sessions.toolsState). */
     val tools: Boolean = false,
+    /** Whether the route allows tools: true, false, or null when the model decides (Ollama) or the desktop does not say. */
+    val toolsAvailable: Boolean? = null,
+    val toolsUnavailableReason: String? = null,
+    /** A compatible conversation's reviewed destination (feature sessions.routeRevision), its images declaration and connection name. */
+    val routeRevision: String? = null,
+    val imagesAvailable: Boolean? = null,
+    val connectionName: String? = null,
+    /** Files, Images and Analysis selected on the desktop; "acknowledge" when sending from this phone pauses them (feature workbench.takeover). */
+    val workbenchFamilies: List<String> = emptyList(),
+    val workbenchTakeover: String? = null,
+    val workbenchNote: String? = null,
     val error: String? = null,
     val ollamaHost: String = "",
     val agents: List<Agent> = emptyList(),
@@ -201,7 +213,11 @@ data class Message(
     val bookmarked: Boolean = false,
     /** Set only on pinned replies listed across conversations. */
     val sessionTitle: String? = null,
+    /** A Workbench result reviewed on the desktop (role "workbench"): what it is, never its contents. */
+    val desktopOnly: DesktopOnlyResult? = null,
 )
+
+@Serializable data class DesktopOnlyResult(val kind: String = "result", val label: String = "A desktop result")
 
 @Serializable data class ApprovalOption(val label: String, val description: String? = null)
 @Serializable
@@ -250,6 +266,22 @@ data class Approval(
     val capabilities: List<String> = emptyList(),
     val cloud: Boolean = false,
     val contextLength: Int? = null,
+)
+
+/** A providers.models answer with listing:true (feature models.listing). */
+@Serializable data class ModelListing(val items: List<ModelOption> = emptyList(), val unlisted: Boolean = false)
+
+/**
+ * W11 sessions.behavior: the style a conversation's next turn uses. The desktop sends JSON null for
+ * an absent profile or posture; both are nullable here, so no state can make the screen fail.
+ */
+@Serializable data class BehaviorLabel(val label: String = "", val pinned: Boolean = false)
+@Serializable data class ConversationBehavior(
+    val source: String? = null,
+    val profile: BehaviorLabel? = null,
+    val posture: BehaviorLabel? = null,
+    val standingInstructions: Boolean = false,
+    val warnings: List<String> = emptyList(),
 )
 
 @Serializable

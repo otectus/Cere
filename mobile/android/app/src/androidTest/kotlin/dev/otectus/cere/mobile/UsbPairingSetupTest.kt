@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.otectus.cere.mobile.data.CompletedPairing
 import dev.otectus.cere.mobile.data.ConnectionState
+import dev.otectus.cere.mobile.data.PairingReturnState
 import dev.otectus.cere.mobile.data.PendingPairing
 import dev.otectus.cere.mobile.protocol.ActionAuthentication
 import dev.otectus.cere.mobile.protocol.WireCodec
@@ -181,6 +182,41 @@ class UsbPairingSetupTest {
             instrumentation.runOnMainSync { dialog?.dismiss() }
             if (committed) { responseFile.delete(); confirmedFile.delete() }
         }
+    }
+
+    /**
+     * Network-return pairing with the app's own delivery: the trusted-device answer goes to the
+     * desktop over the pinned offer address, the desktop (the harness, as the owner) compares the
+     * words and confirms, and the phone saves the pairing when it is told, with no file or copy step.
+     */
+    @Test fun pairByNetworkReturn() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val offer = InstrumentationRegistry.getArguments().getString("cereNetworkPairingOffer")
+        assumeTrue("Run explicitly with a fresh network-return Cere pairing offer", offer != null)
+        require(offer!!.startsWith("cere-pair://v1/") && offer.length <= 2000)
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+        instrumentation.waitForIdleSync(); Thread.sleep(1_000); instrumentation.waitForIdleSync()
+        val repository = (activity.application as CereApp).repository
+        check(repository.state.value.desktop == null) { "Network pairing runs on a phone without a pairing" }
+        val manager = repository.pairingManager()
+        val verified = manager.parseAndVerify(offer)
+        check(verified.offer.responseReturn == "network") { "The offer does not ask for a network answer" }
+        val prepared = manager.prepare(verified, Build.MODEL.take(48), null)
+        check(prepared.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) { "Automated network pairing needs a trusted-device offer" }
+        val completed = manager.completeWithoutAuthentication(prepared)
+        runBlocking { repository.stagePairing(completed) }
+        // The words only, for the harness to compare with the desktop's as a person would.
+        File(context.filesDir, "usb-pairing-response.json").writeText(buildJsonObject { put("sas", completed.sas); put("deviceId", completed.desktop.deviceId); put("network", true) }.toString())
+        repository.startPairingReturn(completed)
+        val decided = runBlocking { withTimeoutOrNull(180_000) { repository.pairingReturn.first { it is PairingReturnState.Confirmed || it is PairingReturnState.Ended || it is PairingReturnState.Unreachable } } }
+        check(decided == PairingReturnState.Confirmed) { "Network pairing did not complete: $decided" }
+        runBlocking { repository.completePairing(completed) }
+        instrumentation.runOnMainSync { ContextCompat.startForegroundService(activity, Intent(activity, MonitoringService::class.java)) }
+        runBlocking { withTimeout(45_000) { repository.state.first { it.connection is ConnectionState.Online && it.projects.isNotEmpty() } } }
+        File(context.filesDir, "usb-pairing-response.json").delete()
+        println("USB_NETWORK_PAIRING: answer delivered over pinned TLS, desktop confirmed, phone saved the pairing and reached Online")
     }
 
     /** Resume after force-stop/process death once a replacement response was durably staged. */

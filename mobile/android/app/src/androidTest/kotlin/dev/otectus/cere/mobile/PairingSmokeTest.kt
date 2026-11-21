@@ -19,7 +19,8 @@ class PairingSmokeTest {
         compose.onNodeWithContentDescription("Cere").assertIsDisplayed()
         compose.onNodeWithText("Connect to Cere").assertIsDisplayed()
         compose.onAllNodes(hasSetTextAction()).assertCountEquals(2)
+        // Scanning is the main route; pasting the offer text stays available.
+        compose.onNodeWithText("Scan pairing QR").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Verify offer").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Scan").performScrollTo().assertIsDisplayed()
     }
 }

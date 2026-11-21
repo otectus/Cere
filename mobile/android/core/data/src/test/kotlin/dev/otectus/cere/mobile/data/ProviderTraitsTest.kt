@@ -18,5 +18,9 @@ class ProviderTraitsTest {
         assertFalse(codex.cereTools); assertTrue(codex.effort)
         assertTrue(state.traits("ollama").queue)
         assertEquals("Unknown", state.traits("unknown").label)
+        // MOB-003/004: typed model IDs and the route's tools rule come from the desktop too; an older one sends neither.
+        val described = MobileState(providers = WireCodec.json.parseToJsonElement("""{"compatible":{"traits":{"label":"Workstation","kind":"api","modelRequired":true,"customModel":true,"tools":"cere","toolCalling":"no"}}}""").jsonObject)
+        assertTrue(described.traits("compatible").customModel); assertEquals("no", described.traits("compatible").toolCalling)
+        assertFalse(api.customModel); assertEquals(null, api.toolCalling)
     }
 }

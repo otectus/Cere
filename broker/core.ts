@@ -284,6 +284,15 @@ export class Core extends EventEmitter {
     return { key: () => this.credentials.key('compatible', endpointOrigin(endpoint().baseUrl)), endpoint };
   }
   endpointAccess(endpoint: import('./types.ts').CompatibleEndpoint): ApiAccess { return { key: () => this.credentials.key('compatible', endpointOrigin(endpoint.baseUrl)), endpoint: () => endpoint }; }
+  /**
+   * A conversation's own catalog: its Ollama host's, its named connection's, or the provider's. A
+   * conversation on a named connection never gets the default endpoint's list (MOB-001).
+   */
+  async sessionModels(s: Session): Promise<ModelOption[]> {
+    if (s.provider === 'ollama') return ollamaModels(s.ollama!.host);
+    if (s.provider === 'compatible' && s.connectionId) return apiModels('compatible', this.apiAccess('compatible', s.id));
+    return this.refreshProviderModels(s.provider);
+  }
   /** M13: whether a conversation's provider takes tool calls; a compatible endpoint only if declared. */
   toolCalling(s: Session) { if (s.provider !== 'compatible') return true; try { return this.chatConnections.endpoint(s).tools; } catch { return false; } }
   conversationAdapter(s: Session, h: Hooks, context: import('./ollama.ts').OllamaContext): Adapter {
@@ -444,7 +453,7 @@ export class Core extends EventEmitter {
       // A partially readable catalog stays available; omitted entries are named, never guessed.
       const omitted=(models as {omitted?:{id:string;error:string}[]}).omitted;
       const unlisted=(models as {unlisted?:boolean}).unlisted;
-      this.capabilities[provider]={...this.capabilities[provider],available:true,models,modelsStatus:'ready',modelsError:undefined,modelsWarning:unlisted?'This endpoint does not list its models. Enter a model ID when you start a conversation.':omitted?.length?`Some models could not be inspected: ${omitted.map(o=>o.id).join(', ')}`:undefined,error:undefined,managed:true,resume:true};this.changed();return models;
+      this.capabilities[provider]={...this.capabilities[provider],available:true,models,modelsStatus:'ready',modelsError:undefined,modelsUnlisted:unlisted===true,modelsWarning:unlisted?'This endpoint does not list its models. Enter a model ID when you start a conversation.':omitted?.length?`Some models could not be inspected: ${omitted.map(o=>o.id).join(', ')}`:undefined,error:undefined,managed:true,resume:true};this.changed();return models;
     } catch(error:any) {
       if(this.closed || this.modelGenerations.get(provider)!==generation)return this.capabilities[provider]?.models || [];
       this.capabilities[provider]={...this.capabilities[provider],models:previous.models || [],modelsStatus:'error',modelsError:error.message,...(provider==='ollama'||isApiProvider(provider)?{available:false,error:error.message}:{})};this.changed();throw error;
@@ -816,7 +825,8 @@ export class Core extends EventEmitter {
     // never touches the draft or the recovery record, which belong to the user's messages.
     const delegation: { pingIds: string[]; summary: string } | undefined = p.delegation;
     const powerAtStart=this.power.effective(s);
-    const authorizeDispatch=()=>{signal.throwIfAborted();if(this.closed||this.deleting.has(s.id))throw new Error("Conversation is closing");this.settingsFor(s.id);if(powerAtStart.leaseId&&this.power.effective(this.store.session(s.id)).leaseId!==powerAtStart.leaseId)throw new Error('Power authorization expired before the provider accepted this turn');beforeAccept?.();};
+    // The caller's own check goes first: a phone's names the exact reason (a changed connection, a reduced grant).
+    const authorizeDispatch=()=>{signal.throwIfAborted();if(this.closed||this.deleting.has(s.id))throw new Error("Conversation is closing");beforeAccept?.();this.settingsFor(s.id);if(powerAtStart.leaseId&&this.power.effective(this.store.session(s.id)).leaseId!==powerAtStart.leaseId)throw new Error('Power authorization expired before the provider accepted this turn');};
     if (p.expectedDraftRevision !== undefined && !p.turnId && !p.queuedMessageId && p.expectedDraftRevision !== (s.draftRevision || '0')) throw remoteError('REVISION_CONFLICT','Draft changed on another client. Review before sending.');
     const effective = this.settingsFor(p.id);
     // A phone's turn runs only for a provider its authorized execution carries: never AntiGravity, and a
@@ -1845,7 +1855,7 @@ export class Core extends EventEmitter {
       }
       case 'session.history': return this.history(p.provider);
       case 'provider.models': {
-        if (p.sessionId) { const s = this.store.session(p.sessionId); if(p.provider!==s.provider)throw new Error('Choose this conversation’s provider'); if(s.provider==='ollama')return ollamaModels(s.ollama!.host);return this.refreshProviderModels(s.provider); }
+        if (p.sessionId) { const s = this.store.session(p.sessionId); if(p.provider!==s.provider)throw new Error('Choose this conversation’s provider'); return this.sessionModels(s); }
         if(!(providerIds as readonly string[]).includes(p.provider))throw new Error('Unknown provider');
         return this.refreshProviderModels(p.provider);
       }

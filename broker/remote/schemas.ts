@@ -1,10 +1,18 @@
 import { z } from 'zod';
 
 export const uuid=z.uuid(), revision=z.string().regex(/^(0|[1-9][0-9]{0,18})$/), hash=z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+// A conversation's route as the session DTO names it: 'connection:<id>:<revision>', 'default:<digest>' or 'missing:<id>'.
+const routeRevision=z.string().max(200).regex(/^[A-Za-z0-9:_-]*$/);
 // A phone names any provider it may run; whether it may run it is decided by the device's grants.
 const str=z.string().max(4096),sessionId=uuid,projectId=uuid,provider=z.enum(['codex','claude','ollama','openai','anthropic','google','compatible']),empty=z.strictObject({});
 const memoryRevision=z.string().regex(/^(0|[1-9][0-9]{0,15})$/).refine(value=>BigInt(value)<=BigInt(Number.MAX_SAFE_INTEGER),'Memory revision exceeds exact integer range');
 export const helloSchema=z.strictObject({v:z.literal(1),type:z.literal('hello'),protocolMin:z.number().int().min(0),protocolMax:z.number().int().min(0),desktopId:uuid,deviceId:uuid,keyVersion:z.literal(1),clientNonce:hash,appVersion:z.string().max(32)});
+/**
+ * The one frame a phone that is not paired yet may send besides hello: its signed answer to a
+ * network-return pairing offer (offer responseReturn 'network'). Answered with pair.received, then
+ * pair.confirmed or pair.closed {reason}.
+ */
+export const pairResponseSchema=z.strictObject({v:z.literal(1),type:z.literal('pair.response'),response:z.string().min(16).max(2100)});
 export const requestSchema=z.strictObject({v:z.literal(1),type:z.literal('request'),id:uuid,method:z.string().max(64),params:z.record(z.string(),z.unknown()),commandId:uuid.optional(),proof:z.strictObject({challengeId:uuid,signature:z.string().max(100)}).optional()});
 export const methods:Record<string,z.ZodType>={
   'sync.open':z.strictObject({resumeCursor:str.optional(),selectedSessionId:sessionId.optional()}),'sync.ack':z.strictObject({cursor:str}),
@@ -18,7 +26,9 @@ export const methods:Record<string,z.ZodType>={
   'sessions.history':z.strictObject({projectId,provider:z.enum(['codex','claude']).default('codex')}),
   'sessions.import':z.strictObject({historyId:uuid,externalWriterStopped:z.literal(true)}),
   // desktopAttachments: the desktop draft's own attachments, as the phone reviewed them (W10).
-  'sessions.send':z.strictObject({sessionId,text:z.string().min(1).max(100000),attachments:z.array(uuid).max(4).default([]),desktopAttachments:z.array(z.strictObject({id:uuid,sha256:z.string().regex(/^[a-f0-9]{64}$/)})).max(8).optional(),webSearch:z.boolean().default(false),expectedDraftRevision:revision,expectedConfigRevision:revision}),
+  // expectedRouteRevision: the connection the phone reviewed (sessions.routeRevision); workbenchAcknowledged:
+  // the Files/Images/Analysis selection the phone showed would pause on taking over (workbench.takeover).
+  'sessions.send':z.strictObject({sessionId,text:z.string().min(1).max(100000),attachments:z.array(uuid).max(4).default([]),desktopAttachments:z.array(z.strictObject({id:uuid,sha256:z.string().regex(/^[a-f0-9]{64}$/)})).max(8).optional(),webSearch:z.boolean().default(false),expectedDraftRevision:revision,expectedConfigRevision:revision,expectedRouteRevision:routeRevision.optional(),workbenchAcknowledged:z.array(z.enum(['files','images','analysis'])).max(3).optional()}),
   'sessions.stop':z.strictObject({sessionId}),'sessions.disconnect':z.strictObject({sessionId}),'sessions.read':z.strictObject({sessionId}),
   'sessions.rename':z.strictObject({sessionId,title:z.string().min(1).max(100),expectedRevision:revision}),
   'sessions.organize':z.strictObject({sessionId,expectedRevision:revision,pinned:z.boolean().optional(),archived:z.boolean().optional()}).refine(p=>p.pinned!==undefined||p.archived!==undefined,'Choose a session organization change'),
@@ -38,8 +48,10 @@ export const methods:Record<string,z.ZodType>={
   'sessions.focusTerminal':z.strictObject({sessionId}),
   'desktop.workspace':z.strictObject({projectId}),
   'memory.health':z.strictObject({sessionId}),
-  'providers.models':z.strictObject({provider,sessionId:sessionId.optional()}),
-  'sessions.configure':z.strictObject({sessionId,model:z.string().max(512),effort:z.string().max(32).optional(),tools:z.boolean(),expectedConfigRevision:revision}),
+  // listing: answer {items, unlisted} instead of a bare list (models.listing).
+  'providers.models':z.strictObject({provider,sessionId:sessionId.optional(),listing:z.boolean().optional()}),
+  // An omitted effort or tools keeps its current value (sessions.toolsState).
+  'sessions.configure':z.strictObject({sessionId,model:z.string().max(512),effort:z.string().max(32).optional(),tools:z.boolean().optional(),expectedConfigRevision:revision,expectedRouteRevision:routeRevision.optional()}),
   'approvals.list':empty,'approvals.get':z.strictObject({approvalId:uuid}),
   'approvals.answer':z.strictObject({approvalId:uuid,revision,digest:hash,choice:z.enum(['allow','deny','answer','cancel']),answers:z.record(z.string().max(150),z.strictObject({answers:z.array(z.string().max(100000)).max(32)})).default({}),imageDigest:hash.optional()}),
   'approvals.preview':z.strictObject({approvalId:uuid,revision,digest:hash}),
@@ -81,7 +93,7 @@ export const methods:Record<string,z.ZodType>={
  * Behaviour a client can rely on beyond the operation list, named in welcome. A client checks for a
  * feature before using it and keeps its older behaviour otherwise; an absent feature is never an error.
  */
-export const protocolFeatures=['activity.page','sessions.batch','search.ids','message.sources','citations.display','agent.refs','captures','drafts.desktopAttachments','messages.bookmarks','workflows.status','sessions.behavior','desktop.portrait','desktop.workspace','memory.health','sessions.focusTerminal','history.claude'] as const;
+export const protocolFeatures=['activity.page','sessions.batch','search.ids','message.sources','citations.display','agent.refs','captures','drafts.desktopAttachments','messages.bookmarks','workflows.status','sessions.behavior','desktop.portrait','desktop.workspace','memory.health','sessions.focusTerminal','history.claude','sessions.toolsState','sessions.routeRevision','models.listing','workbench.takeover'] as const;
 export const mutations=new Set(['sessions.focusTerminal','workflows.pauseSchedule','messages.bookmark','captures.start','captures.discard','captures.attach','memory.correct','memory.resolveConflict','memory.identity','memory.freezeEpisode','sessions.create','sessions.send','sessions.stop','sessions.disconnect','sessions.read','sessions.rename','sessions.organize','drafts.put','sessions.configure','sessions.handoffCreate','sessions.import','approvals.answer','permissions.pause','permissions.reduce','devices.selfRevoke','desktop.execute','timers.cancel','settings.patch','memory.save','memory.forget','memory.clear','attachments.begin','attachments.commit','attachments.abort']);
 const defensive=new Set(['workflows.pauseSchedule','messages.bookmark','captures.discard','sessions.stop','sessions.disconnect','sessions.read','sessions.rename','sessions.organize','drafts.put','permissions.pause','permissions.reduce','devices.selfRevoke','attachments.abort']);
 export function needsProof(method:string,params:any) { return mutations.has(method) && !defensive.has(method) && !(method==='approvals.answer'&&['deny','cancel'].includes(params.choice)); }

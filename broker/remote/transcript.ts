@@ -10,8 +10,17 @@ const projection=`rowid AS cursor,json_remove(data,'$.text','$.sources') AS meta
  length(CAST(json_extract(data,'$.text') AS BLOB)) AS bytes,
  json_extract(data,'$.sources') AS sources,
  EXISTS(SELECT 1 FROM message_bookmarks b WHERE b.message_id=messages.id) AS bookmarked`;
-function dto(row:any) {
+/**
+ * MOB-005: a Workbench result (proposed changes, files or images a tool produced, an image or analysis
+ * run) is reviewed on the desktop. The phone gets what it is, never its text, paths or previews.
+ */
+const desktopResults:Record<string,string>={changes:'Proposed file changes',artifacts:'Files or images from a tool',operation:'An image, analysis or code run'};
+function dto(row:any):Record<string,any> {
   const m=JSON.parse(row.metadata);
+  if(m.role==='workbench') {
+    const kind=m.kind in desktopResults?m.kind:'result',label=desktopResults[kind]||'A desktop result';
+    return {id:m.id,sessionId:m.sessionId,role:'workbench',kind,text:`${label} · view this result on the desktop.`,time:m.time,revision:m.revision||'0',turnId:m.turnId,desktopOnly:{kind,label}};
+  }
   const sources=row.sources?JSON.parse(row.sources).slice(0,20).map((s:any)=>({title:String(s.title||'').slice(0,256),url:String(s.url||'').slice(0,4096)})):undefined;
   return {id:m.id,sessionId:m.sessionId,role:m.role,kind:m.kind,text:row.text||'',time:m.time,revision:m.revision||'0',turnId:m.turnId,sources,
     // W11: a pinned reply (a desktop bookmark); absent when not pinned.
@@ -28,7 +37,8 @@ export function mobilePage(store:Store,sessionId:string,before?:string,limit=100
   // Page the two surfaces independently: a long tool run must not push every
   // conversational reply out of the first phone page.
   // A 'delegation' row is Cere's Delegation update: user-role, Cere-authored, part of the conversation.
-  const conversation="json_extract(data,'$.role') IN ('user','assistant') AND COALESCE(json_extract(data,'$.kind'),'text') IN ('text','message','','question','answer','queued','queue-cancelled','delegation')";
+  // A 'workbench' row is a desktop-only result card (see desktopResults): it belongs in the conversation, where it happened.
+  const conversation="(json_extract(data,'$.role') IN ('user','assistant') AND COALESCE(json_extract(data,'$.kind'),'text') IN ('text','message','','question','answer','queued','queue-cancelled','delegation') OR json_extract(data,'$.role')='workbench')";
   const filter=`AND ${activity?`NOT (${conversation})`:`(${conversation})`}`;
   const rows=store.db.prepare(`SELECT ${projection} FROM messages WHERE session_id=? AND (? IS NULL OR rowid<?) ${filter} ORDER BY rowid DESC LIMIT ?`).iterate(sessionId,cursor??null,cursor??null,limit+1);
   const items:ReturnType<typeof dto>[]=[];let used=0,more=false;

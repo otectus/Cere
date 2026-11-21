@@ -7,7 +7,11 @@
  * conversation. Unlike `connectedDebugAndroidTest`, which skips these without arguments, every test
  * here must report a pass; a skip, an assumption failure or a missing result fails the gate.
  *
- *   node tools/mobile-paired-check.ts [--serial SERIAL] [--evidence DIR] [--package ID] [--keep-pairing]
+ *   node tools/mobile-paired-check.ts [--serial SERIAL] [--evidence DIR] [--package ID] [--keep-pairing] [--pairing manual|network]
+ *
+ * --pairing network uses a network-return offer: the app sends its signed answer to the isolated
+ * broker over pinned TLS (UsbPairingSetupTest#pairByNetworkReturn), the harness compares the six
+ * words the desktop shows with the phone's and confirms by pairing ID, and the phone must finish by itself.
  *
  * The debug app and its instrumentation APK must already be installed (`:app:installDebug
  * :app:installDebugAndroidTest`). The app's data is cleared first, so run it only on a test emulator
@@ -32,6 +36,8 @@ if (!/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/.test(appPackage)) throw new E
 const runner = `${appPackage}.test/androidx.test.runner.AndroidJUnitRunner`;
 const evidence = resolve(option('--evidence', join('build', 'mobile-paired', new Date().toISOString().replace(/[:.]/g, '-')))!);
 const keepPairing = args.includes('--keep-pairing');
+const pairingMode = option('--pairing', 'manual')!;
+if (!['manual', 'network'].includes(pairingMode)) throw new Error('--pairing is manual or network');
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const log: string[] = [];
 const note = (line: string) => { const stamped = `[${new Date().toISOString()}] ${line}`; log.push(stamped); console.log(stamped); };
@@ -97,7 +103,7 @@ function instrument(test: string, extras: Record<string, string>, timeout: numbe
 }
 
 const results: Instrumented[] = [];
-const summary: Record<string, unknown> = { started: new Date().toISOString(), serial: serial ?? 'default', package: appPackage };
+const summary: Record<string, unknown> = { started: new Date().toISOString(), serial: serial ?? 'default', package: appPackage, pairing: pairingMode };
 let broker: ChildProcess | undefined, ollama: ChildProcess | undefined, brokerLog = '', port = 0;
 const work = await mkdtemp(join(tmpdir(), 'cere-paired-'));
 // The Unix socket path must stay under 108 bytes, so the runtime directory is short.
@@ -140,28 +146,46 @@ try {
   // Instrumentation runs as the app's user; the alert and local-network prompts must not block it.
   for (const permission of ['android.permission.POST_NOTIFICATIONS', 'android.permission.ACCESS_LOCAL_NETWORK'])
     await adb(['shell', 'pm', 'grant', appPackage, permission], { allowFailure: true });
-  const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'Cere paired check', actionAuthentication: 'trusted-device' });
+  const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'Cere paired check', actionAuthentication: 'trusted-device', ...(pairingMode === 'network' ? { networkReturn: true } : {}) });
   const offer = parsePairing(prepared.uri) as any;
   summary.desktopId = offer.desktopId;
-  note(`Prepared a trusted-device offer for wss://127.0.0.1:${port} (desktop ${offer.desktopId})`);
-
-  const pairing = instrument('dev.otectus.cere.mobile.UsbPairingSetupTest#pairFromExplicitUsbOffer', { cerePairingOffer: prepared.uri }, 240_000);
-  const phone = await until('the phone\'s staged pairing response', async () => {
+  note(`Prepared a trusted-device ${pairingMode} offer for wss://127.0.0.1:${port} (desktop ${offer.desktopId})`);
+  const readPhone = (key: string) => until(`the phone's ${key}`, async () => {
     const text = await adb(['exec-out', 'run-as', appPackage, 'cat', 'files/usb-pairing-response.json'], { allowFailure: true, timeout: 10_000 });
-    try { const value = JSON.parse(text); return typeof value.response === 'string' ? value : undefined; } catch { return undefined; }
+    try { const value = JSON.parse(text); return typeof value[key] === 'string' ? value : undefined; } catch { return undefined; }
   }, 120_000);
-  const review = await brokerRequest(socketPath, 'remote.reviewPair', { response: phone.response });
-  if (review.sas !== phone.sas) throw new Error(`Six-word comparison differs: desktop "${review.sas}", phone "${phone.sas}"`);
-  if (review.actionAuthentication !== 'trusted-device' || phone.actionAuthentication !== 'trusted-device') throw new Error('Pairing did not keep the trusted-device policy');
-  await brokerRequest(socketPath, 'remote.confirmPair', { response: phone.response, sas: review.sas, confirmed: true, projectPaths: [project],
-    caps: ['chat.read', 'chat.write', 'approvals.answer', 'providers.execute', 'approvals.provider', 'settings.write', 'desktop.control'], categories: ['timers'], scriptIds: [] });
-  await adb(['shell', 'run-as', appPackage, 'touch', 'files/usb-pairing-desktop-confirmed']);
-  note(`SAS matched ("${review.sas}"); desktop confirmed device ${phone.deviceId}`);
+  let pairing: ReturnType<typeof instrument>, phone: any;
+  if (pairingMode === 'network') {
+    pairing = instrument('dev.otectus.cere.mobile.UsbPairingSetupTest#pairByNetworkReturn', { cereNetworkPairingOffer: prepared.uri }, 240_000);
+    // As the owner would at the desktop: the phone's answer arrives by itself, and its words are compared.
+    const received = await until('the phone\'s answer at the desktop', async () => (await brokerRequest(socketPath, 'remote.status', {}, 5000)).pairing?.received, 120_000);
+    phone = await readPhone('sas');
+    if (received.sas !== phone.sas) throw new Error(`Six-word comparison differs: desktop "${received.sas}", phone "${phone.sas}"`);
+    if (received.actionAuthentication !== 'trusted-device') throw new Error('Pairing did not keep the trusted-device policy');
+    summary.networkReturn = { received: true, wordsMatched: true };
+    await brokerRequest(socketPath, 'remote.confirmPair', { pairingId: prepared.pairingId, sas: received.sas, confirmed: true, projectPaths: [project],
+      caps: ['chat.read', 'chat.write', 'approvals.answer', 'providers.execute', 'approvals.provider', 'settings.write', 'desktop.control'], categories: ['timers'], scriptIds: [] });
+    note(`SAS matched ("${received.sas}"); desktop confirmed device ${phone.deviceId} by pairing ID; the phone finishes by itself`);
+  } else {
+    pairing = instrument('dev.otectus.cere.mobile.UsbPairingSetupTest#pairFromExplicitUsbOffer', { cerePairingOffer: prepared.uri }, 240_000);
+    phone = await readPhone('response');
+    const review = await brokerRequest(socketPath, 'remote.reviewPair', { response: phone.response });
+    if (review.sas !== phone.sas) throw new Error(`Six-word comparison differs: desktop "${review.sas}", phone "${phone.sas}"`);
+    if (review.actionAuthentication !== 'trusted-device' || phone.actionAuthentication !== 'trusted-device') throw new Error('Pairing did not keep the trusted-device policy');
+    await brokerRequest(socketPath, 'remote.confirmPair', { response: phone.response, sas: review.sas, confirmed: true, projectPaths: [project],
+      caps: ['chat.read', 'chat.write', 'approvals.answer', 'providers.execute', 'approvals.provider', 'settings.write', 'desktop.control'], categories: ['timers'], scriptIds: [] });
+    await adb(['shell', 'run-as', appPackage, 'touch', 'files/usb-pairing-desktop-confirmed']);
+    note(`SAS matched ("${review.sas}"); desktop confirmed device ${phone.deviceId}`);
+  }
   // The setup instrumentation cleans its activity after it reports success, which can race the
-  // status sampling below. Observe the authenticated socket while this pairing is live instead.
+  // status sampling below. Observe the authenticated socket while this pairing is live instead. A
+  // network-return phone finishes by itself, often before the confirmation call returns here, so a
+  // sign-in the desktop recorded for the new device (lastSeen is set only on authentication) counts too.
   const connectedAfterPairing = await until('the paired device connection', async () => {
-    const connected = (await brokerRequest(socketPath, 'remote.status')).connected as { id: string }[];
-    return connected.some(entry => entry.id === phone.deviceId) ? true : undefined;
+    const status = await brokerRequest(socketPath, 'remote.status');
+    const connected = (status.connected as { id: string }[]).some(entry => entry.id === phone.deviceId);
+    const signedIn = (status.devices as { id: string; lastSeen?: number }[] | undefined)?.some(entry => entry.id === phone.deviceId && typeof entry.lastSeen === 'number');
+    return connected || signedIn ? true : undefined;
   }, 30_000);
   results.push(await pairing.done);
   summary.connectedAfterPairing = connectedAfterPairing;
@@ -182,7 +206,7 @@ try {
   note(`Desktop transcript: ${prompts.length} user row(s) for the send, reply ${(summary.desktopTranscript as any).reply ? 'present' : 'missing'}`);
   // The tests print a checkpoint after each stage; a stage that returned early leaves its line out.
   const output = await adb(['logcat', '-d', '-s', 'System.out:I'], { allowFailure: true, timeout: 30_000 });
-  const checkpoints = ['USB_SETUP:', 'CONNECTED_CHECK: pinned TLS', 'CONNECTED_CHECK: live Ollama reply received', 'CONNECTED_CHECK: revision-bound pin/archive', 'CONNECTED_CHECK: disconnect/reconnect'];
+  const checkpoints = [pairingMode === 'network' ? 'USB_NETWORK_PAIRING:' : 'USB_SETUP:', 'CONNECTED_CHECK: pinned TLS', 'CONNECTED_CHECK: live Ollama reply received', 'CONNECTED_CHECK: revision-bound pin/archive', 'CONNECTED_CHECK: disconnect/reconnect'];
   summary.checkpoints = Object.fromEntries(checkpoints.map(checkpoint => [checkpoint, output.includes(checkpoint)]));
   const staged = checkpoints.every(checkpoint => output.includes(checkpoint));
   note(`Checkpoints: ${checkpoints.filter(checkpoint => output.includes(checkpoint)).length}/${checkpoints.length} reached`);

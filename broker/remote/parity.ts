@@ -13,7 +13,7 @@ export class Parity {
   constructor(router:Router){this.router=router;}
   handoff(device:Device,id:string) {
     const r=this.router,session=r.session(device,id);
-    const rows=r.core.store.db.prepare("SELECT id FROM messages WHERE session_id=? AND json_extract(data,'$.role')!='tool' AND COALESCE(json_extract(data,'$.kind'),'')!='tool' ORDER BY rowid DESC LIMIT 8").all(id);
+    const rows=r.core.store.db.prepare("SELECT id FROM messages WHERE session_id=? AND json_extract(data,'$.role') NOT IN ('tool','workbench') AND COALESCE(json_extract(data,'$.kind'),'')!='tool' ORDER BY rowid DESC LIMIT 8").all(id);
     const messages=rows.reverse().map(row=>mobileMessage(r.core.store,id,String(row.id)));
     const content=messages.map(m=>`${m.role}: ${m.text}${m.contentTruncated?'\n[Source message shortened; review the complete transcript on desktop.]':''}`).join('\n\n');
     const draft=('Continue this conversation:\n\n'+content).slice(0,99000);

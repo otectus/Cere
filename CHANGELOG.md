@@ -4,6 +4,29 @@ Notable changes to Cere, the desktop application and its broker, and to Cere Mob
 
 ## [Unreleased]
 
+Fixes from the Cere Mobile compatibility audit (`Cere_Mobile_APK_Desktop_Compatibility_Audit_and_Handoff.md`, findings MOB-001–MOB-008) and simpler pairing. The phone side is published as the Cere Mobile 0.1.4 development snapshot (`mobile-dev-v0.1.4`); its validation is recorded in [docs/mobile/TESTING.md](docs/mobile/TESTING.md). Phones need the desktop broker from this source for the new behaviour.
+
+### Added
+
+- **Pairing without copying.** Desktop Settings → Cere Mobile lists this computer's Tailscale and local-network addresses and the projects Cere knows, offers grant presets, and shows the pairing QR. The phone sends its signed answer back to the PC by itself, the PC shows the six words, and confirming there finishes the phone. For the QR's five minutes the gateway listens and accepts only that offer's answer; two different answers cancel it. Copying or sharing the answer remains as a fallback.
+- **Connection details** on the phone: the connected or last-seen desktop build, protocol, app version and channel, last synchronization, and a copyable summary without keys, addresses, IDs or messages.
+- **Typed API model IDs** on the phone, for new conversations, settings and handoffs; an endpoint without a model list is shown as such.
+- `tools/mobile-upgrade-check.ts` (in-place update from a previous development snapshot) and `tools/mobile-ui-pairing-check.ts` (an R8 build paired through its own screen); `tools/mobile-paired-check.ts --pairing network`; `tools/mobile-release.ts` accepts `mobile-dev-vX.Y.Z` and writes `mobile-development.json`.
+
+### Changed
+
+- **Named compatible connections and phones (MOB-001).** A conversation is authorized against its own connection's origin and key, before every provider request; a conversation on a saved connection the phone isn't granted can be read but not sent to, configured or listed. A compatible grant can name a chosen saved connection.
+- **Desktop tools for API conversations (MOB-003).** The phone sees the stored choice; changing only the model keeps it; compatible endpoints follow their declared tool support.
+- **Files, Images and Analysis under phone control (MOB-005).** Continuing such a conversation from the phone first names what pauses; the desktop keeps the selection and restores it when it detaches the phone. Their results appear on the phone as cards to view on the desktop.
+- The phone's "Desktop confirmed" step for manual pairing now checks with the desktop before saving the pairing.
+- CI retries only plugin resolution before the mobile gates (MOB-007); the paired API 35 job pairs by network return.
+
+### Fixed
+
+- Conversation settings on the phone failed for conversations without a style (MOB-002).
+- A newly staged phone pairing could lose its keys, leaving "Phone pairing keys are missing" after the desktop confirmed.
+- `tools/mobile-release.ts` rejected APKs whose minimum SDK aapt2 reports as `minSdkVersion`.
+
 ## [0.1.1] - 2026-11-20
 
 The Workbench: files, images and analysis for Ollama and API conversations, built from `Cere_Workbench_Files_Images_and_API_Expansion_Handoff.md`. The user guide is [docs/WORKBENCH.md](docs/WORKBENCH.md), and [VALIDATION.md](VALIDATION.md) records its checks. This release also carries the work listed below, which was previously unreleased.

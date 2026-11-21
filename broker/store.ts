@@ -232,7 +232,7 @@ export class Store {
     if(!previous||catalog(previous)!==catalog(s))this.catalogRevision++;
     s.revision = String(BigInt(previous?.revision || '0') + 1n);
     s.draftRevision = String(BigInt(previous?.draftRevision || '0') + (previous && (previous.draft !== s.draft || JSON.stringify(previous.draftAttachments||[])!==JSON.stringify(s.draftAttachments||[])) ? 1n : 0n));
-    const config = (v: Session) => JSON.stringify([v.title,v.model,v.effort,v.ollama,v.api,v.mode,v.remote]);
+    const config = (v: Session) => JSON.stringify([v.title,v.model,v.effort,v.ollama,v.api,v.mode,v.remote,v.connectionId]);
     s.configRevision = String(BigInt(previous?.configRevision || '0') + (previous && config(previous) !== config(s) ? 1n : 0n));
     db.prepare('INSERT OR REPLACE INTO sessions VALUES (?,?)').run(s.id, JSON.stringify(s));
   }

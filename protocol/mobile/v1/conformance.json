@@ -39,7 +39,11 @@
           "desktop.workspace",
           "memory.health",
           "sessions.focusTerminal",
-          "history.claude"
+          "history.claude",
+          "sessions.toolsState",
+          "sessions.routeRevision",
+          "models.listing",
+          "workbench.takeover"
         ],
         "operations": [
           "sync.open",
@@ -151,7 +155,9 @@
                   "updated": 0
                 }
               ],
-              "tools": false
+              "tools": false,
+              "workbenchFamilies": [],
+              "workbenchTakeover": null
             }
           ],
           "projects": [
@@ -206,9 +212,11 @@
                 "label": "Codex",
                 "kind": "cli",
                 "modelRequired": false,
+                "customModel": false,
                 "effort": true,
                 "images": "yes",
                 "tools": "native",
+                "toolCalling": "native",
                 "webSearch": false,
                 "queue": false,
                 "configure": true,
@@ -226,9 +234,11 @@
                 "label": "Claude Code",
                 "kind": "cli",
                 "modelRequired": false,
+                "customModel": false,
                 "effort": true,
                 "images": "yes",
                 "tools": "native",
+                "toolCalling": "native",
                 "webSearch": false,
                 "queue": false,
                 "configure": true,
@@ -246,9 +256,11 @@
                 "label": "Ollama",
                 "kind": "local",
                 "modelRequired": true,
+                "customModel": false,
                 "effort": false,
                 "images": "per-model",
                 "tools": "cere",
+                "toolCalling": "per-model",
                 "webSearch": true,
                 "queue": true,
                 "configure": true,
@@ -397,7 +409,9 @@
                   "updated": 0
                 }
               ],
-              "tools": false
+              "tools": false,
+              "workbenchFamilies": [],
+              "workbenchTakeover": null
             }
           ],
           "nextOffset": null,
@@ -458,7 +472,9 @@
                   "updated": 0
                 }
               ],
-              "tools": false
+              "tools": false,
+              "workbenchFamilies": [],
+              "workbenchTakeover": null
             }
           ],
           "missing": [
@@ -514,7 +530,9 @@
               "updated": 0
             }
           ],
-          "tools": false
+          "tools": false,
+          "workbenchFamilies": [],
+          "workbenchTakeover": null
         }
       }
     },
@@ -893,7 +911,9 @@
               "updated": 0
             }
           ],
-          "tools": false
+          "tools": false,
+          "workbenchFamilies": [],
+          "workbenchTakeover": null
         }
       }
     },

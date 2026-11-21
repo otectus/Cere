@@ -12,12 +12,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import dev.otectus.cere.mobile.data.CereRepository
+import dev.otectus.cere.mobile.data.ConfigurationDraft
 import dev.otectus.cere.mobile.data.MobileState
+import dev.otectus.cere.mobile.data.ModelIds
+import dev.otectus.cere.mobile.data.ToolAvailability
+import dev.otectus.cere.mobile.data.ToolPolicy
 import dev.otectus.cere.mobile.data.traits
 import dev.otectus.cere.mobile.protocol.Agent
+import dev.otectus.cere.mobile.protocol.ConversationBehavior
 import dev.otectus.cere.mobile.protocol.ModelOption
 import dev.otectus.cere.mobile.protocol.Session
+import dev.otectus.cere.mobile.protocol.WireCodec
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
@@ -28,22 +36,28 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
     val scope = rememberCoroutineScope()
     var title by rememberSaveable(session.id) { mutableStateOf(session.title) }
     var models by remember(session.id) { mutableStateOf(emptyList<ModelOption>()) }
+    var unlisted by remember(session.id) { mutableStateOf(false) }
     var model by rememberSaveable(session.id) { mutableStateOf(session.model.orEmpty()) }
     var effort by rememberSaveable(session.id) { mutableStateOf(session.effort.orEmpty()) }
     var tools by rememberSaveable(session.id) { mutableStateOf(session.tools) }
+    var toolsNotice by remember(session.id) { mutableStateOf<String?>(null) }
     var baseline by rememberSaveable(session.id) { mutableStateOf(session.configRevision) }
     var refresh by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
+    val traits = state.traits(session.provider)
+    // A desktop that reports the stored tools choice also keeps options a change leaves out (sessions.toolsState).
+    val toolsState = state.has("sessions.toolsState")
+    val blocked = ConfigurationDraft.blockedReason(traits, toolsState)
     val canConfigure = session.canConfigure && state.supports("sessions.configure")
     val idle = session.status !in setOf("starting", "working", "waiting", "stopping") && session.agents.none(Agent::isActive)
     val conflict = baseline != session.configRevision
     LaunchedEffect(session.id, refresh, canConfigure) {
-        if (canConfigure) {
+        if (canConfigure && blocked == null) {
             loading = true; error = null
-            try { models = repository.models(session.provider, refresh = true, sessionId = session.id) }
+            try { val catalog = repository.modelCatalog(session.provider, sessionId = session.id); models = catalog.models; unlisted = catalog.unlisted }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { error = failure.message }
             finally { loading = false }
@@ -65,12 +79,19 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
         put("sessionId", session.id); put("expectedRevision", session.revision)
         pinned?.let { put("pinned", it) }; archived?.let { put("archived", it) }
     })
-    val selected = models.firstOrNull { it.id == model }
-    val changed = model != session.model.orEmpty() || effort != session.effort.orEmpty() || tools != session.tools
-    fun chooseModel(option: ModelOption) { model = option.id; effort = option.defaultEffort; if ("tools" !in option.capabilities) tools = false }
+    val selected = models.firstOrNull { it.id == model.trim() }
+    // A typed ID is accepted where the provider takes one (MOB-004); the desktop checks it again.
+    val typed = traits.customModel
+    val modelError = if (typed && selected == null) ModelIds.error(model) else null
+    fun availability(option: ModelOption?) = ToolPolicy.availability(traits, option, session, toolsState)
+    val tooling = availability(selected)
+    val draft = ConfigurationDraft(model, effort, tools)
+    // A model change keeps the tools choice unless the new model or route cannot use it; then the change is said first.
+    fun keepTools(next: ToolAvailability) { if (tools && !next.available) { tools = false; toolsNotice = "Desktop tools turn off with this change: ${next.reason}" } else toolsNotice = null }
+    fun chooseModel(option: ModelOption) { model = option.id; effort = option.defaultEffort; keepTools(availability(option)) }
     AlertDialog(onDismissRequest = { if (!submitting) close() }, title = { Text("Conversation settings") }, text = {
         Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("${session.provider} · ${session.project.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+            Text(listOfNotNull("${traits.label} · ${session.project.orEmpty()}", session.connectionName?.let { "Connection: $it" }).joinToString("\n"), style = MaterialTheme.typography.bodySmall)
             if (state.supports("sessions.rename")) {
                 OutlinedTextField(title, { title = it.take(100) }, label = { Text("Title") }, enabled = !submitting, singleLine = true, modifier = Modifier.fillMaxWidth())
                 TextButton({ run("sessions.rename", buildJsonObject { put("sessionId", session.id); put("title", title.trim()); put("expectedRevision", session.revision) }) },
@@ -88,32 +109,45 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
                 OutlinedButton({ run("sessions.disconnect", buildJsonObject { put("sessionId", session.id) }, "Provider disconnected. It reconnects with your next message.", closeAfter = false) },
                     enabled = !submitting && idle) { Text("Disconnect provider") }
             }
-            if (canConfigure) {
+            if (canConfigure && blocked != null) { HorizontalDivider(); Text(blocked, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            else if (canConfigure) {
                 HorizontalDivider()
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Model", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     TextButton({ refresh++ }, enabled = !loading && !submitting) { Text("Refresh models") }
                 }
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (!loading && models.isEmpty()) Text("No models loaded. Check this provider on your PC, then refresh.")
+                // An endpoint that lists no models is not a failure: its model ID is typed instead.
+                if (!loading && unlisted) Text("This endpoint doesn't list its models. Enter the model ID below.", style = MaterialTheme.typography.bodySmall)
+                else if (!loading && error != null && typed) Text("The model list could not be loaded. You can still enter a model ID below.", style = MaterialTheme.typography.bodySmall)
+                else if (!loading && models.isEmpty() && error == null) Text(if (typed) "No models listed. Enter the model ID below." else "No models loaded. Check this provider on your PC, then refresh.")
+                // The current model stays chosen even when a refreshed list leaves it out.
+                session.model?.takeIf { it.isNotBlank() && !loading && models.isNotEmpty() && models.none { option -> option.id == it } }?.let {
+                    Text("The current model, $it, is not in this list.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 models.forEach { option -> Row(Modifier.fillMaxWidth().clickable(enabled = !submitting && !loading) { chooseModel(option) }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(model == option.id, { chooseModel(option) }, enabled = !submitting && !loading)
+                    RadioButton(model.trim() == option.id, { chooseModel(option) }, enabled = !submitting && !loading)
                     Column { Text(option.displayName); if (option.description.isNotBlank()) Text(option.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 } }
+                if (typed) OutlinedTextField(model, { value -> model = value.take(ModelIds.MAX_LENGTH + 64); effort = ""; keepTools(availability(models.firstOrNull { it.id == value.trim() })) },
+                    label = { Text("Model ID") }, singleLine = true, enabled = !submitting, isError = modelError != null && model.isNotEmpty(),
+                    supportingText = { Text(modelError?.takeIf { model.isNotEmpty() } ?: "As the provider names it; the desktop checks it.") }, modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Model ID" })
                 selected?.efforts?.takeIf { it.isNotEmpty() }?.let { efforts ->
                     Text("Reasoning effort")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { efforts.forEach { option ->
                         FilterChip(effort == option.id, { effort = option.id }, { Text(option.displayName) }, enabled = !submitting)
                     } }
                 }
-                if (state.traits(session.provider).cereTools) ListItem(headlineContent = { Text("Desktop tools") },
-                    supportingContent = { Text("Uses the desktop's existing permission checks") },
-                    trailingContent = { Switch(tools, { tools = it }, enabled = !submitting && selected?.capabilities?.contains("tools") == true) })
+                if (tooling.applies) ListItem(headlineContent = { Text("Desktop tools") },
+                    supportingContent = { Text(tooling.reason ?: "Uses the desktop's existing permission checks") },
+                    // Tools that are on can always be turned off; turning them on needs a route and model that allow it.
+                    trailingContent = { Switch(tools, { tools = it; toolsNotice = null }, enabled = !submitting && (tooling.available || tools)) })
+                toolsNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
                 if (conflict) {
                     Text("Conversation settings changed on the desktop. Reload before saving.", color = MaterialTheme.colorScheme.error)
-                    TextButton({ model = session.model.orEmpty(); effort = session.effort.orEmpty(); tools = session.tools; baseline = session.configRevision; refresh++ }) { Text("Reload desktop settings") }
+                    TextButton({ model = session.model.orEmpty(); effort = session.effort.orEmpty(); tools = session.tools; toolsNotice = null; baseline = session.configRevision; refresh++ }) { Text("Reload desktop settings") }
                 }
-            } else Text("Model changes are unavailable while busy or outside this phone's provider access.")
+            } else Text(session.toolsUnavailableReason?.takeIf { !session.canSend } ?: "Model changes are unavailable while busy or outside this phone's provider access.")
             if ((session.draftAttachmentCount ?: 0) > 0) Text("This draft includes ${session.draftAttachmentCount} desktop attachment(s). " +
                 if (state.draftEditable(session)) "Review them under the message field before sending." else "Review them on the PC before sending.")
             if (state.supports("sessions.behavior")) ConversationStyle(repository, session.id)
@@ -122,34 +156,43 @@ internal fun ConversationSettingsSheet(repository: CereRepository, state: Mobile
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }, confirmButton = {
-        if (canConfigure) Button({
+        if (canConfigure && blocked == null) Button({
             submitting = true; error = null
-            signedReview(activity, repository, "sessions.configure", buildJsonObject {
-                put("sessionId", session.id); put("model", model); put("tools", tools)
-                put("effort", effort); put("expectedConfigRevision", baseline)
-            }, "Change conversation model", {
+            signedReview(activity, repository, "sessions.configure", draft.params(session, baseline, partial = toolsState, routeRevision = state.has("sessions.routeRevision")), "Change conversation model", {
                 scope.launch { try { repository.selectSession(session.id); close() } finally { submitting = false } }
             }, { error = it; submitting = false }, label = session.title)
-        }, enabled = !submitting && !loading && !conflict && changed && selected != null) { Text("Review & apply") }
+        }, enabled = !submitting && !loading && !conflict && draft.changes(session) && (selected != null || typed && modelError == null) && (!tools || tooling.available)) { Text("Review & apply") }
     }, dismissButton = { TextButton(close, enabled = !submitting) { Text("Close") } })
 }
 
-/** W11: which style the conversation's next turn uses and where it is set. Styles are chosen on the desktop. */
+/**
+ * W11: which style the conversation's next turn uses and where it is set. Styles are chosen on the
+ * desktop. MOB-002: the answer is decoded into a model whose profile and posture are nullable, so the
+ * desktop's JSON nulls (no style set) render as "No style" instead of failing.
+ */
 @Composable
 private fun ConversationStyle(repository: CereRepository, sessionId: String) {
-    var value by remember(sessionId) { mutableStateOf<JsonObject?>(null) }
-    LaunchedEffect(sessionId) { value = runCatching { repository.read("sessions.behavior", buildJsonObject { put("sessionId", sessionId) }).jsonObject }.getOrNull() }
-    val behavior = value ?: return
+    var value by remember(sessionId) { mutableStateOf<ConversationBehavior?>(null) }
+    LaunchedEffect(sessionId) {
+        try { value = WireCodec.json.decodeFromJsonElement(ConversationBehavior.serializer(), repository.read("sessions.behavior", buildJsonObject { put("sessionId", sessionId) })) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { value = null }
+    }
+    value?.let { ConversationStyleContent(it) }
+}
+
+@Composable
+internal fun ConversationStyleContent(behavior: ConversationBehavior) {
     HorizontalDivider()
     Text("Style", style = MaterialTheme.typography.titleMedium)
-    val where = when (behavior["source"]?.jsonPrimitive?.contentOrNull) { "session" -> "set for this conversation"; "project" -> "set for this project"; else -> "the personality, for every conversation" }
-    val profile = behavior["profile"]?.jsonObject?.get("label")?.jsonPrimitive?.contentOrNull
+    val where = when (behavior.source) { "session" -> "set for this conversation"; "project" -> "set for this project"; else -> "the personality, for every conversation" }
+    val profile = behavior.profile?.label?.takeIf(String::isNotBlank)
     Text(if (profile != null) "$profile · $where" else "No style · $where")
-    behavior["posture"]?.jsonObject?.let { posture ->
-        Text("Posture: ${posture["label"]?.jsonPrimitive?.contentOrNull.orEmpty()}" + if (posture["pinned"]?.jsonPrimitive?.booleanOrNull == true) " · pinned to this conversation" else "", style = MaterialTheme.typography.bodySmall)
+    behavior.posture?.takeIf { it.label.isNotBlank() }?.let { posture ->
+        Text("Posture: ${posture.label}" + if (posture.pinned) " · pinned to this conversation" else "", style = MaterialTheme.typography.bodySmall)
     }
-    if (behavior["standingInstructions"]?.jsonPrimitive?.booleanOrNull == true) Text("This conversation also has standing instructions.", style = MaterialTheme.typography.bodySmall)
-    behavior["warnings"]?.jsonArray?.forEach { Text(it.jsonPrimitive.content, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
+    if (behavior.standingInstructions) Text("This conversation also has standing instructions.", style = MaterialTheme.typography.bodySmall)
+    behavior.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
     Text("Styles and postures are chosen on the desktop.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 

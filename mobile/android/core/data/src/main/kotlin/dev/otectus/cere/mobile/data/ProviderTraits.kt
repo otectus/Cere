@@ -15,9 +15,13 @@ data class ProviderTraits(
     val label: String,
     val kind: String = "cli",
     val modelRequired: Boolean = false,
+    /** A typed model ID is accepted (hosted APIs and compatible endpoints). */
+    val customModel: Boolean = false,
     val effort: Boolean = false,
     val images: String = "no",
     val tools: String = "native",
+    /** Whether Cere's tools can be on for a new conversation: "yes", "no", "per-model", "native"; null from an older desktop. */
+    val toolCalling: String? = null,
     val webSearch: Boolean = false,
     val queue: Boolean = false,
     val configure: Boolean = false,

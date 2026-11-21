@@ -24,7 +24,8 @@
       "expiresAt": 0,
       "signature": "DER base64url",
       "actionAuthentication": "biometric | trusted-device (optional; absent means biometric)",
-      "replacesDeviceId": "optional UUID of the existing phone being replaced on the same desktop"
+      "replacesDeviceId": "optional UUID of the existing phone being replaced on the same desktop",
+      "responseReturn": "optional 'network' — the gateway listens for the offer's lifetime and takes the answer over pinned TLS"
     },
     "offerSignatureTranscript": {
       "domain": "cere.mobile.pair.offer.v1",
@@ -51,7 +52,18 @@
     "response": "responseBody plus connectionProof and actionProof signatures of responseSignatureTranscript using respective keys",
     "sas": "SHA256 UTF8(offerDigest + '.' + digest(complete signed response)); first six bytes index sas-words.json; join words with spaces",
     "maximumUriBytes": 2000,
-    "replacement": "A signed replacesDeviceId must match the saved desktop/device. Replacement reuses project IDs, revokes old authority, preserves local drafts/cache, and requires reconciliation of pending commands first. Policy is chosen locally in the signed offer, not supplied by the phone."
+    "replacement": "A signed replacesDeviceId must match the saved desktop/device. Replacement reuses project IDs, revokes old authority, preserves local drafts/cache, and requires reconciliation of pending commands first. Policy is chosen locally in the signed offer, not supplied by the phone.",
+    "networkReturn": {
+      "frame": {
+        "v": 1,
+        "type": "pair.response",
+        "response": "cere-pair://v1/<signed response>"
+      },
+      "replies": [
+        "{v:1,type:'pair.received',pairingId,expiresAt} then, on the same socket, {v:1,type:'pair.confirmed'} or {v:1,type:'pair.closed',reason:'expired'|'cancelled'|'replaced'|'contested'|'refused',message?}"
+      ],
+      "notes": "Sent on /mobile/v1 before hello, pinned to the offer's certificate. Only for an offer with responseReturn 'network'; the desktop still shows the six words and the owner confirms there. The same answer may be sent again after a lost connection; an answer the desktop already confirmed is answered pair.confirmed at once. A second, different answer voids the offer. The listener closes when the offer ends unless a paired device keeps it open."
+    }
   },
   "authentication": {
     "hello": {
@@ -299,7 +311,9 @@
         "webSearch": false,
         "expectedDraftRevision": "0",
         "expectedConfigRevision": "0",
-        "desktopAttachments": "optional [{id, sha256}] — the desktop draft's attachments exactly as reviewed (feature drafts.desktopAttachments); refused if unreviewed or changed, and for queued sends"
+        "desktopAttachments": "optional [{id, sha256}] — the desktop draft's attachments exactly as reviewed (feature drafts.desktopAttachments); refused if unreviewed or changed, and for queued sends",
+        "expectedRouteRevision": "optional — the session's routeRevision as reviewed (feature sessions.routeRevision)",
+        "workbenchAcknowledged": "optional ['files'|'images'|'analysis'] — exactly the session's workbenchFamilies the phone showed would pause (feature workbench.takeover); required to take over such a conversation"
       },
       "result": {
         "commandId": "uuid",
@@ -367,17 +381,19 @@
     "providers.models": {
       "params": {
         "provider": "codex|claude|ollama|openai|anthropic|google|compatible",
-        "sessionId": "optional"
+        "sessionId": "optional — the conversation's own route: its Ollama host or named compatible connection",
+        "listing": "optional true — answer {items, unlisted} (feature models.listing)"
       },
-      "result": []
+      "result": "[] of models, or {items, unlisted} with listing; a compatible catalog's capabilities are the route's declaration"
     },
     "sessions.configure": {
       "params": {
         "sessionId": "uuid",
         "model": "model",
-        "effort": "optional",
-        "tools": false,
-        "expectedConfigRevision": "0"
+        "effort": "optional; omitted keeps the current value for the same model",
+        "tools": "optional (feature sessions.toolsState); omitted keeps the current value",
+        "expectedConfigRevision": "0",
+        "expectedRouteRevision": "optional — the session's routeRevision as reviewed (feature sessions.routeRevision)"
       },
       "result": "session"
     },
@@ -919,7 +935,16 @@
           "updated": 0
         }
       ],
-      "draftAttachments": "open conversation only: [{id,name,kind:'image'|'text',mime,size,sha256}], never a path"
+      "draftAttachments": "open conversation only: [{id,name,kind:'image'|'text',mime,size,sha256}], never a path",
+      "tools": "stored choice (Ollama or hosted API)",
+      "toolsAvailable": "optional true|false|null (feature sessions.toolsState)",
+      "toolsUnavailableReason": "optional",
+      "routeRevision": "compatible only (feature sessions.routeRevision)",
+      "imagesAvailable": "compatible only: the route's declaration",
+      "connectionName": "compatible on a named connection only",
+      "workbenchFamilies": "[] — Files/Images/Analysis selected on the desktop (feature workbench.takeover)",
+      "workbenchTakeover": "'acknowledge' when sending from this phone pauses them, otherwise null",
+      "workbenchNote": "optional explanation"
     },
     "message": {
       "id": "opaque",
@@ -1078,6 +1103,10 @@
     "desktop.workspace": "desktop.workspace serves the scoped workspace card",
     "memory.health": "memory.health serves sanitized memory health",
     "sessions.focusTerminal": "sessions.focusTerminal brings a linked conversation's terminal forward on the desktop",
-    "history.claude": "sessions.history accepts provider claude"
+    "history.claude": "sessions.history accepts provider claude",
+    "sessions.toolsState": "session tools is the stored choice for Ollama and hosted API conversations, with toolsAvailable (true, false, or null when the model decides) and toolsUnavailableReason; sessions.configure keeps an omitted effort or tools",
+    "sessions.routeRevision": "compatible sessions name routeRevision, imagesAvailable and connectionName; sessions.send and sessions.configure accept expectedRouteRevision and refuse with REVISION_CONFLICT when the connection changed",
+    "models.listing": "providers.models listing:true answers {items, unlisted}; snapshot providers carry modelsUnlisted, and traits carry customModel and toolCalling",
+    "workbench.takeover": "sessions name workbenchFamilies, workbenchTakeover ('acknowledge' or null) and workbenchNote; sessions.send takes workbenchAcknowledged; Workbench results arrive as role 'workbench' messages with desktopOnly {kind,label}"
   }
 }

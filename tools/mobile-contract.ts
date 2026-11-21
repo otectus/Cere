@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { z } from 'zod';
-import { helloSchema, requestSchema, methods, mutations, needsProof, protocolFeatures } from '../broker/remote/schemas.ts';
+import { helloSchema, pairResponseSchema, requestSchema, methods, mutations, needsProof, protocolFeatures } from '../broker/remote/schemas.ts';
 
 // The hand-written contract documents every operation and negotiated feature the gateway accepts.
 const contract=JSON.parse(readFileSync(new URL('../protocol/mobile/v1/CONTRACT.json',import.meta.url),'utf8'));
@@ -30,7 +30,7 @@ const requests=Object.entries(methods).map(([method,params])=>{
   if(method==='memory.save')schema.properties.params.dependentRequired={id:['expectedRevision']};
   return schema;
 });
-const schema={$schema:'https://json-schema.org/draft/2020-12/schema',$id:'https://cere.local/protocol/mobile/v1/client.schema.json',title:'Cere mobile v1 client frames',oneOf:[z.toJSONSchema(helloSchema),z.toJSONSchema(z.strictObject({v:z.literal(1),type:z.literal('auth'),challengeId:z.uuid(),signature:z.string().max(100)})),...requests]};
+const schema={$schema:'https://json-schema.org/draft/2020-12/schema',$id:'https://cere.local/protocol/mobile/v1/client.schema.json',title:'Cere mobile v1 client frames',oneOf:[z.toJSONSchema(helloSchema),z.toJSONSchema(z.strictObject({v:z.literal(1),type:z.literal('auth'),challengeId:z.uuid(),signature:z.string().max(100)})),z.toJSONSchema(pairResponseSchema),...requests]};
 const output=JSON.stringify(schema,null,2)+'\n',path=new URL('../protocol/mobile/v1/client.schema.json',import.meta.url);
 if(process.argv.includes('--check')) {if(readFileSync(path,'utf8')!==output)throw new Error('Mobile JSON Schema is stale. Run node tools/mobile-contract.ts.');}
 else writeFileSync(path,output);

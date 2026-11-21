@@ -343,6 +343,36 @@ private slots:
         QVERIFY2(pairing->property("text").toString().isEmpty(),"Tab inserted text into the pairing response editor");
         openCategory("companion");click("tab_Chat");
     }
+    // Network-return pairing at the desktop: the phone's signed answer arrives by itself, the six words
+    // it computed appear here, and confirming by pairing ID finishes the phone (a stand-in speaking the
+    // real protocol over the pinned gateway).
+    void mobileNetworkPairing(){
+        openCategory("mobile");QTRY_VERIFY(item("pairAddresses"));
+        item("pairAddresses")->setProperty("text","127.0.0.1");
+        QVERIFY2(item("networkReturn")&&item("networkReturn")->property("checked").toBool(),"Network return is the default");
+        click("showPairingQr");
+        auto section=item("remoteSettings");QVERIFY(section);
+        QTRY_VERIFY_WITH_TIMEOUT(!section->property("offer").toMap().value("uri").toString().isEmpty(),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(app->state().value("remote").toMap().value("listening").toBool(),10000);
+        QProcess phone;phone.setProcessChannelMode(QProcess::MergedChannels);
+        phone.start("node",{QString(CERE_SOURCE_DIR)+"/tests/fixtures/phone-network-answer.ts",section->property("offer").toMap().value("uri").toString()});
+        QVERIFY(phone.waitForStarted());QTRY_VERIFY_WITH_TIMEOUT(phone.canReadLine(),10000);
+        const QString words=QString::fromUtf8(phone.readLine()).trimmed();QCOMPARE(words.split(' ').size(),6);
+        QTRY_VERIFY_WITH_TIMEOUT(item("pairingWords")&&item("pairingWords")->property("visible").toBool(),15000);
+        QVERIFY2(item("pairingWords")->property("text").toString().contains(words),"The desktop shows other words than the phone computed");
+        item("pairProjects")->setProperty("text",data.path());
+        click("pairingWordsMatch");QTRY_VERIFY(item("pairingWordsMatch")->property("checked").toBool());
+        capture("mobile-network-pairing-words");
+        click("confirmPairing");
+        QTRY_VERIFY_WITH_TIMEOUT(call("remote.status").value("devices").toList().size()==1||!section->property("error").toString().isEmpty(),10000);
+        QVERIFY2(section->property("error").toString().isEmpty(),qPrintable("Confirm failed: "+section->property("error").toString()));
+        // The phone may already have finished while the call above waited (waitForFinished is false then).
+        QTRY_VERIFY_WITH_TIMEOUT(phone.state()==QProcess::NotRunning,20000);
+        const QString told=QString::fromUtf8(phone.readAll());
+        QVERIFY2(phone.exitStatus()==QProcess::NormalExit&&phone.exitCode()==0&&told.contains("pair.confirmed"),qPrintable("The phone was not told: "+told));
+        QTRY_COMPARE_WITH_TIMEOUT(call("remote.status").value("devices").toList().size(),1,8000);
+        QVERIFY(!call("remote.off").contains("error"));
+    }
     void workspaceTelemetryControls(){
         const QString root=data.path()+"/telemetry-project";QVERIFY(QDir().mkpath(root));
         const auto configured=call("settings.update",{{"telemetry",QVariantMap{{"roots",QStringList{root}}}}});QVERIFY(!configured.contains("error"));

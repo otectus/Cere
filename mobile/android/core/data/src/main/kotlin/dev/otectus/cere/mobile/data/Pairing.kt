@@ -35,6 +35,8 @@ data class PairingOffer(
     val signature: String,
     val actionAuthentication: ActionAuthentication = ActionAuthentication.BIOMETRIC,
     val replacesDeviceId: String? = null,
+    /** "network": the desktop listens for this offer's answer, so the phone sends it instead of the owner copying it. */
+    val responseReturn: String? = null,
 )
 
 data class VerifiedPairingOffer(
@@ -109,6 +111,8 @@ data class PendingPairing(
     val responseUri: String,
     val sas: String,
     val replacesDeviceId: String? = null,
+    /** The offer's responseReturn: "network" when this answer goes to the desktop by itself. */
+    val responseReturn: String? = null,
 )
 
 class PairingManager(private val context: Context) {
@@ -213,7 +217,7 @@ class PairingManager(private val context: Context) {
         val sas = sasBytes.take(6).joinToString(" ") { SAS_WORDS[it.toInt() and 0xff] }
         return CompletedPairing(
             PairedDesktop(pending.offer.desktopId, pending.offer.name, pending.body.deviceId, pending.body.name, pending.offer.certificate, pending.offer.spki, pending.offer.endpoints, pending.connectionAlias, pending.actionAlias, System.currentTimeMillis(), pending.actionAuthentication, pending.offer.identityKey),
-            responseUri, sas, pending.offer.replacesDeviceId,
+            responseUri, sas, pending.offer.replacesDeviceId, pending.offer.responseReturn,
         )
     }
 

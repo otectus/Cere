@@ -37,6 +37,8 @@ data class CachedState(
     val cacheEpoch: String? = null,
     val scrollPositions: Map<String, SessionScrollPosition> = emptyMap(),
     val erasures: List<ErasureReceipt> = emptyList(),
+    /** MOB-008: the last desktop build this phone signed in to. */
+    val desktopBuild: DesktopBuildSeen? = null,
 )
 
 /**

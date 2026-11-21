@@ -34,8 +34,12 @@ sealed interface ConnectionState {
     data class Blocked(val reason: String, val repair: Boolean = false) : ConnectionState
     data object Connecting : ConnectionState
     data object Authenticating : ConnectionState
-    /** [features]: behaviour beyond [operations] the desktop negotiated in welcome (protocol 1.1). */
-    data class Online(val desktopName: String, val operations: Set<String>, val expiresAt: Long, val features: Set<String> = emptySet()) : ConnectionState
+    /**
+     * [features]: behaviour beyond [operations] the desktop negotiated in welcome (protocol 1.1);
+     * [build] and [protocol]: the authenticated desktop build and protocol version, null when not sent.
+     */
+    data class Online(val desktopName: String, val operations: Set<String>, val expiresAt: Long, val features: Set<String> = emptySet(),
+        val build: BuildIdentity? = null, val brokerBuild: String? = null, val protocol: ProtocolVersion? = null) : ConnectionState
 }
 
 data class MobileState(
@@ -61,6 +65,8 @@ data class MobileState(
     /** The desktop search being shown, with every match it named. */
     val search: SessionSearch? = null,
     val erasures: List<ErasureReceipt> = emptyList(),
+    /** MOB-008: the desktop build this phone last signed in to; while offline it is the last one seen. */
+    val desktopBuild: DesktopBuildSeen? = null,
 ) {
     fun supports(operation: String) = (connection as? ConnectionState.Online)?.operations?.contains(operation) == true
     fun has(feature: String) = (connection as? ConnectionState.Online)?.features?.contains(feature) == true
@@ -242,6 +248,60 @@ class CereRepository(context: Context) {
             catch (error: Exception) { updateState { it.copy(lastError = error.message) } }
         }
     }
+    private val _pairingReturn = MutableStateFlow<PairingReturnState>(PairingReturnState.Idle)
+    /** Delivery of a staged network-return pairing's answer to the desktop, and the desktop's decision. */
+    val pairingReturn: StateFlow<PairingReturnState> = _pairingReturn.asStateFlow()
+    private var pairingReturnJob: Job? = null
+
+    /**
+     * Network-return pairing: sends the staged answer to the address the QR named, pinned to its
+     * certificate, and waits there for the owner to compare the words and confirm on the desktop. A
+     * lost connection is retried for the offer's lifetime; an ended offer is not. It never saves the
+     * pairing itself: the pairing screen does that when the state is Confirmed.
+     */
+    @Synchronized fun startPairingReturn(completed: CompletedPairing) {
+        if (completed.responseReturn != "network" || pairingReturnJob?.isActive == true) return
+        pairingReturnJob = scope.launch {
+            val deadline = System.currentTimeMillis() + PAIRING_RETURN_WINDOW_MS
+            _pairingReturn.value = PairingReturnState.Sending
+            val delivery = try { PairingReturnClient(PinnedTls.client(completed.desktop)) } catch (cancelled: CancellationException) { throw cancelled } catch (error: Exception) {
+                _pairingReturn.value = PairingReturnState.Unreachable(error.message ?: "The certificate in the pairing QR cannot be used"); return@launch
+            }
+            var attempt = 0
+            while (isActive && _state.value.stagedPairing == completed) {
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0) { _pairingReturn.value = PairingReturnState.Unreachable("The PC could not be reached before the pairing QR expired."); return@launch }
+                try {
+                    when (val reply = delivery.deliver(completed.desktop.endpoints, completed.responseUri, remaining) { _pairingReturn.value = PairingReturnState.Waiting }) {
+                        PairingReply.Confirmed -> { _pairingReturn.value = PairingReturnState.Confirmed; return@launch }
+                        is PairingReply.Closed -> { _pairingReturn.value = PairingReturnState.Ended(reply.message); return@launch }
+                        PairingReply.Received -> Unit
+                    }
+                } catch (unsupported: PairingReturnUnsupported) { _pairingReturn.value = PairingReturnState.Unreachable(unsupported.message!!); return@launch }
+                catch (timeout: TimeoutCancellationException) { _pairingReturn.value = PairingReturnState.Unreachable("The PC did not confirm before the pairing QR expired."); return@launch }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    attempt++
+                    _pairingReturn.value = PairingReturnState.Retrying(error.message?.takeIf(String::isNotBlank) ?: "The PC could not be reached")
+                    delay(minOf(10_000L, 1_000L shl minOf(attempt, 4)))
+                }
+            }
+        }
+    }
+    @Synchronized fun stopPairingReturn() { pairingReturnJob?.cancel(); pairingReturnJob = null; _pairingReturn.value = PairingReturnState.Idle }
+
+    /**
+     * The manual route's "Desktop confirmed": asks the desktop whether it confirmed this answer before
+     * the pairing is saved, so the phone does not keep a pairing the desktop never made. Null when the
+     * desktop could not be asked (unreachable, or too old to answer).
+     */
+    suspend fun checkPairingConfirmed(completed: CompletedPairing): PairingReply? = try {
+        PairingReturnClient(PinnedTls.client(completed.desktop)).deliver(completed.desktop.endpoints, completed.responseUri, PAIRING_CHECK_MS, untilReceived = true)
+    } catch (timeout: TimeoutCancellationException) { null } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { null }
+
+    /** When this phone last synchronized with the desktop's authoritative state. */
+    fun lastSynchronizedAt(): Long? = lastVerified
+
     /** Seal the response and new aliases before showing them. The old pairing remains committed. */
     suspend fun stagePairing(completed: CompletedPairing) {
         pairingTransition = true
@@ -273,6 +333,7 @@ class CereRepository(context: Context) {
 
     suspend fun completePairing(completed: CompletedPairing) {
         commitGate.invalidate()
+        stopPairingReturn()
         val replacing = stateMutex.withLock {
             val current = _state.value
             require(current.stagedPairing == completed) { "Pairing response was not durably staged" }
@@ -309,6 +370,7 @@ class CereRepository(context: Context) {
 
     suspend fun cancelStagedPairing() {
         commitGate.invalidate()
+        stopPairingReturn()
         val staged = stateMutex.withLock {
             val current = _state.value
             val pending = current.stagedPairing ?: return@withLock null
@@ -706,7 +768,11 @@ class CereRepository(context: Context) {
     }
 
     /** Serialize pending autosaves before binding the send signature to draft/config revisions. */
-    suspend fun prepareSend(sessionId: String, text: String, webSearch: Boolean = false): PreparedAction = draftMutexes.getOrPut(sessionId) { Mutex() }.withLock {
+    /**
+     * [workbenchAcknowledged]: the Files/Images/Analysis selection the person saw would pause when
+     * this phone takes the conversation over (workbench.takeover); the desktop requires exactly it.
+     */
+    suspend fun prepareSend(sessionId: String, text: String, webSearch: Boolean = false, workbenchAcknowledged: List<String>? = null): PreparedAction = draftMutexes.getOrPut(sessionId) { Mutex() }.withLock {
         require(_state.value.pendingCommands.none { it.sessionId == sessionId && it.method == "sessions.send" }) { "Review the previous send outcome before sending another message" }
         val initial = _state.value.sessions.first { it.id == sessionId }
         require(initial.canSend && initial.draftIncluded) { "This session is not ready to send" }
@@ -714,6 +780,7 @@ class CereRepository(context: Context) {
         require(_state.value.draftEditable(initial)) { "This draft has desktop attachments. Update Cere on your PC to review them here, or send it from the PC." }
         require(initial.draftAttachments.isEmpty() || _state.value.supports("attachments.commit")) { "Sending this draft's desktop attachments needs the attachment permission. Remove them, or send from the PC." }
         require(!webSearch || _state.value.canSearchWeb(initial)) { "Web search is unavailable for this conversation" }
+        require(initial.workbenchTakeover != "acknowledge" || workbenchAcknowledged != null || !_state.value.has("workbench.takeover")) { "Confirm continuing on this phone without the conversation's Files, Images and Analysis first." }
         require(!_state.value.draft(initial).conflict) { "Resolve the desktop draft conflict before sending" }
         check(saveLocalDraft(sessionId, text, immediate = true)) { PRIVATE_CACHE_ERROR }
         syncDraftLocked(sessionId)
@@ -736,6 +803,9 @@ class CereRepository(context: Context) {
             put("attachments", JsonArray(attachments.map { JsonPrimitive(it.remoteAttachmentId!!) }))
             if (desktop.isNotEmpty()) put("desktopAttachments", JsonArray(desktop.map { buildJsonObject { put("id", it.id); put("sha256", it.sha256) } }))
             put("webSearch", webSearch); put("expectedDraftRevision", draft.remoteRevision); put("expectedConfigRevision", session.configRevision)
+            // The connection this phone shows is the one the send is bound to (sessions.routeRevision).
+            if (current.has("sessions.routeRevision")) session.routeRevision?.let { put("expectedRouteRevision", it) }
+            if (session.workbenchTakeover == "acknowledge" && workbenchAcknowledged != null) put("workbenchAcknowledged", JsonArray(workbenchAcknowledged.map(::JsonPrimitive)))
         })
     }
     suspend fun keepLocalDraft(sessionId: String) { updateState { current -> current.drafts[sessionId]?.let { current.copy(drafts = current.drafts + (sessionId to it.copy(baseRevision = it.remoteRevision, conflict = false, remoteText = null, dirty = true))) } ?: current }; syncDraft(sessionId) }
@@ -800,6 +870,20 @@ class CereRepository(context: Context) {
         val before = result["before"]?.jsonPrimitive?.contentOrNull
         updateState(remoteFence = fence) { current -> if (current.sessions.none { it.id == sessionId }) current else current.copy(messages = mergeMessages(current.messages, incoming),
             activityBefore = if (before == null) current.activityBefore - sessionId else current.activityBefore + (sessionId to before)) }
+    }
+    /**
+     * MOB-004: a provider's or conversation's catalog, saying when an endpoint lists no models
+     * (models.listing) so the screen can ask for a typed ID instead of reporting a failure.
+     */
+    suspend fun modelCatalog(provider: String, sessionId: String? = null): ModelCatalog {
+        if (!_state.value.has("models.listing")) return ModelCatalog(models(provider, refresh = true, sessionId = sessionId))
+        if (!_state.value.supports("providers.models")) return ModelCatalog(emptyList())
+        val fence = fence()
+        val result = request("providers.models", buildJsonObject { put("provider", provider); sessionId?.let { put("sessionId", it) }; put("listing", true) })
+        val sessionStillAuthorized = sessionId == null || (sessionId in authorizedSessionIds && _state.value.sessions.any { it.id == sessionId })
+        if (!authorityFenceCurrent(fence) || !sessionStillAuthorized) throw StaleResultException()
+        val listing = WireCodec.json.decodeFromJsonElement(ModelListing.serializer(), result)
+        return ModelCatalog(listing.items, listing.unlisted)
     }
     suspend fun models(provider: String, refresh: Boolean = false, sessionId: String? = null): List<ModelOption> {
         val cached = _state.value.providers[provider]?.jsonObject?.get("models")?.jsonArray.orEmpty().mapNotNull { runCatching { WireCodec.json.decodeFromJsonElement(ModelOption.serializer(), it) }.getOrNull() }
@@ -1219,7 +1303,8 @@ class CereRepository(context: Context) {
             updateState { current ->
                 if (scopeChanged) authorizedSessionIds = emptySet()
                 current.copy(
-                    connection = ConnectionState.Online(desktop.desktopName, frame.value.operations, frame.value.expiresAt, frame.value.features),
+                    connection = ConnectionState.Online(desktop.desktopName, frame.value.operations, frame.value.expiresAt, frame.value.features, frame.value.build, frame.value.brokerBuild, frame.value.protocol),
+                    desktopBuild = ConnectionDiagnostics.seen(frame.value, System.currentTimeMillis()),
                     pendingCommands = current.pendingCommands.map { command -> if (command.scopeVersion != null && command.scopeVersion != frame.value.scopeVersion) command.copy(params = JsonObject(emptyMap())) else command },
                 )
             }
@@ -1379,7 +1464,7 @@ class CereRepository(context: Context) {
             _state.value = MobileState(restoreReady = true, desktop = cache.desktop, stagedPairing = cache.stagedPairing,
             connection = cache.desktop?.let { ConnectionState.Offline("Not connected", cache.lastVerifiedAt, OfflineKind.NotConnected) } ?: ConnectionState.Unpaired,
             sessions = cache.sessions, messages = cache.messages, approvals = cache.approvals, projects = cache.projects, providers = cache.providers,
-            permissions = cache.permissions, settings = cache.settings, cursor = cache.cursor, drafts = cache.drafts.associateBy(LocalDraft::sessionId), pendingCommands = cache.pendingCommands, selectedSessionId = cache.selectedSessionId, attachments = attachments, cacheEpoch = cache.cacheEpoch, scrollPositions = cache.scrollPositions, monitoring = shouldMonitor, erasures = cache.erasures,
+            permissions = cache.permissions, settings = cache.settings, cursor = cache.cursor, drafts = cache.drafts.associateBy(LocalDraft::sessionId), pendingCommands = cache.pendingCommands, selectedSessionId = cache.selectedSessionId, attachments = attachments, cacheEpoch = cache.cacheEpoch, scrollPositions = cache.scrollPositions, monitoring = shouldMonitor, erasures = cache.erasures, desktopBuild = cache.desktopBuild,
                 lastError = if (dangling.isNotEmpty()) "${dangling.size} image draft${if (dangling.size == 1) " was" else "s were"} lost when Cere stopped unexpectedly. Add ${if (dangling.size == 1) "it" else "them"} again." else null)
             if (dangling.isNotEmpty()) cacheDirty = true
             pairingTransition = cache.stagedPairing != null
@@ -1464,6 +1549,7 @@ class CereRepository(context: Context) {
         cacheEpoch = persisted.cacheEpoch,
         scrollPositions = persisted.scrollPositions,
         erasures = persisted.erasures,
+        desktopBuild = persisted.desktopBuild,
     ) }
     private suspend fun removePending(commandId: String) = updateState(immediate = true) { it.copy(pendingCommands = it.pendingCommands.filterNot { command -> command.commandId == commandId }) }
     private suspend fun markPending(commandId: String, status: String) = updateState(immediate = true) { current -> current.copy(pendingCommands = current.pendingCommands.map { if (it.commandId == commandId) it.copy(status = status) else it }) }
@@ -1510,6 +1596,9 @@ class CereRepository(context: Context) {
         const val REQUEST_TIMEOUT_MS = 30_000L
         const val PERSIST_DEBOUNCE_MS = 1_000L
         const val BACKGROUND_GRACE_MS = 30_000L
+        /** A pairing QR is valid for five minutes on the desktop; a minute more allows for clocks that differ. */
+        const val PAIRING_RETURN_WINDOW_MS = 6 * 60_000L
+        const val PAIRING_CHECK_MS = 10_000L
         const val TAG = "CereRepository"
     }
 }

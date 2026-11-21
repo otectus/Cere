@@ -197,33 +197,66 @@ private fun PairingScreen(
     var raw by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var scan by rememberSaveable { mutableStateOf(false) }
+    var showManual by rememberSaveable { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
+    var savePrompt by remember { mutableStateOf<CompletedPairing?>(null) }
     val result = state.stagedPairing
     var unstaged by remember { mutableStateOf<CompletedPairing?>(null) }
     var deviceName by rememberSaveable { mutableStateOf(Build.MODEL.take(48).ifBlank { "Android phone" }) }
-    var pendingCompletion by remember { mutableStateOf<CompletedPairing?>(null) }
+    val returning by repository.pairingReturn.collectAsStateWithLifecycle()
     BackHandler(enabled = scan) { scan = false }
     BackHandler(enabled = !scan && onCancel != null) { onCancel?.invoke() }
     LaunchedEffect(state.restoreReady, state.desktop?.deviceId, result?.desktop?.deviceId, unstaged?.desktop?.deviceId) {
-        withContext(Dispatchers.IO) { repository.pairingManager().pruneUncommitted(state.restoreReady, state.desktop, result?.desktop, unstaged?.desktop) }
+        // What to keep is read from the repository when pruning runs, not from this frame: a pairing
+        // that was just staged is there before this screen's collected state shows it, and clearing
+        // `unstaged` in between must not delete its brand-new keys.
+        val keep = unstaged?.desktop
+        withContext(Dispatchers.IO) { val now = repository.state.value; repository.pairingManager().pruneUncommitted(now.restoreReady, now.desktop, now.stagedPairing?.desktop, keep) }
     }
+    fun finishPairing(completed: CompletedPairing) { scope.launch { runCatching { repository.completePairing(completed); startMonitoring(activity); onCancel?.invoke() }.onFailure { error = it.message } } }
+    // Alerts and (Android 17) local-network access are asked for before the phone first contacts the
+    // PC, so approvals can reach a locked phone and the answer can travel. Declining alerts doesn't stop pairing.
+    var afterPermissions by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val next = afterPermissions; afterPermissions = null
+        if (granted) next?.invoke() else error = "Local network permission is required to connect to Cere Desktop."
+    }
+    fun withLocalNetwork(then: () -> Unit) {
+        if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(activity, "android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) { afterPermissions = then; localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") }
+        else then()
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> val next = afterPermissions; afterPermissions = null; next?.let(::withLocalNetwork) }
+    fun withPermissions(then: () -> Unit) {
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) { afterPermissions = then; notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+        else withLocalNetwork(then)
+    }
+    val networkReturn = result?.responseReturn == "network"
+    fun sendAnswer(completed: CompletedPairing) = withPermissions { repository.startPairingReturn(completed) }
     fun stagePairing(completed: CompletedPairing) { scope.launch {
         unstaged = completed
         runCatching { repository.stagePairing(completed) }
-            .onSuccess { unstaged = null }
+            .onSuccess { unstaged = null; if (completed.responseReturn == "network") sendAnswer(completed) }
             .onFailure { error = "Could not seal the pairing response. Unlock the phone and retry: ${it.message}" }
     } }
-    fun finishPairing(completed: CompletedPairing) { scope.launch { runCatching { repository.completePairing(completed); startMonitoring(activity); onCancel?.invoke() }.onFailure { error = it.message } } }
-    val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) pendingCompletion?.let(::finishPairing).also { pendingCompletion = null } else error = "Local network permission is required to connect to Cere Desktop." }
-    fun continueCompletion(completed: CompletedPairing) {
-        if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(activity, "android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) { pendingCompletion = completed; localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") }
-        else { pendingCompletion = null; finishPairing(completed) }
+    // After a restart with an answer staged, delivery resumes where the permissions already allow it.
+    LaunchedEffect(result?.desktop?.deviceId) {
+        val staged = result ?: return@LaunchedEffect
+        val allowed = Build.VERSION.SDK_INT < 37 || ContextCompat.checkSelfPermission(activity, "android.permission.ACCESS_LOCAL_NETWORK") == PackageManager.PERMISSION_GRANTED
+        if (staged.responseReturn == "network" && allowed) repository.startPairingReturn(staged)
     }
-    // Request alerts are asked for while pairing, so approvals can reach a locked phone. Declining doesn't stop pairing.
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { pendingCompletion?.let(::continueCompletion) }
-    fun confirmDesktop(completed: CompletedPairing) {
-        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) { pendingCompletion = completed; notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
-        else continueCompletion(completed)
-    }
+    // The desktop confirmed this answer: save the pairing and connect.
+    LaunchedEffect(returning, result?.desktop?.deviceId) { if (returning == PairingReturnState.Confirmed) result?.let(::finishPairing) }
+    // The manual route: the desktop is asked first, so a pairing it never confirmed is not kept.
+    fun desktopConfirmed(completed: CompletedPairing) { checking = true; error = null; scope.launch {
+        try {
+            when (val reply = repository.checkPairingConfirmed(completed)) {
+                PairingReply.Confirmed -> withPermissions { finishPairing(completed) }
+                PairingReply.Received -> error = "Your PC has this answer. Check that it shows these six words, then confirm there."
+                is PairingReply.Closed -> error = if (reply.reason == "refused") "Your PC hasn't confirmed this pairing yet. Paste the response there, compare the six words and confirm, then try again." else reply.message
+                null -> savePrompt = completed
+            }
+        } finally { checking = false }
+    } }
     val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
 
     fun prepare(value: String) {
@@ -266,14 +299,16 @@ private fun PairingScreen(
             Image(painterResource(R.drawable.cere_face_icon), "Cere", modifier = Modifier.size(76.dp))
             if (onCancel != null) TextButton(onClick = onCancel) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Back") }
             Text(if (replacing == null) "Connect to Cere" else "Update secure connection", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
-            Text(if (replacing == null) "Pair offline with the offer shown in Desktop Settings. Cere will not contact the desktop until you copy the signed response back and confirm the six words." else "Use the replacement offer from this same desktop. Your encrypted conversations, drafts, and local images stay on this phone; unresolved commands and active uploads must be settled first.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            replacing?.let { desktop -> Text("Expected desktop ${desktop.desktopName} · device ${desktop.deviceId.take(8)}", style = MaterialTheme.typography.bodySmall) }
-            repository.replacementBlocker()?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            OutlinedTextField(deviceName, { deviceName = it.take(48) }, label = { Text("This phone") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(raw, { raw = it }, label = { Text("Pairing offer") }, placeholder = { Text("Paste cere-pair://v1/…") }, minLines = 4, maxLines = 6, modifier = Modifier.fillMaxWidth())
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { prepare(raw) }, enabled = raw.isNotBlank() && result == null && (replacing == null || repository.replacementBlocker() == null)) { Icon(Icons.Default.Check, null); Spacer(Modifier.width(8.dp)); Text("Verify offer") }
-                OutlinedButton(onClick = { scan = true }) { Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text("Scan") }
+            if (result == null) {
+                Text(if (replacing == null) "On your PC, open Cere Settings → Cere Mobile and choose Show pairing QR. Then scan it here, and compare the six words both screens show."
+                    else "On your PC, choose Replace pairing for this phone and scan its QR. Your encrypted conversations, drafts, and local images stay on this phone; unresolved commands and active uploads must be settled first.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                replacing?.let { desktop -> Text("Expected desktop ${desktop.desktopName} · device ${desktop.deviceId.take(8)}", style = MaterialTheme.typography.bodySmall) }
+                repository.replacementBlocker()?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                OutlinedTextField(deviceName, { deviceName = it.take(48) }, label = { Text("This phone") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Button(onClick = { scan = true }, enabled = replacing == null || repository.replacementBlocker() == null, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text("Scan pairing QR") }
+                Text("Or paste the offer text from the PC:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(raw, { raw = it }, label = { Text("Pairing offer") }, placeholder = { Text("Paste cere-pair://v1/…") }, minLines = 3, maxLines = 6, modifier = Modifier.fillMaxWidth())
+                OutlinedButton(onClick = { prepare(raw) }, enabled = raw.isNotBlank() && (replacing == null || repository.replacementBlocker() == null)) { Icon(Icons.Default.Check, null); Spacer(Modifier.width(8.dp)); Text("Verify offer") }
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             unstaged?.let { completed ->
@@ -281,25 +316,50 @@ private fun PairingScreen(
                 TextButton(onClick = { repository.pairingManager().delete(completed.desktop); unstaged = null; error = null }) { Text("Cancel unstaged pairing") }
             }
             result?.let { completed ->
-                HorizontalDivider()
                 Text("Compare on both screens", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
                 Text(completed.sas, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.secondary)
-                Text("Get this public signed response to the PC: copy or share it, then paste it, or save it to a file and choose Load response file…, in Desktop Settings → Cere Mobile. Confirm only if the six words match. ${if (completed.desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) "This trusted-phone pairing signs reviewed actions without a fingerprint or PIN." else "This pairing requires phone authentication for sensitive actions."}")
-                PairingQrCode(completed.responseUri, Modifier.align(Alignment.CenterHorizontally))
-                SelectionContainer { Text(completed.responseUri, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere pairing response", completed.responseUri)) }) { Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(8.dp)); Text("Copy response") }
-                    OutlinedButton(onClick = {
-                        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, completed.responseUri).putExtra(Intent.EXTRA_SUBJECT, "Cere pairing response")
-                        runCatching { activity.startActivity(Intent.createChooser(send, "Send the pairing response to your PC")) }.onFailure { error = "No app can share text on this phone. Copy the response instead." }
-                    }) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(8.dp)); Text("Share response") }
+                Text(if (completed.desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) "This trusted-phone pairing signs reviewed actions without a fingerprint or PIN." else "This pairing requires phone authentication for sensitive actions.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // Network return: the answer goes to the PC by itself and the phone finishes when the PC confirms.
+                val ended = returning as? PairingReturnState.Ended
+                if (networkReturn) {
+                    val (line, problem) = when (val now = returning) {
+                        PairingReturnState.Idle, PairingReturnState.Sending -> "Sending your answer to the PC…" to false
+                        PairingReturnState.Waiting -> "Your PC has the answer. Check that it shows these same six words, then confirm there. This phone finishes by itself." to false
+                        is PairingReturnState.Retrying -> "Can't reach the PC yet (${now.reason}). Retrying while the QR is valid…" to true
+                        PairingReturnState.Confirmed -> "Confirmed. Connecting…" to false
+                        is PairingReturnState.Ended -> now.message to true
+                        is PairingReturnState.Unreachable -> "${now.reason} Send the answer another way below." to true
+                    }
+                    if (returning == PairingReturnState.Sending || returning == PairingReturnState.Waiting) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text(line, color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    if (returning == PairingReturnState.Idle) OutlinedButton({ sendAnswer(completed) }) { Text("Send the answer to the PC") }
                 }
-                Text("Next, Cere asks to show notifications so desktop requests can reach you.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = { confirmDesktop(completed) }, modifier = Modifier.fillMaxWidth()) { Text("Desktop confirmed") }
-                TextButton(onClick = { scope.launch { runCatching { repository.cancelStagedPairing() }.onFailure { error = it.message } }; pendingCompletion = null }) { Text("Cancel pairing") }
+                val manual = !networkReturn || showManual || returning is PairingReturnState.Unreachable
+                if (networkReturn && !manual && ended == null) TextButton({ showManual = true }) { Text("Send the answer another way") }
+                if (manual && ended == null) {
+                    HorizontalDivider()
+                    Text("Get this public signed answer to the PC: copy or share it, then paste it, or save it to a file and choose Load response file…, in Cere Settings → Cere Mobile. Confirm there only if the six words match.")
+                    PairingQrCode(completed.responseUri, Modifier.align(Alignment.CenterHorizontally))
+                    SelectionContainer { Text(completed.responseUri, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere pairing response", completed.responseUri)) }) { Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(8.dp)); Text("Copy response") }
+                        OutlinedButton(onClick = {
+                            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, completed.responseUri).putExtra(Intent.EXTRA_SUBJECT, "Cere pairing response")
+                            runCatching { activity.startActivity(Intent.createChooser(send, "Send the pairing response to your PC")) }.onFailure { error = "No app can share text on this phone. Copy the response instead." }
+                        }) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(8.dp)); Text("Share response") }
+                    }
+                    // Checked with the PC before the pairing is saved.
+                    Button(onClick = { desktopConfirmed(completed) }, enabled = !checking, modifier = Modifier.fillMaxWidth()) { Text(if (checking) "Checking with the PC…" else "I confirmed on the PC") }
+                }
+                TextButton(onClick = { scope.launch { runCatching { repository.cancelStagedPairing() }.onFailure { error = it.message } }; showManual = false }) { Text(if (ended != null) "Start over" else "Cancel pairing") }
             }
         }
     }
+    savePrompt?.let { completed -> AlertDialog(onDismissRequest = { savePrompt = null }, title = { Text("Save this pairing?") },
+        text = { Text("Cere couldn't ask your PC whether it confirmed this pairing. Save it only if the PC showed these same six words and you confirmed there; otherwise this phone keeps a pairing the PC doesn't have.") },
+        confirmButton = { Button({ savePrompt = null; withPermissions { finishPairing(completed) } }) { Text("Save pairing") } },
+        dismissButton = { TextButton({ savePrompt = null }) { Text("Not yet") } }) }
 }
 
 private fun connectionLabel(connection: ConnectionState) = when (connection) {
@@ -498,6 +558,7 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
     var provider by rememberSaveable { mutableStateOf(supportedProviders.keys.firstOrNull().orEmpty()) }
     var project by rememberSaveable { mutableStateOf(state.projects.firstOrNull()?.id.orEmpty()) }
     var models by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
+    var unlisted by remember { mutableStateOf(false) }
     var model by rememberSaveable { mutableStateOf("") }
     var effort by rememberSaveable { mutableStateOf("") }
     var tools by rememberSaveable { mutableStateOf(false) }
@@ -508,22 +569,30 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
     LaunchedEffect(supportedProviders.keys) { if (provider !in supportedProviders) provider = supportedProviders.keys.firstOrNull().orEmpty() }
     LaunchedEffect(state.projects) { if (state.projects.none { it.id == project }) project = state.projects.firstOrNull()?.id.orEmpty() }
     LaunchedEffect(provider, refresh) {
-        model = ""; effort = ""; tools = false; models = emptyList(); error = null
+        // A refresh keeps a model the person typed; switching provider starts over.
+        val typedBefore = model.takeIf { refresh > 0 && state.traits(provider).customModel }
+        model = typedBefore.orEmpty(); effort = ""; tools = false; models = emptyList(); unlisted = false; error = null
         if (provider.isNotBlank()) {
             loading = true
             try {
-                models = repository.models(provider, refresh = true)
+                val catalog = repository.modelCatalog(provider); models = catalog.models; unlisted = catalog.unlisted
                 val defaultModel = if (provider == "ollama") state.settings["defaultModel"]?.jsonPrimitive?.contentOrNull else null
-                val preferred = models.firstOrNull { it.id == defaultModel } ?: models.firstOrNull { it.isDefault } ?: models.firstOrNull()
-                model = preferred?.id.orEmpty(); effort = preferred?.defaultEffort.orEmpty()
+                val preferred = models.firstOrNull { it.id == typedBefore } ?: models.firstOrNull { it.id == defaultModel } ?: models.firstOrNull { it.isDefault } ?: models.firstOrNull()
+                if (typedBefore.isNullOrBlank()) { model = preferred?.id.orEmpty(); effort = preferred?.defaultEffort.orEmpty() }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { error = failure.message }
             finally { loading = false }
         }
     }
-    val selectedModel = models.firstOrNull { it.id == model }
+    val providerTraits = state.traits(provider)
+    val selectedModel = models.firstOrNull { it.id == model.trim() }
     val selectedProject = state.projects.firstOrNull { it.id == project }
-    fun chooseModel(option: ModelOption) { model = option.id; effort = option.defaultEffort; if ("tools" !in option.capabilities && state.traits(provider).kind != "api") tools = false }
+    // MOB-004: a typed model ID where the provider takes one; Ollama still needs a model it lists.
+    val typed = providerTraits.customModel
+    val modelError = if (typed && selectedModel == null) ModelIds.error(model) else null
+    // MOB-003: the same tools rule as Conversation settings.
+    val tooling = ToolPolicy.availability(providerTraits, selectedModel)
+    fun chooseModel(option: ModelOption) { model = option.id; effort = option.defaultEffort; if (!ToolPolicy.availability(providerTraits, option).available) tools = false }
     AlertDialog(onDismissRequest = { if (!submitting) close() }, title = { Text("New conversation") }, text = {
         Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(title, { title = it.take(100) }, label = { Text("Title (optional)") }, enabled = !submitting)
@@ -551,35 +620,39 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
                 TextButton({ refresh++ }, enabled = provider.isNotBlank() && !loading && !submitting && state.supports("providers.models")) { Text("Refresh models") }
             }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            else if (models.isEmpty() && provider.isNotBlank()) Text("No models loaded. Check the provider on your PC, then refresh.", style = MaterialTheme.typography.bodySmall)
+            // An endpoint without a model list is not a failure; neither is a failed refresh where an ID can be typed.
+            else if (unlisted) Text("This endpoint doesn't list its models. Enter the model ID below.", style = MaterialTheme.typography.bodySmall)
+            else if (error != null && typed) Text("The model list could not be loaded. You can still enter a model ID below.", style = MaterialTheme.typography.bodySmall)
+            else if (models.isEmpty() && provider.isNotBlank()) Text(if (typed) "No models listed. Enter the model ID below." else "No models loaded. Check the provider on your PC, then refresh.", style = MaterialTheme.typography.bodySmall)
             models.forEach { option -> Row(Modifier.fillMaxWidth().clickable(enabled = !submitting) { chooseModel(option) }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(model == option.id, { chooseModel(option) }, enabled = !submitting)
+                RadioButton(model.trim() == option.id, { chooseModel(option) }, enabled = !submitting)
                 Column { Text(option.displayName); if (option.description.isNotBlank()) Text(option.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } }
+            if (typed && provider.isNotBlank()) OutlinedTextField(model, { value -> model = value.take(ModelIds.MAX_LENGTH + 64); effort = ""; if (!ToolPolicy.availability(providerTraits, models.firstOrNull { it.id == value.trim() }).available) tools = false },
+                label = { Text("Model ID") }, singleLine = true, enabled = !submitting, isError = modelError != null && model.isNotEmpty(),
+                supportingText = { Text(modelError?.takeIf { model.isNotEmpty() } ?: "Choose one above, or type the ID as the provider names it.") }, modifier = Modifier.fillMaxWidth())
             selectedModel?.efforts?.takeIf { it.isNotEmpty() }?.let { efforts ->
                 Text("Effort", fontWeight = FontWeight.Medium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { efforts.forEach { option -> FilterChip(effort == option.id, { effort = option.id }, { Text(option.displayName) }, enabled = !submitting) } }
             }
-            // Cere's desktop tools, for providers whose conversation Cere runs; a local model must advertise tools.
-            val providerTraits = state.traits(provider)
-            val toolCapable = providerTraits.kind == "api" || selectedModel?.capabilities?.contains("tools") == true
-            if (providerTraits.cereTools) ListItem(headlineContent = { Text("Desktop tools") }, supportingContent = {
-                Text(if (toolCapable) "Use ordinary desktop permission checks" else "Conversation only · this model does not advertise tools")
-            }, trailingContent = { Switch(tools, { tools = it }, enabled = !submitting && toolCapable) })
+            // Cere's desktop tools, for providers whose conversation Cere runs: per model for Ollama, per route for APIs.
+            if (tooling.applies) ListItem(headlineContent = { Text("Desktop tools") }, supportingContent = {
+                Text(if (tooling.available) "Use ordinary desktop permission checks" else "Conversation only · ${tooling.reason}")
+            }, trailingContent = { Switch(tools, { tools = it }, enabled = !submitting && tooling.available) })
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }, confirmButton = { Button(onClick = {
         submitting = true; error = null
         scope.launch {
             try {
-                val params = buildJsonObject { put("provider", provider); put("projectId", project); if (title.isNotBlank()) put("title", title); put("model", model); if (effort.isNotBlank()) put("effort", effort); put("tools", tools) }
+                val params = buildJsonObject { put("provider", provider); put("projectId", project); if (title.isNotBlank()) put("title", title); put("model", model.trim()); if (effort.isNotBlank()) put("effort", effort); put("tools", tools && tooling.available) }
                 val action = repository.prepareAction("sessions.create", params, label = title.ifBlank { null })
                 authenticate(activity, "Create ${state.traits(provider).label} conversation", action, repository, { result ->
                     scope.launch { try { created(repository.openCreatedSession(result)) } catch (failure: Exception) { error = failure.message; submitting = false } }
                 }, { error = it; submitting = false })
             } catch (failure: Exception) { error = failure.message; submitting = false }
         }
-    }, enabled = selectedModel != null && selectedProject != null && !loading && !submitting && state.supports("sessions.create")) {
+    }, enabled = (selectedModel != null || typed && modelError == null) && selectedProject != null && !loading && !submitting && state.supports("sessions.create")) {
         Text(if (submitting) "Creating…" else "Create conversation")
     } }, dismissButton = { TextButton(close, enabled = !submitting) { Text("Cancel") } })
 }
@@ -666,11 +739,17 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
     }
     // Removing always works on the phone; the desktop is asked to discard its copy when it still has one.
     fun remove(local: LocalAttachment) { scope.launch { runCatching { repository.discardAttachment(local.id) }.onFailure { error = it.message } } }
+    // MOB-005: Files, Images and Analysis pause under phone control. The person confirms exactly
+    // which before this phone takes the conversation over; the desktop refuses anything else.
+    var takeoverOpen by rememberSaveable(session.id) { mutableStateOf(false) }
+    var acknowledged by remember(session.id, session.workbenchFamilies) { mutableStateOf<List<String>?>(null) }
+    val takeoverNeeded = session.workbenchTakeover == "acknowledge" && state.has("workbench.takeover")
     fun send() {
-        val sentText = draft; val sentAttachments = attachments.map { it.id }.toSet(); val searchThisTurn = webSearch
+        if (takeoverNeeded && acknowledged == null) { takeoverOpen = true; return }
+        val sentText = draft; val sentAttachments = attachments.map { it.id }.toSet(); val searchThisTurn = webSearch; val families = acknowledged
         sending = true; error = null
         scope.launch {
-            val action = try { repository.prepareSend(session.id, sentText, webSearch = searchThisTurn) } catch (cancelled: CancellationException) { sending = false; throw cancelled } catch (failure: Exception) {
+            val action = try { repository.prepareSend(session.id, sentText, webSearch = searchThisTurn, workbenchAcknowledged = families) } catch (cancelled: CancellationException) { sending = false; throw cancelled } catch (failure: Exception) {
                 sending = false; error = failure.message
                 if ((failure as? RemoteRequestException)?.code == "REVISION_CONFLICT") repository.selectSession(session.id)
                 return@launch
@@ -773,6 +852,7 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                 if (waitingApprovals.isNotEmpty()) {
                     TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text("${waitingApprovals.first().title}${if (waitingApprovals.size > 1) " (+${waitingApprovals.size - 1})" else ""} · Review", maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
+                session.workbenchNote?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
                 (error ?: state.lastError)?.let { Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                     IconButton({ error = null; scope.launch { repository.dismissError() } }) { Icon(Icons.Default.Close, "Dismiss error") }
@@ -839,6 +919,10 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
     }
     if (showConversationSettings) ConversationSettingsSheet(repository, state, session, activity) { showConversationSettings = false }
     if (pinnedOpen) PinnedReplies(repository, state, session.id) { pinnedOpen = false }
+    if (takeoverOpen) AlertDialog(onDismissRequest = { takeoverOpen = false }, title = { Text("Continue on this phone?") },
+        text = { Text((session.workbenchNote ?: "This conversation uses desktop Workbench tools that pause under phone control.") + "\n\nSending from the phone continues it without them. To keep them, continue on the desktop instead.") },
+        confirmButton = { Button({ takeoverOpen = false; acknowledged = session.workbenchFamilies; send() }) { Text("Continue without them") } },
+        dismissButton = { TextButton({ takeoverOpen = false }) { Text("Keep it on the desktop") } })
     if (activityOpen) ActivityPanel(activityItems, activityLoading, activityError, { activityRefresh++ }, { activityOpen = false },
         agents = session.agents, canOpenAgent = { agent -> state.sessions.any { it.id == agent.id } },
         onOpenAgent = { agent -> activityOpen = false; selectSession(agent.id) },
@@ -963,7 +1047,25 @@ private fun DesktopAttachmentDialog(repository: CereRepository, state: MobileSta
     } }
 }
 
+/**
+ * MOB-005: a Workbench result (proposed changes, files or images, an image or analysis run) is
+ * reviewed on the desktop. The phone shows what it is and where to see it, never a partial preview.
+ */
+@Composable internal fun DesktopResultCard(message: Message) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.padding(start = 10.dp)) {
+                Text(message.desktopOnly?.label ?: "A desktop result", fontWeight = FontWeight.SemiBold)
+                Text("View this result on the desktop. Its files, images and review stay there.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
 @Composable private fun MessageBubble(repository: CereRepository, state: MobileState, message: Message) {
+    if (message.isDesktopOnlyResult()) { DesktopResultCard(message); return }
     val scope = rememberCoroutineScope(); var content by remember(message.id, message.revision) { mutableStateOf(message.text) }; var loading by remember(message.id, message.revision) { mutableStateOf(false) }; var error by remember(message.id, message.revision) { mutableStateOf<String?>(null) }
     val clipboard = LocalContext.current.getSystemService(android.content.ClipboardManager::class.java)
     val uriHandler = LocalUriHandler.current
@@ -989,6 +1091,40 @@ private fun DesktopAttachmentDialog(repository: CereRepository, state: MobileSta
         if (preview) { Spacer(Modifier.height(8.dp)); Text("Message preview · ${message.contentChars ?: "many"} characters", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary); OutlinedButton({ scope.launch { loading = true; error = null; runCatching { repository.fullMessage(message) }.onSuccess { content = it }.onFailure { error = it.message }; loading = false } }, enabled = !loading && state.supports("sessions.messagePart")) { Text(if (loading) "Loading…" else "Load full message") } }
         error?.let { Text("$it. Open the full message on the desktop.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     } } }
+}
+
+/**
+ * MOB-008: which desktop build this phone is (or was last) signed in to, the protocol they agreed,
+ * this app's own build, and when it last synchronized. The summary can be copied for support; it
+ * names no keys, tokens, offers, addresses, IDs or conversation content.
+ */
+@Composable
+private fun ConnectionDetails(repository: CereRepository, state: MobileState) {
+    val context = LocalContext.current
+    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+    var copied by remember { mutableStateOf(false) }
+    val app = remember(context) {
+        @Suppress("DEPRECATION") val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        AppIdentity(info.versionName ?: "unknown", info.longVersionCode, context.packageName, Build.VERSION.RELEASE ?: "unknown", Build.VERSION.SDK_INT)
+    }
+    val online = state.connection as? ConnectionState.Online
+    val time = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+    OutlinedPanel("Connection details") {
+        Text("Cere Mobile ${app.versionName} (${app.versionCode}) · ${app.channel} channel", style = MaterialTheme.typography.bodySmall)
+        val build = state.desktopBuild
+        Text(when {
+            build == null -> "Desktop build: unknown"
+            online != null -> "Desktop build: ${ConnectionDiagnostics.buildText(build)}"
+            else -> "Desktop build last seen: ${ConnectionDiagnostics.buildText(build)} · ${time.format(java.util.Date(build.seenAt))}"
+        }, style = MaterialTheme.typography.bodySmall)
+        Text("Protocol ${ConnectionDiagnostics.protocolText(build)}" + (online?.let { " · ${it.features.size} features · ${it.operations.size} operations" } ?: ""), style = MaterialTheme.typography.bodySmall)
+        val usable = state.providers.count { (_, value) -> (value as? JsonObject)?.get("remoteExecution")?.jsonPrimitive?.booleanOrNull == true }
+        Text("Providers usable from this phone: $usable of ${state.providers.size}", style = MaterialTheme.typography.bodySmall)
+        Text("Last synchronized: ${repository.lastSynchronizedAt()?.let { time.format(java.util.Date(it)) } ?: "never"}", style = MaterialTheme.typography.bodySmall)
+        TextButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere connection details", ConnectionDiagnostics.summary(app, state, repository.lastSynchronizedAt()))); copied = true }) {
+            Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(8.dp)); Text(if (copied) "Copied" else "Copy diagnostic summary")
+        }
+    }
 }
 
 /** F77: the desktop's memory health in plain words; details stay in desktop Health. */
@@ -1332,6 +1468,7 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
                 else -> Text("Connecting to your paired desktop…")
             }
         } }
+        item { ConnectionDetails(repository, state) }
         // Actions whose outcome the desktop never confirmed. Nothing here is sent again.
         if (state.pendingCommands.isNotEmpty()) item { OutlinedPanel("Unconfirmed desktop actions") {
             Text("Cere couldn't confirm these with the desktop. Check each one on the PC; nothing is sent again automatically.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

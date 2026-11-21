@@ -15,6 +15,24 @@ export function addresses(values: unknown): string[] {
   if(values.some(a=>!local.includes(a)))throw remoteError('DESKTOP_UNAVAILABLE','A selected address is not on a current desktop interface.');
   return [...new Set(values)];
 }
+/**
+ * Addresses a phone could reach this desktop on, for choosing at pairing: Tailscale and WireGuard
+ * first, then the local network. Loopback and link-local addresses are left out (they change or
+ * are unreachable from a phone); an address can still be typed.
+ */
+export function addressCandidates() {
+  const kind=(name:string,address:string,family:string)=>{
+    if(/^tailscale/i.test(name)||family==='IPv4'&&/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(address))return 'tailscale';
+    if(/^(wg|wireguard)/i.test(name))return 'wireguard';
+    // Container and VM bridges use private ranges too, but a phone never reaches them.
+    if(/^(docker|br-|veth|virbr|vmnet|vboxnet|lxc|lxd|podman|cni|flannel|incus)/i.test(name))return 'virtual';
+    if(family==='IPv4'?/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address):/^f[cd]/i.test(address))return 'lan';
+    return 'other';
+  };
+  const order=['tailscale','wireguard','lan','other','virtual'];
+  return Object.entries(networkInterfaces()).flatMap(([name,infos])=>(infos||[]).filter(info=>!info.internal&&!/^(169\.254\.|fe80:)/i.test(info.address)).map(info=>({address:info.address,interface:name,kind:kind(name,info.address,String(info.family))})))
+    .sort((a,b)=>order.indexOf(a.kind)-order.indexOf(b.kind)).slice(0,16);
+}
 export const endpoints = (config:RemoteConfig) => config.addresses.map(a=>`wss://${isIP(a)===6?'['+a+']':a}:${config.port}/mobile/v1`);
 export class Identity {
   directory:string; registry:RemoteStore;

@@ -21,6 +21,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.otectus.cere.mobile.data.CereRepository
 import dev.otectus.cere.mobile.data.MobileState
+import dev.otectus.cere.mobile.data.traits
 import dev.otectus.cere.mobile.protocol.ModelOption
 import dev.otectus.cere.mobile.protocol.Project
 import dev.otectus.cere.mobile.protocol.Session
@@ -60,11 +61,18 @@ fun SessionTransferSheet(repository: CereRepository, state: MobileState, activit
             else repository.read("sessions.history", buildJsonObject { put("projectId", projectId); if (historyProvider != "codex") put("provider", historyProvider) }).jsonObject.let { value -> history = value["items"]?.jsonArray.orEmpty().map { row -> row.jsonObject }; if (history.none { it["id"]?.jsonPrimitive?.contentOrNull == historyId }) historyId = "" }
         }.onFailure { error = it.message }; busy = false
     }
+    var unlisted by remember { mutableStateOf(false) }
     LaunchedEffect(provider) {
-        if (source != null && provider.isNotEmpty()) runCatching { repository.read("providers.models", buildJsonObject { put("provider", provider) }) }
-            .onSuccess { models = WireCodec.json.decodeFromJsonElement<List<ModelOption>>(it); if (models.none { option -> option.id == model }) model = if (provider == "ollama") models.firstOrNull { option -> option.isDefault }?.id ?: models.firstOrNull()?.id.orEmpty() else "" }
-            .onFailure { error = it.message }
+        if (source != null && provider.isNotEmpty()) try {
+            val catalog = repository.modelCatalog(provider); models = catalog.models; unlisted = catalog.unlisted
+            // A provider that needs a model gets one chosen for it; a typed ID is kept.
+            if (models.none { option -> option.id == model.trim() } && !(state.traits(provider).customModel && model.isNotBlank()))
+                model = if (state.traits(provider).modelRequired) models.firstOrNull { option -> option.isDefault }?.id ?: models.firstOrNull()?.id.orEmpty() else ""
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (failure: Exception) { error = failure.message }
     }
+    // MOB-004: the destination's model follows the provider's rules: required, listed, or typed.
+    val destination = state.traits(provider)
+    val modelReady = !destination.modelRequired || models.any { it.id == model.trim() } || destination.customModel && dev.otectus.cere.mobile.data.ModelIds.error(model) == null
     AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text(if (source == null) "Desktop history" else "Hand off conversation") },
         text = { Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(if (source == null) "Import a stopped conversation from an approved project. Its historical transcript remains with the provider; a Claude Code conversation continues in Claude's restricted mode." else "Review the last eight conversation messages. This creates a draft; Send is a separate action.")
@@ -73,10 +81,13 @@ fun SessionTransferSheet(repository: CereRepository, state: MobileState, activit
             Text("Destination project"); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { state.projects.forEach { project -> FilterChip(projectId == project.id, { projectId = project.id }, { Column { Text(project.name); Text(project.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall) } }) } }
             state.projects.firstOrNull { it.id == projectId }?.let { project -> SelectionContainer { Text(project.path ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) } }
             if (source != null) {
-                Text("Provider"); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { providers.forEach { value -> FilterChip(provider == value, { provider = value }, { Text(value) }) } }
+                Text("Provider"); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { providers.forEach { value -> FilterChip(provider == value, { provider = value }, { Text(state.traits(value).label) }) } }
                 if (provider == "ollama") Text("Ollama destination · ${state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (provider != "ollama") FilterChip(model.isBlank(), { model = "" }, { Text("Provider default model") })
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { models.forEach { option -> FilterChip(model == option.id, { model = option.id }, { Text(option.displayName + if (option.cloud) " · Cloud" else "") }) } }
+                if (!destination.modelRequired) FilterChip(model.isBlank(), { model = "" }, { Text("Provider default model") })
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { models.forEach { option -> FilterChip(model.trim() == option.id, { model = option.id }, { Text(option.displayName + if (option.cloud) " · Cloud" else "") }) } }
+                if (unlisted) Text("This endpoint doesn't list its models. Enter the model ID.", style = MaterialTheme.typography.bodySmall)
+                if (destination.customModel) OutlinedTextField(model, { model = it.take(dev.otectus.cere.mobile.data.ModelIds.MAX_LENGTH + 64) }, label = { Text("Model ID") }, singleLine = true,
+                    isError = model.isNotEmpty() && models.none { it.id == model.trim() } && dev.otectus.cere.mobile.data.ModelIds.error(model) != null, modifier = Modifier.fillMaxWidth())
                 if (preview?.get("shortened")?.jsonPrimitive?.booleanOrNull == true) Text("Some source text is shortened. Check and edit the draft before continuing.", color = MaterialTheme.colorScheme.tertiary)
                 OutlinedTextField(draft, { draft = it.take(100000) }, label = { Text("Handoff draft") }, minLines = 5, maxLines = 12, modifier = Modifier.fillMaxWidth())
             } else {
@@ -89,9 +100,9 @@ fun SessionTransferSheet(repository: CereRepository, state: MobileState, activit
         confirmButton = { Button(onClick = {
             busy = true; error = null
             val method = if (source == null) "sessions.import" else "sessions.handoffCreate"
-            val params = buildJsonObject { if (source == null) { put("historyId", historyId); put("externalWriterStopped", true) } else { put("sourceSessionId", source.id); put("sourceDigest", preview!!.getValue("sourceDigest")); put("draft", draft); put("projectId", projectId); put("provider", provider); put("model", model); put("tools", false) } }
+            val params = buildJsonObject { if (source == null) { put("historyId", historyId); put("externalWriterStopped", true) } else { put("sourceSessionId", source.id); put("sourceDigest", preview!!.getValue("sourceDigest")); put("draft", draft); put("projectId", projectId); put("provider", provider); put("model", model.trim()); put("tools", false) } }
             signedReview(activity, repository, method, params, if (source == null) "Import this desktop thread" else "Create this handoff draft", { value -> busy = false; onCreated(value.jsonObject.getValue("id").jsonPrimitive.content) }, { error = it; busy = false }, projectId)
-        }, enabled = !busy && projectId.isNotBlank() && if (source == null) stopped && historyId.isNotBlank() else preview != null && draft.isNotBlank() && provider.isNotBlank() && (provider != "ollama" || model.isNotBlank())) { Text(if (source == null) "Review & import" else "Create draft") } },
+        }, enabled = !busy && projectId.isNotBlank() && if (source == null) stopped && historyId.isNotBlank() else preview != null && draft.isNotBlank() && provider.isNotBlank() && modelReady) { Text(if (source == null) "Review & import" else "Create draft") } },
         dismissButton = { TextButton({ onDismiss() }, enabled = !busy) { Text("Cancel") } })
 }
 
@@ -187,7 +198,7 @@ internal const val MEMORY_FACT_LIMIT = 2000
 @Composable
 fun MobileMaintenanceSection() {
     val context = LocalContext.current; val scope = rememberCoroutineScope(); val power = context.getSystemService(PowerManager::class.java)
-    val development = remember { ReleaseChannel.of(context).development }
+    val development = remember { dev.otectus.cere.mobile.data.ReleaseChannel.forPackage(context.packageName).development }
     var unrestricted by remember { mutableStateOf(power.isIgnoringBatteryOptimizations(context.packageName)) }
     var busy by remember { mutableStateOf(false) }; var status by remember { mutableStateOf<String?>(null) }; var release by remember { mutableStateOf<String?>(null) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -217,64 +228,28 @@ fun MobileMaintenanceSection() {
 }
 
 /**
- * Stable builds follow published `mobile-vX.Y.Z` releases. Development builds (the
- * `.debug` package) follow `mobile-dev-vX.Y.Z` snapshots, whose metadata must name this
- * exact package; a stable release never offers itself to a development install.
+ * The update check itself is [dev.otectus.cere.mobile.data.ReleaseCheck]: this supplies its HTTP
+ * requests (bounded bodies and timeouts, no token) and keeps its ETag cache in preferences.
  */
-private class ReleaseChannel private constructor(val development: Boolean, val packageId: String) {
-    val tag = Regex(if (development) "^mobile-dev-v(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$" else "^mobile-v(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$")
-    val metadata = if (development) "mobile-development.json" else "mobile-release.json"
-    fun apkNames(version: String) = if (development) setOf("cere-mobile-v$version-dev.apk", "cere-mobile-v$version-debug.apk") else setOf("cere-mobile-v$version.apk")
-    companion object { fun of(context: android.content.Context) = ReleaseChannel(context.packageName.endsWith(".debug"), context.packageName) }
-}
-
 private suspend fun checkMobileRelease(context: android.content.Context): String? = withContext(Dispatchers.IO) {
     val preferences = context.getSharedPreferences("public-release-cache", android.content.Context.MODE_PRIVATE)
     preferences.edit().putLong("lastCheck", System.currentTimeMillis()).apply()
-    val channel = ReleaseChannel.of(context)
     val client = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build()
     val ownCode = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
-    val candidates = mutableListOf<Triple<Long, String, String>>()
-    for (page in 1..10) {
-        val builder = Request.Builder().url("https://api.github.com/repos/otectus/Cere/releases?per_page=50&page=$page").header("Accept", "application/vnd.github+json")
-        preferences.getString("etag-$page", null)?.let { builder.header("If-None-Match", it) }
-        val body = client.newCall(builder.build()).execute().use { response ->
-            if (response.code == 304) preferences.getString("body-$page", null) ?: error("Missing update cache")
-            else { check(response.isSuccessful); val bytes = response.body?.byteStream()?.use { it.readBounded(2 * 1024 * 1024) } ?: error("Missing update response"); bytes.toString(Charsets.UTF_8).also { value -> preferences.edit().putString("body-$page", value).putString("etag-$page", response.header("ETag")).apply() } }
-        }
-        val releases = WireCodec.json.parseToJsonElement(body).jsonArray
-        for (entry in releases) {
-            val value = entry.jsonObject
-            if (value["draft"]?.jsonPrimitive?.booleanOrNull != false) continue
-            // Stable builds ignore prereleases; development snapshots are published as prereleases.
-            if (!channel.development && value["prerelease"]?.jsonPrimitive?.booleanOrNull != false) continue
-            val tag = value["tag_name"]?.jsonPrimitive?.contentOrNull ?: continue
-            val match = channel.tag.matchEntire(tag) ?: continue
-            val (major, minor, patch) = match.destructured; val code = major.toLong() * 1000000 + minor.toLong() * 1000 + patch.toLong()
-            val assets = value["assets"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull }.toSet()
-            if (assets.none { it in channel.apkNames("$major.$minor.$patch") } || channel.metadata !in assets) continue
-            val url = value["html_url"]?.jsonPrimitive?.contentOrNull ?: continue; val parsed = URI(url)
-            if (parsed.scheme != "https" || parsed.host != "github.com" || parsed.path != "/otectus/Cere/releases/tag/$tag") continue
-            if (code > ownCode) candidates.add(Triple(code, tag, url))
-        }
-        if (releases.size < 50) break
+    val cache = object : dev.otectus.cere.mobile.data.ReleaseCache {
+        override fun body(page: Int) = preferences.getString("body-$page", null)
+        override fun etag(page: Int) = preferences.getString("etag-$page", null)
+        override fun store(page: Int, body: String, etag: String?) { preferences.edit().putString("body-$page", body).putString("etag-$page", etag).apply() }
     }
-    // Release metadata is read from this repository only. This check never downloads or installs an APK.
-    for ((code, tag, url) in candidates.sortedByDescending { it.first }.take(10)) {
-        val metadata = client.newCall(Request.Builder().url("https://github.com/otectus/Cere/releases/download/$tag/${channel.metadata}").build()).execute().use { response ->
-            check(response.isSuccessful)
-            WireCodec.json.parseToJsonElement(response.body!!.byteStream().use { it.readBounded(8192) }.toString(Charsets.UTF_8)).jsonObject
+    dev.otectus.cere.mobile.data.ReleaseCheck(dev.otectus.cere.mobile.data.ReleaseChannel.forPackage(context.packageName), ownCode, android.os.Build.VERSION.SDK_INT, { url, etag ->
+        val builder = Request.Builder().url(url).header("Accept", if (url.startsWith("https://api.github.com/")) "application/vnd.github+json" else "application/json")
+        etag?.let { builder.header("If-None-Match", it) }
+        client.newCall(builder.build()).execute().use { response ->
+            // Release pages are bounded at 2 MiB, metadata at 8 KiB.
+            val limit = if (url.startsWith("https://api.github.com/")) 2 * 1024 * 1024 else 8192
+            dev.otectus.cere.mobile.data.HttpReply(response.code, if (response.isSuccessful) response.body?.byteStream()?.use { it.readBounded(limit) }?.toString(Charsets.UTF_8) else null, response.header("ETag"))
         }
-        val version = channel.tag.matchEntire(tag)!!.destructured.let { (major, minor, patch) -> "$major.$minor.$patch" }
-        val protocol = metadata["protocol"] as? JsonObject ?: continue
-        if (metadata["packageId"]?.jsonPrimitive?.contentOrNull != channel.packageId || metadata["versionCode"]?.jsonPrimitive?.longOrNull != code || metadata["versionName"]?.jsonPrimitive?.contentOrNull != version) continue
-        if (channel.development && metadata["development"]?.jsonPrimitive?.booleanOrNull != true) continue
-        if ((metadata["minSdk"]?.jsonPrimitive?.intOrNull ?: Int.MAX_VALUE) > android.os.Build.VERSION.SDK_INT || protocol["major"]?.jsonPrimitive?.intOrNull != 1 || (protocol["minMinor"]?.jsonPrimitive?.intOrNull ?: Int.MAX_VALUE) > 0 || (protocol["maxMinor"]?.jsonPrimitive?.intOrNull ?: -1) < 0) continue
-        val apk = metadata["apk"] as? JsonObject ?: continue
-        if (apk["name"]?.jsonPrimitive?.contentOrNull !in channel.apkNames(version) || apk["sha256"]?.jsonPrimitive?.contentOrNull?.matches(Regex("[a-fA-F0-9]{64}")) != true) continue
-        return@withContext url
-    }
-    null
+    }, cache).newest()
 }
 
 private fun InputStream.readBounded(limit: Int): ByteArray {

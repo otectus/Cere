@@ -134,7 +134,7 @@ with its expression badge.
 </tr>
 <tr>
 <td width="50%" valign="top"><a href="settings-scripts.png"><img src="settings-scripts.png" alt="Saved scripts settings"></a><br><b>Saved scripts.</b> Executables Cere may run after review.</td>
-<td width="50%" valign="top"><a href="settings-mobile.png"><img src="settings-mobile.png" alt="Cere Mobile settings"></a><br><b>Cere Mobile.</b> Gateway addresses and offline pairing.</td>
+<td width="50%" valign="top"><a href="settings-mobile.png"><img src="settings-mobile.png" alt="Cere Mobile settings"></a><br><b>Cere Mobile.</b> Where the phone reaches this computer, and pairing by QR with the phone's answer sent back over the network.</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><a href="settings-telemetry.png"><img src="settings-telemetry.png" alt="Workspace telemetry settings"></a><br><b>Workspace telemetry.</b> Opt-in shell and file activity for chosen workspaces.</td>

@@ -101,6 +101,31 @@
         },
         "type": {
           "type": "string",
+          "const": "pair.response"
+        },
+        "response": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 2100
+        }
+      },
+      "required": [
+        "v",
+        "type",
+        "response"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
           "const": "request"
         },
         "id": {
@@ -1193,6 +1218,23 @@
             "expectedConfigRevision": {
               "type": "string",
               "pattern": "^(0|[1-9][0-9]{0,18})$"
+            },
+            "expectedRouteRevision": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9:_-]*$"
+            },
+            "workbenchAcknowledged": {
+              "maxItems": 3,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "files",
+                  "images",
+                  "analysis"
+                ]
+              }
             }
           },
           "required": [
@@ -2541,6 +2583,9 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "listing": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -2625,12 +2670,16 @@
             "expectedConfigRevision": {
               "type": "string",
               "pattern": "^(0|[1-9][0-9]{0,18})$"
+            },
+            "expectedRouteRevision": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9:_-]*$"
             }
           },
           "required": [
             "sessionId",
             "model",
-            "tools",
             "expectedConfigRevision"
           ],
           "additionalProperties": false
