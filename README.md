@@ -1,8 +1,8 @@
 # Cere
 
-[Download Cere Mobile 0.1.3 for Android](https://github.com/otectus/Cere/releases/download/mobile-dev-v0.1.3/cere-mobile-v0.1.3-debug.apk) · [Development release and checksums](https://github.com/otectus/Cere/releases/tag/mobile-dev-v0.1.3)
+[Download Cere Mobile 0.1.4 for Android](https://github.com/otectus/Cere/releases/download/mobile-dev-v0.1.4/cere-mobile-v0.1.4-dev.apk) · [Development release and checksums](https://github.com/otectus/Cere/releases/tag/mobile-dev-v0.1.4)
 
-This development APK updates the existing Cere Mobile debug app in place. It includes approval synchronization fixes; removing desktop rate limits also requires the matching broker source from this repository. Android 11 or newer is required. See [mobile setup](docs/mobile/SETUP.md) for pairing. The source has moved on to protocol 1.1 (0.1.4, not yet published): the [feature matrix](docs/FEATURE-MATRIX.md) lists what the phone and the desktop each offer, and why anything stays on the desktop.
+This development APK updates the existing Cere Mobile debug app in place, keeping its pairing and drafts; 0.1.3 does not find it by itself, so download it once on the phone and choose **Update** ([details](docs/mobile/RELEASES.md#updating-a-013-development-install)). It brings protocol 1.1, pairing without copying (the phone sends its answer back to the PC), and the fixes from the compatibility audit; run the desktop broker from this repository's matching source for the new behaviour. Android 11 or newer is required. See [mobile setup](docs/mobile/SETUP.md) for pairing; the [feature matrix](docs/FEATURE-MATRIX.md) lists what the phone and the desktop each offer, and why anything stays on the desktop.
 
 Workspace telemetry is available as an opt-in Linux feature under Settings.
 See [setup, privacy boundaries, shell hooks and measurements](docs/workspace-telemetry.md).
