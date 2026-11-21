@@ -49,13 +49,15 @@
   },
   {
     "name": "ONNXRUNTIME-MIT.txt",
-    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.14.1/LICENSE",
+    "path": "packaging/licenses/onnxruntime-1.14.1/LICENSE",
+    "origin": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.14.1/LICENSE",
     "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
     "bytes": 1073
   },
   {
     "name": "ONNXRUNTIME-NOTICES.txt",
-    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.14.1/ThirdPartyNotices.txt",
+    "path": "packaging/licenses/onnxruntime-1.14.1/ThirdPartyNotices.txt",
+    "origin": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.14.1/ThirdPartyNotices.txt",
     "sha256": "cc63920441c5681cfb1663caf1de1858349b517fc1bed9ca669a85bc526cd13e",
     "bytes": 299762
   },

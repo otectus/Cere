@@ -28,7 +28,9 @@ with additional third-party notices. fmt 10.0.0, spdlog 1.12.0 and uni-algo carr
 their own included licenses. eSpeak NG is GPL-3.0-or-later; the executable bundle
 must not be described as wholly MIT. Cere runs it as a separate process.
 
-Full license texts and ONNX Runtime's notices are in `licenses/`. Source archives
+Full license texts and ONNX Runtime's notices are in `licenses/`. ONNX Runtime's two
+texts come from Cere's repository (`packaging/licenses/onnxruntime-1.14.1/`) because its
+GitHub repository is no longer published; they match the digests pinned in `manifest.json`. Source archives
 for Piper, piper-phonemize, the Rhasspy eSpeak NG fork, fmt and spdlog accompany
 the binaries in `sources/`. Piper's and piper-phonemize's CMakeLists and Dockerfiles
 contain the upstream build recipes. The dependency source revisions are pinned

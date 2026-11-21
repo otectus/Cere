@@ -36,7 +36,13 @@ def main():
         if name.startswith('piper_linux_') and name != f'piper_linux_{args.arch}.tar.gz':
             continue
         cached = args.cache / name
-        if not cached.is_file() or digest(cached) != asset['sha256']:
+        if 'path' in asset:
+            # Kept in this repository because its upstream is no longer published ('origin' records
+            # where it came from). It is checked against the pinned digest exactly like a download.
+            cached = REPO / asset['path']
+            if not cached.is_file() or digest(cached) != asset['sha256']:
+                raise RuntimeError(f'Missing or changed repository copy of TTS asset: {name}')
+        elif not cached.is_file() or digest(cached) != asset['sha256']:
             if args.offline:
                 raise RuntimeError(f'Missing or corrupt cached TTS asset: {name}')
             print(f'Downloading {name}', flush=True)

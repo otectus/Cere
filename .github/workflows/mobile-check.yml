@@ -28,7 +28,8 @@ jobs:
       - name: Build same-user peer credentials adapter for isolated process tests
         run: tools/build-node-addons.sh
       - name: Broker and gateway tests (JUnit report)
-        run: CERE_TTS_DISABLED=1 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/mobile-contract.xml tests/remote.test.ts tests/remote-rate-limits.test.ts tests/remote-process.test.ts tests/mobile-transcript.test.ts tests/mobile-conformance.test.ts tests/fanout.test.ts tests/send-queue.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
+        # Node's JUnit reporter does not create its destination folder.
+        run: mkdir -p reports && CERE_TTS_DISABLED=1 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/mobile-contract.xml tests/remote.test.ts tests/remote-rate-limits.test.ts tests/remote-process.test.ts tests/mobile-transcript.test.ts tests/mobile-conformance.test.ts tests/fanout.test.ts tests/send-queue.test.ts tests/core.test.ts tests/providers.test.ts tests/ollama.test.ts tests/desktop.test.ts tests/memory.test.ts
       - name: Test report
         if: ${{ !cancelled() }}
         run: node tools/ci-test-report.mjs reports >> "$GITHUB_STEP_SUMMARY"
