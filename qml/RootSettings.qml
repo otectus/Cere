@@ -13,7 +13,7 @@ CDialog {
     property string error: ""
     readonly property bool adding: !root.id
     signal saved()
-    RpcClient { id: rpc }
+    RpcClient { id: rpc; scope: dialog.sessionId + ":" + (dialog.root.id || dialog.root.path || "") }
     function openFor(sessionId, root, grants) {
         dialog.sessionId = sessionId; dialog.root = root || ({}); dialog.grants = (grants || []).filter(g => g.rootId === dialog.root.id); error = ""
         const p = dialog.root.policy || {}

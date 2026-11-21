@@ -8,4 +8,7 @@ Text {
     font.pixelSize: Theme.body
     wrapMode: Text.Wrap
     textFormat: Text.PlainText
+    Accessible.role: Accessible.StaticText
+    Accessible.name: text
+    Accessible.focusable: false
 }

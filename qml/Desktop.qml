@@ -38,6 +38,12 @@ ColumnLayout {
     spacing: 14
     function matches(text) { return !query || String(text).toLowerCase().indexOf(query)>=0 }
     function focusSearch() { search.forceActiveFocus() }
+    function showSearch(value) {
+        category = 0
+        search.text = value
+        focusSearch()
+        search.selectAll()
+    }
     function pending(name) { return Object.values(requests).some(r=>r.name===name) }
     function action(name,args,label) {
         const id=App.rpc("action.run",{name:name,args:args||{},expectedScript:name==="script.run"?scriptConfirm.script:undefined})
@@ -57,34 +63,16 @@ ColumnLayout {
     onQueryChanged: { appLimit=12;desktopScroll.contentY=0 }
     onCategoryChanged: desktopScroll.contentY=0
     Component.onCompleted: if(visible)refresh()
-    Rectangle {
-        Layout.fillWidth:true;implicitHeight:desktopHeader.implicitHeight+28
-        color:Theme.surface;radius:Theme.radius;border.color:Theme.line
-        RowLayout {
-            id:desktopHeader;x:16;y:14;width:parent.width-32;spacing:12
-            Rectangle {
-                visible:desktop.width>=500
-                Layout.preferredWidth:42;Layout.preferredHeight:42;radius:Theme.radiusCard
-                color:Theme.selected
-                Text { anchors.centerIn:parent;text:"⌁";color:Theme.accentText;font.family:Theme.font;font.pixelSize:Theme.page;font.weight:Font.DemiBold }
-            }
-            // Title and status share one line; actions wrap below so narrow panels never clip them.
-            ColumnLayout {
-                Layout.fillWidth:true;Layout.minimumWidth:0;spacing:6
-                RowLayout {
-                    Layout.fillWidth:true;spacing:6
-                    CText { text:"Desktop";font.pixelSize:Theme.page;font.weight:Font.DemiBold }
-                    Item { Layout.fillWidth:true }
-                    Rectangle { Layout.preferredWidth:8;Layout.preferredHeight:8;radius:4;color:App.connected?Theme.success:Theme.muted }
-                    CText { text:App.connected?"Ready":"Offline";color:App.connected?Theme.success:Theme.muted;font.pixelSize:Theme.caption }
-                }
-                CText { Layout.fillWidth:true;wrapMode:Text.Wrap;text:desktop.width>=500?"Your apps, windows, sound, and everyday actions.":"Your everyday controls.";color:Theme.muted;font.pixelSize:Theme.secondary }
-                Flow {
-                    Layout.fillWidth:true;spacing:6
-                    CButton { objectName:"desktopOfflineTools";text:"Offline tools";onClicked:utilityShelf.open() }
-                    CButton { objectName:"desktopRefresh";text:desktop.loading?"Loading…":"Refresh";help:"Refresh applications, windows and volume";onClicked:desktop.refresh();enabled:App.connected&&!desktop.loading }
-                }
-            }
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: Theme.space2
+        CText { text: "Desktop"; font.pixelSize: Theme.page; font.weight: Font.DemiBold; Accessible.role: Accessible.Heading }
+        CButton { objectName: "desktopOfflineTools"; text: "Offline tools"; onClicked: utilityShelf.open() }
+        CButton {
+            objectName: "desktopRefresh"; iconName: "refresh"; quiet: true
+            text: desktop.width >= 560 ? (desktop.loading ? "Loading…" : "Refresh") : ""
+            help: "Refresh apps, windows and sound"; Accessible.name: help
+            enabled: App.connected && !desktop.loading; onClicked: desktop.refresh()
         }
     }
     RowLayout {
@@ -96,14 +84,13 @@ ColumnLayout {
         Layout.fillWidth:true;spacing:5
         Repeater {
             model:["All","Controls","Apps","Windows"]
-            CButton { required property string modelData;required property int index;objectName:"desktopFilter_"+index;Layout.fillWidth:true;Layout.preferredWidth:1;leftPadding:8;rightPadding:8;text:modelData;primary:desktop.category===index;onClicked:desktop.category=index }
+            CButton { required property string modelData;required property int index;objectName:"desktopFilter_"+index;Layout.fillWidth:true;Layout.preferredWidth:1;leftPadding:8;rightPadding:8;text:modelData;quiet:true;primary:desktop.category===index;Accessible.role:Accessible.PageTab; Accessible.onPressAction: if (enabled) click();Accessible.selected:primary;onClicked:desktop.category=index }
         }
     }
     CText {
         Layout.fillWidth:true
-        text:desktop.query
-            ? "Results for “"+search.text.trim()+"”"
-            : ["All desktop tools and recent activity","Quick actions, sound, timers, and scripts","Installed applications","Open windows and workspaces"][desktop.category]
+        visible: !!desktop.query || !App.connected
+        text: App.connected ? "Results for “"+search.text.trim()+"”" : "Reconnecting. Offline tools are available."
         color:desktop.query?Theme.accentText:Theme.muted;font.pixelSize:Theme.caption
     }
     Rectangle {

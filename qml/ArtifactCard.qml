@@ -12,14 +12,17 @@ Rectangle {
     property string thumbnail: ""
     property string error: ""
     property string notice: ""
+    readonly property bool compact: width < 440
     readonly property var version: info ? (info.versions || []).find(v => v.versionId === reference.versionId) || null : null
     readonly property bool image: !!version && (version.kind === "image" || version.kind === "plot")
-    implicitHeight: row.implicitHeight + 16
-    radius: Theme.radiusControl; color: Theme.input; border.color: Theme.subtle
+    implicitHeight: row.implicitHeight + 20
+    radius: Theme.radiusCard; color: Theme.input; border.color: card.error ? Theme.dangerBorder : Theme.border
     Accessible.role: Accessible.Grouping; Accessible.name: version ? "File " + version.name : "File"
-    RpcClient { id: rpc }
+    RpcClient { id: rpc; scope: card.sessionId + ":" + (card.reference.artifactId || "") + ":" + (card.reference.versionId || "") }
+    Timer { id: initialLoad; interval: 0; onTriggered: card.load() }
     function size(bytes) { return bytes < 1024 ? bytes + " B" : bytes < 1048576 ? Math.round(bytes / 1024) + " KiB" : (bytes / 1048576).toFixed(1) + " MiB" }
     function load() {
+        info = null; thumbnail = ""; error = ""
         if (!reference.artifactId || !sessionId) return
         rpc.call("artifacts.get", { sessionId: sessionId, artifactId: reference.artifactId }, value => {
             if (value.error) { error = value.error; return }
@@ -29,7 +32,7 @@ Rectangle {
         })
     }
     function openIt() {
-        if (image) { WorkbenchState.artifactId = reference.artifactId; WorkbenchState.versionId = reference.versionId; App.selectedId = sessionId; WorkbenchState.show("images"); App.rpc("images.select", { sessionId: sessionId, ref: { artifactId: reference.artifactId, versionId: reference.versionId } }); return }
+        if (image) { WorkbenchState.selectImage(sessionId, reference.artifactId, reference.versionId); App.selectedId = sessionId; WorkbenchState.show("images"); App.rpc("images.select", { sessionId: sessionId, ref: { artifactId: reference.artifactId, versionId: reference.versionId } }); return }
         rpc.call("artifacts.file", { sessionId: sessionId, artifactId: reference.artifactId, versionId: reference.versionId }, value => { if (value.error) error = value.error; else App.openPath(value.path) })
     }
     function saveAs() {
@@ -37,18 +40,19 @@ Rectangle {
         if (!path) return
         rpc.call("artifacts.saveAs", { sessionId: sessionId, artifactId: reference.artifactId, versionId: reference.versionId, path: path, replace: true }, value => { if (value.error) error = value.error; else { notice = "Saved to " + value.path; load() } })
     }
-    Component.onCompleted: load()
-    onReferenceChanged: load()
+    Component.onCompleted: initialLoad.restart()
+    onReferenceChanged: { notice = ""; initialLoad.restart() }
+    onSessionIdChanged: { notice = ""; initialLoad.restart() }
     RowLayout {
-        id: row; anchors.fill: parent; anchors.margins: 8; spacing: 10
+        id: row; anchors.fill: parent; anchors.margins: 10; spacing: Theme.space3
         Rectangle {
-            visible: card.image; Layout.preferredWidth: 96; Layout.preferredHeight: 72; radius: 4; color: Theme.codeSurface; clip: true
+            visible: card.image; Layout.preferredWidth: card.compact ? 64 : 96; Layout.preferredHeight: card.compact ? 64 : 72; radius: Theme.radiusChip; color: Theme.codeSurface; clip: true
             Image { anchors.fill: parent; source: card.thumbnail; fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true
                 Accessible.role: Accessible.Graphic; Accessible.name: card.version ? "Thumbnail of " + card.version.name : "Thumbnail" }
             CText { anchors.centerIn: parent; visible: !card.thumbnail; text: card.error ? "Missing" : "…"; color: Theme.muted; font.pixelSize: Theme.caption; horizontalAlignment: Text.AlignHCenter }
         }
         ColumnLayout {
-            Layout.fillWidth: true; spacing: 2
+            Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: Theme.space1
             CText { text: card.version ? card.version.name : "Loading file…"; font.weight: Font.DemiBold; elide: Text.ElideMiddle; wrapMode: Text.NoWrap }
             CText { visible: !!card.version; color: Theme.muted; font.pixelSize: Theme.caption
                 text: card.version ? [card.version.image ? card.version.image.width + "×" + card.version.image.height : card.version.mime, card.size(card.version.bytes), card.version.source === "model-generation" ? "generated" : card.version.source === "user-import" ? "imported" : card.version.source === "derived" ? "derived" : "tool output",
@@ -56,7 +60,7 @@ Rectangle {
             CText { visible: !!card.error; text: card.error; color: Theme.danger; font.pixelSize: Theme.caption; Accessible.role: Accessible.AlertMessage }
             CText { visible: !!card.notice; text: card.notice; color: Theme.muted; font.pixelSize: Theme.caption }
             Flow {
-                Layout.fillWidth: true; spacing: 4; visible: !!card.version && !card.error
+                Layout.fillWidth: true; spacing: Theme.space1; visible: !!card.version && !card.error
                 CButton { objectName: "artifactOpen"; text: card.image ? "View" : "Open"; implicitHeight: 28; quiet: true; onClicked: card.openIt() }
                 CButton { objectName: "artifactSaveAs"; text: "Save as…"; implicitHeight: 28; quiet: true; onClicked: card.saveAs() }
                 CButton { objectName: "artifactUse"; text: "Use in next message"; implicitHeight: 28; quiet: true; visible: card.image || (card.version && card.version.mime.startsWith("text/"))

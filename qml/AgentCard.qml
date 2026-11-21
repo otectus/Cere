@@ -25,17 +25,20 @@ Rectangle {
         : agent.status === "waiting" ? Theme.amber
         : active ? Theme.accentText
         : Theme.muted
+    Accessible.role: Accessible.Grouping
+    Accessible.name: (agent.name || agent.id || "Subagent") + ", " + statusLabel
+    Accessible.description: expanded ? "Details shown" : "Details hidden"
 
     implicitHeight: body.implicitHeight + 16
     radius: Theme.radiusControl
-    color: Theme.surface
+    color: expanded ? Theme.raised : Theme.surface
     border.color: active ? Theme.activeBorder : Theme.line
 
     ColumnLayout {
         id: body
         anchors.fill: parent
-        anchors.margins: 8
-        spacing: 5
+        anchors.margins: Theme.space2
+        spacing: Theme.space2
         CButton {
             objectName: "agent_" + (card.agent.id || "")
             Layout.fillWidth: true
@@ -44,6 +47,8 @@ Rectangle {
             rightPadding: 8
             help: card.expanded ? "Hide subagent details" : "Show subagent details"
             Accessible.name: (card.agent.name || card.agent.id || "Subagent") + ", " + card.statusLabel
+            Accessible.description: help
+            Accessible.expanded: card.expanded
             onClicked: card.expansionRequested(!card.expanded)
             contentItem: RowLayout {
                 spacing: 7
@@ -52,6 +57,7 @@ Rectangle {
                     Layout.preferredHeight: 8
                     radius: 4
                     color: card.statusColor
+                    Accessible.ignored: true
                 }
                 Text {
                     Layout.fillWidth: true
@@ -83,7 +89,8 @@ Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: 8
             Layout.rightMargin: 8
-            spacing: 4
+            Layout.bottomMargin: Theme.space1
+            spacing: Theme.space2
             CText {
                 visible: !!card.agent.task
                 Layout.fillWidth: true

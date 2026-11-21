@@ -12,7 +12,7 @@ Item {
     property var shelfData: null
     property string error: ""
     property string notice: ""
-    RpcClient { id: rpc }
+    RpcClient { id: rpc; scope: shelf.sessionId }
     function refresh() { if (!sessionId) return; rpc.call("shelf.get", { sessionId: sessionId }, value => { if (value.error) { error = value.error; shelfData = null } else { error = ""; shelfData = value } }) }
     function use(ref) {
         const current = WorkbenchState.referencesFor(sessionId)
@@ -21,7 +21,7 @@ Item {
         if (!current.some(r => JSON.stringify(Object.assign({}, r, { label: "", version: undefined })) === key)) WorkbenchState.setReferences(sessionId, current.concat([ref]))
         notice = "Added “" + ref.label + "” to your next message."
     }
-    onSessionIdChanged: refresh()
+    onSessionIdChanged: { shelfData = null; error = ""; notice = ""; refresh() }
     onVisibleChanged: if (visible) refresh()
     Component.onCompleted: refresh()
     component Group: ColumnLayout {

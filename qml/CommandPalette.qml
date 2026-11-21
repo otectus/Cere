@@ -8,8 +8,9 @@ Popup {
     objectName:"commandPalette"
     parent:Overlay.overlay
     anchors.centerIn:parent
-    width:Math.min(680,parent?parent.width-28:680)
-    height:Math.min(600,parent?parent.height-28:600)
+    scale:Theme.interfaceScale
+    width:Math.min(680,parent?(parent.width-28)/scale:680)
+    height:Math.min(600,parent?(parent.height-28)/scale:600)
     modal:true;dim:true;focus:true;padding:16;margins:14
     closePolicy:Popup.CloseOnEscape|Popup.CloseOnPressOutside
     background:Rectangle { color:Theme.surface;radius:Theme.radiusDialog;border.color:Theme.borderStrong }
@@ -34,7 +35,7 @@ Popup {
     readonly property var navigation:App.state.navigation||({favorites:[],recents:[]})
     readonly property var favorites:navigation.favorites||[]
     readonly property var recents:navigation.recents||[]
-    readonly property var allEntries:buildEntries().concat(brokerEntries||[])
+    readonly property var allEntries:visible ? buildEntries().concat(brokerEntries||[]) : []
     readonly property var results:rankedEntries()
 
     function buildEntries() {
@@ -184,6 +185,8 @@ Popup {
                     objectName:"command_"+resultRow.modelData.id.replace(/[^a-zA-Z0-9_-]/g,"_")
                     Layout.fillWidth:true;implicitHeight:56;quiet:true;alignLeft:true
                     text:resultRow.modelData.title
+                    primary:resultList.currentIndex===resultRow.index
+                    Accessible.selected:primary
                     help:resultRow.modelData.detail
                     Accessible.name:resultRow.modelData.title+", "+resultRow.modelData.detail
                     onClicked:{resultList.currentIndex=resultRow.index;rootPalette.activate(resultRow.modelData)}

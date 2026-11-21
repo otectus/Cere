@@ -40,13 +40,13 @@ test('every avatar has a complete palette, with no unknown or malformed tokens',
   }
 });
 
-test('no text is set below the 11 px floor of the Theme type scale', () => {
+test('no text is set below the 12 px floor of the Theme type scale', () => {
   const small = files.filter(name => !artwork.has(name)).flatMap(name => [...source(name).matchAll(/pixelSize\s*:[^;\n}]*/g)]
-    .flatMap(match => [...match[0].matchAll(/(?<![\w.])(\d+)(?![\w.])/g)].map(number => Number(number[1])).filter(size => size < 11).map(size => `${name}: ${size} in "${match[0].trim()}"`)));
+    .flatMap(match => [...match[0].matchAll(/(?<![\w.])(\d+)(?![\w.])/g)].map(number => Number(number[1])).filter(size => size < 12).map(size => `${name}: ${size} in "${match[0].trim()}"`)));
   assert.deepEqual(small, []);
   const scale = [...theme.matchAll(/property int (caption|secondary|body|message|section|title|page|display|wordmark|glyph): (\d+)/g)];
   assert.equal(scale.length, 10);
-  for (const [, name, size] of scale) assert.ok(Number(size) >= 11, `Theme.${name} is ${size} px`);
+  for (const [, name, size] of scale) assert.ok(Number(size) >= 12, `Theme.${name} is ${size} px`);
 });
 
 for (const [id, palette] of Object.entries(palettes)) test(`${id} colours meet WCAG 2.2 AA on every surface they sit on (4.5:1 text, 3:1 boundaries)`, () => {

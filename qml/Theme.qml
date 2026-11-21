@@ -69,16 +69,24 @@ QtObject {
     readonly property int focusWidth: 2
     // Type scale (logical px); nothing is smaller than caption
     readonly property string font: "Adwaita Sans"
-    readonly property int caption: 11
-    readonly property int secondary: 12
-    readonly property int body: 13
-    readonly property int message: 14
-    readonly property int section: 15
-    readonly property int title: 20
-    readonly property int page: 22
+    readonly property int caption: 12
+    readonly property int secondary: 13
+    readonly property int body: 14
+    readonly property int message: 15
+    readonly property int section: 17
+    readonly property int title: 22
+    readonly property int page: 25
     readonly property int display: 28
-    readonly property int wordmark: 18
+    readonly property int wordmark: 21
     readonly property int glyph: 20
+    readonly property string mono: "monospace"
+    readonly property real interfaceScale: typeof App !== "undefined" ? App.state.settings?.interfaceScale || 1 : 1
+    readonly property int iconSize: 18
+    readonly property int controlHeight: 40
+    readonly property int readingWidth: 800
+    // Text selected for copying needs a stronger highlight than a selected list row.
+    readonly property color selectionFill: accentText
+    readonly property color selectionInk: background
     // Spacing scale
     readonly property int space1: 4
     readonly property int space2: 8
@@ -87,7 +95,7 @@ QtObject {
     readonly property int space5: 24
     // Shape
     readonly property int radiusChip: 6
-    readonly property int radiusControl: 9
+    readonly property int radiusControl: 8
     readonly property int radiusCard: 12
     readonly property int radiusPanel: 14
     readonly property int radiusDialog: 16

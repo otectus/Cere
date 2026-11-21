@@ -208,6 +208,28 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(([&]{for(auto w:qGuiApp->allWindows())if(w->title()=="Cere"){window=qobject_cast<QQuickWindow*>(w);return window!=nullptr;}return false;})(),5000);
         QTRY_VERIFY(window->isVisible());QTest::qWait(500);
     }
+    void trayActionsReflectSettings() {
+        auto *tray = app->findChild<QSystemTrayIcon*>();
+        QVERIFY(tray && tray->contextMenu());
+        auto *visibility = tray->contextMenu()->findChild<QAction*>("trayVisibility");
+        auto *pause = tray->contextMenu()->findChild<QAction*>("trayPause");
+        QVERIFY(visibility && pause);
+        const auto settings = app->state().value("settings").toMap();
+        const auto restore = qScopeGuard([&] {
+            call("settings.update", {{"hidden", settings.value("hidden")}, {"paused", settings.value("paused")}});
+        });
+        QVERIFY(!call("settings.update", {{"hidden", false}, {"paused", false}}).contains("error"));
+        QTRY_COMPARE(pause->text(), QString("Pause AI actions"));
+        pause->trigger();
+        QTRY_COMPARE(pause->text(), QString("Resume AI actions"));
+        QVERIFY(app->state().value("settings").toMap().value("paused").toBool());
+        pause->trigger();
+        QTRY_COMPARE(pause->text(), QString("Pause AI actions"));
+        visibility->trigger();
+        QTRY_COMPARE(visibility->text(), QString("Show companion"));
+        visibility->trigger();
+        QTRY_COMPARE(visibility->text(), QString("Hide companion"));
+    }
     void startupEntryTracksSuccessfulWrites(){
         const auto previous=qgetenv("XDG_CONFIG_HOME");
         const auto restore=qScopeGuard([&]{if(previous.isNull())qunsetenv("XDG_CONFIG_HOME");else qputenv("XDG_CONFIG_HOME",previous);});
@@ -264,6 +286,58 @@ private slots:
         click("tab_Desktop");QCOMPARE(window->contentItem()->childItems().first()->property("page").toInt(),2);QTest::qWait(1200);capture("desktop");
         click("tab_Settings");capture("settings");
         click("tab_Sessions");capture("sessions");click("tab_Chat");
+    }
+    void workspaceLayoutPreferences() {
+        if (!offscreen()) QSKIP("The offscreen output permits exact workspace sizing");
+        const QSize original = window->size();
+        const auto originalScale = app->state().value("settings").toMap().value("interfaceScale", 1.0);
+        const auto restore = qScopeGuard([&] {
+            call("settings.update", {{"interfaceScale", originalScale}});
+            if (window) window->resize(original);
+        });
+        window->resize(1120, 720);
+        click("tab_Chat");
+        QVERIFY(item("sidebarSessionList"));
+        click("sidebarToggle");
+        QTRY_VERIFY(!item("sidebarSessionList"));
+        // Destroy the workspace and re-open it. Both size and navigation survive.
+        app->closePanel();
+        app->togglePanel();
+        QTRY_VERIFY((window=titled("Cere Panel")));
+        restoreWorkspace();
+        QTRY_COMPARE(window->size(), QSize(1120, 720));
+        QVERIFY(!item("sidebarSessionList"));
+        click("sidebarToggle");
+        QTRY_VERIFY(item("sidebarSessionList"));
+        QTest::keyClick(window, Qt::Key_W, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY(item("workbenchResize"));
+        auto splitter = item("workbenchResize");
+        auto pane = item("workbenchSide");
+        QVERIFY(pane);
+        QTRY_VERIFY(pane->width() >= 360 && item("chatView")->width() >= 390);
+        const qreal width = pane->width();
+        splitter->forceActiveFocus(Qt::TabFocusReason);
+        QTest::keyClick(window, Qt::Key_Left);
+        QTRY_COMPARE(pane->width(), width + 24);
+        QTest::keyClick(window, Qt::Key_Right);
+        QTRY_COMPARE(pane->width(), width);
+        QTest::keyClick(window, Qt::Key_W, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY(item("sidebarSessionList"));
+
+        QVERIFY(!call("settings.update", {{"interfaceScale", 1.5}}).contains("error"));
+        window->resize(720, 520);
+        click("tab_Sessions");
+        click("newSession");
+        auto open = item("sessionOpen"), title = item("sessionTitle");
+        QVERIFY(open && title);
+        QTRY_VERIFY(title->hasActiveFocus());
+        const QRectF bounds(QPointF(0, 0), window->size());
+        QVERIFY(bounds.contains(open->mapRectToScene(open->boundingRect())));
+        capture("new-session-150-percent");
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!item("sessionOpen"));
+        QTRY_VERIFY(item("newSession")->hasActiveFocus());
+        click("tab_Chat");
     }
     void settingsSectionNavigation(){
         click("tab_Settings");
@@ -1258,7 +1332,18 @@ Unicode: café ✦ 日本語
         }
         for(auto frame:document->rootFrame()->childFrames())if(auto t=qobject_cast<QTextTable*>(frame))table=t->rows()==2&&t->columns()==2;
         QVERIFY(heading);QVERIFY(bold);QVERIFY(italic);QVERIFY(strike);QVERIFY(code);QVERIFY(quote);QVERIFY(nested);QVERIFY(task);QVERIFY(table);QVERIFY(link);QVERIFY(image);
-        QVERIFY(document->toPlainText().contains("const auto fence = \"```\";"));
+        const QString fencedLine = QStringLiteral("const auto fence = \"```\";");
+        auto codeCursor = document->find(fencedLine);
+        QVERIFY(!codeCursor.isNull());
+        auto quickDocument = body->property("textDocument").value<QQuickTextDocument*>();
+        QCOMPARE(app->messageCodeAt(quickDocument, codeCursor.selectionStart()), fencedLine);
+        QVERIFY(app->messageCodeAt(quickDocument, 0).isEmpty());
+        body->forceActiveFocus(Qt::TabFocusReason);
+        body->setProperty("cursorPosition", codeCursor.selectionStart());
+        QTest::keyClick(window, Qt::Key_F10, Qt::ShiftModifier);
+        QTRY_VERIFY(item("copyCodeBlock"));
+        click("copyCodeBlock");
+        QCOMPARE(QGuiApplication::clipboard()->text(), fencedLine);
         QVERIFY(document->toPlainText().contains(QString::fromUtf8("café ✦ 日本語")));
         QDesktopServices::setUrlHandler("https",this,"recordMessageLink");
         QDesktopServices::setUrlHandler("file",this,"recordMessageLink");
@@ -1398,6 +1483,15 @@ Unicode: café ✦ 日本語
         QTRY_COMPARE(saved(),QString("Last edit before switching"));
         app->select(original);
         QTRY_COMPARE(composer->property("text").toString(),QString("Last edit before switching"));
+
+        // Return before Qt can deliver the save reply from leaving the original session.
+        const QString immediate = QStringLiteral("Keep this when returning immediately");
+        composer->setProperty("text", immediate);
+        app->select(other);
+        app->select(original);
+        QTRY_COMPARE(composer->property("text").toString(), immediate);
+        QTest::qWait(800); // allow a stale editor's debounce to reach the broker
+        QCOMPARE(saved(), immediate);
     }
     void queuedOllamaMessages(){
         click("tab_Chat");
@@ -1815,7 +1909,7 @@ Unicode: café ✦ 日本語
     }
     void responsiveLayoutsAndDesktopActions(){
         auto original=window;
-        const auto restoreWindow=qScopeGuard([&]{window=original;});
+        const auto restoreWindow=qScopeGuard([&]{window=original;if(window)window->requestActivate();});
         QQuickView layout;
         layout.setTitle("Cere UI Layout Check");
         layout.setFlags(Qt::Tool|Qt::FramelessWindowHint);
@@ -4656,6 +4750,14 @@ private slots:
         reviewWorkspace();click("tab_Chat");
         if(longSession.isEmpty()){note("long session available",false);saveNotes("review-responsiveness");return;}
         app->select(longSession);waitFor([&]{return app->messages().size()>=100;},8000);QTest::qWait(600);
+        // Measure visible streaming. The preceding workflow may have deliberately
+        // left this session scrolled up, where offscreen revisions need no frames.
+        auto chat = item("chatView"), transcript = item("messageList");
+        QVERIFY(chat && transcript);
+        chat->setProperty("viewPristine", false);
+        chat->setProperty("follow", true);
+        QVERIFY(QMetaObject::invokeMethod(transcript, "positionViewAtEnd"));
+        QTRY_VERIFY(transcript->property("atYEnd").toBool());
         QMutex guard;QVector<qint64> frames;QElapsedTimer clock;clock.start();
         const auto connection=connect(window,&QQuickWindow::frameSwapped,this,[&]{QMutexLocker lock(&guard);frames.append(clock.nsecsElapsed()/1000);},Qt::DirectConnection);
         auto stats=[&](const QString &phase,qint64 fromUs,qint64 toUs){
@@ -4966,7 +5068,7 @@ private slots:
     // The Workbench end to end through the real broker: browse a folder, preview and edit a file, review and
     // apply the change, open an image in the editor and the runs pane, in the workspace and the compact panel.
     void workbenchAcceptance(){
-        window=reviewWorkspace();QVERIFY(window);
+        window=reviewWorkspace();QVERIFY(window);click("tab_Chat");
         const QString project=data.path()+"/workbench-project";
         QVERIFY(QDir().mkpath(project+"/src"));
         writeFile(project+"/src/app.ts","const a = 1;\n// TODO fix\nexport { a };\n");
@@ -4997,7 +5099,17 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(item("previewPath")?item("previewPath")->property("text").toString():QString(),QString("README.md"),5000);
         capture("workbench-preview");
         click("previewEdit");QTRY_VERIFY(item("previewEditor"));
-        item("previewEditor")->setProperty("text","# Demo\n\nEdited through the Workbench review.\n");
+        const QString edit = "# Demo\n\nEdited through the Workbench review.\n";
+        item("previewEditor")->setProperty("text", edit);
+        const auto other = createSession("ollama", "Separate work area", "fixture-chat:latest");
+        QVERIFY(!other.isEmpty());
+        app->select(other);
+        QTRY_COMPARE(app->session().value("id").toString(), other);
+        QTRY_VERIFY(item("filePreview") && !item("previewEditor") && !item("previewPath"));
+        app->select(id);
+        QTRY_VERIFY(item("previewEditor"));
+        QCOMPARE(item("previewPath")->property("text").toString(), QString("README.md"));
+        QCOMPARE(item("previewEditor")->property("text").toString(), edit);
         click("previewProposeEdit");
         QTRY_VERIFY_WITH_TIMEOUT(item("changeAcceptAll"),5000);QTRY_VERIFY(item("changeAcceptAll")->isEnabled());
         capture("workbench-review");

@@ -5,8 +5,8 @@ TextArea {
     id: control
     color: Theme.text
     placeholderTextColor: Theme.muted
-    selectionColor: Theme.selected
-    selectedTextColor: Theme.text
+    selectionColor: Theme.selectionFill
+    selectedTextColor: Theme.selectionInk
     font.family: Theme.font
     font.pixelSize: Theme.body
     wrapMode: TextEdit.Wrap

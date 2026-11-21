@@ -7,6 +7,11 @@ Item {
     implicitWidth: 20
     implicitHeight: 20
     readonly property var paths: ({
+        refresh: "M16 6 A7 7 0 1 0 17 13 M16 2 L16 7 L11 7",
+        chevron: "M8 5 L13 10 L8 15",
+        sidebar: "M3 3 L17 3 Q18 3 18 4 L18 16 Q18 17 17 17 L3 17 Q2 17 2 16 L2 4 Q2 3 3 3 Z M8 3 L8 17",
+        workflow: "M3 3 L8 3 L8 8 L3 8 Z M12 12 L17 12 L17 17 L12 17 Z M6 8 L6 14 L12 14 M8 6 L14 6 L14 12",
+        down: "M5 8 L10 13 L15 8",
         chat: "M4 3 L16 3 Q18 3 18 5 L18 13 Q18 15 16 15 L8 15 L3 18 L3 5 Q3 3 4 3 M7 7 L14 7 M7 11 L11 11",
         sessions: "M6 3 L17 3 L17 15 M3 6 L14 6 L14 18 L3 18 Z M6 10 L11 10 M6 14 L10 14",
         projects: "M2 6 L2 4 L8 4 L10 6 L18 6 L18 16 L2 16 Z M2 8 L18 8",
@@ -38,6 +43,7 @@ Item {
     Shape {
         anchors.centerIn: parent
         width: 20; height: 20
+        scale: Math.min(icon.width, icon.height, 20) / 20
         ShapePath {
             strokeColor: icon.color; strokeWidth: 1.5; fillColor: "transparent"
             capStyle: ShapePath.RoundCap; joinStyle: ShapePath.RoundJoin

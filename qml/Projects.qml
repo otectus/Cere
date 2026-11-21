@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "Labels.js" as Labels
 
 ColumnLayout {
     id:page
@@ -40,8 +41,8 @@ ColumnLayout {
     Timer { interval:5000;repeat:true;running:page.visible&&App.connected;onTriggered:page.refresh() }
     RowLayout {
         Layout.fillWidth:true
-        CText { text:"Projects";font.pixelSize:Theme.page;font.weight:Font.DemiBold;Layout.fillWidth:true }
-        CButton { objectName:"addProject";text:"Add project";iconName:"plus";enabled:App.connected;onClicked:page.edit({},false) }
+        CText { text:"Projects";Accessible.role:Accessible.Heading;font.pixelSize:Theme.page;font.weight:Font.DemiBold;Layout.fillWidth:true }
+        CButton { objectName:"addProject";primary:true;text:"Add project";iconName:"plus";enabled:App.connected;onClicked:page.edit({},false) }
     }
     CField {
         id:search;objectName:"projectSearch";Layout.fillWidth:true;placeholderText:"Find a project…";Accessible.name:"Find a project"
@@ -61,8 +62,8 @@ ColumnLayout {
             id:row
             required property var modelData
             required property int index
-            width:rows.width;implicitHeight:92;radius:Theme.radiusCard
-            color:row.ListView.isCurrentItem?Theme.raised:Theme.surface;border.color:row.ListView.isCurrentItem?Theme.line:Theme.subtle
+            width:rows.width-(rows.contentHeight>rows.height?12:0);implicitHeight:86;radius:Theme.radiusCard
+            color:row.ListView.isCurrentItem?Theme.selected:Theme.surface;border.color:row.ListView.isCurrentItem&&rows.activeFocus?Theme.focus:Theme.subtle
             RowLayout {
                 anchors.fill:parent;anchors.margins:8;spacing:4
                 CButton {
@@ -74,11 +75,11 @@ ColumnLayout {
                         RowLayout {
                             Layout.fillWidth:true;spacing:6
                             CIcon { name:row.modelData.favorite?"star":"projects";color:row.modelData.favorite?Theme.amber:Theme.accentText;Layout.preferredWidth:18;Layout.preferredHeight:18 }
-                            Text { text:row.modelData.name;Layout.fillWidth:true;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.message;font.weight:Font.DemiBold }
+                            Text { text:row.modelData.name;textFormat:Text.PlainText;Layout.fillWidth:true;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.message;font.weight:Font.DemiBold }
                         }
-                        Text { text:row.modelData.cwd;Layout.fillWidth:true;elide:Text.ElideMiddle;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
+                        Text { text:row.modelData.cwd;textFormat:Text.PlainText;Layout.fillWidth:true;elide:Text.ElideMiddle;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
                         Text {
-                            text:(row.modelData.sessions?row.modelData.sessions+" session"+(row.modelData.sessions===1?"":"s"):row.modelData.total?row.modelData.total+" archived":"No sessions")+(row.modelData.active?" · "+row.modelData.active+" active":"")+(row.modelData.unread?" · "+row.modelData.unread+" unread":"")+(!row.modelData.configured?" · Set defaults":" · "+row.modelData.defaults.provider)
+                            text:(row.modelData.sessions?row.modelData.sessions+" session"+(row.modelData.sessions===1?"":"s"):row.modelData.total?row.modelData.total+" archived":"No sessions")+(row.modelData.active?" · "+row.modelData.active+" active":"")+(row.modelData.unread?" · "+row.modelData.unread+" unread":"")+(!row.modelData.configured?" · Set defaults":" · "+Labels.provider(row.modelData.defaults.provider))
                             Layout.fillWidth:true;elide:Text.ElideRight;color:row.modelData.unread?Theme.accentText:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption
                         }
                     }

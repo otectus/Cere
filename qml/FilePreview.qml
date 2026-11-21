@@ -8,7 +8,7 @@ Item {
     objectName: "filePreview"
     property string sessionId: ""
     property var roots: []
-    readonly property var target: WorkbenchState.file
+    readonly property var target: WorkbenchState.fileFor(sessionId)
     readonly property var root: roots.find(r => r.id === target.rootId) || null
     readonly property string absolute: root && target.path ? root.path + "/" + target.path : ""
     property var page: ({})
@@ -17,8 +17,11 @@ Item {
     property bool markdown: false
     property bool editing: false
     property var editable: null
+    property bool recoveredDraft: false
     property string reviewError: ""
-    RpcClient { id: rpc }
+    readonly property string ownerKey: sessionId + ":" + (target.rootId || "") + ":" + (target.path || "")
+    RpcClient { id: rpc; scope: preview.ownerKey }
+    Timer { id: initialLoad; interval: 0; onTriggered: { preview.load(1); if (WorkbenchState.fileDraft(preview.sessionId, preview.target.rootId, preview.target.path) !== undefined) preview.startEditing() } }
     function load(from) {
         if (!target.path || target.sessionId !== sessionId) { lines = []; page = ({}); return }
         error = ""
@@ -35,20 +38,28 @@ Item {
         reviewError = ""
         rpc.call("files.text", { sessionId: sessionId, rootId: target.rootId, path: target.path }, value => {
             if (value.error) { reviewError = value.error; return }
-            editable = value; editor.text = value.text; editing = true; Qt.callLater(() => editor.forceActiveFocus())
+            const saved = WorkbenchState.fileDraft(sessionId, target.rootId, target.path)
+            recoveredDraft = saved !== undefined
+            // Recovered text keeps the exact version and original content it began from. Pairing it
+            // with the latest version would weaken the change review's concurrency precondition.
+            editable = saved && typeof saved === "object" ? Object.assign({}, value, { version: saved.baseVersion, text: saved.baseText }) : value
+            editor.text = saved && typeof saved === "object" ? saved.text : value.text
+            editing = true; Qt.callLater(() => editor.forceActiveFocus())
         })
     }
+    function cancelEditing() { WorkbenchState.keepFileDraft(sessionId, target.rootId, target.path, undefined); editing = false; editable = null; recoveredDraft = false }
     function proposeEdit() {
         reviewError = ""
         rpc.call("changes.propose", { sessionId: sessionId, reason: "Edited in the Workbench",
             operations: [{ kind: "patch_text", rootId: target.rootId, path: target.path, baseVersion: editable.version, content: editor.text }] }, value => {
             if (value.error) { reviewError = value.error; return }
-            editing = false; WorkbenchState.openReview(value.id)
+            WorkbenchState.keepFileDraft(sessionId, target.rootId, target.path, undefined)
+            editing = false; recoveredDraft = false; WorkbenchState.openReview(value.id, sessionId)
         })
     }
-    onTargetChanged: { editing = false; markdown = false; load(1) }
-    onSessionIdChanged: load(1)
-    Component.onCompleted: load(1)
+    onTargetChanged: { editing = false; editable = null; recoveredDraft = false; markdown = false; error = ""; reviewError = ""; lines = []; page = ({}); initialLoad.restart() }
+    onSessionIdChanged: { editing = false; editable = null; recoveredDraft = false; lines = []; page = ({}); initialLoad.restart() }
+    Component.onCompleted: initialLoad.restart()
 
     ColumnLayout {
         anchors.fill: parent; spacing: 8
@@ -100,12 +111,13 @@ Item {
         }
         ScrollView {
             visible: preview.editing; Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-            CTextArea { id: editor; objectName: "previewEditor"; font.family: "monospace"; font.pixelSize: Theme.caption; wrapMode: TextEdit.NoWrap; selectByMouse: true; Accessible.name: "Edit " + (preview.target.path || "") }
+            CTextArea { id: editor; objectName: "previewEditor"; font.family: Theme.mono; font.pixelSize: Theme.caption; wrapMode: TextEdit.NoWrap; selectByMouse: true; Accessible.name: "Edit " + (preview.target.path || "")
+                onTextChanged: if (preview.editing && preview.editable) WorkbenchState.keepFileDraft(preview.sessionId, preview.target.rootId, preview.target.path, { text: text, baseVersion: preview.editable.version, baseText: preview.editable.text }) }
         }
         RowLayout {
             visible: preview.editing; Layout.fillWidth: true
-            CText { Layout.fillWidth: true; text: "Saving creates a change you review before anything is written."; color: Theme.muted; font.pixelSize: Theme.caption }
-            CButton { text: "Cancel"; onClicked: preview.editing = false }
+            CText { Layout.fillWidth: true; text: preview.recoveredDraft ? "Recovered your unsent edit. Its original file version will still be checked during review." : "Saving creates a change you review before anything is written."; color: preview.recoveredDraft ? Theme.amber : Theme.muted; font.pixelSize: Theme.caption }
+            CButton { text: "Cancel"; onClicked: preview.cancelEditing() }
             CButton { objectName: "previewProposeEdit"; text: "Review change"; primary: true; enabled: !!preview.editable && editor.text !== preview.editable.text; onClicked: preview.proposeEdit() }
         }
     }

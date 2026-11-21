@@ -4,15 +4,20 @@ import QtQuick.Controls
 import QtQuick.Window
 import "PortraitState.js" as State
 
-Rectangle {
+AbstractButton {
     id: portrait
     objectName: "cerePortrait"
     implicitWidth: 64
     implicitHeight: 64
-    radius: width * .27
-    color: portraitColors.portraitSurface
-    border.color: accent
-    border.width: 1
+    readonly property real radius: width * .27
+    readonly property color color: portraitColors.portraitSurface
+    padding: 0
+    hoverEnabled: true
+    background: Rectangle {
+        radius: portrait.radius
+        color: portrait.color
+        border.color: portrait.accent
+    }
 
     // Inputs are explicit so the miniature and workspace share identical behavior.
     property var settings: ({})
@@ -36,7 +41,6 @@ Rectangle {
     readonly property bool exposed: visible && Window.window !== null && Window.window.visible && Window.window.visibility !== Window.Minimized
     readonly property bool animated: exposed && !settings.reducedMotion && !settings.quiet && intensity > 0
     readonly property bool cuesEnabled: settings.expressiveCues !== false
-    readonly property bool hovered: pointer.containsMouse
     readonly property bool speaking: connected && speech.state === "speaking"
     readonly property var resolved: State.resolve({session:session, approvals:approvals, connected:connected,
         paused:settings.paused, mood:cuesEnabled ? mood : "neutral", greeting:greeting,
@@ -88,13 +92,10 @@ Rectangle {
     onSessionIdChanged: { greeting = false; greetingTimer.stop() }
     Component.onCompleted: ready = true
 
-    Accessible.role: Accessible.Button
     Accessible.name: assistantName + " · " + actionText
     Accessible.description: description + ". " + actionText
-    Accessible.onPressAction: acknowledge()
-    activeFocusOnTab: true
-    Keys.onSpacePressed: acknowledge()
-    Keys.onReturnPressed: acknowledge()
+    onClicked: acknowledge()
+    Keys.onReturnPressed: click()
 
     Timer { id: greetingTimer; interval: 1550; onTriggered: portrait.greeting = false }
     Timer {
@@ -116,8 +117,8 @@ Rectangle {
             var dt = Math.min(frameTime, .05), ease = 1 - Math.exp(-dt * 7)
             portrait.phase += dt
             var p = portrait.phase, weight = portrait.intensity
-            portrait.gazeX += ((portrait.hovered ? (pointer.mouseX / portrait.width - .5) * 2 : Math.sin(p * .43) * .28) - portrait.gazeX) * ease
-            portrait.gazeY += ((portrait.hovered ? (pointer.mouseY / portrait.height - .5) * 2 : 0) - portrait.gazeY) * ease
+            portrait.gazeX += ((portrait.hovered ? (pointer.point.position.x / portrait.width - .5) * 2 : Math.sin(p * .43) * .28) - portrait.gazeX) * ease
+            portrait.gazeY += ((portrait.hovered ? (pointer.point.position.y / portrait.height - .5) * 2 : 0) - portrait.gazeY) * ease
             portrait.driftX = portrait.gazeX * portrait.width * .018 * weight
             portrait.driftY = (Math.sin(p * 1.7) * .65 + portrait.gazeY * .6 + (portrait.speaking ? Math.sin(p * 9) * .45 : 0)) * portrait.height / 64 * weight
             var target = (portrait.expression === "curious" ? -4 : portrait.expression === "cheeky" ? 4 : portrait.expression === "tender" ? -3 : 0)
@@ -127,7 +128,7 @@ Rectangle {
     }
 
     Rectangle {
-        anchors.fill: parent; anchors.margins: 3; radius: parent.radius - 2
+        anchors.fill: parent; anchors.margins: 3; radius: portrait.radius - 2
         gradient: Gradient {
             GradientStop { position: 0; color: portrait.portraitColors.portraitTop }
             GradientStop { position: 1; color: portrait.portraitColors.portraitBottom }
@@ -160,7 +161,7 @@ Rectangle {
         }
     }
     Rectangle {
-        anchors.fill: parent; radius: parent.radius; color: "transparent"
+        anchors.fill: parent; radius: portrait.radius; color: "transparent"
         border.width: portrait.activeFocus ? 2 : 1
         border.color: portrait.activeFocus ? portrait.portraitColors.accentText : portrait.portraitColors.portraitBorder
     }
@@ -185,11 +186,8 @@ Rectangle {
         border.color:Theme.amber
         CIcon { anchors.centerIn:parent;name:"muted";color:Theme.amber }
     }
-    MouseArea {
-        id: pointer; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-        onClicked: portrait.acknowledge()
-    }
-    ToolTip.visible: pointer.containsMouse || activeFocus
+    HoverHandler { id: pointer; cursorShape: Qt.PointingHandCursor }
+    ToolTip.visible: hovered || visualFocus
     ToolTip.delay: 650
     ToolTip.text: actionText
 }

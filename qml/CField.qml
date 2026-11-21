@@ -8,8 +8,8 @@ TextField {
     Layout.minimumWidth: 0
     color: Theme.text
     placeholderTextColor: Theme.muted
-    selectionColor: Theme.selected
-    selectedTextColor: Theme.text
+    selectionColor: Theme.selectionFill
+    selectedTextColor: Theme.selectionInk
     font.family: Theme.font
     font.pixelSize: Theme.body
     leftPadding: 12

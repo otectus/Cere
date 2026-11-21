@@ -15,6 +15,9 @@ Rectangle {
     // Every surface shows who is asking: a response answers exactly this requester.
     property var requester: (App.state.sessions || []).find(s => s.id === card.approval.sessionId) || null
     readonly property var requestingAgent: (requester?.agents || []).find(agent => agent.id === card.approval.nativeThreadId) || null
+    Accessible.role: Accessible.Grouping
+    Accessible.name: card.isQuestion ? "Question requiring your response" : "Permission request"
+    Accessible.description: card.approval.title || ""
 
     function cloneAnswers(source) {
         const result = {}
@@ -126,16 +129,16 @@ Rectangle {
         }
     }
 
-    color: Theme.approvalSurface
-    border.color: Theme.approvalBorder
-    radius: Theme.radiusControl
-    implicitHeight: contents.implicitHeight + 24
+    color: card.isQuestion ? Theme.questionSurface : Theme.approvalSurface
+    border.color: card.isQuestion ? Theme.activeBorder : Theme.approvalBorder
+    radius: Theme.radiusCard
+    implicitHeight: contents.implicitHeight + 32
 
     ColumnLayout {
         id: contents
         anchors.fill: parent
-        anchors.margins: 12
-        spacing: 8
+        anchors.margins: Theme.space4
+        spacing: Theme.space3
 
         RowLayout {
             Layout.fillWidth: true
@@ -201,6 +204,8 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 160
             fillMode: Image.PreserveAspectFit
+            Accessible.role: Accessible.Graphic
+            Accessible.name: "Image included with this request"
         }
         ColumnLayout {
             visible: !!card.approval.url
@@ -218,6 +223,7 @@ Rectangle {
             contentWidth: availableWidth
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical: CScrollBar {}
+            background: Rectangle { color: Theme.codeSurface; radius: Theme.radiusControl; border.color: Theme.line }
             TextArea {
                 id: detailText
                 text: card.approval.detail || ""
@@ -226,8 +232,11 @@ Rectangle {
                 wrapMode: TextEdit.Wrap
                 color: Theme.text
                 font.pixelSize: Theme.caption
-                font.family: "monospace"
+                font.family: Theme.mono
+                selectionColor: Theme.selectionFill
+                selectedTextColor: Theme.selectionInk
                 background: null
+                padding: Theme.space2
             }
         }
 
@@ -244,14 +253,14 @@ Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: questionContents.implicitHeight + 20
                 radius: Theme.radiusControl
-                color: Theme.questionSurface
-                border.color: card.validationErrors[questionId] ? Theme.danger : Theme.border
+                color: Theme.surface
+                border.color: card.validationErrors[questionId] ? Theme.danger : Theme.line
 
                 ColumnLayout {
                     id: questionContents
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 7
+                    anchors.margins: Theme.space3
+                    spacing: Theme.space2
                     RowLayout {
                         Layout.fillWidth: true
                         CText {
@@ -343,6 +352,12 @@ Rectangle {
                             selectByMouse: true
                             Accessible.name: questionBody.question.question
                             onTextChanged: if (activeFocus && text !== card.otherValue(questionBody.question)) card.setOther(questionBody.question, text)
+                            Keys.onPressed: event => {
+                                if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & Qt.ControlModifier) && (card.approval.choices || []).includes("answer")) {
+                                    card.submit("answer")
+                                    event.accepted = true
+                                }
+                            }
                         }
                     }
                     CText {

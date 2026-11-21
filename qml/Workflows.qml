@@ -111,7 +111,7 @@ CDialog {
         Layout.fillWidth:true;spacing:5
         Repeater {
             model:["Project","Recipes","Results"]
-            CButton { required property string modelData;required property int index;objectName:"workflowTab"+index;Layout.fillWidth:true;Layout.preferredWidth:1;text:modelData;primary:workflow.tab===index;Accessible.role:Accessible.PageTab;Accessible.selected:workflow.tab===index;onClicked:workflow.tab=index }
+            CButton { required property string modelData;required property int index;objectName:"workflowTab"+index;Layout.fillWidth:true;Layout.preferredWidth:1;text:modelData;primary:workflow.tab===index;Accessible.role:Accessible.PageTab; Accessible.onPressAction: if (enabled) click();Accessible.selected:workflow.tab===index;onClicked:workflow.tab=index }
         }
     }
     CText { visible:!App.selectedId&&workflow.tab!==2;text:"Select a saved session to use project workflows.";color:Theme.amber }

@@ -6,7 +6,7 @@ import QtQuick.Layouts
 // Importing shows what is new or changed first; nothing is saved until the reviewed preview is imported.
 CDialog {
     id:packages;objectName:"packageDialog"
-    width:Math.min(600,parent?parent.width-32:600)
+    preferredWidth:600
     property string mode:"export"
     property var styles:[]
     property var recipes:[]

@@ -1,12 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "Labels.js" as Labels
 
 ColumnLayout {
     id:list
     property bool compact:false
-    // Narrow windows keep each row to one line of actions: the context menu (or its ⋯ button).
-    property bool rowActions:true
+    property bool managingFolders: false
     property bool activeOnly:false
     property bool historyExpanded:false
     property string selectedFilter:"all"
@@ -24,6 +24,10 @@ ColumnLayout {
     property var history:[]
     property int historyRequest:-1
     property string error:""
+    property string catalogError:""
+    property bool retryAppend:false
+    readonly property bool brokerOnline:App.connected
+    onBrokerOnlineChanged:if(brokerOnline && visible)catalogRefresh.restart()
     property string contextSessionId:""
     property string folderSessionId:""
     readonly property var contextSession:sessionById(contextSessionId)
@@ -100,6 +104,7 @@ ColumnLayout {
     function refresh(reset) {
         if(!App.connected)return
         if(reset===undefined)reset=true
+        catalogError=""
         if(reset){nextPage=null;loadingMore=false}
         else if(!nextPage||listRequest>=0)return
         const request=App.rpc("sessions.list",requestParams(reset?null:nextPage))
@@ -136,17 +141,16 @@ ColumnLayout {
         }
     }
 
-    spacing:compact?10:14
+    spacing:compact ? 6 : Theme.space3
     RowLayout {
         Layout.fillWidth:true
-        CText { text:list.compact?"RECENT SESSIONS":"Sessions";color:list.compact?Theme.muted:Theme.text;font.pixelSize:list.compact?Theme.caption:Theme.page;font.letterSpacing:list.compact?1.4:0;font.weight:Font.DemiBold }
+        CText { text:list.compact?"Recent sessions":"Sessions";Accessible.role:Accessible.Heading;color:list.compact?Theme.muted:Theme.text;font.pixelSize:list.compact?Theme.secondary:Theme.page;font.weight:Font.DemiBold }
         Text { visible:list.compact;text:list.totalSessions;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
         CButton { visible:!list.compact;objectName:"newSession";text:"New session";iconName:"plus";primary:true;onClicked:list.createRequested() }
     }
-    CText { visible:!list.compact&&list.height>=420;text:"Pick up where you left off, or organize conversations by project and folder.";color:Theme.muted }
     CField {
         id:filter;objectName:list.compact?"sidebarSessionSearch":"sessionSearch"
-        placeholderText:"Find a session…";Layout.fillWidth:true;Accessible.name:"Find a session"
+        implicitHeight:list.compact ? 34 : Theme.controlHeight; placeholderText:"Find a session…";Layout.fillWidth:true;Accessible.name:"Find a session"
         onTextChanged:searchDelay.restart()
         onAccepted:if(list.filtered.length)list.activate(list.filtered[0])
         Keys.onDownPressed:event=>{sessionViewport.currentIndex=Math.max(0,sessionViewport.currentIndex);sessionViewport.forceActiveFocus();event.accepted=true}
@@ -160,10 +164,15 @@ ColumnLayout {
             currentIndex:Math.max(0,list.filterOptions.findIndex(option=>option.id===list.selectedFilter))
             onActivated:if(currentIndex>=0)list.setFilter(list.filterOptions[currentIndex].id)
         }
+        CButton {
+            visible:list.folders.length>0;objectName:"manageFolders";iconName:"settings";text:"";quiet:true;primary:list.managingFolders
+            help:"Manage folders";Accessible.name:"Manage folders";Accessible.expanded:list.managingFolders
+            onClicked:list.managingFolders=!list.managingFolders
+        }
         CButton { objectName:"createFolder";text:"New folder";iconName:"plus";onClicked:folderDialog.createFolder() }
     }
     RowLayout {
-        visible:!list.compact&&list.folders.length>0;Layout.fillWidth:true;spacing:8
+        visible:!list.compact&&list.managingFolders&&list.folders.length>0;Layout.fillWidth:true;spacing:8
         CComboBox { id:folderPicker;objectName:"folderPicker";Layout.fillWidth:true;model:list.folders;textRole:"name";Accessible.name:"Folder to manage" }
         CButton { text:"Rename";enabled:folderPicker.currentIndex>=0;onClicked:folderDialog.renameFolder(list.folders[folderPicker.currentIndex]) }
         CButton { text:"Delete";danger:true;enabled:folderPicker.currentIndex>=0;onClicked:folderDialog.deleteFolder(list.folders[folderPicker.currentIndex]) }
@@ -188,16 +197,16 @@ ColumnLayout {
             required property var entry
             property var modelData:entry
             required property int index
-            width:sessionViewport.width-10;height:list.compact?72:list.rowActions?116:80
+            width:sessionViewport.width-(sessionViewport.contentHeight>sessionViewport.height?12:0);height:list.compact?54:76
             CButton {
                 id:sessionRow
                 objectName:"session_"+sessionDelegate.modelData.id
                 anchors.left:parent.left;anchors.right:parent.right;anchors.top:parent.top
-                height:list.compact?72:76
+                height:sessionDelegate.height
                 text:sessionDelegate.modelData.title||"Untitled session";quiet:true
-                primary:App.selectedId===sessionDelegate.modelData.id
-                help:(sessionDelegate.modelData.title||"Untitled session")+"\n"+sessionDelegate.modelData.provider+" · "+list.statusLabel(sessionDelegate.modelData)+"\n"+(sessionDelegate.modelData.cwd||"")
-                Accessible.name:(sessionDelegate.modelData.title||"Untitled session")+", "+sessionDelegate.modelData.provider+", "+list.statusLabel(sessionDelegate.modelData)
+                primary:App.selectedId===sessionDelegate.modelData.id || (sessionViewport.activeFocus && sessionViewport.currentIndex===sessionDelegate.index)
+                help:(sessionDelegate.modelData.title||"Untitled session")+"\n"+Labels.provider(sessionDelegate.modelData.provider)+" · "+list.statusLabel(sessionDelegate.modelData)+"\n"+(sessionDelegate.modelData.cwd||"")
+                Accessible.name:(sessionDelegate.modelData.title||"Untitled session")+", "+Labels.provider(sessionDelegate.modelData.provider)+", "+list.statusLabel(sessionDelegate.modelData)
                 Accessible.selected:App.selectedId===sessionDelegate.modelData.id
                 onClicked:{sessionViewport.currentIndex=sessionDelegate.index;list.activate(sessionDelegate.modelData)}
                 Keys.onPressed:event=>list.contextKey(event,sessionDelegate.modelData,sessionRow)
@@ -206,47 +215,48 @@ ColumnLayout {
                     onClicked:mouse=>list.openSessionMenu(sessionDelegate.modelData,sessionRow,mouse.x,mouse.y)
                 }
                 contentItem:ColumnLayout {
-                    spacing:5
+                    spacing:list.compact ? 1 : 4
                     RowLayout {
-                        Layout.fillWidth:true;spacing:8
+                        Layout.fillWidth:true;spacing:6
                         Text { visible:sessionDelegate.modelData.pinned===true;text:"★";color:Theme.amber;font.pixelSize:Theme.body;Accessible.ignored:true }
                         Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:(sessionDelegate.modelData.unread?"● ":"")+(sessionDelegate.modelData.title||"Untitled session");maximumLineCount:1;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;textFormat:Text.PlainText }
-                        Rectangle { width:6;height:6;radius:3;color:list.pendingInputCount(sessionDelegate.modelData)>0?Theme.amber:["starting","working","stopping"].indexOf(sessionDelegate.modelData.status)>=0?Theme.accentText:Theme.line }
+
                         CButton {
-                            visible:!list.compact&&!list.rowActions;objectName:"sessionMore_"+sessionDelegate.modelData.id
-                            implicitWidth:32;implicitHeight:28;leftPadding:6;rightPadding:6;quiet:true
+                            visible:!list.compact || sessionRow.hovered || sessionRow.activeFocus || activeFocus;objectName:"sessionMore_"+sessionDelegate.modelData.id
+                            implicitWidth:28;implicitHeight:list.compact?20:26;leftPadding:6;rightPadding:6;quiet:true
                             help:"Rename, organize or delete";Accessible.name:"Actions for "+(sessionDelegate.modelData.title||"Untitled session")
                             contentItem:CIcon { name:"more";color:Theme.text }
                             onClicked:{const corner=mapToItem(sessionRow,0,height);list.openSessionMenu(sessionDelegate.modelData,sessionRow,corner.x,corner.y)}
                         }
                     }
-                    Text { Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight;text:sessionDelegate.modelData.provider.charAt(0).toUpperCase()+sessionDelegate.modelData.provider.slice(1)+" · "+list.statusLabel(sessionDelegate.modelData);color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
+                    Text { Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideRight;text:Labels.provider(sessionDelegate.modelData.provider)+" · "+list.statusLabel(sessionDelegate.modelData);color:list.pendingInputCount(sessionDelegate.modelData)>0?Theme.amber:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
                     Text { visible:!list.compact;Layout.fillWidth:true;Layout.minimumWidth:0;elide:Text.ElideMiddle;text:sessionDelegate.modelData.cwd||"";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption;textFormat:Text.PlainText }
                 }
             }
-            RowLayout {
-                visible:!list.compact&&list.rowActions;anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom;height:36;spacing:6
-                CButton { objectName:"pinSession_"+sessionDelegate.modelData.id;text:sessionDelegate.modelData.pinned?"Unpin":"Pin";help:"Pinned replies appear beside "+App.assistantName+" and are read aloud when voice is enabled.";quiet:true;implicitHeight:32;onClicked:list.organize(sessionDelegate.modelData,{pinned:!sessionDelegate.modelData.pinned}) }
-                CComboBox {
-                    objectName:"moveSession_"+sessionDelegate.modelData.id;Layout.fillWidth:true;implicitHeight:32
-                    model:[{id:"",name:"Unfiled"}].concat(list.folders);textRole:"name";valueRole:"id"
-                    Accessible.name:"Move "+(sessionDelegate.modelData.title||"session")+" to folder"
-                    currentIndex:Math.max(0,model.findIndex(folder=>folder.id===(sessionDelegate.modelData.folderId||"")))
-                    onActivated:list.organize(sessionDelegate.modelData,{folderId:currentValue||null})
-                }
-                CButton { objectName:"archiveSession_"+sessionDelegate.modelData.id;text:sessionDelegate.modelData.archived?"Unarchive":"Archive";quiet:true;implicitHeight:32;onClicked:list.organize(sessionDelegate.modelData,{archived:!sessionDelegate.modelData.archived}) }
-            }
+
         }
         CText {
             visible:!list.filtered.length&&list.listRequest<0;width:parent.width-12;anchors.top:parent.top;anchors.topMargin:12
             text:filter.text?"No sessions match your search.":list.selectedFilter==="working"?"All caught up. No sessions are working.":"No sessions in this view."
             color:Theme.muted;font.pixelSize:Theme.secondary
         }
-        footer:CButton { visible:list.nextPage!==null;width:sessionViewport.width-10;text:list.loadingMore?"Loading…":"Load more";enabled:!list.loadingMore;onClicked:list.refresh(false) }
+        footer:CButton { visible:list.nextPage!==null;height:visible?implicitHeight:0;width:sessionViewport.width-10;text:list.loadingMore?"Loading…":"Load more";enabled:!list.loadingMore;onClicked:list.refresh(false) }
     }
     CText { visible:list.listRequest>=0&&list.filtered.length===0;text:"Loading sessions…";color:Theme.muted;font.pixelSize:Theme.secondary }
+    RowLayout {
+        visible: list.catalogError.length > 0
+        Layout.fillWidth: true
+        CText {
+            Layout.fillWidth: true
+            text: list.catalogError
+            color: Theme.muted
+            font.pixelSize: Theme.secondary
+            Accessible.role: Accessible.AlertMessage
+        }
+        CButton { text:qsTr("Retry");quiet:true;enabled:App.connected && list.listRequest<0;onClicked:list.refresh(!list.retryAppend) }
+    }
     CText { visible:list.error.length>0;text:list.error;color:Theme.danger;font.pixelSize:Theme.secondary }
-    CButton { Layout.fillWidth:true;quiet:true;alignLeft:true;iconName:"sessions";text:list.historyExpanded?"Hide terminal history":"Import terminal session";help:"Continue a completed Codex or Claude conversation";onClicked:list.historyExpanded=!list.historyExpanded }
+    CButton { Layout.fillWidth:true;quiet:true;alignLeft:true;iconName:"sessions";implicitHeight:list.compact?32:Theme.controlHeight;text:list.historyExpanded?"Hide terminal history":"Import terminal session";help:"Continue a completed Codex or Claude conversation";onClicked:list.historyExpanded=!list.historyExpanded }
     ColumnLayout {
         visible:list.historyExpanded;Layout.fillWidth:true;spacing:8
         CText { text:list.historyRequest>=0?"Loading history…":"Continue a completed conversation.";color:Theme.muted;font.pixelSize:Theme.caption }
@@ -360,7 +370,12 @@ ColumnLayout {
             if(id===list.listRequest){
                 const append=list.loadingMore
                 list.listRequest=-1;list.loadingMore=false
-                if(value?.error){list.error=value.error;return}
+                if(value?.error){
+                    list.retryAppend=append
+                    list.catalogError=append ? qsTr("Couldn’t load more sessions.") : qsTr("Couldn’t refresh sessions.")
+                    return
+                }
+                list.catalogError=""
                 const rows=value?.sessions||value||[]
                 list.remoteSessions=append?list.remoteSessions.concat(rows):rows
                 list.remoteLoaded=true;list.catalogSeen=list.catalogRequested;list.nextPage=value?.next||null

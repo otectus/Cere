@@ -6,7 +6,7 @@ import QtQuick.Layouts
 // Cloud models read a collection only when it allows them to.
 CDialog {
     id:library;objectName:"knowledgeCollections"
-    width:Math.min(680,parent?parent.width-32:680)
+    preferredWidth:680
     property string sessionId:""
     property var collections:[]
     property int listRequest:-1

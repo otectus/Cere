@@ -69,7 +69,7 @@ Item {
                     text:bubble.needsInput?"Input needed"+(bubble.approvals.length>1?" · "+bubble.approvals.length:"")
                         :bubble.currentReply?App.assistantName+" · pinned conversation"
                         :"Run complete"+(bubble.completions.length>1?" · "+bubble.completions.length+" unread":"")
-                    font.pixelSize:Theme.section;font.bold:true;color:bubble.accent
+                    font.pixelSize:Theme.section;font.weight:Font.DemiBold;color:Theme.text;Accessible.role:Accessible.Heading
                 }
                 Repeater {
                     model:bubble.approvals

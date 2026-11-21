@@ -22,8 +22,9 @@ Item {
     property var references: []
     property var mask: null
     property bool creating: WorkbenchState.createRequested
-    property bool editing: !!WorkbenchState.artifactId && WorkbenchState.versionId !== ""
-    RpcClient { id: rpc }
+    readonly property var imageSelection: WorkbenchState.imageFor(sessionId)
+    property bool editing: !!imageSelection.artifactId && !!imageSelection.versionId
+    RpcClient { id: rpc; scope: browser.sessionId }
     function refresh() {
         if (!sessionId) return
         rpc.call("artifacts.list", { sessionId: sessionId, kind: filter, source: source, query: query.text, limit: 60 }, value => {
@@ -76,7 +77,7 @@ Item {
     property string seen: ""
     property bool stale: false
     onVisibleChanged: if (visible && stale) { stale = false; refresh() }
-    Connections { target: WorkbenchState; function onArtifactIdChanged() { if (WorkbenchState.artifactId) browser.refresh() } }
+    Connections { target: WorkbenchState; function onImagesChanged() { if (WorkbenchState.imageFor(browser.sessionId).artifactId) browser.refresh() } }
 
     ColumnLayout {
         anchors.fill: parent; spacing: 8; visible: !browser.editing
@@ -90,7 +91,7 @@ Item {
             Layout.fillWidth: true; spacing: 6
             CButton { objectName: "imagesCreate"; text: browser.creating ? "Hide Create" : "Create image"; iconName: "image"; primary: !browser.creating; onClicked: { browser.creating = !browser.creating; WorkbenchState.createRequested = false } }
             CButton { objectName: "imagesImport"; text: "Import…"; iconName: "plus"; onClicked: { const path = browser.filter === "image" ? App.chooseImage() : App.chooseFile(); if (path) importDialog.openFor(path) } }
-            CButton { objectName: "imagesSketch"; text: "New sketch"; iconName: "edit"; onClicked: rpc.call("images.sketch", { sessionId: browser.sessionId, width: 1024, height: 768 }, value => { if (value.error) browser.error = value.error; else { browser.refresh(); WorkbenchState.artifactId = value.artifactId; WorkbenchState.versionId = value.versionId } }) }
+            CButton { objectName: "imagesSketch"; text: "New sketch"; iconName: "edit"; onClicked: rpc.call("images.sketch", { sessionId: browser.sessionId, width: 1024, height: 768 }, value => { if (value.error) browser.error = value.error; else { browser.refresh(); WorkbenchState.selectImage(browser.sessionId, value.artifactId, value.versionId) } }) }
         }
         CText { visible: !!browser.error; text: browser.error; color: Theme.danger; font.pixelSize: Theme.secondary; Accessible.role: Accessible.AlertMessage }
         CText { visible: !!browser.notice; text: browser.notice; color: Theme.accentText; font.pixelSize: Theme.secondary }
@@ -160,7 +161,7 @@ Item {
                         CText { text: [modelData.latest?.image ? modelData.latest.image.width + "×" + modelData.latest.image.height : "", modelData.latest?.image?.transparent ? "transparency" : "", modelData.versions > 1 ? modelData.versions + " versions" : "",
                             modelData.latest?.source === "model-generation" ? "generated" : modelData.latest?.source === "user-import" ? "imported" : ""].filter(s => s).join(" · "); color: Theme.muted; font.pixelSize: Theme.caption; elide: Text.ElideRight; wrapMode: Text.NoWrap }
                     }
-                    MouseArea { anchors.fill: parent; onClicked: { grid.currentIndex = index; browser.select(modelData) } onDoubleClicked: { WorkbenchState.artifactId = modelData.id; WorkbenchState.versionId = modelData.latestVersionId } }
+                    MouseArea { anchors.fill: parent; onClicked: { grid.currentIndex = index; browser.select(modelData) } onDoubleClicked: WorkbenchState.selectImage(browser.sessionId, modelData.id, modelData.latestVersionId) }
                 }
             }
             Keys.onReturnPressed: if (currentIndex >= 0) browser.select(model[currentIndex])
@@ -170,7 +171,7 @@ Item {
             visible: !!browser.selected; Layout.fillWidth: true; spacing: 4
             Flow {
                 Layout.fillWidth: true; spacing: 4
-                CButton { objectName: "imageView"; text: "View and edit"; quiet: true; implicitHeight: 30; onClicked: { WorkbenchState.artifactId = browser.selected.id; WorkbenchState.versionId = browser.selected.latestVersionId } }
+                CButton { objectName: "imageView"; text: "View and edit"; quiet: true; implicitHeight: 30; onClicked: WorkbenchState.selectImage(browser.sessionId, browser.selected.id, browser.selected.latestVersionId) }
                 CButton { objectName: "imageReference"; text: "Use as reference"; quiet: true; implicitHeight: 30; visible: browser.selected?.kind === "image"; onClicked: { if (!browser.references.some(r => r.versionId === browser.selected.latestVersionId)) browser.references = browser.references.concat([{ artifactId: browser.selected.id, versionId: browser.selected.latestVersionId, role: "subject" }]); browser.creating = true } }
                 CButton { objectName: "imageSaveAs"; text: "Save as…"; quiet: true; implicitHeight: 30; onClicked: { const path = App.chooseSavePath(browser.selected.name); if (path) rpc.call("artifacts.saveAs", { sessionId: browser.sessionId, artifactId: browser.selected.id, versionId: browser.selected.latestVersionId, path: path, replace: true }, value => browser.notice = value.error ? value.error : "Saved to " + value.path) } }
                 CButton { objectName: "imagePin"; text: browser.selected?.pinned ? "Unpin" : "Pin"; quiet: true; implicitHeight: 30; onClicked: rpc.call("artifacts.update", { sessionId: browser.sessionId, artifactId: browser.selected.id, pinned: !browser.selected.pinned }, () => browser.refresh()) }
@@ -184,8 +185,8 @@ Item {
     }
     ImageWorkbench {
         anchors.fill: parent; visible: browser.editing; sessionId: browser.sessionId
-        onCloseRequested: { WorkbenchState.artifactId = ""; WorkbenchState.versionId = ""; browser.refresh() }
-        onMaskReady: ref => { browser.mask = ref; if (!browser.references.some(r => r.versionId === WorkbenchState.versionId)) browser.references = [{ artifactId: WorkbenchState.artifactId, versionId: WorkbenchState.versionId, role: "edit-base" }].concat(browser.references); browser.creating = true; WorkbenchState.artifactId = ""; WorkbenchState.versionId = "" }
+        onCloseRequested: { WorkbenchState.clearImage(browser.sessionId); browser.refresh() }
+        onMaskReady: ref => { const selected = WorkbenchState.imageFor(browser.sessionId); browser.mask = ref; if (!browser.references.some(r => r.versionId === selected.versionId)) browser.references = [{ artifactId: selected.artifactId, versionId: selected.versionId, role: "edit-base" }].concat(browser.references); browser.creating = true; WorkbenchState.clearImage(browser.sessionId) }
     }
     CDialog {
         id: billing; objectName: "imagesBilling"

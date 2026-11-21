@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // and deletes only after confirmation, never a model in use or chosen as a default.
 CDialog {
     id:models;objectName:"localModels"
-    width:Math.min(640,parent?parent.width-32:640)
+    preferredWidth:640
     property var items:[]
     property string host:""
     property int listRequest:-1

@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // message only. The conversation's style wins over its project's, which wins over Settings.
 CDialog {
     id:behavior;objectName:"sessionBehavior"
-    width:Math.min(600,parent?parent.width-32:600)
+    preferredWidth:600
     property string sessionId:""
     property var styles:[]
     property var postures:[]

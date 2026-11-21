@@ -63,6 +63,7 @@ class Controller : public QObject {
     // The socket is open but the broker has not answered for a while (frozen, overloaded).
     Q_PROPERTY(bool brokerUnresponsive READ brokerUnresponsive NOTIFY stateChanged)
     Q_PROPERTY(bool overlay READ overlay CONSTANT)
+    Q_PROPERTY(QUrl layoutSettingsUrl READ layoutSettingsUrl CONSTANT)
     Q_PROPERTY(QString assetPath READ assetPath CONSTANT)
     Q_PROPERTY(QVariantMap animations READ animations CONSTANT)
     Q_PROPERTY(QVariantList avatars READ avatars CONSTANT)
@@ -97,6 +98,7 @@ public:
     bool connected() const { return m_socket.state()==QLocalSocket::ConnectedState&&m_responsive; }
     bool brokerUnresponsive() const { return m_socket.state()==QLocalSocket::ConnectedState&&!m_responsive; }
     bool overlay() const { return m_overlay; }
+    QUrl layoutSettingsUrl() const;
     QString assetPath() const;
     QVariantMap animations() const { return m_animations; }
     QVariantList avatars() const { return m_avatars; }
@@ -145,6 +147,7 @@ public:
     Q_INVOKABLE void openPath(const QString &path);
     Q_INVOKABLE void openMessageLink(const QString &link, const QString &directory);
     // proseWidth: the visible width; paragraphs wrap there even when a table or code block is wider.
+    Q_INVOKABLE QString messageCodeAt(QQuickTextDocument *document, int position) const;
     Q_INVOKABLE void formatMessage(QQuickTextDocument *document, qreal proseWidth=0);
     Q_INVOKABLE QString chooseFolder();
     Q_INVOKABLE QString chooseImage();

@@ -34,19 +34,21 @@ ColumnLayout {
         return parts.join(" · ")
     }
 
-    spacing: 0
-    implicitHeight: 36 + (expanded ? maximumHeight : 0)
+    spacing: expanded ? 6 : 0
+    implicitHeight: Theme.controlHeight + (expanded ? maximumHeight + 6 : 0)
 
     CButton {
         objectName: "activityToggle"
         Layout.fillWidth: true
-        implicitHeight: 36
+        implicitHeight: Theme.controlHeight
         quiet: true
         alignLeft: true
-        text: (panel.expanded ? "▾  " : "▸  ") + "Activity" + (panel.summary ? " · " + panel.summary : "")
+        iconName: panel.expanded ? "down" : "chevron"
+        text: "Activity" + (panel.summary ? " · " + panel.summary : "")
         help: panel.expanded ? "Hide subagent and tool activity" : "Show subagent and tool activity"
         Accessible.name: "Activity"
         Accessible.description: panel.summary || help
+        Accessible.expanded: panel.expanded
         onClicked: panel.expanded = !panel.expanded
     }
     Rectangle {
@@ -54,14 +56,14 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: panel.maximumHeight
         color: Theme.input
-        border.color: Theme.line
-        radius: Theme.radiusControl
+        border.color: Theme.border
+        radius: Theme.radiusCard
         clip: true
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 8
-            spacing: 6
+            anchors.margins: Theme.space3
+            spacing: Theme.space2
 
             RowLayout {
                 visible: panel.agents.length > 0
@@ -71,7 +73,7 @@ ColumnLayout {
                     text: "Subagents · " + panel.agents.length
                     color: Theme.muted
                     font.pixelSize: Theme.caption
-                    font.bold: true
+                    font.weight: Font.DemiBold
                 }
                 CText {
                     visible: panel.activeAgents.length > 0
@@ -119,7 +121,7 @@ ColumnLayout {
                 text: "Tool activity · " + App.activityCount
                 color: Theme.muted
                 font.pixelSize: Theme.caption
-                font.bold: true
+                font.weight: Font.DemiBold
             }
             ListView {
                 id: activity
@@ -129,7 +131,7 @@ ColumnLayout {
                 Layout.fillHeight: true
                 clip: true
                 model: App.activity
-                spacing: 8
+                spacing: Theme.space2
                 cacheBuffer: 120
                 reuseItems: true
                 ScrollBar.vertical: CScrollBar {}
@@ -157,8 +159,10 @@ ColumnLayout {
         CButton {
             visible: !panel.follow && App.activityCount > 0
             anchors.bottom: parent.bottom
+            anchors.bottomMargin: Theme.space2
             anchors.horizontalCenter: parent.horizontalCenter
             text: "↓ Latest activity"
+            primary: true
             onClicked: {
                 panel.follow = true
                 activity.positionViewAtEnd()

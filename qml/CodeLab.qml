@@ -15,13 +15,13 @@ ColumnLayout {
     property string error: ""
     signal started()
     spacing: 6
-    RpcClient { id: rpc }
+    RpcClient { id: rpc; scope: lab.sessionId }
     function refresh() {
         rpc.call("codelab.status", {}, value => { if (!value.error) lab.status = value })
         if (sessionId) rpc.call("artifacts.list", { sessionId: sessionId, limit: 100 }, value => { if (!value.error) lab.files = value.artifacts || [] })
     }
     Component.onCompleted: refresh()
-    onSessionIdChanged: { chosen = []; refresh() }
+    onSessionIdChanged: { files = []; chosen = []; error = ""; refresh() }
     RowLayout {
         Layout.fillWidth: true
         CButton { objectName: "codeLabToggle"; text: lab.open ? "Hide Code Lab" : "Code Lab"; iconName: "terminal"; quiet: !lab.open; onClicked: { lab.open = !lab.open; if (lab.open) lab.refresh() } }

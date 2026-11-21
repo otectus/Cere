@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // formatting checks annotate replies and never change them; checkpoints are immutable.
 CDialog {
     id:editor;objectName:"behaviorProfileEditor"
-    width:Math.min(640,parent?parent.width-32:640)
+    preferredWidth:640
     property var profile:({})
     property int request:-1
     property int previewRequest:-1

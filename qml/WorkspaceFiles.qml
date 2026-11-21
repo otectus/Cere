@@ -18,18 +18,21 @@ Item {
     readonly property string path: root ? WorkbenchState.folder(sessionId, root.id) : ""
     readonly property var crumbs: path ? path.split("/") : []
     signal settingsRequested(var root)
-    RpcClient { id: rpc }
+    readonly property string ownerKey: sessionId + ":" + (root ? root.id : "") + ":" + path
+    RpcClient { id: rpc; scope: pane.ownerKey }
+    RpcClient { id: rootsRpc; scope: pane.sessionId }
     function refreshRoots() {
         if (!sessionId) { roots = []; return }
-        rpc.call("workspace.roots", { sessionId: sessionId }, value => {
+        rootsRpc.call("workspace.roots", { sessionId: sessionId }, value => {
             if (value.error) { error = value.error; roots = []; return }
             roots = value.roots || []; grants = value.grants || []; problem = value.problem || ""; error = ""
-            if (root) load(false)
+            if (root) Qt.callLater(() => pane.load(false))
         })
     }
     function load(more) {
         if (!root) return
         if (root.status && root.status !== "available") { listing = ({ entries: [] }); return }
+        if (!more) listing = ({ entries: [] })
         loading = true
         const params = { sessionId: sessionId, rootId: root.id, path: path }
         if (more && listing.nextCursor) params.cursor = listing.nextCursor
@@ -41,10 +44,10 @@ Item {
         })
     }
     function open(entry) {
-        if (entry.type === "directory") { results = null; WorkbenchState.setFolder(sessionId, root.id, entry.path); load(false) }
+        if (entry.type === "directory") { results = null; WorkbenchState.setFolder(sessionId, root.id, entry.path); Qt.callLater(() => pane.load(false)) }
         else if (entry.type === "file") WorkbenchState.openFile(sessionId, root.id, entry.path, 1)
     }
-    function goTo(index) { results = null; WorkbenchState.setFolder(sessionId, root.id, index < 0 ? "" : crumbs.slice(0, index + 1).join("/")); load(false) }
+    function goTo(index) { results = null; WorkbenchState.setFolder(sessionId, root.id, index < 0 ? "" : crumbs.slice(0, index + 1).join("/")); Qt.callLater(() => pane.load(false)) }
     function runSearch() {
         if (!root || !searchField.text.trim()) { results = null; return }
         loading = true
@@ -57,9 +60,9 @@ Item {
     function chooseFolder() { const chosen = App.chooseFolder(); if (chosen) settingsRequested({ path: chosen, policy: { write: false, organize: false, hidden: false, execute: false, destinations: { remote: false, cloud: false } } }) }
     function useConversation() { rpc.call("workspace.conversationRoot", { sessionId: sessionId }, value => { if (value.error) error = value.error; else { WorkbenchState.setRoot(sessionId, value.id); refreshRoots() } }) }
     function size(bytes) { return bytes < 1024 ? bytes + " B" : bytes < 1048576 ? Math.round(bytes / 1024) + " KiB" : (bytes / 1048576).toFixed(1) + " MiB" }
-    onSessionIdChanged: { results = null; refreshRoots() }
+    onSessionIdChanged: { roots = []; grants = []; results = null; listing = ({ entries: [] }); problem = ""; error = ""; loading = false; refreshRoots() }
     Component.onCompleted: refreshRoots()
-    Connections { target: App; function onStateChanged() { if (!pane.roots.length && pane.sessionId && App.connected && !rpc.busy) pane.refreshRoots() } }
+    Connections { target: App; function onStateChanged() { if (!pane.roots.length && pane.sessionId && App.connected && !rootsRpc.busy) pane.refreshRoots() } }
 
     ColumnLayout {
         anchors.fill: parent; spacing: 8
@@ -72,7 +75,7 @@ Item {
                 model: pane.roots.map(r => r.name + (r.primary ? " · primary" : "") + (r.status && r.status !== "available" ? " · " + (r.status === "missing" ? "unavailable" : "replaced") : ""))
                 currentIndex: Math.max(0, pane.roots.findIndex(r => pane.root && r.id === pane.root.id))
                 Accessible.name: "Workspace folder"
-                onActivated: index => { WorkbenchState.setRoot(pane.sessionId, pane.roots[index].id); pane.results = null; pane.load(false) }
+                onActivated: index => { WorkbenchState.setRoot(pane.sessionId, pane.roots[index].id); pane.results = null; Qt.callLater(() => pane.load(false)) }
             }
             CButton { objectName: "workspaceAddFolder"; visible: pane.roots.length > 0; implicitWidth: 40; text: ""; iconName: "plus"; help: "Add a folder to this conversation’s workspace"; Accessible.name: "Add a workspace folder"; onClicked: pane.chooseFolder() }
             CButton { objectName: "workspaceUseConversation"; visible: pane.roots.length > 0 && !pane.roots.some(r => r.kind === "conversation"); implicitWidth: 40; text: ""; iconName: "projects"

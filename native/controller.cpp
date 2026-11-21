@@ -21,6 +21,7 @@
 #include <QDir>
 #include <QFile>
 #include <QScreen>
+#include <QSettings>
 #include <QClipboard>
 #include <QMimeData>
 #include <QDesktopServices>
@@ -199,6 +200,11 @@ Controller::~Controller(){
     QObject::disconnect(&m_socket,nullptr,this,nullptr);
     if(m_overlayProcess){m_overlayProcess->terminate();m_overlayProcess->waitForFinished(2000);}
     if(m_panel)QObject::disconnect(m_panel,nullptr,this,nullptr);
+    if (m_tray) {
+        auto *menu = m_tray->contextMenu();
+        m_tray->setContextMenu(nullptr);
+        delete menu;
+    }
     delete m_petMirror;
     delete m_bubble;m_bubble=nullptr;delete m_panel;m_panel=nullptr;delete m_pet;m_pet=nullptr;
     m_socket.abort();
@@ -270,11 +276,34 @@ void Controller::start(bool show,bool toggle,const QString &conversationFolder){
         QStringList overlayArguments{"--overlay","--root",m_root};if(toggle)overlayArguments<<"--toggle";
         m_overlayProcess->setArguments(overlayArguments);m_overlayProcess->setProcessChannelMode(QProcess::ForwardedChannels);m_overlayProcess->start();
         m_tray=new QSystemTrayIcon(QGuiApplication::windowIcon(),this);m_tray->setToolTip("Cere · your desktop companion");
-        auto menu=new QMenu();menu->addAction("Open Cere",this,[this]{expand();});menu->addAction("Show / hide",this,[this]{auto s=m_state.value("settings").toMap();rpc("settings.update",{{"hidden",!s.value("hidden").toBool()}});});
-        menu->addAction("Pause AI actions",this,[this]{rpc("settings.update",{{"paused",true}});});
-        menu->addAction("Disable remote access now",this,[this]{rpc("remote.off",{});});
-        menu->addSeparator();menu->addAction("Quit · keep sessions running",this,[this]{quit(false);});menu->addAction("Quit and stop sessions",this,[this]{quit(true);});
-        m_tray->setContextMenu(menu);m_tray->show();connect(m_tray,&QSystemTrayIcon::activated,this,[this](auto reason){if(reason==QSystemTrayIcon::Trigger)expand();});
+        auto *menu = new QMenu();
+        menu->addAction(tr("Open workspace"), this, [this] { expand(); });
+        auto *visibility = menu->addAction(tr("Hide companion"), this, [this] {
+            rpc("settings.update", {{"hidden", !m_state.value("settings").toMap().value("hidden").toBool()}});
+        });
+        menu->addSeparator();
+        auto *pause = menu->addAction(tr("Pause AI actions"), this, [this] {
+            rpc("settings.update", {{"paused", !m_state.value("settings").toMap().value("paused").toBool()}});
+        });
+        auto *remote = menu->addAction(tr("Disable remote access now"), this, [this] { rpc("remote.off", {}); });
+        visibility->setObjectName("trayVisibility");
+        pause->setObjectName("trayPause");
+        const auto refreshActions = [this, visibility, pause, remote] {
+            const auto settings = m_state.value("settings").toMap();
+            visibility->setText(settings.value("hidden").toBool() ? tr("Show companion") : tr("Hide companion"));
+            pause->setText(settings.value("paused").toBool() ? tr("Resume AI actions") : tr("Pause AI actions"));
+            for (auto *action : {visibility, pause, remote}) action->setEnabled(connected());
+        };
+        connect(this, &Controller::stateChanged, menu, refreshActions);
+        refreshActions();
+        menu->addSeparator();
+        menu->addAction(tr("Quit and keep sessions running"), this, [this] { quit(false); });
+        menu->addAction(tr("Quit and stop sessions"), this, [this] { quit(true); });
+        m_tray->setContextMenu(menu);
+        m_tray->show();
+        connect(m_tray, &QSystemTrayIcon::activated, this, [this](auto reason) {
+            if (reason == QSystemTrayIcon::Trigger) expand();
+        });
         if(show||!conversationFolder.isEmpty()) QTimer::singleShot(500,this,[this]{showWorkspace();});
     }
     connectBroker();
@@ -1048,19 +1077,84 @@ void Controller::flushOfflineDrafts(){
         sendHeldDraft(it.value());
     }
 }
-void Controller::showWorkspace(){stopRoaming(true);if(m_panel&&!m_expanded){emit flushDrafts();delete m_panel;m_panel=nullptr;}m_expanded=true;if(!m_panel){m_panel=view("Workspace.qml",false,"Cere");m_panel->resize(1040,780);m_panel->setMinimumSize({720,520});connect(m_panel,&QWindow::visibleChanged,this,[this]{refreshMotion();});}m_panel->show();m_panel->requestActivate();refreshMotion();preview("listen");}
+QUrl Controller::layoutSettingsUrl() const {
+    const auto directory = qEnvironmentVariable("CERE_STATE_DIR",
+        QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + "/cere");
+    return QUrl::fromLocalFile(directory + "/desktop-layout.ini");
+}
+
+void Controller::showWorkspace() {
+    stopRoaming(true);
+    if (m_panel && !m_expanded) {
+        emit flushDrafts();
+        delete m_panel;
+        m_panel = nullptr;
+    }
+    m_expanded = true;
+    if (!m_panel) {
+        auto *window = view("Workspace.qml", false, "Cere");
+        m_panel = window;
+        // Store logical size only. The compositor places toplevels and owns tiling.
+        auto *layout = new QSettings(layoutSettingsUrl().toLocalFile(), QSettings::IniFormat, window);
+        const QSize minimum(720, 520);
+        const auto limitMinimum = [window, minimum](QScreen *screen) {
+            window->setMinimumSize(screen ? minimum.boundedTo(screen->availableSize()) : minimum);
+        };
+        limitMinimum(window->screen());
+        connect(window, &QWindow::screenChanged, window, limitMinimum);
+        auto size = layout->value("workspace/size", QSize(1040, 780)).toSize();
+        size = size.expandedTo(window->minimumSize());
+        if (window->screen()) size = size.boundedTo(window->screen()->availableSize());
+        window->resize(size);
+        if (layout->value("workspace/maximized", false).toBool()) window->setWindowState(Qt::WindowMaximized);
+        auto *saveSize = new QTimer(window);
+        saveSize->setInterval(200);
+        saveSize->setSingleShot(true);
+        const auto rememberSize = [window, layout] {
+            if (window->windowState() == Qt::WindowNoState)
+                layout->setValue("workspace/size", window->size());
+        };
+        connect(window, &QWindow::widthChanged, saveSize, [saveSize] { saveSize->start(); });
+        connect(window, &QWindow::heightChanged, saveSize, [saveSize] { saveSize->start(); });
+        connect(saveSize, &QTimer::timeout, window, rememberSize);
+        connect(window, &QWindow::windowStateChanged, layout, [layout](Qt::WindowState state) {
+            if (state == Qt::WindowMaximized || state == Qt::WindowNoState)
+                layout->setValue("workspace/maximized", state == Qt::WindowMaximized);
+        });
+        connect(window, &QWindow::visibleChanged, this, [this, rememberSize](bool visible) {
+            if (!visible) rememberSize();
+            refreshMotion();
+        });
+    }
+    m_panel->setVisible(true);
+    m_panel->requestActivate();
+    refreshMotion();
+    preview("listen");
+}
 void Controller::copy(const QString &text){QGuiApplication::clipboard()->setText(text);notify("Copied to clipboard");preview("copy");}
 void Controller::openPath(const QString &path){QDesktopServices::openUrl(QUrl::fromLocalFile(path));}
 // Prose may break a long URL or path anywhere, but a table column keeps its widest word, as
 // with word wrapping: columns grow toward their natural width as the view allows, and a table
 // that still does not fit scrolls horizontally instead of crushing words into letters.
-static void fitTable(QTextTable *table,const QFont &base,qreal available){
+static void fitTable(QTextTable *table,const QFont &base,qreal available,const QVariantMap &theme){
     static const QRegularExpression space("\\s+");
+    // Qt's default Markdown grid uses platform gray, even on dark character palettes.
+    auto format = table->format();
+    format.setBorderCollapse(true);
+    format.setBorder(1);
+    format.setBorderBrush(QColor(theme.value("line").toString()));
+    format.setCellPadding(6);
+    format.setCellSpacing(0);
+    format.setTopMargin(8);
+    format.setBottomMargin(6);
     const int columns=table->columns();
     QList<qreal> least(columns,0),natural(columns,0);
     for(int row=0;row<table->rows();++row)for(int column=0;column<columns;++column){
-        const auto cell=table->cellAt(row,column);
+        auto cell=table->cellAt(row,column);
         if(!cell.isValid()||cell.column()!=column||cell.columnSpan()!=1)continue;
+        auto fill = cell.format();
+        fill.setBackground(QColor(theme.value(row == 0 ? "selected" : row % 2 ? "surface" : "input").toString()));
+        if (fill != cell.format()) cell.setFormat(fill);
         for(auto it=cell.begin();!it.atEnd();++it){
             const auto block=it.currentBlock();qreal line=0;
             for(auto part=block.begin();!part.atEnd();++part){
@@ -1072,7 +1166,6 @@ static void fitTable(QTextTable *table,const QFont &base,qreal available){
             natural[column]=std::max(natural[column],line);
         }
     }
-    auto format=table->format();
     const qreal chrome=2*(format.cellPadding()+format.border())+format.cellSpacing()+2;
     qreal leastSum=0,naturalSum=0;
     for(int column=0;column<columns;++column){natural[column]=std::max(natural[column],least[column]);leastSum+=least[column]+chrome;naturalSum+=natural[column]+chrome;}
@@ -1081,8 +1174,28 @@ static void fitTable(QTextTable *table,const QFont &base,qreal available){
         const qreal share=naturalSum<=available?1:leastSum>=available?0:(available-leastSum)/std::max<qreal>(1,naturalSum-leastSum);
         widths<<QTextLength(QTextLength::FixedLength,std::ceil(least[column]+(natural[column]-least[column])*share)+chrome);
     }
-    if(format.columnWidthConstraints()!=widths){format.setColumnWidthConstraints(widths);table->setFormat(format);}
+    format.setColumnWidthConstraints(widths);
+    if (table->format() != format) table->setFormat(format);
 }
+static bool codeBlock(const QTextBlock &block) {
+    if (!block.isValid()) return false;
+    const auto format = block.blockFormat();
+    return format.hasProperty(QTextFormat::BlockCodeFence) || format.hasProperty(QTextFormat::BlockCodeLanguage);
+}
+
+QString Controller::messageCodeAt(QQuickTextDocument *quickDocument, int position) const {
+    if (!quickDocument) return {};
+    auto block = quickDocument->textDocument()->findBlock(position);
+    if (!codeBlock(block)) return {};
+    while (codeBlock(block.previous())) block = block.previous();
+    QStringList lines;
+    while (codeBlock(block)) {
+        lines.append(block.text());
+        block = block.next();
+    }
+    return lines.join('\n');
+}
+
 void Controller::formatMessage(QQuickTextDocument *quickDocument,qreal proseWidth){
     if(!quickDocument)return;
     auto document=quickDocument->textDocument();
@@ -1094,12 +1207,14 @@ void Controller::formatMessage(QQuickTextDocument *quickDocument,qreal proseWidt
     QTextCursor edit(document);edit.beginEditBlock();
     for(auto block=document->begin();block.isValid();block=block.next()){
         auto format=block.blockFormat();
-        const bool code=format.hasProperty(QTextFormat::BlockCodeFence)||format.hasProperty(QTextFormat::BlockCodeLanguage);
-        format.setTopMargin(block==document->begin()?0:code||block.textList()?2:format.headingLevel()?12:8);
+        const bool code=codeBlock(block);
+        const bool inTable=QTextCursor(block).currentTable()!=nullptr;
+        format.setTopMargin(block==document->begin()||inTable?0:code||block.textList()?2:format.headingLevel()?14:8);
+        format.setLineHeight(code || inTable ? 110 : 124, QTextBlockFormat::ProportionalHeight);
         format.setBottomMargin(code?2:0);
         if(code){format.setBackground(QColor(m_theme.value("codeSurface").toString()));format.setLeftMargin(8);format.setRightMargin(8);}
-        else if(!QTextCursor(block).currentTable())format.setRightMargin(overflow);
-        QTextCursor cursor(block);cursor.setBlockFormat(format);
+        else if(!inTable)format.setRightMargin(overflow);
+        if (block.blockFormat() != format) { QTextCursor cursor(block);cursor.setBlockFormat(format); }
         // Markdown anchors keep an explicit foreground from their first parse.
         // Changing TextArea.palette.link alone leaves old replies in the old colour.
         for(auto it=block.begin();!it.atEnd();++it){
@@ -1111,7 +1226,7 @@ void Controller::formatMessage(QQuickTextDocument *quickDocument,qreal proseWidt
     // Collect ranges before editing: merging adjacent fragments invalidates their iterators.
     QTextCharFormat link;link.setForeground(linkColor);
     for(const auto &[position,length]:links){QTextCursor cursor(document);cursor.setPosition(position);cursor.setPosition(position+length,QTextCursor::KeepAnchor);cursor.mergeCharFormat(link);}
-    if(proseWidth>0)for(auto frame:document->rootFrame()->childFrames())if(auto table=qobject_cast<QTextTable*>(frame))fitTable(table,document->defaultFont(),proseWidth);
+    if(proseWidth>0)for(auto frame:document->rootFrame()->childFrames())if(auto table=qobject_cast<QTextTable*>(frame))fitTable(table,document->defaultFont(),proseWidth,m_theme);
     edit.endEditBlock();
 }
 void Controller::openMessageLink(const QString &link,const QString &directory){

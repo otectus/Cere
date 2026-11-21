@@ -1,5 +1,8 @@
 import QtQuick
 Text {
+    Accessible.role: Accessible.Heading
+    Accessible.name: text
+    Accessible.focusable: false
     color: Theme.muted
     font.family: Theme.font
     font.pixelSize: Theme.caption

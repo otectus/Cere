@@ -2,6 +2,12 @@ import QtQuick
 import QtQuick.Controls
 ComboBox {
     id: control
+    Accessible.onPressAction: {
+        if (!enabled) return
+        forceActiveFocus(Qt.OtherFocusReason)
+        if (popup.visible) popup.close()
+        else popup.open()
+    }
     implicitHeight: 42
     implicitWidth: 200
     leftPadding: 12; rightPadding: 32
@@ -12,15 +18,17 @@ ComboBox {
         color: control.enabled ? Theme.text : Theme.muted
         verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; textFormat: Text.PlainText
     }
-    indicator: Text { x: control.width-width-12; y: (control.height-height)/2; text: "⌄"; font.family: Theme.font; font.pixelSize: Theme.glyph; color: Theme.muted }
+    indicator: CIcon { x: control.width-width-12; y: (control.height-height)/2; width: 16; height: 16; name: "down"; color: Theme.muted }
     delegate: ItemDelegate {
+        id: option
         required property int index
         width: control.width-8
         text: control.textAt(index)
+        implicitHeight: Math.max(36, implicitContentHeight + 12)
         font: control.font
         highlighted: control.highlightedIndex===index
-        contentItem: Text { text: parent.text; font: control.font; color: parent.highlighted ? Theme.accentText : Theme.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter; textFormat: Text.PlainText }
-        background: Rectangle { radius: Theme.radiusChip; color: parent.highlighted ? Theme.selected : "transparent" }
+        contentItem: Text { text: option.text; font: control.font; color: option.highlighted ? Theme.accentText : Theme.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter; textFormat: Text.PlainText }
+        background: Rectangle { radius: Theme.radiusChip; color: option.highlighted ? Theme.selected : "transparent" }
     }
     popup: Popup {
         y: control.height+5; width: control.width; padding: 4

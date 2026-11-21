@@ -5,7 +5,13 @@ Rectangle {
     id: shell
     property bool expanded: false
     property int page: 0
-    readonly property var tabs:[{label:"Chat",icon:"chat",page:0},{label:"Sessions",icon:"sessions",page:1},{label:"Projects",icon:"projects",page:4},{label:"Desktop",icon:"desktop",page:2},{label:"Settings",icon:"settings",page:3}]
+    readonly property var tabs: [
+        {key:"Chat", label:qsTr("Chat"), icon:"chat", page:0},
+        {key:"Sessions", label:qsTr("Sessions"), icon:"sessions", page:1},
+        {key:"Projects", label:qsTr("Projects"), icon:"projects", page:4},
+        {key:"Desktop", label:qsTr("Desktop"), icon:"desktop", page:2},
+        {key:"Settings", label:qsTr("Settings"), icon:"settings", page:3}
+    ]
     property real pageOffset: 0
     // Reduced motion, quiet mode and zero intensity keep page changes instant (Theme.duration is then 0).
     readonly property bool animateNavigation: !expanded && Theme.duration(180) > 0
@@ -25,7 +31,8 @@ Rectangle {
     function navigate(target) {
         page=target
         App.rpc("navigation.record",{id:["page:chat","page:sessions","page:desktop","page:settings","page:projects"][target]})
-        if(target===1)Qt.callLater(()=>sessionsPage.focusSearch())
+        if(target===0)Qt.callLater(()=>conversation.focusComposer())
+        else if(target===1)Qt.callLater(()=>sessionsPage.focusSearch())
         else if(target===2)Qt.callLater(()=>desktop.focusSearch())
         else if(target===3)Qt.callLater(()=>settingsPage.focusSearch())
         else if(target===4)Qt.callLater(()=>projectsPage.focusSearch())
@@ -61,7 +68,13 @@ Rectangle {
     Shortcut { sequence: "Ctrl+N"; onActivated: shell.page===4?projectsPage.newProjectSession():newSession.open() }
     Shortcut { sequence: "Ctrl+,"; onActivated: shell.navigate(3) }
     readonly property bool wide: expanded && width >= 920
-    readonly property string statusText: App.brokerUnresponsive ? "Cere is not responding…" : !App.connected ? "Reconnecting…" : approvals.length ? approvals.length+" waiting for input" : busySessions ? busySessions+" conversations working" : "Ready when you are"
+    readonly property bool splitWorkbench: wide && WorkbenchState.open && page === 0
+    // At intermediate widths keep both working panes usable by reducing the navigation to icons.
+    readonly property bool autoRail: splitWorkbench && width < 1280
+    readonly property bool rail: wide && (WorkbenchState.layout.collapsed || autoRail)
+    readonly property int sidebarWidth: rail ? 72 : width >= 1400 ? 280 : 248
+    readonly property real maxPaneWidth: Math.max(360, Math.min(width * 0.55, width - sidebarWidth - 416))
+    readonly property string statusText: App.brokerUnresponsive ? "Cere is not responding…" : !App.connected ? "Reconnecting…" : approvals.length ? approvals.length+" waiting for input" : busySessions ? busySessions+(busySessions===1?" conversation working":" conversations working") : "Ready"
     readonly property bool bypassActive: settings.bypassCliPermissions||settings.bypassComputerPermissions
     readonly property string permissionText: settings.paused?"Tools paused":bypassActive?[settings.bypassCliPermissions?"CLI bypass":"",settings.bypassComputerPermissions?"Computer bypass":""].filter(s=>s).join(" · "):settings.profile==="manual"?"Manual desktop controls":settings.profile==="broad"?"Broad control · project grants apply":(settings.categories||[]).length+" AI desktop categories enabled"
     // Paused tools and permission bypasses stay visible in the one-row compact header.
@@ -70,8 +83,8 @@ Rectangle {
     readonly property bool toastVisible: App.toast.length>0&&!(page===0&&App.toast===(App.session.error||""))
     component HeaderPortrait: CerePortrait {
         avatar: App.avatar
-        Layout.preferredWidth: shell.wide ? 64 : 56
-        Layout.preferredHeight: shell.wide ? 64 : 56
+        Layout.preferredWidth: shell.wide && !shell.rail ? 52 : 44
+        Layout.preferredHeight: Layout.preferredWidth
         settings: shell.settings
         session: App.session
         messages: App.messages
@@ -92,67 +105,119 @@ Rectangle {
         spacing: 0
         Rectangle {
             visible: shell.wide
-            Layout.preferredWidth: shell.width >= 1400 ? 280 : 248
+            Layout.preferredWidth: shell.sidebarWidth
             Layout.fillHeight: true
             color: Theme.sidebar
-            Rectangle { anchors.right:parent.right; width:1; height:parent.height; color:Theme.subtle }
+            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.line }
             ColumnLayout {
-                anchors.fill:parent; anchors.margins:16; spacing:16
+                anchors.fill: parent
+                anchors.margins: shell.rail ? 10 : Theme.space3
+                spacing: Theme.space2
                 RowLayout {
-                    Layout.fillWidth:true; spacing:12; Layout.topMargin:8; Layout.bottomMargin:8
-                    HeaderPortrait {}
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.space2
+                    Layout.bottomMargin: Theme.space2
+                    spacing: Theme.space3
+                    HeaderPortrait { Layout.alignment: Qt.AlignHCenter }
                     ColumnLayout {
-                        Layout.fillWidth:true; spacing:2
-                        Text { text:"CERE";color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.wordmark;font.weight:Font.Bold;font.letterSpacing:3 }
-                        Text { text:"Your desktop companion";color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption }
+                        visible: !shell.rail
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        spacing: 2
+                        Text {
+                            Layout.fillWidth: true; Layout.minimumWidth: 0
+                            text: App.assistantName; textFormat: Text.PlainText; elide: Text.ElideRight
+                            color: Theme.text; font.family: Theme.font; font.pixelSize: Theme.wordmark; font.weight: Font.DemiBold
+                        }
+                        CText { text: shell.statusText; color: App.connected && !shell.approvals.length ? Theme.muted : Theme.amber; font.pixelSize: Theme.caption }
                     }
                 }
+                CButton {
+                    objectName: "sidebarNewSession"; Layout.fillWidth: true
+                    text: shell.rail ? "" : qsTr("New session"); iconName: "plus"; prominent: !!App.session.id || shell.page !== 0; primary: true
+                    help: qsTr("Start a session (Ctrl+N)"); Accessible.name: qsTr("New session")
+                    onClicked: newSession.open()
+                }
+                CButton {
+                    objectName: "sidebarCommandPalette"; Layout.fillWidth: true
+                    text: shell.rail ? "" : qsTr("Search Cere"); iconName: "search"
+                    alignLeft: !shell.rail; quiet: true; implicitHeight: 34
+                    Accessible.name: qsTr("Search Cere"); help: qsTr("Search Cere (Ctrl+K)")
+                    rightPadding: shell.rail ? Theme.space3 : 62
+                    Text {
+                        visible: !shell.rail; anchors.right: parent.right; anchors.rightMargin: Theme.space3; anchors.verticalCenter: parent.verticalCenter
+                        text: "Ctrl K"; color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.caption; Accessible.ignored: true
+                    }
+                    onClicked: commandPalette.openPalette()
+                }
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.subtle }
                 ColumnLayout {
-                    Layout.fillWidth:true;spacing:4
+                    Layout.fillWidth: true
+                    spacing: 2
                     Repeater {
-                        model:shell.tabs
+                        model: shell.tabs
                         CButton {
-                            required property var modelData;required property int index
-                            objectName:"tab_"+modelData.label
-                            Layout.fillWidth:true;implicitHeight:42
-                            text:modelData.label;iconName:modelData.icon;alignLeft:true;quiet:true;primary:shell.page===modelData.page
-                            Accessible.role:Accessible.PageTab;Accessible.selected:shell.page===modelData.page
-                            onClicked:shell.navigate(modelData.page)
+                            required property var modelData
+                            required property int index
+                            objectName: "tab_" + modelData.key
+                            Layout.fillWidth: true
+                            implicitHeight: 34
+                            text: shell.rail ? "" : modelData.label
+                            iconName: modelData.icon
+                            alignLeft: !shell.rail; quiet: true; primary: shell.page === modelData.page
+                            help: shell.rail ? modelData.label : ""
+                            Accessible.name: modelData.label; Accessible.role: Accessible.PageTab; Accessible.onPressAction: if (enabled) click(); Accessible.selected: primary
+                            Rectangle {
+                                visible: parent.primary; width: 3; height: 16; radius: 2
+                                anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; color: Theme.accentText
+                            }
+                            onClicked: shell.navigate(modelData.page)
                         }
                     }
+                    CButton {
+                        objectName: "sidebarWorkflows"; Layout.fillWidth: true; implicitHeight: 34
+                        text: shell.rail ? "" : qsTr("Project workflows"); iconName: "workflow"
+                        quiet: true; alignLeft: !shell.rail; help: "Project workflows"
+                        onClicked: workflows.open()
+                    }
                 }
-                CButton { objectName:"sidebarNewSession";Layout.fillWidth:true;text:"New session";iconName:"plus";primary:true;help:"Start a session (Ctrl+N)";onClicked:newSession.open() }
-                CButton { objectName:"sidebarCommandPalette";Layout.fillWidth:true;text:"Search Cere";iconName:"search";quiet:true;alignLeft:true;help:"Command palette (Ctrl+K)";onClicked:commandPalette.openPalette() }
-                CButton { objectName:"sidebarWorkflows";Layout.fillWidth:true;text:"Project workflows";quiet:true;alignLeft:true;onClicked:workflows.open() }
-                Rectangle { Layout.fillWidth:true;height:1;color:Theme.subtle }
+                Rectangle { visible: !shell.rail && shell.page !== 1; Layout.fillWidth: true; implicitHeight: 1; color: Theme.subtle }
                 SessionList {
-                    visible:shell.page!==1
-                    Layout.fillWidth:true;Layout.fillHeight:true
-                    compact:true
-                    onCreateRequested:newSession.open()
-                    onSessionActivated:shell.openConversation()
+                    visible: !shell.rail && shell.page !== 1
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    compact: true
+                    onCreateRequested: newSession.open()
+                    onSessionActivated: shell.openConversation()
                 }
-                Item { visible:shell.page===1;Layout.fillHeight:true }
-                Rectangle { Layout.fillWidth:true;height:1;color:Theme.subtle }
+                Item { visible: shell.rail || shell.page === 1; Layout.fillHeight: true }
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.subtle }
                 RowLayout {
-                    Layout.fillWidth:true;spacing:8
-                    Rectangle { width:6;height:6;radius:3;color:App.connected?Theme.success:Theme.amber }
-                    CText { text:shell.statusText;color:Theme.muted;font.pixelSize:Theme.caption;maximumLineCount:2;elide:Text.ElideRight }
-                    CButton { text:"";iconName:"hide";quiet:true;help:"Hide window";Accessible.name:"Hide window";onClicked:App.closePanel() }
+                    Layout.fillWidth: true
+                    CButton {
+                        objectName: "sidebarToggle"; Layout.fillWidth: true; implicitHeight: 32
+                        visible: !shell.autoRail
+                        text: shell.rail ? "" : "Collapse sidebar"; iconName: "sidebar"; quiet: true; alignLeft: !shell.rail
+                        help: shell.rail ? "Expand sidebar" : "Collapse sidebar"; Accessible.name: help
+                        onClicked: WorkbenchState.layout.collapsed = !WorkbenchState.layout.collapsed
+                    }
+                    CButton {
+                        visible: !shell.rail; iconName: "hide"; implicitHeight: 32
+                        quiet: true; help: "Hide window"; onClicked: App.closePanel()
+                    }
                 }
             }
         }
         ColumnLayout {
             Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumWidth:0
-            Layout.margins:shell.wide?24:14
-            spacing:shell.wide?16:8
+            Layout.margins:shell.wide ? (shell.splitWorkbench ? 12 : 20) : 12
+            spacing:shell.wide ? 12 : 6
             RowLayout {
                 visible:!shell.wide
                 Layout.fillWidth:true;spacing:10
                 HeaderPortrait {}
                 ColumnLayout {
                     Layout.fillWidth:true;Layout.minimumWidth:0;spacing:2
-                    Text { text:"CERE";color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.wordmark;font.weight:Font.Bold;font.letterSpacing:3 }
+                    Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:App.assistantName;textFormat:Text.PlainText;elide:Text.ElideRight;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.wordmark;font.weight:Font.DemiBold }
                     CText { objectName:"compactStatus";Layout.fillWidth:true;text:shell.compactStatus;color:!App.connected||settings.paused||shell.bypassActive?Theme.amber:Theme.muted;font.pixelSize:Theme.caption;maximumLineCount:1;elide:Text.ElideRight;Accessible.name:text }
                 }
                 CButton {
@@ -167,7 +232,7 @@ Rectangle {
                     contentItem:CIcon { name:"shield";color:settings.paused||shell.bypassActive?Theme.amber:Theme.text }
                     onClicked:permissionCenter.open()
                 }
-                CButton { objectName:"expandWindow";text:expanded?"Hide":"Expand";iconName:expanded?"hide":"expand";quiet:true;onClicked:expanded?App.closePanel():App.expand() }
+                CButton { objectName:"expandWindow";text:"";iconName:expanded?"hide":"expand";quiet:true;help:expanded?"Hide window":"Expand workspace";onClicked:expanded?App.closePanel():App.expand() }
             }
             RowLayout {
                 visible:!shell.wide;Layout.fillWidth:true;spacing:4
@@ -175,11 +240,17 @@ Rectangle {
                     model:shell.tabs
                     CButton {
                         required property var modelData;required property int index
-                        objectName:"tab_"+modelData.label;Layout.fillWidth:true;Layout.preferredWidth:1
+                        id: compactTab
+                        objectName:"tab_"+modelData.key;Layout.fillWidth:true;Layout.preferredWidth:1
                         text:"";help:modelData.label;quiet:true;primary:shell.page===modelData.page
                         leftPadding:6;rightPadding:6
-                        Accessible.name:modelData.label;Accessible.role:Accessible.PageTab;Accessible.selected:shell.page===modelData.page
-                        contentItem:CIcon { name:parent.modelData.icon;color:parent.primary?Theme.accentText:Theme.text }
+                        Accessible.name:modelData.label;Accessible.role:Accessible.PageTab; Accessible.onPressAction: if (enabled) click();Accessible.selected:shell.page===modelData.page
+                        implicitHeight: shell.height < 570 || shell.width < 350 ? 32 : 46
+                        contentItem: Column {
+                            spacing: 1
+                            CIcon { visible:shell.height >= 570 || shell.width < 350; anchors.horizontalCenter:parent.horizontalCenter; width:18;height:18;name:compactTab.modelData.icon;color:compactTab.primary?Theme.accentText:Theme.muted }
+                            Text { visible:shell.width >= 350;width:parent.width;height:implicitHeight;text:compactTab.modelData.label;elide:Text.ElideRight;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter;font.family:Theme.font;font.pixelSize:Theme.caption;font.weight:compactTab.primary?Font.DemiBold:Font.Normal;color:compactTab.primary?Theme.accentText:Theme.text }
+                        }
                         onClicked:shell.navigate(modelData.page)
                     }
                 }
@@ -227,8 +298,8 @@ Rectangle {
                     anchors.fill:parent;currentIndex:shell.page;visible:!workbenchSheet.visible
                     transform:Translate { x:shell.pageOffset }
                     Chat { id:conversation;showBackButton:!shell.wide;onBackRequested:shell.showSessions();onCreateRequested:newSession.open()
-                        onNavigateRequested:target=>{if(target==="settings")shell.navigate(3);else if(target==="sessions")shell.showSessions();else if(target==="desktop")shell.navigate(2);else if(target==="new")newSession.open();else shell.navigate(0)} }
-                    SessionList { id:sessionsPage;rowActions:shell.wide;onSessionActivated:shell.openConversation();onCreateRequested:newSession.open() }
+                        onNavigateRequested:target=>{if(target==="connections"){shell.navigate(3);settingsPage.open("connections","")}else if(target==="settings")shell.navigate(3);else if(target==="sessions")shell.showSessions();else if(target==="desktop")shell.navigate(2);else if(target==="new")newSession.open();else shell.navigate(0)} }
+                    SessionList { id:sessionsPage;onSessionActivated:shell.openConversation();onCreateRequested:newSession.open() }
                     Desktop { id:desktop;onSettingsRequested:category=>{shell.navigate(3);settingsPage.open(category,"")} }
                     Settings { id:settingsPage }
                     Projects { id:projectsPage;onSessionActivated:shell.openConversation();onProjectRequested:(cwd,archived)=>{shell.page=1;sessionsPage.selectProject(cwd,archived)} }
@@ -287,19 +358,31 @@ Rectangle {
         // The expanded workspace shows the Workbench beside the conversation, resizable from its edge.
         Item {
             id:workbenchSide;objectName:"workbenchSide"
-            visible:shell.wide&&WorkbenchState.open&&shell.page===0
-            Layout.preferredWidth:Math.max(360,Math.min(shell.width*.55,WorkbenchState.paneWidth));Layout.fillHeight:true
+            visible:shell.splitWorkbench
+            Layout.preferredWidth:Math.max(360,Math.min(shell.maxPaneWidth,WorkbenchState.paneWidth));Layout.fillHeight:true
             Rectangle { anchors.left:parent.left;width:1;height:parent.height;color:Theme.subtle }
             MouseArea {
+                id: splitter
                 objectName:"workbenchResize";anchors.left:parent.left;width:8;height:parent.height;cursorShape:Qt.SplitHCursor;z:2
+                activeFocusOnTab: true
+                hoverEnabled: true
+                Accessible.role: Accessible.Grip
+                Accessible.name: "Resize Workbench"
+                Accessible.description: "Left widens the Workbench. Right narrows it."
+                Keys.onLeftPressed: WorkbenchState.paneWidth = Math.min(shell.maxPaneWidth, workbenchSide.width + 24)
+                Keys.onRightPressed: WorkbenchState.paneWidth = Math.max(360, workbenchSide.width - 24)
+                Rectangle {
+                    anchors.centerIn: parent; width: splitter.activeFocus || splitter.containsMouse ? 4 : 2; height: 48
+                    color: splitter.activeFocus ? Theme.focus : Theme.scrollThumb; radius: 2
+                }
                 property real startX:0;property real startWidth:0
                 onPressed:mouse=>{startX=mapToItem(shell,mouse.x,0).x;startWidth=workbenchSide.width}
-                onPositionChanged:mouse=>{if(pressed)WorkbenchState.paneWidth=Math.max(360,Math.min(shell.width*.55,startWidth-(mapToItem(shell,mouse.x,0).x-startX)))}
+                onPositionChanged:mouse=>{if(pressed)WorkbenchState.paneWidth=Math.max(360,Math.min(shell.maxPaneWidth,startWidth-(mapToItem(shell,mouse.x,0).x-startX)))}
             }
         }
     }
     // One Workbench per window, moved between the side pane and the compact sheet so its panes, scroll
-    // positions and drafts survive a resize; the other window shares the same state through WorkbenchState.
+    // positions and drafts survive a resize.
     Workbench {
         id:workbench
         parent:shell.wide?workbenchSide:workbenchSheet
@@ -336,17 +419,23 @@ Rectangle {
         onFolderRequested:id=>shell.openFolder(id)
         onSettingsRequested:(category,target)=>{shell.page=3;Qt.callLater(()=>settingsPage.open(category,target))}
         onPageRequested:target=>shell.navigate(target)
-        onDesktopRequested:query=>{shell.page=2;Qt.callLater(()=>desktop.focusSearch())}
+        onDesktopRequested:query=>{shell.page=2;Qt.callLater(()=>desktop.showSearch(query))}
         onWorkflowsRequested:workflows.openRecipes()
     }
     Shortcut { sequence:"Ctrl+Shift+W";onActivated:WorkbenchState.open?WorkbenchState.hide():WorkbenchState.show("") }
     CDialog {
-        id: welcome; closePolicy: Popup.NoAutoClose
+        id: welcome; objectName: "welcomeDialog"; closePolicy: Popup.NoAutoClose
+        accessibleTitle: qsTr("Meet %1").arg(App.assistantName)
+        onOpened: startup.forceActiveFocus(Qt.TabFocusReason)
         visible: App.connected && settings.onboarding === true
-        CText { text:"Hey. I’m "+App.assistantName+".";color:Theme.accentText;font.pixelSize:Theme.page;font.bold:true }
-        CText { text:"A little company. A place for your projects.\n\nClick me to talk, drag me somewhere comfortable, or right-click to change my size. Your sessions keep working when this panel closes." }
-        CCheckBox { id:startup;text:"Keep me around after login" }
+        RowLayout {
+            Layout.fillWidth: true; spacing: Theme.space3
+            HeaderPortrait { enabled: false }
+            CText { text: welcome.accessibleTitle; font.pixelSize: Theme.page; font.weight: Font.DemiBold; Accessible.role: Accessible.Heading }
+        }
+        CText { text:qsTr("Click your companion to open chat. Drag to move them, or right-click for appearance and visibility. Conversations keep working when you close the panel.") }
+        CCheckBox { id:startup;objectName:"welcomeAutostart";text:qsTr("Start Cere when I log in") }
         CText { text:"Desktop AI tools start disabled. Enable the categories you want in Settings. Existing CLI permissions remain in effect.";color:Theme.muted;font.pixelSize:Theme.secondary }
-        CButton { text:"Make yourself at home";primary:true;Layout.fillWidth:true;onClicked:{if(startup.checked&&!App.setAutostart(true))return;App.rpc("settings.update",{onboarding:false});welcome.close()} }
+        CButton { objectName:"welcomeDone";text:qsTr("Get started");prominent:true;Layout.fillWidth:true;onClicked:{if(startup.checked&&!App.setAutostart(true))return;App.rpc("settings.update",{onboarding:false});welcome.close()} }
     }
 }

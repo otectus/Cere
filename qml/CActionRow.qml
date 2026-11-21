@@ -6,6 +6,7 @@ CButton {
     property string detail
     property string mark: text.slice(0,1).toUpperCase()
     property bool selected: false
+    primary: selected
     quiet: true
     implicitHeight: detail.length ? 66 : 48
     implicitWidth: 180
@@ -22,6 +23,6 @@ CButton {
             Text { Layout.fillWidth: true; Layout.minimumWidth: 0; text: control.text; color: Theme.text; font.family: Theme.font; font.pixelSize: Theme.body; font.weight: Font.DemiBold; elide: Text.ElideRight; textFormat: Text.PlainText }
             Text { visible: control.detail.length>0; Layout.fillWidth: true; Layout.minimumWidth: 0; text: control.detail; color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.caption; elide: Text.ElideMiddle; textFormat: Text.PlainText }
         }
-        Text { text: "›"; color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.glyph }
+        CIcon { name: "chevron"; width: 16; height: 16; color: Theme.muted }
     }
 }

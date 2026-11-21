@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 CDialog {
     id:review
-    width:Math.min(680,parent?parent.width-32:680)
+    preferredWidth:680
     property string sessionId:""
     property var listing:({rows:[],assertions:[]})
     property var selected:({})

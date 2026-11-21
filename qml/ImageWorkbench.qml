@@ -9,8 +9,9 @@ Item {
     id: editor
     objectName: "imageWorkbench"
     property string sessionId: ""
-    readonly property string artifactId: WorkbenchState.artifactId
-    readonly property string versionId: WorkbenchState.versionId
+    readonly property var selection: WorkbenchState.imageFor(sessionId)
+    readonly property string artifactId: selection.artifactId || ""
+    readonly property string versionId: selection.versionId || ""
     property var info: null
     property string path: ""
     property string error: ""
@@ -26,23 +27,30 @@ Item {
     property string cropRatio: "free"
     property string compareId: ""
     property string comparePath: ""
+    property string loadedArtifactId: ""
     property real split: 0.5
     readonly property int naturalWidth: picture.implicitWidth
     readonly property int naturalHeight: picture.implicitHeight
     signal closeRequested()
     signal maskReady(var ref)
-    RpcClient { id: rpc }
+    readonly property string ownerKey: sessionId + ":" + artifactId + ":" + versionId
+    RpcClient { id: rpc; scope: editor.ownerKey }
+    Timer { id: initialLoad; interval: 0; onTriggered: editor.load() }
     function load() {
+        if (loadedArtifactId !== artifactId) notice = ""
+        loadedArtifactId = artifactId
+        info = null; path = ""; error = ""; compareId = ""; comparePath = ""
+        shapes = []; maskStrokes = []; maskInverted = false; undone = []; cropRect = null
         if (!artifactId || !versionId || !sessionId) return
         rpc.call("artifacts.get", { sessionId: sessionId, artifactId: artifactId }, value => { if (!value.error) info = value })
         rpc.call("artifacts.file", { sessionId: sessionId, artifactId: artifactId, versionId: versionId }, value => {
             if (value.error) { error = value.error; return }
             path = value.path; error = ""
-            const draft = WorkbenchState.draft(versionId)
+            const draft = WorkbenchState.draft(versionId, sessionId)
             shapes = draft ? draft.shapes : []; maskStrokes = draft ? draft.mask : []; maskInverted = draft ? draft.inverted : false; undone = []
         })
     }
-    function keepDraft() { WorkbenchState.keepDraft(versionId, shapes.length || maskStrokes.length || maskInverted ? { shapes: shapes, mask: maskStrokes, inverted: maskInverted } : undefined) }
+    function keepDraft() { WorkbenchState.keepDraft(versionId, shapes.length || maskStrokes.length || maskInverted ? { shapes: shapes, mask: maskStrokes, inverted: maskInverted } : undefined, sessionId) }
     function add(shape) { if (shape.layer === "mask") maskStrokes = maskStrokes.concat([shape]); else shapes = shapes.concat([shape]); undone = []; keepDraft(); annotations.requestPaint(); maskLayer.requestPaint() }
     function undo() {
         const last = [...shapes, ...maskStrokes].sort((a, b) => b.at - a.at)[0]; if (!last) return
@@ -54,16 +62,18 @@ Item {
         notice = ""; error = ""
         rpc.call("images.transform", { sessionId: sessionId, artifactId: artifactId, versionId: versionId, steps: steps }, value => {
             if (value.error) { error = value.error; return }
-            notice = label + " · new version"; WorkbenchState.keepDraft(versionId, undefined); WorkbenchState.versionId = value.versionId; load()
+            notice = label + " · new version"; WorkbenchState.keepDraft(versionId, undefined, sessionId); WorkbenchState.selectImage(sessionId, artifactId, value.versionId)
         })
     }
     function saveAnnotations() {
         cropRect = null; annotations.requestPaint()
+        const requestedOwner = ownerKey
         Qt.callLater(() => {
+            if (requestedOwner !== ownerKey) return
             const data = annotations.toDataURL("image/png")
             rpc.call("images.saveEdit", { sessionId: sessionId, artifactId: artifactId, versionId: versionId, layer: data, recipe: JSON.stringify({ base: versionId, shapes: shapes }) }, value => {
                 if (value.error) { error = value.error; return }
-                notice = "Annotations saved as a new version; the original is unchanged"; WorkbenchState.keepDraft(versionId, undefined); shapes = []; WorkbenchState.versionId = value.versionId; load()
+                notice = "Annotations saved as a new version; the original is unchanged"; WorkbenchState.keepDraft(versionId, undefined, sessionId); shapes = []; WorkbenchState.selectImage(sessionId, artifactId, value.versionId)
             })
         })
     }
@@ -80,9 +90,9 @@ Item {
     }
     function ratioOf(name) { return name === "1:1" ? 1 : name === "4:3" ? 4 / 3 : name === "3:2" ? 3 / 2 : name === "16:9" ? 16 / 9 : name === "9:16" ? 9 / 16 : 0 }
     function fit() { const z = Math.min(view.width / Math.max(1, naturalWidth), view.height / Math.max(1, naturalHeight)); WorkbenchState.zoom = Math.max(0.05, Math.min(8, z)) }
-    onVersionIdChanged: load()
-    onSessionIdChanged: load()
-    Component.onCompleted: load()
+    onSelectionChanged: initialLoad.restart()
+    onSessionIdChanged: initialLoad.restart()
+    Component.onCompleted: initialLoad.restart()
     Keys.onPressed: event => {
         if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Z) { if (event.modifiers & Qt.ShiftModifier) redo(); else undo(); event.accepted = true }
         else if (event.key === Qt.Key_Escape) { closeRequested(); event.accepted = true }
@@ -94,7 +104,7 @@ Item {
             CButton { objectName: "imageEditorBack"; text: "Gallery"; iconName: "back"; quiet: true; onClicked: editor.closeRequested() }
             CText { Layout.fillWidth: true; text: (info?.artifact?.name || "") + (editor.naturalWidth ? " · " + editor.naturalWidth + "×" + editor.naturalHeight : ""); elide: Text.ElideMiddle; wrapMode: Text.NoWrap; font.weight: Font.DemiBold }
             CComboBox { objectName: "imageVersion"; implicitWidth: 140; model: (editor.info?.versions || []).map((v, i) => "Version " + (i + 1)); currentIndex: Math.max(0, (editor.info?.versions || []).findIndex(v => v.versionId === editor.versionId)); Accessible.name: "Version"
-                onActivated: index => WorkbenchState.versionId = editor.info.versions[index].versionId }
+                onActivated: index => WorkbenchState.selectImage(editor.sessionId, editor.artifactId, editor.info.versions[index].versionId) }
         }
         Flow {
             Layout.fillWidth: true; spacing: 4
@@ -241,7 +251,7 @@ Item {
         CText { text: "Edit in another application"; font.pixelSize: Theme.title; font.bold: true }
         CText { text: "Save a copy, edit it in your editor, then import the edited file back as a new version. The original stays as it is." }
         CButton { text: "Save a copy and open it"; onClicked: { const path = App.chooseSavePath(editor.info?.artifact?.name || "image.png"); if (!path) return; rpc.call("artifacts.saveAs", { sessionId: editor.sessionId, artifactId: editor.artifactId, versionId: editor.versionId, path: path, replace: true }, value => { if (value.error) editor.error = value.error; else { externalDialog.saved = value.path; App.openPath(value.path) } }) } }
-        CButton { text: "Import the edited file as a new version"; enabled: !!externalDialog.saved; onClicked: rpc.call("artifacts.import", { sessionId: editor.sessionId, path: externalDialog.saved, artifactId: editor.artifactId, destinations: (editor.info?.versions || []).slice(-1)[0]?.policy || {} }, value => { if (value.error) editor.error = value.error; else { externalDialog.close(); WorkbenchState.versionId = value.versionId; editor.load() } }) }
+        CButton { text: "Import the edited file as a new version"; enabled: !!externalDialog.saved; onClicked: rpc.call("artifacts.import", { sessionId: editor.sessionId, path: externalDialog.saved, artifactId: editor.artifactId, destinations: (editor.info?.versions || []).slice(-1)[0]?.policy || {} }, value => { if (value.error) editor.error = value.error; else { externalDialog.close(); WorkbenchState.selectImage(editor.sessionId, editor.artifactId, value.versionId) } }) }
         CButton { text: "Close"; quiet: true; onClicked: externalDialog.close() }
     }
 }

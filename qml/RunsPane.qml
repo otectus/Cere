@@ -10,6 +10,7 @@ Item {
     property var operations: []
     property var partials: ({})
     property string error: ""
+    property int requestCycle: 0
     // 11.5: what backends and helpers reported using; never an estimate, and never a billing guarantee.
     property var usage: []
     readonly property string usageText: {
@@ -22,17 +23,19 @@ Item {
     }
     readonly property var labels: ({ prepared: "Prepared", awaiting_approval: "Waiting for your approval", queued: "Queued", dispatching: "Sending", running: "Running", cancel_requested: "Cancelling",
         completed: "Complete", failed: "Failed", cancelled: "Cancelled", declined: "Declined", expired: "Expired", interrupted: "Interrupted", unknown: "Outcome unknown" })
-    RpcClient { id: rpc }
+    RpcClient { id: rpc; scope: runs.sessionId }
     function refresh() {
-        if (!sessionId) { operations = []; return }
+        const cycle = ++requestCycle
+        if (!sessionId) { operations = []; usage = []; partials = ({}); return }
         rpc.call("operations.list", { sessionId: sessionId, limit: 50 }, value => {
+            if (cycle !== requestCycle) return
             if (value.error) { error = value.error; return }
             operations = value; error = ""
-            rpc.call("operations.usage", { sessionId: sessionId }, rows => { runs.usage = rows.error ? [] : rows })
-            for (const op of value) if (["running", "dispatching"].indexOf(op.state) >= 0 && op.kind.startsWith("image.")) rpc.call("operations.partial", { id: op.operationId }, partial => { if (partial.data) { const next = Object.assign({}, runs.partials); next[op.operationId] = partial.data; runs.partials = next } })
+            rpc.call("operations.usage", { sessionId: sessionId }, rows => { if (cycle === requestCycle) runs.usage = rows.error ? [] : rows })
+            for (const op of value) if (["running", "dispatching"].indexOf(op.state) >= 0 && op.kind.startsWith("image.")) rpc.call("operations.partial", { id: op.operationId }, partial => { if (cycle === requestCycle && partial.data) { const next = Object.assign({}, runs.partials); next[op.operationId] = partial.data; runs.partials = next } })
         })
     }
-    onSessionIdChanged: refresh()
+    onSessionIdChanged: { operations = []; usage = []; partials = ({}); error = ""; lastActive = "-"; refresh() }
     Component.onCompleted: refresh()
     Connections { target: App; function onStateChanged() { const active = (App.state.workbench?.activeOperations || []).filter(o => o.sessionId === runs.sessionId).map(o => o.operationId + o.state).join(); if (active !== runs.lastActive) { runs.lastActive = active; runs.refresh() } } }
     property string lastActive: "-"

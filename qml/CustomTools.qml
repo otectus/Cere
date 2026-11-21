@@ -57,7 +57,7 @@ ColumnLayout {
     CText { visible:!!tools.feedback;text:tools.feedback;color:Theme.accentText;font.pixelSize:Theme.secondary;wrapMode:Text.Wrap;Layout.fillWidth:true }
     CDialog {
         id:editor;objectName:"customToolEditor"
-        width:Math.min(640,parent?parent.width-32:640)
+        preferredWidth:640
         property var existing:null
         readonly property bool isHttp:kind.currentIndex===0
         readonly property var methods:["GET","POST","PUT","PATCH","DELETE"]

@@ -25,6 +25,31 @@ Item {
         else if(chip.x+chip.width>chipStrip.contentX+chipStrip.width)chipStrip.contentX=Math.min(chipStrip.contentWidth-chipStrip.width,chip.x+chip.width-chipStrip.width)
     }
     function revealCurrent(){const index=categories.findIndex(entry=>entry.id===category);if(index>=0)revealChip(chips.itemAt(index))}
+    // Arrow keys move through the same ordered catalog in both layouts. Selection follows focus so
+    // keyboard users do not need to press Enter after every category change.
+    function categoryButton(item,id){
+        if(!item)return null
+        if(item.objectName==="settingsCategory_"+id)return item
+        for(let index=0;index<item.children.length;++index){const match=categoryButton(item.children[index],id);if(match)return match}
+        return null
+    }
+    function selectAndFocus(id){
+        selected(id)
+        Qt.callLater(()=>{const button=categoryButton(nav.rail?railScroll:chipStrip,id);if(button)button.forceActiveFocus(Qt.TabFocusReason)})
+    }
+    function move(step){
+        const index=categories.findIndex(entry=>entry.id===category)
+        if(index<0||!categories.length)return
+        const next=Math.max(0,Math.min(categories.length-1,index+step))
+        if(next!==index)selectAndFocus(categories[next].id)
+    }
+    function moveTo(index){if(categories.length)selectAndFocus(categories[Math.max(0,Math.min(categories.length-1,index))].id)}
+    function handleKey(event){
+        if(event.key===Qt.Key_Left||event.key===Qt.Key_Up){move(-1);event.accepted=true}
+        else if(event.key===Qt.Key_Right||event.key===Qt.Key_Down){move(1);event.accepted=true}
+        else if(event.key===Qt.Key_Home){moveTo(0);event.accepted=true}
+        else if(event.key===Qt.Key_End){moveTo(categories.length-1);event.accepted=true}
+    }
     onCategoryChanged:Qt.callLater(revealCurrent)
     onRailChanged:Qt.callLater(revealCurrent)
     onWidthChanged:Qt.callLater(revealCurrent)
@@ -56,8 +81,9 @@ Item {
                             Layout.fillWidth:true;implicitHeight:38
                             text:modelData.label;iconName:modelData.icon;alignLeft:true;quiet:true;primary:current
                             help:modelData.blurb
-                            Accessible.role:Accessible.PageTab;Accessible.selected:current;Accessible.description:modelData.blurb
+                            Accessible.role:Accessible.PageTab; Accessible.onPressAction: if (enabled) click();Accessible.selected:current;Accessible.description:modelData.blurb
                             onClicked:nav.selected(modelData.id)
+                            Keys.onPressed:event=>nav.handleKey(event)
                         }
                     }
                 }
@@ -91,9 +117,10 @@ Item {
                     implicitHeight:34
                     text:modelData.chip||modelData.label;primary:current
                     help:modelData.blurb
-                    Accessible.name:modelData.label;Accessible.role:Accessible.PageTab;Accessible.selected:current;Accessible.description:modelData.blurb
+                    Accessible.name:modelData.label;Accessible.role:Accessible.PageTab; Accessible.onPressAction: if (enabled) click();Accessible.selected:current;Accessible.description:modelData.blurb
                     onActiveFocusChanged:if(activeFocus)nav.revealChip(this)
                     onClicked:nav.selected(modelData.id)
+                    Keys.onPressed:event=>nav.handleKey(event)
                 }
             }
         }

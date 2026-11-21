@@ -23,9 +23,10 @@ CButton {
     property var command:null
     property int commandRequest:-1
     function runCommand(){if(!command)return;commandRequest=App.rpc("voice.command",{id:command.id,sessionId:voiceInput.sessionId});review.close()}
-    implicitWidth:40;implicitHeight:40;Layout.preferredWidth:40;Layout.preferredHeight:40
+    implicitWidth:Theme.controlHeight;implicitHeight:Theme.controlHeight;Layout.preferredWidth:Theme.controlHeight;Layout.preferredHeight:Theme.controlHeight
     leftPadding:10;rightPadding:10;quiet:true;primary:recording;danger:transcribing
     Accessible.name:recording?"Finish voice input":transcribing?"Cancel transcription":"Voice input"
+    Accessible.description:statusText||help
     help:transcription.state==="unavailable"?"Set up local voice input in Settings → Voice":recording?"Finish recording":transcribing?"Cancel transcription":"Record a voice message"
     enabled:available&&App.connected&&!!sessionId&&(requestId<0||transcribing)&&((transcription.state!=="recording"&&transcription.state!=="transcribing")||ownsRecording)
     contentItem:CIcon { name:voiceInput.recording?"stop":voiceInput.transcribing?"close":"microphone";color:!voiceInput.enabled?Theme.muted:voiceInput.recording?Theme.accentText:Theme.text }

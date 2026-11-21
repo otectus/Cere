@@ -14,7 +14,7 @@ Item {
     property string error: ""
     property string notice: ""
     property bool working: false
-    RpcClient { id: rpc }
+    RpcClient { id: rpc; scope: review.sessionId }
     readonly property var labels: ({ added: "Added", changed: "Changed", folder: "New folder", copied: "Copied", moved: "Moved", trashed: "Moved to trash", removed: "Removed folder", restored: "Restored" })
     readonly property var statusLabels: ({ pending: "Waiting for review", applying: "Applying", applied: "Applied", partial: "Partly applied", failed: "Not applied", declined: "Declined", expired: "Expired", revoked: "Retired: permissions changed", unknown: "Outcome unknown" })
     function refresh() {
@@ -22,14 +22,16 @@ Item {
         rpc.call("changes.list", { sessionId: sessionId }, value => {
             if (value.error) { error = value.error; return }
             sets = value
-            const wanted = WorkbenchState.changeSetId || (sets.find(s => s.status === "pending") || sets[0] || {}).id
+            const wanted = WorkbenchState.changeSetFor(sessionId) || (sets.find(s => s.status === "pending") || sets[0] || {}).id
             if (wanted) open(wanted)
         })
     }
     function open(id) {
+        if (WorkbenchState.changeSetFor(sessionId) !== id) { WorkbenchState.setReview(sessionId, id); return }
         rpc.call("changes.review", { id: id }, value => {
+            if (WorkbenchState.changeSetFor(sessionId) !== id) return
             if (value.error) { error = value.error; return }
-            error = ""; detail = value; WorkbenchState.changeSetId = id
+            error = ""; detail = value
             const all = {}; for (const op of value.operations) all[op.index] = true; selected = all
         })
     }
@@ -55,9 +57,9 @@ Item {
     }
     function decline() { working = true; rpc.call("changes.decline", { id: detail.id }, value => { working = false; if (value.error) error = value.error; else { open(detail.id); refresh() } }) }
     function undo() { working = true; rpc.call("changes.undo", { id: detail.id }, value => { working = false; if (value.error) error = value.error; else { notice = (value.conflicts || []).join("\n"); refresh(); open(value.id) } }) }
-    onSessionIdChanged: refresh()
+    onSessionIdChanged: { sets = []; detail = null; selected = ({}); error = ""; notice = ""; working = false; refresh() }
     Component.onCompleted: refresh()
-    Connections { target: WorkbenchState; function onChangeSetIdChanged() { if (WorkbenchState.changeSetId && (!review.detail || review.detail.id !== WorkbenchState.changeSetId)) review.refresh() } }
+    Connections { target: WorkbenchState; function onReviewsChanged() { const wanted = WorkbenchState.changeSetFor(review.sessionId); if (wanted && (!review.detail || review.detail.id !== wanted)) review.open(wanted) } }
     Connections { target: App; function onStateChanged() { const pending = (App.state.workbench?.pendingChanges || []).filter(p => p.sessionId === review.sessionId).length; if (pending !== review.pendingCount) { review.pendingCount = pending; review.refresh() } } }
     property int pendingCount: -1
 

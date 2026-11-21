@@ -56,7 +56,7 @@ Popup {
                 required property var modelData; required property int index
                 objectName: "referenceCandidate_" + index
                 width: list.width; height: 44; highlighted: index === picker.current
-                Accessible.role: Accessible.ListItem; Accessible.name: picker.kindLabel(modelData.kind) + " " + modelData.label + ", " + modelData.detail
+                Accessible.role: Accessible.ListItem; Accessible.onPressAction: if (enabled) click(); Accessible.name: picker.kindLabel(modelData.kind) + " " + modelData.label + ", " + modelData.detail
                 background: Rectangle { radius: Theme.radiusChip; color: parent.highlighted || parent.hovered ? Theme.selected : "transparent" }
                 onClicked: { picker.current = index; picker.accept() }
                 contentItem: RowLayout {

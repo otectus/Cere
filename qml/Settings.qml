@@ -25,6 +25,12 @@ ColumnLayout {
     onHiddenCategoriesChanged:if(hiddenCategories.indexOf(category)>=0)category=Catalog.defaultCategory
     Component.onCompleted:if(hiddenCategories.indexOf(category)>=0)category=Catalog.defaultCategory
     function focusSearch(){settingsSearch.forceActiveFocus()}
+    function focusResult(index){
+        if(index<0||index>=resultList.count)return
+        resultList.currentIndex=index;resultList.positionViewAtIndex(index,ListView.Contain)
+        Qt.callLater(()=>{const item=resultList.itemAtIndex(index);if(item)item.forceActiveFocus(Qt.TabFocusReason)})
+    }
+    Shortcut { sequences:[StandardKey.Find];enabled:settingsView.visible;onActivated:settingsView.focusSearch() }
     // Opens a category; with a target, the control with that objectName instead.
     function open(id,target){
         settingsSearch.text=""
@@ -84,7 +90,7 @@ ColumnLayout {
         onAccepted:settingsView.openResult(settingsView.results[0])
         // Escape clears a search first; on an empty field it leaves Settings as before.
         Keys.onEscapePressed:event=>{if(text.length){clear();event.accepted=true}else event.accepted=false}
-        Keys.onDownPressed:event=>{event.accepted=resultList.count>0;if(event.accepted){resultList.currentIndex=0;resultList.itemAtIndex(0).forceActiveFocus(Qt.TabFocusReason)}}
+        Keys.onDownPressed:event=>{event.accepted=resultList.count>0;if(event.accepted)settingsView.focusResult(0)}
     }
     SettingsNav {
         visible:!settingsView.rail&&!settingsView.query
@@ -106,7 +112,7 @@ ColumnLayout {
             Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumWidth:0;spacing:8
             CText {
                 objectName:"settingsResultSummary";color:Theme.muted;font.pixelSize:Theme.caption
-                text:settingsView.results.length?settingsView.results.length+(settingsView.results.length===1?" match":" matches")+" · Enter opens the first":"Nothing by that name. Try a broader word, like voice or memory."
+                text:settingsView.results.length?settingsView.results.length+(settingsView.results.length===1?" match":" matches")+" for “"+settingsView.query+"” · Enter opens the first":"Nothing by that name. Try a broader word, like voice or memory."
             }
             ListView {
                 id:resultList;objectName:"settingsResults"
@@ -120,15 +126,18 @@ ColumnLayout {
                     required property int index
                     readonly property string detail:modelData.setting?Catalog.group(modelData.category.group).label+" › "+modelData.category.label:"Category · "+modelData.category.blurb
                     objectName:"settingsResult_"+index
-                    width:resultList.width-12;implicitHeight:54;quiet:true;alignLeft:true
+                    width:resultList.width-12;implicitHeight:60;quiet:true;alignLeft:true
                     text:modelData.setting?modelData.setting.label:modelData.category.label
                     help:detail;Accessible.name:text+", "+detail
                     onClicked:settingsView.openResult(modelData)
                     contentItem:ColumnLayout {
-                        spacing:2
+                        spacing:3
                         Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:result.text;color:Theme.text;font.family:Theme.font;font.pixelSize:Theme.body;font.weight:Font.Medium;elide:Text.ElideRight;textFormat:Text.PlainText }
                         Text { Layout.fillWidth:true;Layout.minimumWidth:0;text:result.detail;color:Theme.muted;font.family:Theme.font;font.pixelSize:Theme.caption;elide:Text.ElideRight;textFormat:Text.PlainText }
                     }
+                    Keys.onUpPressed:event=>{if(index>0)settingsView.focusResult(index-1);else settingsSearch.forceActiveFocus();event.accepted=true}
+                    Keys.onDownPressed:event=>{settingsView.focusResult(index+1);event.accepted=true}
+                    Keys.onEscapePressed:event=>{settingsSearch.clear();settingsSearch.forceActiveFocus();event.accepted=true}
                 }
             }
         }

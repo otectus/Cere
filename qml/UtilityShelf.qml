@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 CDialog {
     id:shelf
-    width:Math.min(700,parent?parent.width-32:700)
+    preferredWidth:700
     property var entries:[]
     property var selected:({})
     property var pending:({})

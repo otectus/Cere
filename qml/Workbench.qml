@@ -22,14 +22,65 @@ Rectangle {
     color: Theme.background
     border.color: compact ? "transparent" : Theme.subtle
     Accessible.role: Accessible.Pane; Accessible.name: "Workbench"
-    RpcClient { id: rpc }
-    function refreshRoots() { if (sessionId) rpc.call("workspace.roots", { sessionId: sessionId }, value => { if (!value.error) { roots = value.roots || []; grants = value.grants || [] } }) }
+    readonly property bool canBrowse: !!sessionId && session.id === sessionId && !session.temporary && !session.remote
+    property bool initialized: false
+    RpcClient { id: rpc; scope: bench.canBrowse ? bench.sessionId : "" }
+    Timer {
+        id: loadVisiblePane
+        interval: 0
+        onTriggered: {
+            if (!bench.initialized || !bench.visible || !bench.canBrowse) return
+            bench.refreshRoots()
+            bench.ensurePane()
+        }
+    }
+    function refreshRoots() {
+        if (!sessionId) { roots = []; grants = []; return }
+        rpc.call("workspace.roots", { sessionId: sessionId }, value => { if (!value.error) { roots = value.roots || []; grants = value.grants || [] } })
+    }
+    readonly property var paneLoaders: [filesLoader, previewLoader, changesLoader, imagesLoader, runsLoader, shelfLoader]
+    function paneIndex(tab) { return Math.max(0, tabs.findIndex(t => t.id === tab)) }
+    function resetPanes() { for (const loader of paneLoaders) loader.source = "" }
+    function ensurePane() {
+        if (!initialized || !visible || !canBrowse) return
+        const index = paneIndex(WorkbenchState.tab), loader = paneLoaders[index]
+        if (loader.status !== Loader.Null) return
+        const selectedSession = sessionId, selectedTab = WorkbenchState.tab
+        Qt.callLater(() => {
+            if (!bench.visible || !bench.canBrowse || bench.sessionId !== selectedSession || WorkbenchState.tab !== selectedTab || loader.status !== Loader.Null) return
+            const properties = { sessionId: selectedSession }
+            if (selectedTab === "preview") properties.roots = filesLoader.item ? filesLoader.item.roots : bench.roots
+            loader.setSource(loader.paneSource, properties)
+        })
+    }
     function setCapability(family, on) {
         const next = Object.assign({}, capabilities); if (on) next[family] = true; else delete next[family]
         rpc.call("session.capabilities", { id: sessionId, capabilities: next }, value => { if (value.error) capabilityError.text = value.error; else capabilityError.text = "" })
     }
-    onSessionIdChanged: refreshRoots()
-    Component.onCompleted: refreshRoots()
+    onSessionIdChanged: {
+        if (!initialized) return
+        rootSettings.close()
+        rootSettings.sessionId = ""
+        WorkbenchState.activateSession(sessionId)
+        roots = []
+        grants = []
+        capabilityError.text = ""
+        resetPanes()
+        loadVisiblePane.restart()
+    }
+    onCanBrowseChanged: {
+        if (!initialized) return
+        if (canBrowse) loadVisiblePane.restart()
+        else { rootSettings.close(); resetPanes(); roots = []; grants = [] }
+    }
+    onVisibleChanged: if (initialized && visible) loadVisiblePane.restart()
+    onRootsChanged: if (previewLoader.item) previewLoader.item.roots = roots
+    Component.onCompleted: {
+        initialized = true
+        WorkbenchState.activateSession(sessionId)
+        loadVisiblePane.restart()
+    }
+    Connections { target: WorkbenchState; function onTabChanged() { bench.ensurePane() } }
     Keys.onEscapePressed: closeRequested()
 
     ColumnLayout {
@@ -48,7 +99,7 @@ Rectangle {
                     required property var modelData
                     objectName: "workbenchTab_" + modelData.id
                     text: modelData.label; quiet: WorkbenchState.tab !== modelData.id; primary: WorkbenchState.tab === modelData.id; implicitHeight: 32
-                    Accessible.role: Accessible.PageTab; Accessible.selected: WorkbenchState.tab === modelData.id
+                    Accessible.role: Accessible.PageTab; Accessible.onPressAction: if (enabled) click(); Accessible.selected: WorkbenchState.tab === modelData.id
                     onClicked: WorkbenchState.tab = modelData.id
                 }
             }
@@ -71,14 +122,20 @@ Rectangle {
         StackLayout {
             Layout.fillWidth: true; Layout.fillHeight: true
             visible: !!bench.sessionId && !bench.session.temporary && !bench.session.remote
-            currentIndex: Math.max(0, bench.tabs.findIndex(t => t.id === WorkbenchState.tab))
-            WorkspaceFiles { id: files; sessionId: bench.sessionId; onSettingsRequested: root => rootSettings.openFor(bench.sessionId, root, bench.grants) }
-            FilePreview { sessionId: bench.sessionId; roots: files.roots }
-            ChangeReview { sessionId: bench.sessionId }
-            ArtifactBrowser { sessionId: bench.sessionId }
-            RunsPane { sessionId: bench.sessionId }
-            ProjectShelf { sessionId: bench.sessionId }
+            currentIndex: bench.paneIndex(WorkbenchState.tab)
+            Loader { id: filesLoader; readonly property url paneSource: "WorkspaceFiles.qml" }
+            Loader { id: previewLoader; readonly property url paneSource: "FilePreview.qml" }
+            Loader { id: changesLoader; readonly property url paneSource: "ChangeReview.qml" }
+            Loader { id: imagesLoader; readonly property url paneSource: "ArtifactBrowser.qml" }
+            Loader { id: runsLoader; readonly property url paneSource: "RunsPane.qml" }
+            Loader { id: shelfLoader; readonly property url paneSource: "ProjectShelf.qml" }
+        }
+        Connections {
+            target: filesLoader.item
+            ignoreUnknownSignals: true
+            function onSettingsRequested(root) { rootSettings.openFor(bench.sessionId, root, bench.grants) }
+            function onRootsChanged() { if (previewLoader.item) previewLoader.item.roots = filesLoader.item.roots }
         }
     }
-    RootSettings { id: rootSettings; onSaved: { files.refreshRoots(); bench.refreshRoots() } }
+    RootSettings { id: rootSettings; onSaved: { if (filesLoader.item) filesLoader.item.refreshRoots(); bench.refreshRoots() } }
 }
