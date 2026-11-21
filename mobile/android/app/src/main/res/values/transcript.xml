@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="transcript_load_earlier">Load earlier messages</string>
+    <string name="transcript_loading_earlier">Loading earlier messages…</string>
+    <string name="transcript_empty_title">Start a conversation</string>
+    <string name="transcript_empty_body">Send a message to your desktop assistant.</string>
+    <string name="transcript_waiting">Waiting for a decision on the desktop…</string>
+    <string name="transcript_starting">Starting the provider…</string>
+    <string name="transcript_stopping">Stopping…</string>
+    <string name="transcript_working">Working on it…</string>
+    <string name="transcript_updated">Updated reply</string>
+    <string name="transcript_latest">Latest messages</string>
+    <plurals name="transcript_new_messages">
+        <item quantity="one">%1$d new message</item>
+        <item quantity="other">%1$d new messages</item>
+    </plurals>
+    <string name="transcript_send">Send message</string>
+    <string name="transcript_sources">Sources</string>
+    <string name="transcript_open_source">Open source %1$s</string>
+    <string name="transcript_unavailable_source">%1$s · this address is not opened on the phone</string>
+
+    <string name="markdown_code">Code</string>
+    <string name="markdown_copy_code">Copy code</string>
+    <string name="markdown_code_copied">Code copied</string>
+    <string name="markdown_image">Image: %1$s</string>
+    <string name="markdown_image_without_description">Image without a description</string>
+    <string name="markdown_open_image">Open image</string>
+    <string name="markdown_table_description">Table. Rows, %1$d. Columns, %2$d.</string>
+</resources>

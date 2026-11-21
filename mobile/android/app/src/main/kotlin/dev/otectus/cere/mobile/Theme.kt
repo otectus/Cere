@@ -1,27 +1,78 @@
 package dev.otectus.cere.mobile
 
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
-private val CereColors = darkColorScheme(
-    primary = Color(0xFF5DD8FF), onPrimary = Color(0xFF0F1721), primaryContainer = Color(0xFF203E50), onPrimaryContainer = Color(0xFFECF4FA),
-    secondary = Color(0xFF5DD8FF), onSecondary = Color(0xFF0F1721), secondaryContainer = Color(0xFF203E50), onSecondaryContainer = Color(0xFFECF4FA),
-    tertiary = Color(0xFFFFD385), onTertiary = Color(0xFF0F1721), tertiaryContainer = Color(0xFF332E22), onTertiaryContainer = Color(0xFFFFD385),
-    background = Color(0xFF0F1721), surface = Color(0xFF16222F), surfaceVariant = Color(0xFF203142), surfaceContainer = Color(0xFF16222F), surfaceContainerHigh = Color(0xFF203142),
-    onBackground = Color(0xFFECF4FA), onSurface = Color(0xFFECF4FA), onSurfaceVariant = Color(0xFFA0B3C5),
-    outline = Color(0xFF304556), outlineVariant = Color(0xFF304556), error = Color(0xFFFF9EAE), errorContainer = Color(0xFF33232E), onErrorContainer = Color(0xFFFF9EAE),
+// Ink and ice from the desktop portrait, with amber reserved for attention.
+private val Night = darkColorScheme(
+    primary = Color(0xFF71DCFF), onPrimary = Color(0xFF003546),
+    primaryContainer = Color(0xFF163E50), onPrimaryContainer = Color(0xFFBFEFFF),
+    secondary = Color(0xFFABC7D4), onSecondary = Color(0xFF17313C),
+    secondaryContainer = Color(0xFF293E4A), onSecondaryContainer = Color(0xFFE0EEF4),
+    tertiary = Color(0xFFFFCF83), onTertiary = Color(0xFF452C00),
+    tertiaryContainer = Color(0xFF483821), onTertiaryContainer = Color(0xFFFFDEAC),
+    background = Color(0xFF101923), onBackground = Color(0xFFEAF1F6),
+    surface = Color(0xFF15202B), onSurface = Color(0xFFEAF1F6),
+    surfaceDim = Color(0xFF101923), surfaceBright = Color(0xFF354350),
+    surfaceContainerLowest = Color(0xFF0C141D), surfaceContainerLow = Color(0xFF14202C),
+    surfaceContainer = Color(0xFF192734), surfaceContainerHigh = Color(0xFF213140),
+    surfaceContainerHighest = Color(0xFF2A3B49), surfaceVariant = Color(0xFF253543),
+    onSurfaceVariant = Color(0xFFB2C3D0), outline = Color(0xFF788B99), outlineVariant = Color(0xFF354755),
+    error = Color(0xFFFFB2B9), onError = Color(0xFF5F1422),
+    errorContainer = Color(0xFF4B2730), onErrorContainer = Color(0xFFFFDADF),
+    inverseSurface = Color(0xFFE2EBF1), inverseOnSurface = Color(0xFF1B2B37), inversePrimary = Color(0xFF006581),
+    surfaceTint = Color(0xFF71DCFF),
+)
+
+private val Day = lightColorScheme(
+    primary = Color(0xFF00647F), onPrimary = Color.White,
+    primaryContainer = Color(0xFFCDEEF9), onPrimaryContainer = Color(0xFF073F52),
+    secondary = Color(0xFF475F6C), onSecondary = Color.White,
+    secondaryContainer = Color(0xFFDFEAF0), onSecondaryContainer = Color(0xFF1D3847),
+    tertiary = Color(0xFF815000), onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFFFE6BD), onTertiaryContainer = Color(0xFF593900),
+    background = Color(0xFFF3F6F8), onBackground = Color(0xFF14232F),
+    surface = Color(0xFFFAFCFD), onSurface = Color(0xFF14232F),
+    surfaceDim = Color(0xFFD9E3E9), surfaceBright = Color.White,
+    surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFF3F6F8),
+    surfaceContainer = Color(0xFFEBF1F4), surfaceContainerHigh = Color(0xFFE4ECF1),
+    surfaceContainerHighest = Color(0xFFDAE5EB), surfaceVariant = Color(0xFFE1EAF0),
+    onSurfaceVariant = Color(0xFF485D6B), outline = Color(0xFF647C8A), outlineVariant = Color(0xFFCAD7DF),
+    error = Color(0xFFAB3043), onError = Color.White,
+    errorContainer = Color(0xFFFFDDE0), onErrorContainer = Color(0xFF741729),
+    inverseSurface = Color(0xFF263845), inverseOnSurface = Color(0xFFEBF2F7), inversePrimary = Color(0xFF71DCFF),
+    surfaceTint = Color(0xFF00647F),
+)
+
+internal object CereLayout {
+    val gutter = 16.dp
+    val groupGap = 12.dp
+    val readingWidth = 760.dp
+    val target = 48.dp
+}
+
+private val CereType = Typography().run {
+    copy(
+        headlineLarge = headlineLarge.copy(fontSize = 32.sp, lineHeight = 38.sp, letterSpacing = (-0.8).sp, fontWeight = FontWeight.SemiBold),
+        headlineSmall = headlineSmall.copy(fontSize = 26.sp, lineHeight = 32.sp, letterSpacing = (-0.5).sp, fontWeight = FontWeight.SemiBold),
+        titleLarge = titleLarge.copy(fontSize = 21.sp, lineHeight = 27.sp, letterSpacing = (-0.3).sp, fontWeight = FontWeight.SemiBold),
+        titleMedium = titleMedium.copy(fontSize = 17.sp, lineHeight = 23.sp, fontWeight = FontWeight.SemiBold),
+        bodyLarge = bodyLarge.copy(fontSize = 16.sp, lineHeight = 25.sp, letterSpacing = 0.1.sp),
+        bodySmall = bodySmall.copy(fontSize = 13.sp, lineHeight = 19.sp),
+        labelSmall = labelSmall.copy(fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 0.15.sp),
+    )
+}
+private val CereShapes = Shapes(
+    extraSmall = RoundedCornerShape(6.dp), small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(14.dp), large = RoundedCornerShape(20.dp), extraLarge = RoundedCornerShape(26.dp),
 )
 
 @Composable fun CereTheme(content: @Composable () -> Unit) {
-    val noto = FontFamily.SansSerif
-    MaterialTheme(
-        colorScheme = CereColors,
-        typography = Typography().run { copy(displayLarge=displayLarge.copy(fontFamily=noto), displayMedium=displayMedium.copy(fontFamily=noto), displaySmall=displaySmall.copy(fontFamily=noto), headlineLarge=headlineLarge.copy(fontFamily=noto), headlineMedium=headlineMedium.copy(fontFamily=noto), headlineSmall=headlineSmall.copy(fontFamily=noto), titleLarge=titleLarge.copy(fontFamily=noto), titleMedium=titleMedium.copy(fontFamily=noto), titleSmall=titleSmall.copy(fontFamily=noto), bodyLarge=bodyLarge.copy(fontFamily=noto), bodyMedium=bodyMedium.copy(fontFamily=noto), bodySmall=bodySmall.copy(fontFamily=noto), labelLarge=labelLarge.copy(fontFamily=noto), labelMedium=labelMedium.copy(fontFamily=noto), labelSmall=labelSmall.copy(fontFamily=noto)) },
-        shapes = Shapes(extraSmall=RoundedCornerShape(6.dp), small=RoundedCornerShape(8.dp), medium=RoundedCornerShape(10.dp), large=RoundedCornerShape(14.dp), extraLarge=RoundedCornerShape(18.dp)),
-        content = content,
-    )
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Night else Day, typography = CereType, shapes = CereShapes, content = content)
 }

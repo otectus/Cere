@@ -15,10 +15,11 @@
     <application
         android:name=".CereApp"
         android:allowBackup="false"
+        android:supportsRtl="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@mipmap/ic_launcher"
         android:label="Cere Mobile"
         android:theme="@style/Theme.Cere"
         android:usesCleartextTraffic="false">

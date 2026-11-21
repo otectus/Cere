@@ -1,5 +1,5 @@
 pkgname=cere
-pkgver=0.1.1
+pkgver=0.1.5
 pkgrel=1
 pkgdesc='A native Hyprland desktop companion for Codex and Claude CLI'
 arch=('x86_64' 'aarch64')

@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,10 +18,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,6 +36,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -69,10 +73,19 @@ open class MainActivity : FragmentActivity() {
     private val launch = mutableStateOf<LaunchRequest?>(null)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         // A share or notification tap is handled once. After rotation or process death it
         // is replayed only if it had not been handled yet.
         if (savedInstanceState?.getBoolean(LAUNCH_HANDLED) != true) launch.value = launchRequest(intent)
-        setContent { CereTheme { CereRoot(repository, this, launch.value) { launch.value = null } } }
+        setContent {
+            CereTheme {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                        CereRoot(repository, this@MainActivity, launch.value) { launch.value = null }
+                    }
+                }
+            }
+        }
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); launch.value = launchRequest(intent) }
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); outState.putBoolean(LAUNCH_HANDLED, launch.value == null) }
@@ -115,9 +128,6 @@ internal sealed interface LaunchRequest {
     data object OpenDesktop : LaunchRequest
 }
 
-private enum class Destination(val label: String) { Chat("Chat"), Sessions("Sessions"), Inbox("Inbox"), Desktop("Desktop"), Settings("Settings") }
-private val primaryDestinations = listOf(Destination.Chat, Destination.Sessions, Destination.Desktop, Destination.Settings)
-
 private fun startMonitoring(context: Context) { ContextCompat.startForegroundService(context, Intent(context, MonitoringService::class.java)) }
 private fun openNotificationSettings(context: Context) { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) }
 
@@ -142,12 +152,29 @@ private fun CereRoot(repository: CereRepository, activity: FragmentActivity, lau
 @Composable
 private fun UnreadableCacheScreen(repository: CereRepository, activity: FragmentActivity, blocked: ConnectionState.Blocked) {
     var confirm by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Icon(Icons.Default.Lock, null, modifier = Modifier.size(48.dp)); Spacer(Modifier.height(14.dp))
-        Text(if (blocked.repair) "Private data can't be read" else "Unlock private cache", style = MaterialTheme.typography.titleLarge)
-        Text(blocked.reason, color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(16.dp))
-        if (blocked.repair) Button({ confirm = true }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Remove and pair again") }
-        else Button(repository::retry) { Text("Retry") }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.widthIn(max = 600.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Surface(shape = RoundedCornerShape(20.dp), color = if (blocked.repair) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer) {
+                Icon(Icons.Default.Lock, null, tint = if (blocked.repair) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(18.dp).size(36.dp))
+            }
+            Text(if (blocked.repair) "Private data can't be read" else "Unlock private cache", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
+            Text(
+                if (blocked.repair) "Cere stopped before opening anything private on this phone." else "Unlock this phone, then ask Cere to open its encrypted cache again.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            SecureStatusPanel(if (blocked.repair) "Encrypted cache unavailable" else "Phone is still locked", blocked.reason, tone = if (blocked.repair) SecureTone.Danger else SecureTone.Attention)
+            if (blocked.repair) {
+                Text("Removing the unreadable cache is the only recovery on this phone. The desktop pairing must also be revoked before you reconnect.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button({ confirm = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Remove and pair again") }
+            } else {
+                Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Retry") }
+            }
+        }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Remove unreadable data?") },
         text = { Text("Cere Mobile cannot read its private data on this phone. Removing it lets you pair again; anything in it, including unsent drafts, is already unreadable. On the desktop, revoke the old pairing for this phone.") },
@@ -163,21 +190,32 @@ private fun BlockedScreen(repository: CereRepository, state: MobileState, activi
     var error by remember { mutableStateOf<String?>(null) }
     val desktop = state.desktop
     if (replacing && desktop != null) { PairingScreen(repository, state, activity, desktop) { replacing = false }; return }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) {
-        Icon(Icons.Default.Lock, null, modifier = Modifier.size(48.dp))
-        Text(if (blocked.repair) "Pairing needs attention" else "Can't connect to the desktop", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
-        Text(blocked.reason, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-        Button(repository::retry) { Text("Retry") }
-        if (blocked.repair) {
-            if (state.pendingCommands.isNotEmpty()) {
-                Text("These desktop actions were never confirmed. Check them on the PC before replacing the pairing:", style = MaterialTheme.typography.bodySmall)
-                state.pendingCommands.forEach { Text("• ${CommandOutcomes.describe(it)}", style = MaterialTheme.typography.bodySmall) }
-                OutlinedButton({ scope.launch { runCatching { repository.releaseForRepair() }.onFailure { error = it.message } } }) { Text("I've checked them on the PC") }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.widthIn(max = 640.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.tertiaryContainer) {
+                Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(18.dp).size(36.dp))
             }
-            OutlinedButton({ replacing = true }, enabled = desktop != null && repository.replacementBlocker() == null) { Text("Replace pairing · keeps drafts") }
-            TextButton({ confirmForget = true }) { Text("Remove phone pairing and pair again") }
-        } else Text("Your conversations and drafts stay on this phone.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Text(if (blocked.repair) "Pairing needs attention" else "Can't connect to the desktop", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
+            SecureStatusPanel(if (blocked.repair) "Secure connection needs repair" else "Desktop unavailable", blocked.reason, tone = SecureTone.Attention)
+            Button(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Retry") }
+            if (blocked.repair) {
+                if (state.pendingCommands.isNotEmpty()) {
+                    OutlinedPanel("Check before repairing") {
+                        Text("These desktop actions were never confirmed. Check them on the PC before replacing the pairing:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        state.pendingCommands.forEach { Text("• ${CommandOutcomes.describe(it)}", style = MaterialTheme.typography.bodySmall) }
+                        OutlinedButton({ scope.launch { runCatching { repository.releaseForRepair() }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("I've checked them on the PC") }
+                    }
+                }
+                Text("Replacing keeps this phone's encrypted conversations, drafts, and local images.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton({ replacing = true }, enabled = desktop != null && repository.replacementBlocker() == null, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Replace pairing · keeps drafts") }
+                TextButton({ confirmForget = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove phone pairing and pair again") }
+            } else Text("Check the desktop and try again. Your conversations and drafts stay on this phone.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            error?.let { SecureStatusPanel("Repair couldn't continue", it, tone = SecureTone.Danger) }
+        }
     }
     if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text("Remove this pairing?") },
         text = { Text("This erases this phone's encrypted conversations, drafts, images and keys for this desktop. Replace pairing keeps them.") },
@@ -197,6 +235,8 @@ private fun PairingScreen(
     var raw by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var scan by rememberSaveable { mutableStateOf(false) }
+    var enteringOffer by rememberSaveable { mutableStateOf(false) }
+    var showResponseText by rememberSaveable { mutableStateOf(false) }
     var showManual by rememberSaveable { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
     var savePrompt by remember { mutableStateOf<CompletedPairing?>(null) }
@@ -290,58 +330,96 @@ private fun PairingScreen(
     }
 
     if (scan) {
-        ScannerScreen(onResult = { scan = false; raw = it; prepare(it) }, onBack = { scan = false })
+        ScannerScreen(onResult = { scan = false; raw = it; prepare(it) }, onBack = { scan = false }, onEnterOffer = { scan = false; enteringOffer = true })
         return
     }
-    Surface(Modifier.fillMaxSize()) {
-        // imePadding keeps Verify offer above the keyboard; the column scrolls to it.
-        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 42.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Image(painterResource(R.drawable.cere_face_icon), "Cere", modifier = Modifier.size(76.dp))
-            if (onCancel != null) TextButton(onClick = onCancel) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Back") }
-            Text(if (replacing == null) "Connect to Cere" else "Update secure connection", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
-            if (result == null) {
-                Text(if (replacing == null) "On your PC, open Cere Settings → Cere Mobile and choose Show pairing QR. Then scan it here, and compare the six words both screens show."
-                    else "On your PC, choose Replace pairing for this phone and scan its QR. Your encrypted conversations, drafts, and local images stay on this phone; unresolved commands and active uploads must be settled first.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                replacing?.let { desktop -> Text("Expected desktop ${desktop.desktopName} · device ${desktop.deviceId.take(8)}", style = MaterialTheme.typography.bodySmall) }
-                repository.replacementBlocker()?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                OutlinedTextField(deviceName, { deviceName = it.take(48) }, label = { Text("This phone") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Button(onClick = { scan = true }, enabled = replacing == null || repository.replacementBlocker() == null, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text("Scan pairing QR") }
-                Text("Or paste the offer text from the PC:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(raw, { raw = it }, label = { Text("Pairing offer") }, placeholder = { Text("Paste cere-pair://v1/…") }, minLines = 3, maxLines = 6, modifier = Modifier.fillMaxWidth())
-                OutlinedButton(onClick = { prepare(raw) }, enabled = raw.isNotBlank() && (replacing == null || repository.replacementBlocker() == null)) { Icon(Icons.Default.Check, null); Spacer(Modifier.width(8.dp)); Text("Verify offer") }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(
+            Modifier.widthIn(max = 540.dp).fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            if (onCancel != null) TextButton(onCancel) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null)
+                Text(stringResource(R.string.go_back))
             }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Column(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
+                .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(
+                    MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.surfaceContainerHigh)))
+                .padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Image(painterResource(R.drawable.cere_face_icon), "Cere", Modifier.size(72.dp))
+                Text(stringResource(when {
+                    result != null -> R.string.compare_words
+                    replacing != null -> R.string.update_connection
+                    else -> R.string.connect_to_cere
+                }), style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.semantics { heading() })
+                Text(stringResource(when {
+                    result != null -> R.string.verify_pc_steps
+                    replacing != null -> R.string.replace_pc_steps
+                    else -> R.string.pair_pc_steps
+                }), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (result == null) {
+                replacing?.let { Text("Paired desktop · ${it.desktopName}", style = MaterialTheme.typography.titleSmall) }
+                repository.replacementBlocker()?.let { SecureStatusPanel("Finish before replacing", it, tone = SecureTone.Attention) }
+                val canPair = unstaged == null && (replacing == null || repository.replacementBlocker() == null)
+                OutlinedTextField(deviceName, { deviceName = it.take(48) }, label = { Text(stringResource(R.string.phone_name)) },
+                    supportingText = { Text(stringResource(R.string.phone_name_hint)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Button({ scan = true }, enabled = canPair, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                    Icon(painterResource(R.drawable.ic_scan), null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.scan_pairing))
+                }
+                if (!enteringOffer) OutlinedButton({ enteringOffer = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.paste_instead))
+                } else {
+                    OutlinedTextField(raw, { raw = it }, label = { Text(stringResource(R.string.pair_offer)) },
+                        minLines = 2, maxLines = 3, modifier = Modifier.fillMaxWidth())
+                    OutlinedButton({ prepare(raw) }, enabled = raw.isNotBlank() && canPair, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.verify_offer))
+                    }
+                }
+            }
+            error?.let { SecureStatusPanel("Pairing couldn't continue", it, tone = SecureTone.Danger) }
             unstaged?.let { completed ->
-                Button(onClick = { stagePairing(completed) }) { Text("Retry secure staging") }
-                TextButton(onClick = { repository.pairingManager().delete(completed.desktop); unstaged = null; error = null }) { Text("Cancel unstaged pairing") }
+                Button(onClick = { stagePairing(completed) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Retry secure staging") }
+                TextButton(onClick = { repository.pairingManager().delete(completed.desktop); unstaged = null; error = null }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Cancel unstaged pairing") }
             }
             result?.let { completed ->
-                Text("Compare on both screens", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-                Text(completed.sas, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.secondary)
+                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer, border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .45f)), modifier = Modifier.fillMaxWidth()) {
+                    SelectionContainer { Text(completed.sas, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer, textAlign = TextAlign.Center, modifier = Modifier.padding(20.dp).fillMaxWidth()) }
+                }
                 Text(if (completed.desktop.actionAuthentication == ActionAuthentication.TRUSTED_DEVICE) "This trusted-phone pairing signs reviewed actions without a fingerprint or PIN." else "This pairing requires phone authentication for sensitive actions.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 // Network return: the answer goes to the PC by itself and the phone finishes when the PC confirms.
                 val ended = returning as? PairingReturnState.Ended
                 if (networkReturn) {
                     val (line, problem) = when (val now = returning) {
-                        PairingReturnState.Idle, PairingReturnState.Sending -> "Sending your answer to the PC…" to false
+                        PairingReturnState.Idle -> "Ready to send the signed answer to your PC." to false
+                        PairingReturnState.Sending -> "Sending your answer to the PC…" to false
                         PairingReturnState.Waiting -> "Your PC has the answer. Check that it shows these same six words, then confirm there. This phone finishes by itself." to false
                         is PairingReturnState.Retrying -> "Can't reach the PC yet (${now.reason}). Retrying while the QR is valid…" to true
                         PairingReturnState.Confirmed -> "Confirmed. Connecting…" to false
                         is PairingReturnState.Ended -> now.message to true
                         is PairingReturnState.Unreachable -> "${now.reason} Send the answer another way below." to true
                     }
-                    if (returning == PairingReturnState.Sending || returning == PairingReturnState.Waiting) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text(line, color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-                    if (returning == PairingReturnState.Idle) OutlinedButton({ sendAnswer(completed) }) { Text("Send the answer to the PC") }
+                    if (returning == PairingReturnState.Sending) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (problem) SecureStatusPanel("Check the connection", line, tone = SecureTone.Attention)
+                    else Text(line, color = MaterialTheme.colorScheme.onSurface)
+                    if (returning == PairingReturnState.Idle) OutlinedButton({ sendAnswer(completed) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Send the answer to the PC") }
                 }
                 val manual = !networkReturn || showManual || returning is PairingReturnState.Unreachable
-                if (networkReturn && !manual && ended == null) TextButton({ showManual = true }) { Text("Send the answer another way") }
+                if (networkReturn && !manual && ended == null) TextButton({ showManual = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Send the answer another way") }
                 if (manual && ended == null) {
                     HorizontalDivider()
                     Text("Get this public signed answer to the PC: copy or share it, then paste it, or save it to a file and choose Load response file…, in Cere Settings → Cere Mobile. Confirm there only if the six words match.")
                     PairingQrCode(completed.responseUri, Modifier.align(Alignment.CenterHorizontally))
-                    SelectionContainer { Text(completed.responseUri, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+                    TextButton({ showResponseText = !showResponseText }) {
+                        Text(stringResource(if (showResponseText) R.string.hide_signed_text else R.string.show_signed_text))
+                    }
+                    if (showResponseText) SelectionContainer { Text(completed.responseUri, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere pairing response", completed.responseUri)) }) { Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(8.dp)); Text("Copy response") }
                         OutlinedButton(onClick = {
@@ -350,10 +428,11 @@ private fun PairingScreen(
                         }) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(8.dp)); Text("Share response") }
                     }
                     // Checked with the PC before the pairing is saved.
-                    Button(onClick = { desktopConfirmed(completed) }, enabled = !checking, modifier = Modifier.fillMaxWidth()) { Text(if (checking) "Checking with the PC…" else "I confirmed on the PC") }
+                    Button(onClick = { desktopConfirmed(completed) }, enabled = !checking, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(if (checking) "Checking with the PC…" else "I confirmed on the PC") }
                 }
-                TextButton(onClick = { scope.launch { runCatching { repository.cancelStagedPairing() }.onFailure { error = it.message } }; showManual = false }) { Text(if (ended != null) "Start over" else "Cancel pairing") }
+                TextButton(onClick = { scope.launch { runCatching { repository.cancelStagedPairing() }.onFailure { error = it.message } }; showManual = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (ended != null) "Start over" else "Cancel pairing") }
             }
+        }
         }
     }
     savePrompt?.let { completed -> AlertDialog(onDismissRequest = { savePrompt = null }, title = { Text("Save this pairing?") },
@@ -362,27 +441,15 @@ private fun PairingScreen(
         dismissButton = { TextButton({ savePrompt = null }) { Text("Not yet") } }) }
 }
 
-private fun connectionLabel(connection: ConnectionState) = when (connection) {
-    is ConnectionState.Online -> "Online"
-    is ConnectionState.Offline -> when (connection.kind) {
-        OfflineKind.Unreachable -> "Offline · desktop unreachable"
-        OfflineKind.MonitoringOff -> "Not connected · background monitoring is off"
-        OfflineKind.PairingChange -> "Pairing change in progress"
-        OfflineKind.NotConnected -> "Not connected"
-    }
-    is ConnectionState.Blocked -> "Action required · ${connection.reason}"
-    ConnectionState.Authenticating -> "Signing in"
-    ConnectionState.Connecting -> "Connecting"
-    ConnectionState.Unpaired -> "Unpaired"
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppShell(repository: CereRepository, state: MobileState, activity: FragmentActivity, launch: LaunchRequest?, consumeLaunch: () -> Unit) {
     val scope = rememberCoroutineScope()
     var destinationName by rememberSaveable { mutableStateOf(Destination.Sessions.name) }
-    val destination = Destination.valueOf(destinationName)
+    val destination = Destination.entries.find { it.name == destinationName } ?: Destination.Sessions
     var selectedSession by rememberSaveable { mutableStateOf(state.selectedSessionId) }
+    var settingsGroup by rememberSaveable { mutableStateOf<SettingsGroup?>(null) }
+    var returnFromInbox by rememberSaveable { mutableStateOf<String?>(null) }
     var highlightedApproval by rememberSaveable { mutableStateOf<String?>(null) }
     // Shared image URIs, one per line, until the person picks a conversation for them.
     var pendingShare by rememberSaveable { mutableStateOf("") }
@@ -398,60 +465,67 @@ private fun AppShell(repository: CereRepository, state: MobileState, activity: F
         }
         consumeLaunch()
     }
-    BackHandler(enabled = selectedSession != null) { open(null) }
-    BackHandler(enabled = selectedSession == null && destination == Destination.Inbox) { destinationName = Destination.Sessions.name }
-    val connectionText = connectionLabel(state.connection)
-    val waiting = state.approvals.size
-    Scaffold(
-        topBar = { TopAppBar(
-            title = { if (selectedSession != null) {
-                val selected = state.sessions.find { it.id == selectedSession }
-                val pending = state.approvals.count { it.sessionId == selectedSession }
-                Column { Text(selected?.title ?: "Chat", maxLines = 1, overflow = TextOverflow.Ellipsis); Text(selected?.let { sessionDisplayStatus(it, pending) } ?: connectionText, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = if (state.connection is ConnectionState.Online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary) }
-            } else Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.size(44.dp)) { Image(painterResource(R.drawable.cere_face_icon), "Cere", Modifier.padding(2.dp)) }
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) { Text("C E R E", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge, maxLines = 1); Spacer(Modifier.width(8.dp)); Surface(color = if (state.connection is ConnectionState.Online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary, shape = RoundedCornerShape(50), modifier = Modifier.size(7.dp)) {} }
-                    // The connection state stays visible while requests wait.
-                    Text(listOfNotNull(connectionText, if (waiting > 0) "$waiting waiting for you" else null).joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    fun selectTab(item: Destination) {
+        returnFromInbox = null
+        highlightedApproval = null
+        settingsGroup = null
+        destinationName = item.name
+        open(null)
+    }
+    fun back() {
+        if (selectedSession != null) open(null)
+        else if (destination == Destination.Settings && settingsGroup != null) settingsGroup = null
+        else {
+            val previous = returnFromInbox
+            selectTab(Destination.Sessions)
+            if (previous != null && state.sessions.any { it.id == previous }) open(previous)
+        }
+    }
+    BackHandler(enabled = selectedSession != null || destination != Destination.Sessions, onBack = ::back)
+    val connection = state.connection
+    val connectionText = connectionTitle(state)
+    val selected = state.sessions.find { it.id == selectedSession }
+    val pages = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val landscape = maxWidth >= 440.dp && maxWidth > maxHeight
+        val rail = selectedSession == null && (maxWidth >= 600.dp || landscape)
+        val useBars = maxHeight >= 280.dp
+        val compactRail = maxHeight < 410.dp
+        val keyboardOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
+        Row(Modifier.fillMaxSize()) {
+            if (rail) CereNavigation(destination, state.approvals.size, true, ::selectTab, compactRail = compactRail)
+            Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (useBars && selectedSession == null) {
+                    CompanionHeader(state.desktop?.desktopName.orEmpty(), connection, connectionText,
+                        onConnection = { selectTab(Destination.Settings); settingsGroup = SettingsGroup.Connection }, onRetry = repository::retry)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-            } },
-            navigationIcon = { if (selectedSession != null) IconButton(onClick = { open(null) }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-            actions = {
-                if (state.connection is ConnectionState.Offline) IconButton(repository::retry) { Icon(Icons.Default.Refresh, "Retry connection") }
-                InboxAction(waiting) { open(null); destinationName = Destination.Inbox.name }
-            },
-        ) },
-        // At large text sizes the tabs show icons only, which keep their names for TalkBack.
-        bottomBar = { val compactLabels = androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f; if (selectedSession == null) NavigationBar { primaryDestinations.forEach { item -> NavigationBarItem(selected = destination == item, onClick = {
-            destinationName = item.name
-            if (item == Destination.Chat) (state.selectedSessionId ?: state.sessions.filterNot(Session::archived).maxByOrNull(Session::updated)?.id)?.let(::open)
-        }, icon = { val name = item.label.takeIf { compactLabels }; if (item == Destination.Chat) Icon(painterResource(R.drawable.ic_chat), name) else Icon(when (item) { Destination.Sessions -> Icons.Default.List; Destination.Desktop -> Icons.Default.Home; Destination.Settings -> Icons.Default.Settings; else -> Icons.Default.Notifications }, name) },
-            label = if (compactLabels) null else { { Text(item.label, maxLines = 1) } }) } } },
-    ) { padding ->
-        Box(Modifier.padding(padding).consumeWindowInsets(padding).fillMaxSize()) {
-            if (selectedSession != null) ChatScreen(repository, state, state.sessions.find { it.id == selectedSession }, activity) { id -> open(id) }
-            else when (destination) {
-                Destination.Chat -> EmptyState(painterResource(R.drawable.ic_chat), "No chat selected", "Choose or create a session to start chatting.")
-                Destination.Sessions -> SessionsScreen(repository, state, { open(it) }, activity)
-                Destination.Inbox -> InboxScreen(repository, state, activity, highlightedApproval)
-                Destination.Desktop -> DesktopScreen(repository, state, activity)
-                Destination.Settings -> SettingsScreen(repository, state, activity)
+                Box(Modifier.weight(1f).widthIn(max = CereLayout.readingWidth).fillMaxWidth()) {
+                    if (selectedSession != null) key(selectedSession) {
+                        ChatScreen(repository, state, selected, activity, ::back, {
+                            returnFromInbox = selectedSession
+                            open(null)
+                            destinationName = Destination.Inbox.name
+                        }) { id -> open(id) }
+                    } else pages.SaveableStateProvider(destination.name) {
+                        when (destination) {
+                            Destination.Sessions -> SessionsScreen(repository, state, { open(it) }, activity)
+                            Destination.Inbox -> InboxScreen(repository, state, activity, highlightedApproval)
+                            Destination.Desktop -> DesktopScreen(repository, state, activity)
+                            Destination.Settings -> SettingsScreen(repository, state, activity, settingsGroup) { settingsGroup = it }
+                        }
+                    }
+                }
+                if (selectedSession == null && !rail && (useBars || !keyboardOpen)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Surface(color = MaterialTheme.colorScheme.surface) {
+                        CereNavigation(destination, state.approvals.size, false, ::selectTab)
+                    }
+                }
             }
         }
     }
     if (pendingShare.isNotBlank()) ShareTargetDialog(repository, state, pendingShare.split('\n').map(Uri::parse), { pendingShare = "" }) { id -> pendingShare = ""; destinationName = Destination.Sessions.name; open(id) }
-}
-
-/** The Inbox stays reachable at any text size: a count button instead of a clipped badge. */
-@Composable
-private fun InboxAction(count: Int, open: () -> Unit) {
-    val label = if (count == 0) "Inbox" else "Inbox, $count waiting"
-    if (count == 0) IconButton(open) { Icon(Icons.Default.Notifications, label) }
-    else FilledTonalButton(open, contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.padding(end = 4.dp).semantics { contentDescription = label }) {
-        Icon(Icons.Default.Notifications, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text(if (count > 99) "99+" else count.toString(), maxLines = 1)
-    }
 }
 
 /** Shared images go into a conversation the person picks; failures are shown, never dropped. */
@@ -500,56 +574,121 @@ private fun SessionsScreen(repository: CereRepository, state: MobileState, selec
     var showArchived by rememberSaveable { mutableStateOf(false) }
     var creating by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }; var transferSourceId by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     var searching by remember { mutableStateOf(false) }
+    var searchError by remember { mutableStateOf<String?>(null) }
+    var retrySearch by remember { mutableIntStateOf(0) }
+    var loadingMore by remember { mutableStateOf(false) }
     // The phone keeps recent conversations; the desktop searches every conversation in scope.
-    LaunchedEffect(query, state.connection is ConnectionState.Online) {
+    LaunchedEffect(query, state.connection is ConnectionState.Online, retrySearch) {
+        searchError = null
         val text = query.trim()
         if (text.length < 2 || !state.supports("sessions.list")) return@LaunchedEffect
         delay(350); searching = true
-        try { repository.searchSessions(text) } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { } finally { searching = false }
+        try { repository.searchSessions(text) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { searchError = failure.localizedMessage ?: "Desktop search failed." } finally { searching = false }
     }
     val transferSource = state.sessions.firstOrNull { it.id == transferSourceId }
-    val sessions = state.sessions.filter { it.archived == showArchived && (query.isBlank() || listOf(it.title, it.project.orEmpty(), it.provider, it.folderName.orEmpty()).any { value -> value.contains(query.trim(), true) }) }.sortedWith(compareBy<Session> { it.status != "waiting" }.thenByDescending { it.pinned }.thenByDescending { it.updated })
+    val sessions = remember(state.sessions, query, showArchived) { state.sessions.filter { it.archived == showArchived && (query.isBlank() || listOf(it.title, it.project.orEmpty(), it.provider, it.folderName.orEmpty()).any { value -> value.contains(query.trim(), true) }) }.sortedWith(compareBy<Session> { it.status != "waiting" }.thenByDescending { it.pinned }.thenByDescending { it.updated }) }
+    val loadedIds = remember(state.sessions) { state.sessions.mapTo(HashSet(), Session::id) }
+    val search = state.search?.takeIf { query.trim().length >= 2 && it.query == query.trim() }
+    val unloadedMatches = search?.remaining(loadedIds) ?: 0
+    val requestCounts = remember(state.approvals) { state.approvals.groupingBy(Approval::sessionId).eachCount() }
+    val canImport = state.supports("sessions.history") && state.supports("sessions.import")
+    val canHandoff = state.supports("sessions.handoffPreview") && state.supports("sessions.handoffCreate")
     Box(Modifier.fillMaxSize()) {
-      Column(Modifier.fillMaxSize()) {
-        OutlinedTextField(query, { query = it.take(200) }, leadingIcon = { Icon(Icons.Default.Search, null) }, trailingIcon = { if (searching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) }, placeholder = { Text("Search conversations") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(16.dp))
-        FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilterChip(!showArchived, { showArchived = false }, { Text("Conversations") }); FilterChip(showArchived, { showArchived = true }, { Text("Archived") }) }
-        if (state.supports("sessions.history") && state.supports("sessions.import")) OutlinedButton({ showHistory = true }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Import desktop history") }
-        // Nothing is hidden silently: conversations or matches the phone has not loaded are counted, and load on request.
-        val loadedIds = state.sessions.mapTo(HashSet(), Session::id)
-        val search = state.search?.takeIf { query.trim().length >= 2 && it.query == query.trim().take(200) }
-        val unloadedMatches = search?.remaining(loadedIds) ?: 0
-        var loadingMore by remember { mutableStateOf(false) }
-        val scope = rememberCoroutineScope()
-        if (search != null && unloadedMatches > 0) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("${search.total} matches on the desktop · ${unloadedMatches} not loaded yet${if (search.truncated) " (showing the first 5000)" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-            TextButton({ loadingMore = true; scope.launch { try { repository.loadMoreSearchResults() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {} finally { loadingMore = false } } }, enabled = !loadingMore && state.connection is ConnectionState.Online) { Text(if (loadingMore) "Loading…" else "Load more") }
-        } else if (query.isBlank() && state.sessionsNotLoaded > 0) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("${state.sessionsNotLoaded} more conversations on the desktop are not on this phone yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-            TextButton({ loadingMore = true; scope.launch { try { repository.loadMoreSessions() } finally { loadingMore = false } } }, enabled = !loadingMore && state.connection is ConnectionState.Online) { Text("Load more") }
-        }
-        if (sessions.isEmpty()) EmptyState(Icons.Default.List, when { query.isNotBlank() -> "No matching conversations"; state.connection is ConnectionState.Online -> "No sessions in your approved scope"; else -> "No cached sessions" }, if (query.isNotBlank()) "Cere also searched the desktop." else "Create or connect to the desktop to begin.")
-        // Bottom padding keeps the last card clear of the New session button.
-        else LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(sessions, key = { it.id }) { session -> ElevatedCard(onClick = { select(session.id) }, modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ProviderMark(session.provider)
-                    // The status sits under the title, so long titles keep the full width at large text sizes.
-                    Column(Modifier.padding(start = 14.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) { Text(session.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis); if (session.pinned || session.unread || !session.folderName.isNullOrBlank()) Text(listOfNotNull(if (session.pinned) "Pinned" else null, if (session.unread) "Unread" else null, session.folderName).joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary); Text(listOfNotNull(session.project?.substringAfterLast('/'), session.model).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis); StatusPill(sessionDisplayStatus(session, state.approvals.count { it.sessionId == session.id })) }
-                    if (state.supports("sessions.handoffPreview") && state.supports("sessions.handoffCreate")) IconButton({ transferSourceId = session.id }) { Icon(Icons.Default.Share, "Hand off session") }
+        LazyColumn(contentPadding = PaddingValues(start = CereLayout.gutter, end = CereLayout.gutter, top = 18.dp, bottom = 92.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PageTitle(stringResource(R.string.conversations_heading), Modifier.weight(1f))
+                    if (canImport) {
+                        var menu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.conversation_actions)) }
+                            DropdownMenu(menu, { menu = false }) {
+                                DropdownMenuItem({ Text(stringResource(R.string.import_history)) }, { menu = false; showHistory = true })
+                            }
+                        }
+                    }
                 }
+            }
+            item {
+                OutlinedTextField(query, { query = it.take(200) }, leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (searching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Default.Close, stringResource(R.string.clear_search)) }
+                    }, placeholder = { Text(stringResource(R.string.search_conversations), maxLines = 1, overflow = TextOverflow.Ellipsis) }, singleLine = true,
+                    shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
+            }
+            item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(!showArchived, { showArchived = false }, { Text(stringResource(R.string.active_chats)) })
+                    FilterChip(showArchived, { showArchived = true }, { Text(stringResource(R.string.archived_chats)) })
+                }
+            }
+            searchError?.let { item {
+                Text(it, color = MaterialTheme.colorScheme.error)
+                if (query.trim().length >= 2) TextButton({ retrySearch++ }) { Text("Retry search") }
             } }
+            if (unloadedMatches > 0 || query.isBlank() && state.sessionsNotLoaded > 0) item {
+                val moreSearchResults = search != null && unloadedMatches > 0
+                val detail = if (search != null && moreSearchResults)
+                    "${search.total} matches on the desktop · $unloadedMatches more${if (search.truncated) " (first 5000 matches)" else ""}"
+                else "${state.sessionsNotLoaded} more conversations on the desktop"
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(detail, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton({
+                        loadingMore = true
+                        scope.launch {
+                            try { if (moreSearchResults) repository.loadMoreSearchResults() else repository.loadMoreSessions() }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (failure: Exception) { searchError = failure.message }
+                            finally { loadingMore = false }
+                        }
+                    }, enabled = !loadingMore && state.connection is ConnectionState.Online) {
+                        Text(stringResource(if (loadingMore) R.string.loading_more else R.string.load_more))
+                    }
+                }
+            }
+            if (sessions.isEmpty() && !searching) item {
+                EmptyState(Icons.Default.Search, stringResource(when {
+                    query.isNotBlank() -> R.string.empty_search
+                    showArchived -> R.string.empty_archive
+                    state.connection is ConnectionState.Online -> R.string.empty_library
+                    else -> R.string.empty_cache
+                }), stringResource(when {
+                    state.connection !is ConnectionState.Online && query.isNotBlank() -> R.string.search_offline
+                    query.isNotBlank() -> R.string.search_again
+                    showArchived -> R.string.empty_archive_hint
+                    state.connection is ConnectionState.Online -> R.string.empty_library_hint
+                    else -> R.string.empty_cache_hint
+                }))
+            }
+            items(sessions, key = { it.id }, contentType = { "conversation" }) { session ->
+                LibraryConversation(session, sessionDisplayStatus(session, requestCounts[session.id] ?: 0),
+                    { select(session.id) }, if (canHandoff) { { transferSourceId = session.id } } else null)
+            }
         }
-      }
-      if (state.supports("sessions.create")) FloatingActionButton({ creating = true }, Modifier.padding(20.dp).align(Alignment.BottomEnd)) { Icon(Icons.Default.Add, "New session") }
+        if (state.supports("sessions.create")) {
+            val createLabel = stringResource(R.string.new_chat)
+            val placement = Modifier.align(Alignment.BottomEnd).padding(CereLayout.gutter)
+            if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.6f) {
+                FloatingActionButton({ creating = true }, modifier = placement, containerColor = MaterialTheme.colorScheme.primary) {
+                    Icon(Icons.Default.Add, createLabel)
+                }
+            } else ExtendedFloatingActionButton(
+                onClick = { creating = true }, icon = { Icon(Icons.Default.Add, null) }, text = { Text(createLabel) },
+                modifier = placement.semantics { contentDescription = createLabel },
+                containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)
+        }
     }
-    if (creating) CreateSessionDialog(repository, state, activity, { creating = false }) { id -> creating = false; select(id) }
+    if (creating) CreateSessionSheet(repository, state, activity, { creating = false }) { id -> creating = false; select(id) }
     if (showHistory) SessionTransferSheet(repository, state, activity, null, { showHistory = false }, { id -> showHistory = false; select(id) })
     transferSource?.let { source -> SessionTransferSheet(repository, state, activity, source, { transferSourceId = null }, { id -> transferSourceId = null; select(id) }) }
 }
 
 @Composable
-private fun CreateSessionDialog(repository: CereRepository, state: MobileState, activity: FragmentActivity, close: () -> Unit, created: (String) -> Unit) {
+private fun CreateSessionSheet(repository: CereRepository, state: MobileState, activity: FragmentActivity, close: () -> Unit, created: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     var title by rememberSaveable { mutableStateOf("") }
     // Keep an authorized provider selectable when discovery failed, so Refresh
@@ -559,9 +698,9 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
     var project by rememberSaveable { mutableStateOf(state.projects.firstOrNull()?.id.orEmpty()) }
     var models by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
     var unlisted by remember { mutableStateOf(false) }
-    var model by rememberSaveable { mutableStateOf("") }
-    var effort by rememberSaveable { mutableStateOf("") }
-    var tools by rememberSaveable { mutableStateOf(false) }
+    var model by rememberSaveable(provider) { mutableStateOf("") }
+    var effort by rememberSaveable(provider) { mutableStateOf("") }
+    var tools by rememberSaveable(provider) { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -569,16 +708,21 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
     LaunchedEffect(supportedProviders.keys) { if (provider !in supportedProviders) provider = supportedProviders.keys.firstOrNull().orEmpty() }
     LaunchedEffect(state.projects) { if (state.projects.none { it.id == project }) project = state.projects.firstOrNull()?.id.orEmpty() }
     LaunchedEffect(provider, refresh) {
-        // A refresh keeps a model the person typed; switching provider starts over.
-        val typedBefore = model.takeIf { refresh > 0 && state.traits(provider).customModel }
-        model = typedBefore.orEmpty(); effort = ""; tools = false; models = emptyList(); unlisted = false; error = null
+        models = emptyList(); unlisted = false; error = null
         if (provider.isNotBlank()) {
             loading = true
             try {
                 val catalog = repository.modelCatalog(provider); models = catalog.models; unlisted = catalog.unlisted
                 val defaultModel = if (provider == "ollama") state.settings["defaultModel"]?.jsonPrimitive?.contentOrNull else null
-                val preferred = models.firstOrNull { it.id == typedBefore } ?: models.firstOrNull { it.id == defaultModel } ?: models.firstOrNull { it.isDefault } ?: models.firstOrNull()
-                if (typedBefore.isNullOrBlank()) { model = preferred?.id.orEmpty(); effort = preferred?.defaultEffort.orEmpty() }
+                val selected = models.firstOrNull { it.id == model.trim() }
+                if (model.isBlank() || selected == null && !state.traits(provider).customModel) {
+                    val preferred = models.firstOrNull { it.id == defaultModel } ?: models.firstOrNull { it.isDefault } ?: models.firstOrNull()
+                    model = preferred?.id.orEmpty()
+                    effort = preferred?.defaultEffort.orEmpty()
+                    if (!ToolPolicy.availability(state.traits(provider), preferred).available) tools = false
+                } else if (selected != null && selected.efforts.none { it.id == effort }) {
+                    effort = selected.defaultEffort.orEmpty()
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { error = failure.message }
             finally { loading = false }
@@ -593,10 +737,26 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
     // MOB-003: the same tools rule as Conversation settings.
     val tooling = ToolPolicy.availability(providerTraits, selectedModel)
     fun chooseModel(option: ModelOption) { model = option.id; effort = option.defaultEffort; if (!ToolPolicy.availability(providerTraits, option).available) tools = false }
-    AlertDialog(onDismissRequest = { if (!submitting) close() }, title = { Text("New conversation") }, text = {
-        Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(title, { title = it.take(100) }, label = { Text("Title (optional)") }, enabled = !submitting)
-            Text("Provider", fontWeight = FontWeight.Medium)
+    fun submit() {
+        submitting = true; error = null
+        scope.launch {
+            try {
+                val params = buildJsonObject { put("provider", provider); put("projectId", project); if (title.isNotBlank()) put("title", title); put("model", model.trim()); if (effort.isNotBlank()) put("effort", effort); put("tools", tools && tooling.available) }
+                val action = repository.prepareAction("sessions.create", params, label = title.ifBlank { null })
+                authenticate(activity, "Create ${state.traits(provider).label} conversation", action, repository, { result ->
+                    scope.launch { try { created(repository.openCreatedSession(result)) } catch (failure: Exception) { error = failure.message; submitting = false } }
+                }, { error = it; submitting = false })
+            } catch (failure: Exception) { error = failure.message; submitting = false }
+        }
+    }
+    AncillarySheetScaffold(title = "New conversation", busy = submitting, onDismiss = close, action = {
+        Button(::submit, enabled = (selectedModel != null || typed && modelError == null) && selectedProject != null &&
+            !loading && !submitting && state.supports("sessions.create"), modifier = Modifier.fillMaxWidth()) {
+            Text(if (submitting) "Creating…" else "Create conversation")
+        }
+    }) {
+        OutlinedTextField(title, { title = it.take(100) }, label = { Text("Title (optional)") }, enabled = !submitting, singleLine = true, modifier = Modifier.fillMaxWidth())
+        AncillarySection("Provider") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { supportedProviders.keys.forEach { id ->
                 FilterChip(provider == id, { provider = id }, { Text(state.traits(id).label) }, enabled = !submitting)
             } }
@@ -604,19 +764,26 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
             if (provider.isNotBlank()) state.traits(provider).remoteNote.takeIf(String::isNotBlank)?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = if (state.traits(provider).billed) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            state.providers.filterKeys { it !in supportedProviders }.forEach { (id, value) ->
+            val unavailable = state.providers.filterKeys { it !in supportedProviders }
+            var showUnavailable by rememberSaveable { mutableStateOf(false) }
+            if (unavailable.isNotEmpty()) TextButton({ showUnavailable = !showUnavailable }) {
+                Text(if (showUnavailable) "Hide unavailable providers" else "Unavailable providers (${unavailable.size})")
+            }
+            if (showUnavailable) unavailable.forEach { (id, value) ->
                 Text("${state.traits(id).label} · ${value.jsonObject["remoteUnavailableReason"]?.jsonPrimitive?.contentOrNull ?: "Enable access on the desktop"}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text("Desktop project", fontWeight = FontWeight.Medium)
+        }
+        AncillarySection("Desktop project") {
             if (state.projects.isEmpty()) Text("Grant this phone a project in desktop Remote settings.", color = MaterialTheme.colorScheme.error)
             state.projects.forEach { option -> FilterChip(project == option.id, { project = option.id }, { Column {
                 Text(option.name); Text(option.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall)
             } }, enabled = !submitting) }
+        }
+        AncillarySection("Model") {
             if (provider == "ollama") Text("Ollama · ${state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable"}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Model", fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                 TextButton({ refresh++ }, enabled = provider.isNotBlank() && !loading && !submitting && state.supports("providers.models")) { Text("Refresh models") }
             }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -624,8 +791,9 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
             else if (unlisted) Text("This endpoint doesn't list its models. Enter the model ID below.", style = MaterialTheme.typography.bodySmall)
             else if (error != null && typed) Text("The model list could not be loaded. You can still enter a model ID below.", style = MaterialTheme.typography.bodySmall)
             else if (models.isEmpty() && provider.isNotBlank()) Text(if (typed) "No models listed. Enter the model ID below." else "No models loaded. Check the provider on your PC, then refresh.", style = MaterialTheme.typography.bodySmall)
-            models.forEach { option -> Row(Modifier.fillMaxWidth().clickable(enabled = !submitting) { chooseModel(option) }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(model.trim() == option.id, { chooseModel(option) }, enabled = !submitting)
+            models.forEach { option -> Row(Modifier.fillMaxWidth().selectable(selected = model.trim() == option.id, enabled = !submitting, role = Role.RadioButton, onClick = { chooseModel(option) }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(model.trim() == option.id, null, enabled = !submitting)
+                Spacer(Modifier.width(12.dp))
                 Column { Text(option.displayName); if (option.description.isNotBlank()) Text(option.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } }
             if (typed && provider.isNotBlank()) OutlinedTextField(model, { value -> model = value.take(ModelIds.MAX_LENGTH + 64); effort = ""; if (!ToolPolicy.availability(providerTraits, models.firstOrNull { it.id == value.trim() }).available) tools = false },
@@ -639,27 +807,14 @@ private fun CreateSessionDialog(repository: CereRepository, state: MobileState, 
             if (tooling.applies) ListItem(headlineContent = { Text("Desktop tools") }, supportingContent = {
                 Text(if (tooling.available) "Use ordinary desktop permission checks" else "Conversation only · ${tooling.reason}")
             }, trailingContent = { Switch(tools, { tools = it }, enabled = !submitting && tooling.available) })
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
-    }, confirmButton = { Button(onClick = {
-        submitting = true; error = null
-        scope.launch {
-            try {
-                val params = buildJsonObject { put("provider", provider); put("projectId", project); if (title.isNotBlank()) put("title", title); put("model", model.trim()); if (effort.isNotBlank()) put("effort", effort); put("tools", tools && tooling.available) }
-                val action = repository.prepareAction("sessions.create", params, label = title.ifBlank { null })
-                authenticate(activity, "Create ${state.traits(provider).label} conversation", action, repository, { result ->
-                    scope.launch { try { created(repository.openCreatedSession(result)) } catch (failure: Exception) { error = failure.message; submitting = false } }
-                }, { error = it; submitting = false })
-            } catch (failure: Exception) { error = failure.message; submitting = false }
-        }
-    }, enabled = (selectedModel != null || typed && modelError == null) && selectedProject != null && !loading && !submitting && state.supports("sessions.create")) {
-        Text(if (submitting) "Creating…" else "Create conversation")
-    } }, dismissButton = { TextButton(close, enabled = !submitting) { Text("Cancel") } })
+        error?.let { SecureStatusPanel("Conversation setup", it, tone = SecureTone.Danger) }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatScreen(repository: CereRepository, state: MobileState, session: Session?, activity: FragmentActivity, selectSession: (String) -> Unit) {
+private fun ChatScreen(repository: CereRepository, state: MobileState, session: Session?, activity: FragmentActivity, goBack: () -> Unit, openInbox: () -> Unit, selectSession: (String) -> Unit) {
     if (session == null) return EmptyState(Icons.Default.Warning, "Session unavailable", "It may no longer be in this device's scope.")
     val context = LocalContext.current
     val scope = rememberCoroutineScope(); val storedDraft = state.draft(session); var draft by rememberSaveable(session.id) { mutableStateOf(storedDraft.text) }; var activityOpen by rememberSaveable(session.id) { mutableStateOf(false) }; var error by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
@@ -723,19 +878,40 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) launchCamera()
         else cameraPermission.launch(Manifest.permission.CAMERA)
     }
-    fun finishUpload(local: LocalAttachment, initial: JsonObject?) { scope.launch { runCatching {
-        val uploaded = repository.uploadAttachment(local.id, initial); val attachmentId = uploaded.getValue("attachmentId").jsonPrimitive.content
-        val commit = repository.prepareAction("attachments.commit", buildJsonObject { put("attachmentId", attachmentId) }, label = local.displayName)
-        authenticate(activity, "Finish image upload", commit, repository, { ready -> repository.attachmentCommitted(local.id, ready.jsonObject) }, { error = it })
-    }.onFailure { error = it.message } } }
+    val uploading = remember(session.id) { mutableStateMapOf<String, Int>() }
+    fun uploadFailed(id: String, reason: String?) {
+        uploading.remove(id)
+        error = reason ?: "The image could not be uploaded. Try again when your desktop is connected."
+    }
+    fun finishUpload(local: LocalAttachment, initial: JsonObject?) {
+        uploading[local.id] = R.string.image_transferring
+        scope.launch {
+            runCatching {
+                val uploaded = repository.uploadAttachment(local.id, initial)
+                val attachmentId = uploaded.getValue("attachmentId").jsonPrimitive.content
+                uploading[local.id] = R.string.image_finishing
+                val commit = repository.prepareAction("attachments.commit", buildJsonObject { put("attachmentId", attachmentId) }, label = local.displayName)
+                authenticate(activity, "Finish image upload", commit, repository, { ready ->
+                    repository.attachmentCommitted(local.id, ready.jsonObject)
+                    uploading.remove(local.id)
+                }, { uploadFailed(local.id, it) })
+            }.onFailure { uploadFailed(local.id, it.message) }
+        }
+    }
     fun upload(local: LocalAttachment) {
-        // An upload the desktop already discarded starts again from the private copy.
+        if (local.id in uploading) return
         val resumable = local.remoteAttachmentId != null && local.remoteStatus != "ready" && (local.remoteExpiresAt ?: Long.MAX_VALUE) > now
         if (resumable) { finishUpload(local, null); return }
-        scope.launch { runCatching {
-            val begin = repository.prepareAction("attachments.begin", buildJsonObject { put("sessionId", session.id); put("size", local.size); put("mime", local.mime); put("sha256", local.sha256) }, label = local.displayName)
-            authenticate(activity, "Upload ${local.displayName}", begin, repository, { value -> finishUpload(local, value.jsonObject) }, { error = it })
-        }.onFailure { error = it.message } }
+        uploading[local.id] = R.string.image_preparing
+        scope.launch {
+            runCatching {
+                val begin = repository.prepareAction("attachments.begin", buildJsonObject {
+                    put("sessionId", session.id); put("size", local.size); put("mime", local.mime); put("sha256", local.sha256)
+                }, label = local.displayName)
+                authenticate(activity, "Upload ${local.displayName}", begin, repository, { value -> finishUpload(local, value.jsonObject) },
+                    { uploadFailed(local.id, it) })
+            }.onFailure { uploadFailed(local.id, it.message) }
+        }
     }
     // Removing always works on the phone; the desktop is asked to discard its copy when it still has one.
     fun remove(local: LocalAttachment) { scope.launch { runCatching { repository.discardAttachment(local.id) }.onFailure { error = it.message } } }
@@ -757,14 +933,25 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
             repository.launchSend(action, session.id, sentText, sentAttachments) { result ->
                 sending = false
                 // Like the desktop, web search applies to one accepted message only.
-                result.onSuccess { if (draft == sentText) draft = ""; webSearch = false }.onFailure { failure ->
+                result.onSuccess { webSearch = false }.onFailure { failure ->
                     error = failure.message
                     if ((failure as? RemoteRequestException)?.code == "REVISION_CONFLICT") scope.launch { repository.selectSession(session.id) }
                 }
             }
         }
     }
-    LaunchedEffect(session.id, state.connection is ConnectionState.Online) { if (state.connection is ConnectionState.Online) runCatching { repository.loadMessages(session.id) }.onFailure { error = it.message } }
+    var loadAttempt by remember(session.id) { mutableIntStateOf(0) }
+    var loadingHistory by remember(session.id) { mutableStateOf(false) }
+    var historyError by remember(session.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(session.id, state.connection is ConnectionState.Online, loadAttempt) {
+        if (state.connection !is ConnectionState.Online) return@LaunchedEffect
+        loadingHistory = true
+        historyError = null
+        try { repository.loadMessages(session.id) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { historyError = failure.message ?: "Conversation history could not be loaded." }
+        finally { loadingHistory = false }
+    }
     // A reply that finishes while this conversation is on screen has been read, as on the desktop.
     LaunchedEffect(session.id, session.unread) { if (session.unread) repository.markRead(session.id) }
     LaunchedEffect(storedDraft.text, storedDraft.dirty, storedDraft.conflict) { if (!storedDraft.dirty && draft != storedDraft.text) draft = storedDraft.text }
@@ -777,24 +964,21 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
             finally { activityLoading = false }
         }
     }
-    LaunchedEffect(draft, sending) {
-        if (sending || !draftEditable || !session.draftIncluded || session.mode != "managed") return@LaunchedEffect
-        try {
-            repository.saveLocalDraft(session.id, draft)
+    val canAutosave = !sending && draftEditable && session.draftIncluded && session.mode == "managed" &&
+        state.supports("drafts.put") && storedDraft.dirty && !storedDraft.conflict
+    LaunchedEffect(session.id, canAutosave, storedDraft.text, storedDraft.remoteRevision) {
+        if (canAutosave) {
             delay(700)
-            repository.syncDraft(session.id)
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) {
-            error = failure.message
-            if ((failure as? RemoteRequestException)?.code == "REVISION_CONFLICT") repository.selectSession(session.id)
+            repository.autosaveDraft(session.id)
         }
     }
-    val messages = state.messages.filter { it.sessionId == session.id }.sortedBy { it.time }
-    val activityItems = messages.filterNot(Message::isConversationMessage)
+    val messages = remember(state.messages, session.id) { state.messages.filter { it.sessionId == session.id }.sortedBy { it.time } }
+    val activityItems = remember(messages) { messages.filterNot(Message::isConversationMessage) }
     val unknownSend = state.pendingCommands.firstOrNull { it.sessionId == session.id && it.method == "sessions.send" && it.status == "unknown" }
     var reviewingOutcome by remember(session.id) { mutableStateOf(false) }
     val sendHint = when {
         session.mode == "linked" -> "Linked terminal session · continue on the PC"
+        state.connection !is ConnectionState.Online -> null
         !session.canSend -> "Sending is unavailable for this session. Check provider access on your PC."
         !session.draftIncluded -> "Loading desktop draft…"
         session.draftAttachmentCount == null -> "Restart the updated Cere broker on your PC to sync desktop attachments. Your draft stays on this phone."
@@ -812,24 +996,55 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
             else "${session.provider.replaceFirstChar(Char::uppercase)} takes one message at a time. Wait for this turn to finish, or Stop it, then send."
         else -> null
     }
-    BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val room = maxHeight
         Column(Modifier.fillMaxSize()) {
-            if (state.connection !is ConnectionState.Online) AssistChip({}, { Text("Cached · actions unavailable", maxLines = 1) }, leadingIcon = { Icon(Icons.Default.Warning, null) }, modifier = Modifier.padding(horizontal = 16.dp))
-            // F93: the desktop's portrait, still, showing this conversation's state, which is also written out.
             val portraitShown by UiPreferences.portrait(context).collectAsState()
             val portraitState = PortraitState.resolve(state.connection is ConnectionState.Online, session.status, session.activity, waitingApprovals.size,
                 state.permissions["paused"]?.jsonPrimitive?.booleanOrNull == true)
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (portraitShown) portraitSheet?.let { StatusPortrait(it, portraitState); Spacer(Modifier.width(10.dp)) }
-                Column(Modifier.weight(1f)) {
-                    if (portraitShown && portraitSheet != null) Text(portraitState.label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(listOfNotNull(session.provider.replaceFirstChar(Char::uppercase), session.model, session.project).joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (room >= 240.dp) Surface(color = MaterialTheme.colorScheme.surface) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(goBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.go_back)) }
+                    if (portraitShown && room >= 300.dp) portraitSheet?.let {
+                        StatusPortrait(it, portraitState, size = 36.dp)
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+                        Text(session.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.semantics { heading() })
+                        val online = state.connection is ConnectionState.Online
+                        Text(listOfNotNull(if (online) sessionDisplayStatus(session, waitingApprovals.size) else connectionTitle(state),
+                            session.model?.takeIf(String::isNotBlank) ?: state.traits(session.provider).label).joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = if (online) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
+                            style = MaterialTheme.typography.labelMedium)
+                    }
+                    var options by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton({ options = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.chat_options)) }
+                        DropdownMenu(options, { options = false }) {
+                            DropdownMenuItem({ Text(stringResource(R.string.chat_settings)) },
+                                { options = false; showConversationSettings = true }, leadingIcon = { Icon(Icons.Default.Settings, null) })
+                            if (state.supports("activity.list") || activityItems.isNotEmpty() || session.agents.isNotEmpty())
+                                DropdownMenuItem({ Text(stringResource(R.string.activity_label)) }, { options = false; activityOpen = true },
+                                    leadingIcon = { Icon(Icons.Default.List, null) })
+                            if (state.supports("messages.bookmarks")) DropdownMenuItem({ Text(stringResource(R.string.pinned_replies)) },
+                                { options = false; pinnedOpen = true }, leadingIcon = { Icon(Icons.Default.Star, null) })
+                            DropdownMenuItem({ Text(stringResource(R.string.nav_inbox)) }, { options = false; openInbox() },
+                                leadingIcon = { Icon(Icons.Default.Notifications, null) })
+                            if (canSearchWeb) DropdownMenuItem({ Text("Web search") }, { options = false; webSearch = !webSearch },
+                                enabled = !sending && (!busy || session.canQueue), trailingIcon = { Checkbox(webSearch, null) })
+                        }
+                    }
                 }
             }
             key(session.id) {
-                ConversationTimeline(messages, busy, session.status, Modifier.weight(1f), state.messagesBefore[session.id] != null, loadingOlder, {
+                if (messages.isEmpty() && loadingHistory) Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                } else if (messages.isEmpty() && historyError != null) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                    SecureStatusPanel("History unavailable", historyError.orEmpty(), tone = SecureTone.Attention)
+                    TextButton({ loadAttempt++ }, enabled = state.connection is ConnectionState.Online) { Text("Retry loading messages") }
+                } else ConversationTimeline(messages, busy, session.status, Modifier.weight(1f), state.messagesBefore[session.id] != null, loadingOlder, {
                     loadingOlder = true
                     scope.launch { try { repository.loadOlderMessages(session.id) } catch (failure: Exception) { error = failure.message } finally { loadingOlder = false } }
                 }, statusText = when {
@@ -846,9 +1061,26 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
             }
             // Controls under the conversation scroll on their own and never take more than about
             // half the space, so large text and the keyboard leave the message field usable.
-            Column(Modifier.heightIn(max = room * 0.45f).verticalScroll(rememberScrollState())) {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
+            Column(Modifier.heightIn(max = room * 0.42f).verticalScroll(rememberScrollState()).padding(top = 4.dp)) {
+                if (messages.isNotEmpty() && historyError != null) TextButton({ loadAttempt++ }, enabled = state.connection is ConnectionState.Online) {
+                    Text("Couldn’t refresh messages · Retry")
+                }
                 session.error?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp)) }
-                if (storedDraft.conflict) Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(12.dp)) { Column(Modifier.padding(12.dp)) { Text("Draft changed on desktop", fontWeight = FontWeight.SemiBold); Text("Your phone edit is preserved. Choose which version to keep."); FlowRow { TextButton({ scope.launch { repository.reloadRemoteDraft(session.id); draft = storedDraft.remoteText.orEmpty() } }) { Text("Reload desktop") }; TextButton({ scope.launch { repository.keepLocalDraft(session.id) } }) { Text("Keep phone edit") } } } }
+                if (storedDraft.conflict) Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("Draft changed on desktop", fontWeight = FontWeight.SemiBold)
+                        Text("Your phone edit is preserved. Choose which version to keep.")
+                        FlowRow {
+                            TextButton({ scope.launch { repository.reloadRemoteDraft(session.id, storedDraft.remoteRevision) } }) { Text("Reload desktop") }
+                            TextButton({ scope.launch { repository.keepLocalDraft(session.id, storedDraft.remoteRevision) } }) { Text("Keep phone edit") }
+                        }
+                    }
+                }
                 if (waitingApprovals.isNotEmpty()) {
                     TextButton({ activityOpen = false; reviewOpen = true }, modifier = Modifier.fillMaxWidth()) { Text("${waitingApprovals.first().title}${if (waitingApprovals.size > 1) " (+${waitingApprovals.size - 1})" else ""} · Review", maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
@@ -857,34 +1089,47 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                     IconButton({ error = null; scope.launch { repository.dismissError() } }) { Icon(Icons.Default.Close, "Dismiss error") }
                 } }
-                FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.Center) {
-                    TextButton({ activityOpen = true }, enabled = state.supports("activity.list") || activityItems.isNotEmpty() || session.agents.isNotEmpty()) { Icon(Icons.Default.List, null); Text(buildList { add("Activity"); if (activeAgents.isNotEmpty()) add("${activeAgents.size} agent${if (activeAgents.size == 1) "" else "s"} active"); else if (activityItems.isNotEmpty()) add(activityItems.size.toString()) }.joinToString(" · ")) }
-                    if (!busy) TextButton({ showConversationSettings = true }) { Text("Conversation settings") }
-                    if (state.supports("messages.bookmarks")) TextButton({ pinnedOpen = true }) { Icon(Icons.Default.Star, null); Text("Pinned") }
-                    if (busy) OutlinedButton(onClick = { scope.launch { runCatching { repository.mutate("sessions.stop", buildJsonObject { put("sessionId", session.id) }, session.title) }.onFailure { error = it.message } } }, enabled = state.supports("sessions.stop") && session.status != "stopping") { Icon(Icons.Default.Clear, null); Text(if (session.status == "stopping") "Stopping…" else "Stop") }
-                    if (canSearchWeb) FilterChip(webSearch, { webSearch = !webSearch }, { Text("Search the web") }, enabled = !sending && (!busy || session.canQueue))
+                if (busy) FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton({ activityOpen = true }, enabled = state.supports("activity.list") || activityItems.isNotEmpty() || session.agents.isNotEmpty()) {
+                        Icon(Icons.Default.List, null)
+                        Text(stringResource(R.string.activity_label))
+                    }
+                    if (state.supports("sessions.stop")) OutlinedButton(onClick = {
+                        scope.launch { runCatching { repository.mutate("sessions.stop", buildJsonObject { put("sessionId", session.id) }, session.title) }.onFailure { error = it.message } }
+                    }, enabled = session.status != "stopping") { Text(if (session.status == "stopping") "Stopping…" else "Stop") }
+                }
+                if (state.connection is ConnectionState.Offline) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.draft_offline), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    TextButton(repository::retry) { Text("Reconnect") }
                 }
                 if (webSearch) Text("This message becomes a public web search query, up to 500 characters.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = 16.dp))
                 if (attachments.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(attachments, key = { it.id }) { attachment ->
                     val discarded = attachment.remoteAttachmentId != null && (attachment.remoteExpiresAt ?: Long.MAX_VALUE) <= now
-                    Surface(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(8.dp)) { Column(Modifier.widthIn(min = 150.dp, max = 280.dp).padding(10.dp)) {
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(12.dp)) { Column(Modifier.widthIn(min = 176.dp, max = 280.dp).padding(12.dp)) {
                         Text(attachment.displayName, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text("${attachment.width}×${attachment.height} · ${attachment.size / 1024} KiB${if (attachment.transformed) " · private copy optimized" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (!discarded && attachment.committedOffset > 0 && !attachment.readyAt(now) && attachment.size > 0) {
+                            val fraction = (attachment.committedOffset.toFloat() / attachment.size).coerceIn(0f, 1f)
+                            LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                            Text("${(fraction * 100).toInt()}% received by desktop", style = MaterialTheme.typography.labelSmall)
+                        }
                         if (discarded) Text("The desktop discarded the upload. Upload it again.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            val stage = uploading[attachment.id]
                             when {
+                                stage != null -> Text(stringResource(stage), Modifier.padding(8.dp), style = MaterialTheme.typography.labelMedium)
                                 attachment.reviewedAt == null -> TextButton({ attachmentReviewId = attachment.id }) { Text("Review") }
                                 attachment.readyAt(now) -> Text("Ready", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(12.dp))
                                 else -> TextButton({ upload(attachment) }, enabled = state.supports("attachments.begin") && state.supports("attachments.commit")) { Text(if (attachment.committedOffset > 0 && !discarded && attachment.remoteStatus != "ready") "Resume" else "Upload") }
                             }
-                            IconButton({ remove(attachment) }) { Icon(Icons.Default.Delete, "Remove image") }
+                            IconButton({ remove(attachment) }, enabled = stage == null) { Icon(Icons.Default.Delete, "Remove image") }
                         }
                     } }
                 } }
                 if (desktopAttachments.isNotEmpty() && draftEditable) {
                     Text("From the desktop draft · sent with this message", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                     LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(desktopAttachments, key = { it.id }) { attachment ->
-                        Surface(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(8.dp)) { Column(Modifier.widthIn(min = 150.dp, max = 280.dp).padding(10.dp)) {
+                        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(12.dp)) { Column(Modifier.widthIn(min = 176.dp, max = 280.dp).padding(12.dp)) {
                             Text(attachment.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${if (attachment.kind == "image") "Image" else "Text file"} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -901,20 +1146,27 @@ private fun ChatScreen(repository: CereRepository, state: MobileState, session: 
                 }, modifier = Modifier.padding(horizontal = 12.dp)) { Text("Open on desktop") }
                 if (unknownSend != null) TextButton({ reviewingOutcome = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Review uncertain send") }
             }
-            OutlinedTextField(draft, { if (it.length <= 100_000) { draft = it; repository.editDraft(session.id, it) } }, enabled = session.mode == "managed" && session.draftIncluded && draftEditable && !sending,
-                placeholder = { Text(if (busy && session.canQueue) "Queue a message for ${state.assistantName}" else "Message ${state.assistantName}", maxLines = 1, overflow = TextOverflow.Ellipsis) }, minLines = 1, maxLines = 6,
-                modifier = Modifier.fillMaxWidth().heightIn(max = room * 0.35f).padding(12.dp),
-                leadingIcon = if (canAttach) { {
+            }
+            ConversationComposer(
+                sendFromKeyboard = remember(context) { UiPreferences.sendFromKeyboard(context) },
+                value = draft,
+                onValueChange = { if (it.length <= 100_000) { draft = it; repository.editDraft(session.id, it) } },
+                enabled = session.mode == "managed" && session.draftIncluded && draftEditable && !sending,
+                placeholder = stringResource(if (busy && session.canQueue) R.string.queue_message else R.string.compose_message, state.assistantName),
+                canSend = draft.isNotBlank() && canCompose && !storedDraft.conflict,
+                onSend = ::send,
+                modifier = Modifier.heightIn(max = (room * 0.34f).coerceAtLeast(80.dp)),
+                leadingContent = if (canAttach) { {
                     Box {
-                        IconButton({ attachMenu = true }) { Icon(Icons.Default.Add, "Attach an image") }
+                        IconButton({ attachMenu = true }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Add, stringResource(R.string.attach_image)) }
                         DropdownMenu(attachMenu, { attachMenu = false }) {
-                            DropdownMenuItem({ Text("Photo") }, { attachMenu = false; picker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
-                            DropdownMenuItem({ Text("Screenshot or file") }, { attachMenu = false; files.launch("image/*") })
-                            DropdownMenuItem({ Text("Camera") }, { attachMenu = false; takePhoto() })
+                            DropdownMenuItem({ Text(stringResource(R.string.photo_library)) }, { attachMenu = false; picker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
+                            DropdownMenuItem({ Text(stringResource(R.string.screenshot_file)) }, { attachMenu = false; files.launch("image/*") })
+                            DropdownMenuItem({ Text(stringResource(R.string.camera)) }, { attachMenu = false; takePhoto() })
                         }
                     }
                 } } else null,
-                trailingIcon = { IconButton(onClick = ::send, enabled = draft.isNotBlank() && canCompose && !storedDraft.conflict) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } })
+            )
         }
     }
     if (showConversationSettings) ConversationSettingsSheet(repository, state, session, activity) { showConversationSettings = false }
@@ -976,16 +1228,17 @@ private fun AttachmentReviewDialog(repository: CereRepository, attachment: Local
             bitmap = withContext(Dispatchers.Default) { decodeForDisplay(bytes, 2048) } ?: error("The private image copy could not be decoded")
         } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { error = failure.message }
     }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Review image before upload") }, text = {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Review image") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Only the optimized private copy shown here will be uploaded after you choose Keep and then Upload.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Only this optimized private copy can be uploaded. Nothing leaves your phone until you choose Upload.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             bitmap?.let { Image(it.asImageBitmap(), contentDescription = "Image selected for this message", modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
             if (bitmap == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("${attachment.width}×${attachment.height} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall)
         }
-    }, confirmButton = { Button(onKeep, enabled = bitmap != null) { Text("Keep for message") } }, dismissButton = {
-        FlowRow { TextButton(onDismiss) { Text("Review later") }; TextButton(onRemove, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove") } }
+    }, confirmButton = { Button(onKeep, enabled = bitmap != null, modifier = Modifier.heightIn(min = 48.dp)) { Text("Keep for message") } }, dismissButton = {
+        FlowRow { TextButton(onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Review later") }; TextButton(onRemove,
+            modifier = Modifier.heightIn(min = 48.dp), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove") } }
     })
 }
 
@@ -1018,8 +1271,9 @@ private fun DesktopAttachmentDialog(repository: CereRepository, state: MobileSta
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("${if (attachment.kind == "image") "Image" else "Text file"} · ${attachment.size / 1024} KiB", style = MaterialTheme.typography.bodySmall)
         }
-    }, confirmButton = { TextButton(onDismiss) { Text("Done") } }, dismissButton = {
-        TextButton(onRemove, enabled = state.supports("drafts.put"), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove from draft") }
+    }, confirmButton = { Button(onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Done") } }, dismissButton = {
+        TextButton(onRemove, enabled = state.supports("drafts.put"), modifier = Modifier.heightIn(min = 48.dp),
+            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Remove from draft") }
     })
 }
 
@@ -1030,11 +1284,12 @@ private fun DesktopAttachmentDialog(repository: CereRepository, state: MobileSta
     var content by remember(item.id, item.revision) { mutableStateOf(item.text) }
     var loading by remember(item.id) { mutableStateOf(false) }
     var error by remember(item.id) { mutableStateOf<String?>(null) }
-    ElevatedCard(Modifier.fillMaxWidth().padding(vertical = 6.dp)) { Column(Modifier.padding(12.dp)) {
+    Surface(Modifier.fillMaxWidth().padding(vertical = 6.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) { Column(Modifier.padding(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(item.text.lineSequence().firstOrNull()?.take(90).orEmpty().ifBlank { "Provider activity" }, fontWeight = FontWeight.SemiBold,
                 maxLines = 2, modifier = Modifier.weight(1f))
-            IconButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere activity", content)) }) { Icon(painterResource(R.drawable.ic_copy), if (item.contentTruncated && content == item.text) "Copy activity preview" else "Copy activity text") }
+            IconButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere activity", content)) }, Modifier.size(48.dp)) { Icon(painterResource(R.drawable.ic_copy), if (item.contentTruncated && content == item.text) "Copy activity preview" else "Copy activity text") }
         }
         if (expanded) SelectionContainer { Text(content, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.horizontalScroll(rememberScrollState())) }
@@ -1073,21 +1328,39 @@ private fun DesktopAttachmentDialog(repository: CereRepository, state: MobileSta
     val update = message.isDelegationUpdate(); val mine = message.role == "user" && !update
     // The stored Markdown keeps its memory citations; they are left out of what is shown and copied
     // unless the desktop shows them, including a marker that is still streaming in.
-    val shown = Citations.shown(content, state.showMemoryCitations)
+    val shown = remember(content, state.showMemoryCitations) { Citations.shown(content, state.showMemoryCitations) }
     val preview = message.contentTruncated && content == message.text
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) { Surface(color = if (mine) MaterialTheme.colorScheme.primaryContainer else if (update) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(18.dp), modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(0.88f)) { Column(Modifier.padding(14.dp)) {
+    val colors = MaterialTheme.colorScheme
+    val clipboardLabel = stringResource(if (preview) R.string.copy_preview else R.string.copy_message)
+    val bubbleShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = if (mine) 20.dp else 6.dp, bottomEnd = if (mine) 6.dp else 20.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
+        Surface(color = when { mine -> colors.primaryContainer; update -> colors.secondaryContainer; else -> colors.surface },
+            shape = bubbleShape, border = if (mine) null else BorderStroke(1.dp, colors.outlineVariant),
+            modifier = Modifier.fillMaxWidth(if (mine) 0.87f else 1f)) {
+            Column(Modifier.padding(start = 16.dp, end = 12.dp, bottom = 16.dp, top = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (update) "Delegation update" else message.role.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-            // A pinned reply is the desktop's bookmark of it.
-            if (message.bookmarked || state.supports("messages.bookmark") && message.isConversationMessage())
-                IconButton({ scope.launch { runCatching { repository.setBookmark(message, !message.bookmarked) }.onFailure { error = it.message } } }, Modifier.size(32.dp), enabled = state.supports("messages.bookmark")) {
-                    Icon(Icons.Default.Star, if (message.bookmarked) "Unpin reply" else "Pin reply", Modifier.size(18.dp), tint = if (message.bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+            Text(if (update) stringResource(R.string.delegation_update) else if (mine) stringResource(R.string.your_message) else state.assistantName,
+                style = MaterialTheme.typography.titleSmall, color = if (mine) colors.onPrimaryContainer else colors.primary,
+                modifier = Modifier.weight(1f))
+            if (message.bookmarked) Icon(Icons.Default.Star, stringResource(R.string.session_pinned), Modifier.size(16.dp), tint = colors.primary)
+            var options by remember { mutableStateOf(false) }
+            Box {
+                IconButton({ options = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.message_actions), Modifier.size(20.dp)) }
+                DropdownMenu(options, { options = false }) {
+                    DropdownMenuItem({ Text(clipboardLabel) }, {
+                        options = false
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere message", shown))
+                    }, leadingIcon = { Icon(painterResource(R.drawable.ic_copy), null) })
+                    if (state.supports("messages.bookmark") && message.isConversationMessage()) DropdownMenuItem(
+                        { Text(stringResource(if (message.bookmarked) R.string.unpin_reply else R.string.pin_reply)) }, {
+                            options = false
+                            scope.launch { runCatching { repository.setBookmark(message, !message.bookmarked) }.onFailure { error = it.message } }
+                        }, leadingIcon = { Icon(Icons.Default.Star, null) })
                 }
-            // Copies the Markdown as written; a preview says so.
-            IconButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere message", shown)) }, Modifier.size(32.dp)) { Icon(painterResource(R.drawable.ic_copy), if (preview) "Copy message preview" else "Copy message", Modifier.size(18.dp)) }
+            }
         }
-        Spacer(Modifier.height(5.dp)); Markdown(shown)
-        MessageSources(message.sources) { url -> uriHandler.openUri(url) }
+        Markdown(shown)
+        MessageSources(message.sources) { url -> runCatching { uriHandler.openUri(url) }.onFailure { error = "No app could open this link." } }
         if (preview) { Spacer(Modifier.height(8.dp)); Text("Message preview · ${message.contentChars ?: "many"} characters", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary); OutlinedButton({ scope.launch { loading = true; error = null; runCatching { repository.fullMessage(message) }.onSuccess { content = it }.onFailure { error = it.message }; loading = false } }, enabled = !loading && state.supports("sessions.messagePart")) { Text(if (loading) "Loading…" else "Load full message") } }
         error?.let { Text("$it. Open the full message on the desktop.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     } } }
@@ -1110,18 +1383,27 @@ private fun ConnectionDetails(repository: CereRepository, state: MobileState) {
     val online = state.connection as? ConnectionState.Online
     val time = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
     OutlinedPanel("Connection details") {
-        Text("Cere Mobile ${app.versionName} (${app.versionCode}) · ${app.channel} channel", style = MaterialTheme.typography.bodySmall)
         val build = state.desktopBuild
-        Text(when {
+        val desktopBuild = when {
             build == null -> "Desktop build: unknown"
             online != null -> "Desktop build: ${ConnectionDiagnostics.buildText(build)}"
             else -> "Desktop build last seen: ${ConnectionDiagnostics.buildText(build)} · ${time.format(java.util.Date(build.seenAt))}"
-        }, style = MaterialTheme.typography.bodySmall)
-        Text("Protocol ${ConnectionDiagnostics.protocolText(build)}" + (online?.let { " · ${it.features.size} features · ${it.operations.size} operations" } ?: ""), style = MaterialTheme.typography.bodySmall)
+        }
         val usable = state.providers.count { (_, value) -> (value as? JsonObject)?.get("remoteExecution")?.jsonPrimitive?.booleanOrNull == true }
-        Text("Providers usable from this phone: $usable of ${state.providers.size}", style = MaterialTheme.typography.bodySmall)
-        Text("Last synchronized: ${repository.lastSynchronizedAt()?.let { time.format(java.util.Date(it)) } ?: "never"}", style = MaterialTheme.typography.bodySmall)
-        TextButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere connection details", ConnectionDiagnostics.summary(app, state, repository.lastSynchronizedAt()))); copied = true }) {
+        Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (online != null) "CONNECTED" else "LAST KNOWN CONNECTION", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = if (online != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
+                SelectionContainer { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Cere Mobile ${app.versionName} (${app.versionCode}) · ${app.channel} channel", style = MaterialTheme.typography.bodySmall)
+                    Text(desktopBuild, style = MaterialTheme.typography.bodySmall)
+                    Text("Protocol ${ConnectionDiagnostics.protocolText(build)}" + (online?.let { " · ${it.features.size} features · ${it.operations.size} operations" } ?: ""), style = MaterialTheme.typography.bodySmall)
+                    Text("Providers usable from this phone: $usable of ${state.providers.size}", style = MaterialTheme.typography.bodySmall)
+                    Text("Last synchronized: ${repository.lastSynchronizedAt()?.let { time.format(java.util.Date(it)) } ?: "never"}", style = MaterialTheme.typography.bodySmall)
+                } }
+            }
+        }
+        Text("This summary excludes keys, tokens, network addresses, device IDs, and conversation content.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton({ clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Cere connection details", ConnectionDiagnostics.summary(app, state, repository.lastSynchronizedAt()))); copied = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Icon(painterResource(R.drawable.ic_copy), null); Spacer(Modifier.width(8.dp)); Text(if (copied) "Copied" else "Copy diagnostic summary")
         }
     }
@@ -1153,9 +1435,14 @@ private fun PinnedReplies(repository: CereRepository, state: MobileState, sessio
         try { items = repository.pinnedReplies(sessionId) }
         catch (cancelled: CancellationException) { throw cancelled } catch (_: StaleResultException) {} catch (failure: Exception) { error = failure.message }
     }
-    ModalBottomSheet(onDismiss) {
-        Text("Pinned replies", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 20.dp))
-        Text("Pins are shared with the desktop's bookmarks.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 20.dp))
+    ModalBottomSheet(onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Pinned replies", style = MaterialTheme.typography.headlineSmall)
+                Text("Shared with desktop bookmarks", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onDismiss, Modifier.size(48.dp)) { Icon(Icons.Default.Close, "Close pinned replies") }
+        }
         LazyColumn(Modifier.heightIn(max = 560.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when {
                 error != null -> item { Text(error!!, color = MaterialTheme.colorScheme.error) }
@@ -1163,7 +1450,7 @@ private fun PinnedReplies(repository: CereRepository, state: MobileState, sessio
                 items!!.isEmpty() -> item { Text("No pinned replies yet. Pin a reply with its star.") }
                 else -> items(items!!, key = { it.id }) { message -> MessageBubble(repository, state, message.copy(bookmarked = true)) }
             }
-            item { TextButton({ refresh++ }) { Text("Refresh") } }
+            item { TextButton({ refresh++ }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Refresh") } }
         }
     }
 }
@@ -1171,16 +1458,24 @@ private fun PinnedReplies(repository: CereRepository, state: MobileState, sessio
 @Composable
 private fun InboxScreen(repository: CereRepository, state: MobileState, activity: FragmentActivity, highlighted: String? = null) {
     val gone = highlighted != null && state.approvals.none { it.id == highlighted }
-    if (state.approvals.isEmpty()) return EmptyState(Icons.Default.Check, "Inbox clear", if (gone) "The request you opened was already answered or has ended." else "Requests that need your review appear here.")
+    if (state.approvals.isEmpty()) return EmptyState(Icons.Default.Check, if (state.connection is ConnectionState.Online) "Inbox clear" else "No saved requests", if (state.connection !is ConnectionState.Online) "Reconnect to check for new requests from the desktop." else if (gone) "The request you opened was already answered or has ended." else "Requests that need your review appear here.")
     val list = rememberLazyListState()
     // A notification tap scrolls to its request.
     LaunchedEffect(highlighted, state.approvals.map(Approval::id)) {
         val index = state.approvals.indexOfFirst { it.id == highlighted }
         if (index >= 0) list.animateScrollToItem(index)
     }
-    LazyColumn(state = list, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(state.approvals, key = { it.id }) { approval -> ApprovalCard(repository, state, activity, approval, highlighted = approval.id == highlighted) }
-        if (gone) item { Text("The request you opened was already answered or has ended.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                PageTitle(stringResource(R.string.nav_inbox))
+                Text("${state.approvals.size} waiting · Review the origin and exact request before answering.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            LazyColumn(state = list, modifier = Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(state.approvals, key = { it.id }) { approval -> ApprovalCard(repository, state, activity, approval, highlighted = approval.id == highlighted) }
+                if (gone) item { Text("The request you opened was already answered or has ended.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+        }
     }
 }
 
@@ -1230,19 +1525,55 @@ private fun ApprovalCard(repository: CereRepository, state: MobileState, activit
     // Only an answer in flight for this exact request blocks it; an uncertain answer to an
     // earlier request, or to another request in the same conversation, does not.
     val pending = approval.id in mutations || CommandOutcomes.answering(state.pendingCommands, approval.id, approval.digest)
-    val bitmap by produceState<android.graphics.Bitmap?>(null, preview) { value = preview?.bytes?.let { bytes -> withContext(Dispatchers.Default) { decodeForDisplay(bytes, 2048) } } }
-    ElevatedCard(Modifier.fillMaxWidth().then(if (highlighted) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CardDefaults.elevatedShape) else Modifier)) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { Icon(if (approval.kind == "question" || approval.questions.isNotEmpty()) Icons.Default.Info else Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.tertiary); Spacer(Modifier.width(10.dp)); Column { Text(approval.title, fontWeight = FontWeight.SemiBold); Text(if (approval.kind == "question" || approval.questions.isNotEmpty()) "QUESTION" else "PERMISSION · ${approval.kind.uppercase()}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+    var bitmap by remember(approval.id, approval.revision, approval.digest) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    val isQuestion = approval.kind == "question" || approval.questions.isNotEmpty()
+    ElevatedCard(Modifier.fillMaxWidth().then(if (highlighted) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CardDefaults.elevatedShape) else Modifier)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Surface(shape = RoundedCornerShape(12.dp), color = if (isQuestion) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiaryContainer) {
+                Icon(if (isQuestion) Icons.Default.Info else Icons.Default.Warning, null, tint = if (isQuestion) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(10.dp).size(22.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(if (isQuestion) "QUESTION" else "PERMISSION · ${approval.kind.uppercase()}", style = MaterialTheme.typography.labelMedium, color = if (isQuestion) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.SemiBold)
+                Text(approval.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
             // Where the request comes from: the conversation, the agent inside it, and the conversation that delegated it.
-            Text(approvalOrigin(state, approval), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-        approval.detail?.let { TextButton({ expanded = !expanded }) { Text(if (expanded) "Hide exact request" else "Review exact request") }; if (expanded) SelectionContainer { Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) } }
+                Text(approvalOrigin(state, approval), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        approval.detail?.let {
+            OutlinedButton({ expanded = !expanded }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (expanded) "Hide exact request" else "Review exact request") }
+            if (expanded) Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+                SelectionContainer { Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp)) }
+            }
+        }
         approval.url?.let { url ->
-            OutlinedButton({ runCatching { uriHandler.openUri(url) }.onFailure { error = it.message ?: "Could not open the link." } }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton({ runCatching { uriHandler.openUri(url) }.onFailure { error = it.message ?: "Could not open the link." } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Text("Open link ↗")
             }
             Text("Complete the requested step in your browser, then confirm below.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (approval.kind == "image") { val image = bitmap; if (image != null) { Image(image.asImageBitmap(), "Exact capture proposed for sharing", Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Fit); Text("Verified exact preview", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium) } else OutlinedButton({ scope.launch { previewLoading = true; error = null; runCatching { repository.approvalPreview(approval) }.onSuccess { preview = it }.onFailure { error = it.message }; previewLoading = false } }, enabled = !previewLoading && preview == null && state.supports("approvals.preview") && state.supports("attachments.read")) { Text(if (previewLoading || preview != null) "Loading preview…" else "Review exact capture") } }
+        if (approval.kind == "image") {
+            val image = bitmap
+            if (image != null) {
+                Image(image.asImageBitmap(), "Exact capture proposed for sharing", Modifier.fillMaxWidth()
+                    .heightIn(max = 420.dp).clip(MaterialTheme.shapes.medium), contentScale = ContentScale.Fit)
+                Text("Verified capture", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+            } else if (state.supports("approvals.preview") && state.supports("attachments.read")) OutlinedButton({
+                scope.launch {
+                    previewLoading = true; error = null
+                    try {
+                        val fetched = repository.approvalPreview(approval)
+                        val decoded = withContext(Dispatchers.Default) { decodeForDisplay(fetched.bytes, 2048) }
+                        if (decoded == null) error = "The capture could not be displayed. Try again or review it on your desktop."
+                        else { bitmap = decoded; preview = fetched }
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { error = failure.message }
+                    finally { previewLoading = false }
+                }
+            }, enabled = !previewLoading, modifier = Modifier.fillMaxWidth()) {
+                Text(if (previewLoading) "Loading preview…" else "Review exact capture")
+            } else SecureStatusPanel("Review on your desktop", "This phone does not have access to the capture preview.", tone = SecureTone.Attention)
+        }
         approval.questions.forEachIndexed { index, question ->
             QuestionField(question, index, approval.questions.size, answers[question.id].orEmpty(),
                 if (validationAttempted) questionError(question, answers[question.id].orEmpty()) else null) {
@@ -1255,17 +1586,17 @@ private fun ApprovalCard(repository: CereRepository, state: MobileState, activit
                 repository.setQuestionAnswer(approval.id, id, it)
             }
         }
-        if (unsupported) Text("This form contains an unsupported field. You can deny it here or continue on the desktop.", color = MaterialTheme.colorScheme.tertiary)
-        if (!approval.canAnswer && approval.choices.any { it !in setOf("deny","cancel") }) Text("Positive answers require desktop review under the current provider policy.", color = MaterialTheme.colorScheme.tertiary)
-        if (!state.supports("approvals.answer")) Text("This device has read-only approval access.", color = MaterialTheme.colorScheme.tertiary)
-        if (pending) Text("Submitting this response…", color = MaterialTheme.colorScheme.primary)
+        if (unsupported) SecureStatusPanel("Continue on the desktop", "This form contains an unsupported field. You can still deny it here.", tone = SecureTone.Attention)
+        if (!approval.canAnswer && approval.choices.any { it !in setOf("deny","cancel") }) SecureStatusPanel("Desktop review required", "Positive answers are blocked by the current provider policy.", tone = SecureTone.Attention)
+        if (!state.supports("approvals.answer")) SecureStatusPanel("Read-only access", "This device can review this request but cannot answer it.", tone = SecureTone.Attention)
+        if (pending) SecureStatusPanel("Submitting response", "Keep Cere open while the desktop confirms it.", tone = SecureTone.Info)
         // Actions wrap instead of squeezing their labels at large text sizes.
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { approval.choices.forEach { choice ->
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) { approval.choices.forEach { choice ->
             val deny = choice == "deny" || choice == "cancel"
             if (deny) OutlinedButton({
                 if (!repository.beginApprovalMutation(approval)) return@OutlinedButton
                 scope.launch { try { repository.mutate("approvals.answer", approvalParams(approval, choice, emptyMap()), approval.title) } catch (failure: Exception) { error = failure.message } finally { repository.endApprovalMutation(approval) } }
-            }, enabled = state.supports("approvals.answer") && !pending) { Text(choice.replaceFirstChar(Char::uppercase), maxLines = 1) }
+            }, enabled = state.supports("approvals.answer") && !pending, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(choice.replaceFirstChar(Char::uppercase)) }
             else Button({
                 validationAttempted = true
                 if (!answersComplete || !repository.beginApprovalMutation(approval)) return@Button
@@ -1279,10 +1610,10 @@ private fun ApprovalCard(repository: CereRepository, state: MobileState, activit
                         }
                         .onFailure { error = it.message; repository.endApprovalMutation(approval) }
                 }
-            }, enabled = approval.canAnswer && !unsupported && state.supports("approvals.answer") && !pending && (approval.kind != "image" || preview != null)) { Text(when { choice == "answer" -> "Send answers"; choice == "allow" && approval.url != null -> "I've completed it"; else -> choice.replaceFirstChar(Char::uppercase) }, maxLines = 1) }
+            }, enabled = approval.canAnswer && !unsupported && state.supports("approvals.answer") && !pending && (approval.kind != "image" || preview != null), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(when { choice == "answer" -> "Send answers"; choice == "allow" && approval.url != null -> "I've completed it"; else -> choice.replaceFirstChar(Char::uppercase) }) }
         } }
         if (validationAttempted && !answersComplete) Text("Answer each required question before sending.", color = MaterialTheme.colorScheme.error)
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        error?.let { SecureStatusPanel("Request needs attention", it, tone = SecureTone.Danger) }
     } }
 }
 
@@ -1290,13 +1621,13 @@ private fun ApprovalCard(repository: CereRepository, state: MobileState, activit
 private fun QuestionField(question: ApprovalQuestion, index: Int, count: Int, answers: List<String>, error: String?, update: (List<String>) -> Unit) {
     val other = questionOtherValue(question, answers)
     OutlinedPanel("Question ${index + 1} of $count · ${if (question.required) "Required" else "Optional"}") {
-        question.header?.let { Text(it, fontWeight = FontWeight.SemiBold) }
-        Text(question.question, fontWeight = if (question.header == null) FontWeight.Medium else FontWeight.Normal)
+        question.header?.let { Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+        Text(question.question, style = MaterialTheme.typography.bodyLarge, fontWeight = if (question.header == null) FontWeight.Medium else FontWeight.Normal)
         question.options.forEach { option ->
             val selected = option.label in answers
             FilterChip(selected, { update(selectQuestionOption(question, answers, option.label, !selected)) }, {
                 Column { Text(option.label); option.description?.takeIf(String::isNotBlank)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-            }, modifier = Modifier.fillMaxWidth())
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp))
         }
         if (question.options.isEmpty() || question.allowOther) OutlinedTextField(
             other,
@@ -1345,7 +1676,15 @@ private fun QuestionField(question: ApprovalQuestion, index: Int, count: Int, an
 
 private fun approvalParams(value: Approval, choice: String, answers: Map<String, List<String>>, imageDigest: String? = null) = buildJsonObject { put("approvalId", value.id); put("revision", value.revision); put("digest", value.digest); put("choice", choice); put("answers", buildJsonObject { answers.mapValues { (_, values) -> values.filter(String::isNotBlank) }.filterValues(List<String>::isNotEmpty).forEach { (id, values) -> put(id, buildJsonObject { put("answers", buildJsonArray { values.forEach(::add) }) }) } }); imageDigest?.let { put("imageDigest", it) } }
 
-@Composable private fun OutlinedPanel(title: String, content: @Composable ColumnScope.() -> Unit) { Surface(color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, fontWeight = FontWeight.SemiBold); content() } } }
+@Composable private fun OutlinedPanel(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
+    }
+}
 
 @Composable
 private fun MemoryScreen(repository: CereRepository, state: MobileState, activity: FragmentActivity) {
@@ -1373,7 +1712,7 @@ private fun MemoryScreen(repository: CereRepository, state: MobileState, activit
     LaunchedEffect(sessionId, state.cacheEpoch) { health = if (sessionId.isNotBlank() && state.supports("memory.health")) runCatching { repository.read("memory.health", buildJsonObject { put("sessionId", sessionId) }).jsonObject }.getOrNull() else null }
     val rows = result?.get("rows")?.jsonArray.orEmpty().mapNotNull { it as? JsonObject }; val total = result?.get("total")?.jsonPrimitive?.intOrNull ?: rows.size
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("Project memory", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }); Text("Review memory within the selected conversation's approved project and memory server.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { PageTitle("Project memory"); Text("Review memory within the selected conversation's approved project and memory server.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         health?.let { value -> item { MemoryHealthLine(value) } }
         if (sessions.isEmpty()) item { OutlinedPanel("No conversations") { Text("Create or open a conversation in an approved project before opening memory.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         else item { Text("Session", fontWeight = FontWeight.Medium); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { sessions.forEach { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; FilterChip(sessionId == session.id, { sessionId = session.id; offset = 0 }, { Column { Text(session.title); Text(project?.name ?: session.project.orEmpty(), style = MaterialTheme.typography.labelSmall) } }) } }; sessions.firstOrNull { it.id == sessionId }?.let { session -> val project = state.projects.firstOrNull { it.id == session.projectId }; OutlinedPanel(project?.name ?: "Approved project") { SelectionContainer { Text(project?.path ?: session.project ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) }; Text("Ollama · ${session.ollamaHost.ifBlank { state.settings["ollamaHost"]?.jsonPrimitive?.contentOrNull ?: "host unavailable" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
@@ -1408,7 +1747,7 @@ private fun MemoryScreen(repository: CereRepository, state: MobileState, activit
 }
 
 @Composable
-private fun SettingsScreen(repository: CereRepository, state: MobileState, activity: FragmentActivity) {
+private fun SettingsScreen(repository: CereRepository, state: MobileState, activity: FragmentActivity, group: SettingsGroup?, selectGroup: (SettingsGroup?) -> Unit) {
     val context = LocalContext.current; val scope = rememberCoroutineScope(); var confirmForget by rememberSaveable { mutableStateOf(false) }; var showMemory by rememberSaveable { mutableStateOf(false) }; var replacePairing by rememberSaveable { mutableStateOf(false) }
     var remoteSettings by remember { mutableStateOf(state.settings) }; var personality by rememberSaveable { mutableStateOf("") }; var defaultModel by rememberSaveable { mutableStateOf("") }; var searchProvider by rememberSaveable { mutableStateOf("auto") }; var settingsDirty by rememberSaveable { mutableStateOf(false) }; var settingsConflict by rememberSaveable { mutableStateOf(false) }; var baselineRevision by rememberSaveable { mutableStateOf("0") }; var loading by remember { mutableStateOf(false) }; var error by remember { mutableStateOf<String?>(null) }; var feedback by remember { mutableStateOf<String?>(null) }
     var alertsOn by remember { mutableStateOf(CereNotifications.requestAlertsEnabled(context)) }
@@ -1420,7 +1759,7 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
     val permissions = state.permissions; val paused = permissions["paused"]?.jsonPrimitive?.booleanOrNull == true; val categories = permissions["categories"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }; val caps = permissions["caps"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull }
     fun applySettings(value: JsonObject) { remoteSettings = value; personality = value["personality"]?.jsonPrimitive?.contentOrNull.orEmpty(); defaultModel = value["defaultModel"]?.jsonPrimitive?.contentOrNull.orEmpty(); searchProvider = value["webSearch"]?.jsonObject?.get("provider")?.jsonPrimitive?.contentOrNull ?: "auto"; baselineRevision = value["revision"]?.jsonPrimitive?.contentOrNull ?: "0"; settingsDirty = false; settingsConflict = false }
     fun receiveSettings(value: JsonObject) { val revision = value["revision"]?.jsonPrimitive?.contentOrNull ?: "0"; if (settingsDirty && revision != baselineRevision) { remoteSettings = value; settingsConflict = true } else if (!settingsDirty) applySettings(value) }
-    LaunchedEffect(state.settings, state.connection is ConnectionState.Online) { if (state.supports("settings.get")) { loading = true; runCatching { repository.read("settings.get", buildJsonObject {}).jsonObject }.onSuccess(::receiveSettings).onFailure { error = it.message }; loading = false } else receiveSettings(state.settings) }
+    LaunchedEffect(state.settings, state.connection is ConnectionState.Online, group == SettingsGroup.Assistant) { if (group == SettingsGroup.Assistant && state.supports("settings.get")) { loading = true; runCatching { repository.read("settings.get", buildJsonObject {}).jsonObject }.onSuccess(::receiveSettings).onFailure { error = it.message }; loading = false } else receiveSettings(state.settings) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         alertsOn = CereNotifications.requestAlertsEnabled(context)
         if (!granted && Build.VERSION.SDK_INT >= 33 && !activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) feedback = "Android didn't ask again. Turn on notifications for Cere in Notification settings."
@@ -1437,62 +1776,99 @@ private fun SettingsScreen(repository: CereRepository, state: MobileState, activ
         return
     }
     if (showMemory) { Column(Modifier.fillMaxSize()) { Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) { IconButton({ showMemory = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to settings") }; Text("Settings", style = MaterialTheme.typography.titleMedium) }; MemoryScreen(repository, state, activity) }; return }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { Text("Desktop policy", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
-        item { OutlinedPanel(if (paused) "Actions paused" else "${permissions["profile"]?.jsonPrimitive?.contentOrNull ?: "Scoped"} access") { Text(if (paused) "The desktop is currently blocking remote actions." else "This phone can use only the capabilities negotiated at sign-in.", color = if (paused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant); if (categories.isNotEmpty()) Text("Categories · ${categories.joinToString()}", style = MaterialTheme.typography.bodySmall); if (caps.isNotEmpty()) Text("Capabilities · ${caps.joinToString()}", style = MaterialTheme.typography.bodySmall); if (!paused && state.supports("permissions.pause")) OutlinedButton({ scope.launch { runCatching { repository.mutate("permissions.pause", buildJsonObject {}) }.onSuccess { feedback = "Desktop actions paused" }.onFailure { error = it.message } } }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Pause desktop actions") } } }
-        if (state.supports("permissions.reduce") && state.supports("devices.self")) item {
-            PermissionReductionPanel(repository, state, { feedback = it }, { error = it })
+    if (group == null) {
+        SettingsIndex(state) { selectGroup(it) }
+        return
+    }
+    val groupState = key(group) { rememberLazyListState() }
+    LazyColumn(state = groupState, contentPadding = PaddingValues(CereLayout.gutter), verticalArrangement = Arrangement.spacedBy(CereLayout.groupGap)) {
+        item {
+            TextButton({ selectGroup(null) }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null)
+                Text(stringResource(R.string.nav_settings))
+            }
+            PageTitle(stringResource(group.title))
         }
-        if (state.supports("settings.get")) item { Spacer(Modifier.height(4.dp)); Text("Assistant", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
-        if (state.supports("settings.get")) item { OutlinedPanel("Defaults") { if (settingsConflict) { Text("Desktop settings changed while you were editing. Your values are preserved.", color = MaterialTheme.colorScheme.tertiary); FlowRow { TextButton({ applySettings(remoteSettings) }) { Text("Reload desktop") }; TextButton({ baselineRevision = remoteSettings["revision"]?.jsonPrimitive?.contentOrNull ?: baselineRevision; settingsConflict = false }) { Text("Keep mine") } } }; OutlinedTextField(personality, { personality = it.take(8000); settingsDirty = true }, label = { Text("Personality") }, minLines = 3, modifier = Modifier.fillMaxWidth(), supportingText = { Text("Applies to every conversation unless a project or conversation style on the desktop replaces it.") }); if (!remoteSettings["ollamaHost"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) OutlinedTextField(defaultModel, { defaultModel = it.take(512); settingsDirty = true }, label = { Text("Default Ollama model") }, singleLine = true, modifier = Modifier.fillMaxWidth()); Text("Web search provider", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("auto","duckduckgo","brave","mojeek","searxng").forEach { provider -> FilterChip(searchProvider == provider, { searchProvider = provider; settingsDirty = true }, { Text(provider) }) } }; if (state.supports("settings.patch")) Button({ scope.launch { runCatching { val action = repository.prepareAction("settings.patch", assistantSettingsPatch(remoteSettings, baselineRevision, personality, defaultModel, searchProvider)); authenticate(activity, "Update assistant settings", action, repository, { value -> applySettings(value.jsonObject); feedback = "Settings updated" }, { error = it }) }.onFailure { error = it.message } } }, enabled = !loading && !settingsConflict && settingsDirty, modifier = Modifier.fillMaxWidth()) { Text("Review & save") } else Text("This device has read-only settings access.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-        if (state.supports("memory.list") || state.supports("memory.retrieve")) item { OutlinedPanel("Project memory") { Text("Browse saved facts, conversation passages, assertions, episodes, and entities for an approved conversation.", color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ showMemory = true }) { Icon(Icons.Default.Star, null); Spacer(Modifier.width(8.dp)); Text("Open memory") } } }
-        if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        feedback?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }; error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-        item { HorizontalDivider(); Spacer(Modifier.height(8.dp)); Text("Phone", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
-        item { OutlinedPanel("On this phone") {
-            val portraitShown by UiPreferences.portrait(context).collectAsState()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text("Show the assistant's portrait"); Text("A still portrait beside each conversation, showing its state. It never moves; the state is also written out.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                Switch(portraitShown, { UiPreferences.setPortrait(context, it) })
-            }
-        } }
-        item { OutlinedPanel("Desktop connection") {
-            when (val connection = state.connection) {
-                is ConnectionState.Online -> Text("Connected to ${connection.desktopName}", color = MaterialTheme.colorScheme.primary)
-                is ConnectionState.Offline -> {
-                    Text(connection.reason, style = MaterialTheme.typography.bodySmall)
-                    if (connection.kind == OfflineKind.Unreachable) Text("Check that the PC is awake and reachable over Wi-Fi or your VPN. After a Wi-Fi address change, the PC firewall may still allow the phone's previous address.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (connection.kind == OfflineKind.MonitoringOff) Text("Cere connects whenever it is open. Turn on background monitoring to stay connected while it is closed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(repository::retry) { Text(if (connection.kind == OfflineKind.Unreachable) "Retry connection" else "Connect now") }
+        if (loading && group == SettingsGroup.Assistant) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        feedback?.let { item { SecureStatusPanel("Updated", it, tone = SecureTone.Success) } }
+        error?.let { item { SecureStatusPanel("Couldn't finish", it, tone = SecureTone.Danger) } }
+        when (group) {
+            SettingsGroup.Access -> {
+                item { OutlinedPanel(if (paused) "Actions paused" else "${permissions["profile"]?.jsonPrimitive?.contentOrNull ?: "Scoped"} access") { Text(if (paused) "The desktop is currently blocking remote actions." else "This phone can use only the capabilities negotiated at sign-in.", color = if (paused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant); if (categories.isNotEmpty()) Text("Categories · ${categories.joinToString()}", style = MaterialTheme.typography.bodySmall); if (caps.isNotEmpty()) Text("Capabilities · ${caps.joinToString()}", style = MaterialTheme.typography.bodySmall); if (!paused && state.supports("permissions.pause")) OutlinedButton({ scope.launch { runCatching { repository.mutate("permissions.pause", buildJsonObject {}) }.onSuccess { feedback = "Desktop actions paused" }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Pause desktop actions") } } }
+                if (state.supports("permissions.reduce") && state.supports("devices.self")) item {
+                    PermissionReductionPanel(repository, state, { feedback = it }, { error = it })
                 }
-                else -> Text("Connecting to your paired desktop…")
             }
-        } }
-        item { ConnectionDetails(repository, state) }
-        // Actions whose outcome the desktop never confirmed. Nothing here is sent again.
-        if (state.pendingCommands.isNotEmpty()) item { OutlinedPanel("Unconfirmed desktop actions") {
-            Text("Cere couldn't confirm these with the desktop. Check each one on the PC; nothing is sent again automatically.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            state.pendingCommands.forEach { command -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(CommandOutcomes.describe(command), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(if (command.status == "unknown") "Outcome unknown · check it on the PC" else "Checking with the desktop…", style = MaterialTheme.typography.bodySmall, color = if (command.status == "unknown") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (command.status == "unknown") TextButton({ scope.launch { runCatching { repository.acknowledgeUnknownCommand(command.commandId) }.onFailure { error = it.message } } }) { Text("Checked") }
-            } }
-        } }
+            SettingsGroup.Assistant -> {
+                if (state.supports("settings.get")) item { OutlinedPanel("Defaults") { if (settingsConflict) { Text("Desktop settings changed while you were editing. Your values are preserved.", color = MaterialTheme.colorScheme.tertiary); FlowRow { TextButton({ applySettings(remoteSettings) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Reload desktop") }; TextButton({ baselineRevision = remoteSettings["revision"]?.jsonPrimitive?.contentOrNull ?: baselineRevision; settingsConflict = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Keep mine") } } }; OutlinedTextField(personality, { personality = it.take(8000); settingsDirty = true }, label = { Text("Personality") }, minLines = 3, modifier = Modifier.fillMaxWidth(), supportingText = { Text("Applies to every conversation unless a project or conversation style on the desktop replaces it.") }); if (!remoteSettings["ollamaHost"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) OutlinedTextField(defaultModel, { defaultModel = it.take(512); settingsDirty = true }, label = { Text("Default Ollama model") }, singleLine = true, modifier = Modifier.fillMaxWidth()); Text("Web search provider", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { listOf("auto","duckduckgo","brave","mojeek","searxng").forEach { provider -> FilterChip(searchProvider == provider, { searchProvider = provider; settingsDirty = true }, { Text(provider) }, modifier = Modifier.heightIn(min = 48.dp)) } }; if (state.supports("settings.patch")) Button({ scope.launch { runCatching { val action = repository.prepareAction("settings.patch", assistantSettingsPatch(remoteSettings, baselineRevision, personality, defaultModel, searchProvider)); authenticate(activity, "Update assistant settings", action, repository, { value -> applySettings(value.jsonObject); feedback = "Settings updated" }, { error = it }) }.onFailure { error = it.message } } }, enabled = !loading && !settingsConflict && settingsDirty, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Review & save") } else Text("This device has read-only settings access.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                if (state.supports("memory.list") || state.supports("memory.retrieve")) item { OutlinedPanel("Project memory") { Text("Browse saved facts, conversation passages, assertions, episodes, and entities for an approved conversation.", color = MaterialTheme.colorScheme.onSurfaceVariant); OutlinedButton({ showMemory = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Default.Star, null); Spacer(Modifier.width(8.dp)); Text("Open memory") } } }
+            }
+            SettingsGroup.Phone -> {
+                item { OutlinedPanel(stringResource(R.string.conversation_preferences)) {
+                    val portraitShown by UiPreferences.portrait(context).collectAsState()
+                    Row(Modifier.toggleable(portraitShown, role = Role.Switch) { UiPreferences.setPortrait(context, it) },
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) { Text("Show the assistant's portrait"); Text("Show the desktop portrait alongside the conversation status.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        Switch(portraitShown, null)
+                    }
+                    HorizontalDivider()
+                    var keyboardSend by remember { mutableStateOf(UiPreferences.sendFromKeyboard(context)) }
+                    Row(Modifier.fillMaxWidth().heightIn(min = CereLayout.target).toggleable(keyboardSend, role = Role.Switch) {
+                        keyboardSend = it
+                        UiPreferences.setSendFromKeyboard(context, it)
+                    }, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.keyboard_send))
+                            Text(stringResource(R.string.keyboard_send_detail), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(keyboardSend, null)
+                    }
+                } }
+                item { OutlinedPanel("Background connection") { ListItem(headlineContent = { Text("Monitor in the background") }, supportingContent = { Text("Keeps a private notification and the desktop connection while Cere is closed, so requests, replies and timers can alert you.") }, trailingContent = { Switch(state.monitoring, { enabled -> if (enabled) { if (Build.VERSION.SDK_INT >= 33 && !NotificationManagerCompat.from(context).areNotificationsEnabled()) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(context, "android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") else startMonitoring(context) } else context.stopService(Intent(context, MonitoringService::class.java)) }) }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f))) } }
+                item { OutlinedPanel("Request notifications") { ListItem(headlineContent = { Text("Request alerts") }, supportingContent = { Text(when {
+                    !alertsOn -> "Off. Approval and question requests arrive silently. Allow notifications so they can reach you."
+                    !state.monitoring -> "On while background monitoring is on."
+                    else -> "On. Lock-screen alerts hide request details."
+                }, color = if (alertsOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error) }, trailingContent = { if (!alertsOn) TextButton(::requestAlerts, modifier = Modifier.heightIn(min = 48.dp)) { Text("Allow") } }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f)))
+                    HorizontalDivider()
+                    ListItem(headlineContent = { Text("Notification settings") }, supportingContent = { Text("Choose how requests, replies, problems and timers alert you") }, modifier = Modifier.clickable { openNotificationSettings(context) }.heightIn(min = 56.dp), colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f)))
+                } }
+            }
+            SettingsGroup.Connection -> {
+                item { OutlinedPanel("Desktop connection") {
+                    when (val connection = state.connection) {
+                        is ConnectionState.Online -> Text("Connected to ${connection.desktopName}", color = MaterialTheme.colorScheme.primary)
+                        is ConnectionState.Offline -> {
+                            Text(connection.reason, style = MaterialTheme.typography.bodySmall)
+                            if (connection.kind == OfflineKind.Unreachable) Text("Check that the PC is awake and reachable over Wi-Fi or your VPN. After a Wi-Fi address change, the PC firewall may still allow the phone's previous address.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (connection.kind == OfflineKind.MonitoringOff) Text("Cere connects whenever it is open. Turn on background monitoring to stay connected while it is closed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedButton(repository::retry, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (connection.kind == OfflineKind.Unreachable) "Retry connection" else "Connect now") }
+                        }
+                        else -> Text("Connecting to your paired desktop…")
+                    }
+                } }
+                item { ConnectionDetails(repository, state) }
+                // Actions whose outcome the desktop never confirmed. Nothing here is sent again.
+                if (state.pendingCommands.isNotEmpty()) item { OutlinedPanel("Unconfirmed desktop actions") {
+                    Text("Cere couldn't confirm these with the desktop. Check each one on the PC; nothing is sent again automatically.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    state.pendingCommands.forEach { command -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(CommandOutcomes.describe(command), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(if (command.status == "unknown") "Outcome unknown · check it on the PC" else "Checking with the desktop…", style = MaterialTheme.typography.bodySmall, color = if (command.status == "unknown") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (command.status == "unknown") TextButton({ scope.launch { runCatching { repository.acknowledgeUnknownCommand(command.commandId) }.onFailure { error = it.message } } }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Checked") }
+                    } }
+                } }
 
-        item { ListItem(headlineContent = { Text("Monitor in the background") }, supportingContent = { Text("Keeps a private notification and the desktop connection while Cere is closed, so requests, replies and timers can alert you.") }, trailingContent = { Switch(state.monitoring, { enabled -> if (enabled) { if (Build.VERSION.SDK_INT >= 33 && !NotificationManagerCompat.from(context).areNotificationsEnabled()) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); if (Build.VERSION.SDK_INT >= 37 && ContextCompat.checkSelfPermission(context, "android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) localNetworkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") else startMonitoring(context) } else context.stopService(Intent(context, MonitoringService::class.java)) }) }) }
-        item { ListItem(headlineContent = { Text("Request alerts") }, supportingContent = { Text(when {
-            !alertsOn -> "Off. Approval and question requests arrive silently. Allow notifications so they can reach you."
-            !state.monitoring -> "On while background monitoring is on."
-            else -> "On. Lock-screen alerts hide request details."
-        }, color = if (alertsOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error) }, trailingContent = { if (!alertsOn) TextButton(::requestAlerts) { Text("Allow") } }) }
-        item { ListItem(headlineContent = { Text("Notification settings") }, supportingContent = { Text("Choose how requests, replies, problems and timers alert you") }, modifier = Modifier.clickable { openNotificationSettings(context) }) }
-        item { HorizontalDivider(); Spacer(Modifier.height(8.dp)); MobileMaintenanceSection() }
-        item { ListItem(headlineContent = { Text(state.desktop?.desktopName.orEmpty()) }, supportingContent = { Text("Device ${state.desktop?.deviceId?.take(8)} · pinned TLS identity") }, leadingContent = { Icon(Icons.Default.Home, null) }) }
-        item { OutlinedButton({ replacePairing = true }, enabled = repository.replacementBlocker() == null) { Text("Replace pairing from this desktop") } }
-        repository.replacementBlocker()?.let { blocker -> item { Text(blocker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) } }
-        item { OutlinedButton({ confirmForget = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Forget this desktop") } }
+            }
+            SettingsGroup.Pairing -> {
+                item { MobileMaintenanceSection() }
+                item { OutlinedPanel("Paired desktop") { ListItem(headlineContent = { Text(state.desktop?.desktopName.orEmpty()) }, supportingContent = { Text("Device ${state.desktop?.deviceId?.take(8)} · pinned TLS identity") }, leadingContent = { Icon(Icons.Default.Home, null) }, colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f))) } }
+                item { OutlinedButton({ replacePairing = true }, enabled = repository.replacementBlocker() == null, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Replace pairing from this desktop") } }
+                repository.replacementBlocker()?.let { blocker -> item { Text(blocker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) } }
+                item { OutlinedButton({ confirmForget = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Forget this desktop") } }
+            }
+        }
     }
     if (confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text("Forget desktop?") }, text = { Text("This removes the encrypted cache, drafts and both phone keys. Pairing is required again.") }, confirmButton = { Button({ confirmForget = false; activity.lifecycleScope.launch { repository.forget() } }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Forget") } }, dismissButton = { TextButton({ confirmForget = false }) { Text("Cancel") } })
 }
@@ -1531,20 +1907,22 @@ private fun PermissionReductionPanel(repository: CereRepository, state: MobileSt
     val removedScripts = scripts.filterNot { it in selectedScripts }; val removedHosts = hosts.filterNot { it in selectedHosts }
     val removedProjects = projects.filter { it["id"]?.jsonPrimitive?.contentOrNull !in selectedProjects }
     val changed = removedCaps.isNotEmpty() || removedCategories.isNotEmpty() || removedScripts.isNotEmpty() || removedProjects.isNotEmpty() || removedHosts.isNotEmpty()
+    val removedCount = removedCaps.size + removedCategories.size + removedScripts.size + removedProjects.size + removedHosts.size
     OutlinedPanel("Reduce this phone's access") {
-        Text("You can remove existing device and project grants here. Adding access still requires the desktop.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Turn off grants this phone should no longer have. Selected grants are kept; adding access still requires the desktop.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         fun toggle(value: String, values: Set<String>, update: (Set<String>) -> Unit) = update(if (value in values) values - value else values + value)
-        if (projects.isNotEmpty()) { Text("Projects", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { projects.forEach { project -> val id = project["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach; val name = project["name"]?.jsonPrimitive?.contentOrNull ?: project["path"]?.jsonPrimitive?.contentOrNull ?: id; FilterChip(id in selectedProjects, { toggle(id, selectedProjects) { selectedProjects = it } }, { Text(name) }, enabled = !pending) } } }
-        if (categories.isNotEmpty()) { Text("Action categories", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { categories.forEach { value -> FilterChip(value in selectedCategories, { toggle(value, selectedCategories) { selectedCategories = it } }, { Text(value) }, enabled = !pending) } } }
-        if (caps.isNotEmpty()) { Text("Capabilities", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { caps.forEach { value -> FilterChip(value in selectedCaps, { toggle(value, selectedCaps) { selectedCaps = it } }, { Text(value) }, enabled = !pending) } } }
-        if (scripts.isNotEmpty()) { Text("Scripts", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { scripts.forEach { value -> FilterChip(value in selectedScripts, { toggle(value, selectedScripts) { selectedScripts = it } }, { Text(value) }, enabled = !pending) } } }
-        if (hosts.isNotEmpty()) { Text("Ollama hosts", style = MaterialTheme.typography.labelLarge); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { hosts.forEach { value -> FilterChip(value in selectedHosts, { toggle(value, selectedHosts) { selectedHosts = it } }, { Text(value) }, enabled = !pending) } } }
-        if (pending) Text("Waiting for the desktop to confirm the access reduction after reconnect…", color = MaterialTheme.colorScheme.tertiary)
-        Button({ review = true }, enabled = changed && scopeVersion != null && !pending && !loading) { Text("Review reduced access") }
+        if (projects.isNotEmpty()) { Text("Projects", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { projects.forEach { project -> val id = project["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach; val name = project["name"]?.jsonPrimitive?.contentOrNull ?: project["path"]?.jsonPrimitive?.contentOrNull ?: id; FilterChip(id in selectedProjects, { toggle(id, selectedProjects) { selectedProjects = it } }, { Text(name) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
+        if (categories.isNotEmpty()) { Text("Action categories", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { categories.forEach { value -> FilterChip(value in selectedCategories, { toggle(value, selectedCategories) { selectedCategories = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
+        if (caps.isNotEmpty()) { Text("Capabilities", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { caps.forEach { value -> FilterChip(value in selectedCaps, { toggle(value, selectedCaps) { selectedCaps = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
+        if (scripts.isNotEmpty()) { Text("Scripts", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { scripts.forEach { value -> FilterChip(value in selectedScripts, { toggle(value, selectedScripts) { selectedScripts = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
+        if (hosts.isNotEmpty()) { Text("Ollama hosts", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { hosts.forEach { value -> FilterChip(value in selectedHosts, { toggle(value, selectedHosts) { selectedHosts = it } }, { Text(value) }, enabled = !pending, modifier = Modifier.heightIn(min = 48.dp)) } } }
+        if (changed) SecureStatusPanel("$removedCount ${if (removedCount == 1) "grant" else "grants"} will be removed", "Review the exact list before reconnecting with reduced access.", tone = SecureTone.Attention)
+        if (pending) SecureStatusPanel("Reduction pending", "Waiting for the desktop to confirm the access reduction after reconnect…", tone = SecureTone.Attention)
+        Button({ review = true }, enabled = changed && scopeVersion != null && !pending && !loading, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Review reduced access") }
     }
     if (review && scopeVersion != null) AlertDialog(onDismissRequest = { review = false }, title = { Text("Remove these grants?") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("This only removes access. Active remote work is stopped and this phone reconnects with the new scope.")
             removedProjects.forEach { Text("Project · ${it["name"]?.jsonPrimitive?.contentOrNull ?: it["path"]?.jsonPrimitive?.contentOrNull ?: it["id"]?.jsonPrimitive?.contentOrNull}") }
             removedCategories.forEach { Text("Category · $it") }; removedCaps.forEach { Text("Capability · $it") }
@@ -1568,20 +1946,31 @@ private fun PermissionReductionPanel(repository: CereRepository, state: MobileSt
 
 @Composable private fun MemoryRow(row: JsonObject, manage: (() -> Unit)? = null) { OutlinedPanel(row["text"]?.jsonPrimitive?.contentOrNull ?: row["name"]?.jsonPrimitive?.contentOrNull ?: "Memory record") { val detail = listOfNotNull(row["kind"]?.jsonPrimitive?.contentOrNull, row["status"]?.jsonPrimitive?.contentOrNull, row["state"]?.jsonPrimitive?.contentOrNull, row["updated"]?.jsonPrimitive?.contentOrNull).joinToString(" · "); if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); val remaining = JsonObject(row.filterKeys { it !in setOf("id","text","name","kind","status","state","updated","revision") }); if (remaining.isNotEmpty()) StructuredObject(remaining); manage?.let { OutlinedButton(it) { Text("Inspect or forget") } } } }
 
-@Composable internal fun StructuredObject(value: JsonObject) { Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { value.forEach { (key, item) -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text(key.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.widthIn(min = 88.dp)); SelectionContainer { Text(if (item is JsonPrimitive) item.content else item.toString(), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)) } } } } }
+@Composable internal fun StructuredObject(value: JsonObject) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        value.forEach { (key, item) ->
+            Column {
+                Text(key.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SelectionContainer { Text(if (item is JsonPrimitive) item.content else item.toString(), style = MaterialTheme.typography.bodyMedium) }
+            }
+        }
+    }
+}
 
 @Composable private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, detail: String) = EmptyState(androidx.compose.ui.graphics.vector.rememberVectorPainter(icon), title, detail)
-@Composable private fun EmptyState(icon: androidx.compose.ui.graphics.painter.Painter, title: String, detail: String) { Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Icon(icon, null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp)); Spacer(Modifier.height(14.dp)); Text(title, style = MaterialTheme.typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center); Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center) } }
-@Composable private fun ProviderMark(provider: String) { Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(42.dp)) { Box(contentAlignment = Alignment.Center) { Text(provider.take(1).uppercase(), fontWeight = FontWeight.Bold) } } }
-@Composable private fun StatusPill(status: String) {
-    val normalized = status.lowercase()
-    Surface(shape = RoundedCornerShape(20.dp), color = when {
-        "waiting" in normalized || "input" in normalized -> MaterialTheme.colorScheme.tertiaryContainer
-        "active" in normalized || "working" in normalized || "tools" in normalized -> MaterialTheme.colorScheme.secondaryContainer
-        "error" in normalized || "failed" in normalized -> MaterialTheme.colorScheme.errorContainer
-        else -> MaterialTheme.colorScheme.surface
-    }, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-        Text(status.replaceFirstChar(Char::uppercase), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))
+@Composable private fun EmptyState(icon: androidx.compose.ui.graphics.painter.Painter, title: String, detail: String) {
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        // A library empty state is itself a lazy-list item and has no upper height constraint.
+        val scroll = if (constraints.hasBoundedHeight) Modifier.verticalScroll(rememberScrollState()) else Modifier
+        Column(scroll.widthIn(max = 420.dp).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.secondaryContainer) {
+                Icon(icon, null, Modifier.padding(14.dp).size(28.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+            Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
     }
 }
 

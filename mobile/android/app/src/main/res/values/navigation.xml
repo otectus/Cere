@@ -1,0 +1,23 @@
+<resources>
+    <string name="nav_chats">Chats</string>
+    <string name="nav_inbox">Inbox</string>
+    <string name="nav_desktop">Desktop</string>
+    <string name="nav_settings">Settings</string>
+    <string name="go_back">Back</string>
+    <string name="retry_connection">Retry connection</string>
+    <string name="connection_details">Connection details</string>
+    <string name="conversations_heading">Conversations</string>
+    <string name="import_history">Import desktop history</string>
+    <string name="conversation_actions">Conversation actions</string>
+    <string name="new_chat">New chat</string>
+    <string name="search_conversations">Search conversations</string>
+    <string name="clear_search">Clear search</string>
+    <string name="active_chats">Current</string>
+    <string name="archived_chats">Archived</string>
+    <string name="hand_off_session">Hand off %1$s</string>
+    <plurals name="waiting_requests">
+        <item quantity="one">%d request waiting</item>
+        <item quantity="other">%d requests waiting</item>
+    </plurals>
+    <string name="switch_section">Switch section</string>
+</resources>

@@ -1,0 +1,16 @@
+<resources>
+    <string name="connect_to_cere">Connect to Cere</string>
+    <string name="update_connection">Update your pairing</string>
+    <string name="compare_words">Compare the six words</string>
+    <string name="pair_pc_steps">On your PC, open Cere Settings → Cere Mobile and choose Show pairing QR.</string>
+    <string name="replace_pc_steps">On your PC, choose Replace pairing for this phone. Your saved conversations, drafts, and images stay on this device.</string>
+    <string name="verify_pc_steps">Check that your desktop shows these words in the same order before you confirm.</string>
+    <string name="phone_name">This phone</string>
+    <string name="phone_name_hint">The name you’ll see on your desktop.</string>
+    <string name="scan_pairing">Scan pairing QR</string>
+    <string name="paste_instead">Enter offer instead</string>
+    <string name="pair_offer">Pairing offer</string>
+    <string name="verify_offer">Verify offer</string>
+    <string name="show_signed_text">Show signed response text</string>
+    <string name="hide_signed_text">Hide signed response text</string>
+</resources>

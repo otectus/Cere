@@ -79,6 +79,8 @@ try {
   const prepared = await brokerRequest(socketPath, 'remote.preparePair', { addresses: ['127.0.0.1'], port, name: 'Cere UI pairing check', actionAuthentication: 'trusted-device', networkReturn: true });
   await adb(['logcat', '-c'], 30_000, true);
   await adb(['shell', 'am', 'start', '-W', '-n', `${appPackage}/dev.otectus.cere.mobile.MainActivity`]);
+  // Scanning remains the primary first-use action; reveal the text fallback explicitly.
+  await tap(await until('manual pairing', async () => (await screen()).find(node => node.text === 'Enter offer instead'), 30_000));
   // The offer goes into the second field (the first names this phone), as pasting it would.
   const field = await until('the pairing offer field', async () => (await screen()).filter(node => node.cls === 'android.widget.EditText')[1], 30_000);
   // Typed in short pieces: one long `input text` loses characters on the way through the keyboard.

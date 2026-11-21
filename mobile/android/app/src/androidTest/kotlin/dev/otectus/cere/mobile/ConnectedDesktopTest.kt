@@ -54,7 +54,7 @@ class ConnectedDesktopTest {
                 val prompt = "Connectivity test. Reply with exactly CERE_MOBILE_OK. Do not use tools or save anything to memory."
                 val action = repository.prepareSend(session.id, prompt)
                 repository.completeAction(action, repository.signWithoutAuthentication(action))
-                repository.clearAcceptedDraft(session.id, prompt, emptySet())
+                repository.clearAcceptedDraft(session.id, prompt, emptySet(), action.params.getValue("expectedDraftRevision").jsonPrimitive.content)
                 withTimeout(120_000) {
                     while (true) {
                         repository.loadMessages(session.id)

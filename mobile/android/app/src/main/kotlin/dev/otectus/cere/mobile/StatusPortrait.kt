@@ -25,6 +25,11 @@ import kotlinx.coroutines.flow.StateFlow
 /** On-phone presentation choices (F95). They change only this phone, never the desktop. */
 internal object UiPreferences {
     private const val FILE = "cere-ui"
+    fun sendFromKeyboard(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean("sendFromKeyboard", false)
+    fun setSendFromKeyboard(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean("sendFromKeyboard", enabled).apply()
+    }
+
     private var portrait: MutableStateFlow<Boolean>? = null
     fun portrait(context: Context): StateFlow<Boolean> = portrait ?: MutableStateFlow(context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean("portrait", true)).also { portrait = it }
     fun setPortrait(context: Context, shown: Boolean) {

@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasSetTextAction
@@ -18,9 +19,11 @@ class PairingSmokeTest {
     fun freshInstallShowsCompletePairingEntryPoints() {
         compose.onNodeWithContentDescription("Cere").assertIsDisplayed()
         compose.onNodeWithText("Connect to Cere").assertIsDisplayed()
-        compose.onAllNodes(hasSetTextAction()).assertCountEquals(2)
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(1)
         // Scanning is the main route; pasting the offer text stays available.
         compose.onNodeWithText("Scan pairing QR").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Enter offer instead").performScrollTo().performClick()
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(2)
         compose.onNodeWithText("Verify offer").performScrollTo().assertIsDisplayed()
     }
 }

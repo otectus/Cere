@@ -132,6 +132,88 @@ class ReconciliationTest {
         assertEquals("2", merged.drafts.getValue("a").baseRevision)
     }
 
+    @Test fun snapshotOfOurOwnAutosaveKeepsSubsequentTypingEvenAfterRestart() {
+        val start = session("a", "", "7")
+        val first = CacheReconciler.mergeDraft(null, start).edited("Hello", start)
+        val writing = CacheReconciler.awaitingDraftWrite(first, "Hello").edited("Hello there", start)
+        val restored = WireCodec.json.decodeFromString<LocalDraft>(WireCodec.json.encodeToString(LocalDraft.serializer(), writing))
+        val echo = CacheReconciler.mergeDraft(restored, session("a", "Hello", "8"))
+        assertEquals("Hello there", echo.text)
+        assertEquals("8", echo.baseRevision)
+        assertTrue(echo.dirty)
+        assertFalse(echo.conflict)
+        assertEquals(echo, CacheReconciler.acknowledgeDraft(echo, "Hello", "8"))
+        assertFalse(CacheReconciler.mergeDraft(echo, session("a", "Hello there", "9")).dirty)
+    }
+
+    @Test fun deletingBackToOriginalWhileSaveIsInFlightSurvivesAnOlderSnapshot() {
+        val start = session("a", "", "1")
+        val first = CacheReconciler.mergeDraft(null, start).edited("x", start)
+        val deleted = CacheReconciler.awaitingDraftWrite(first, "x").edited("", start)
+        val beforeReply = CacheReconciler.mergeDraft(deleted, start)
+        val afterReply = CacheReconciler.mergeDraft(beforeReply, session("a", "x", "2"))
+        assertEquals("", afterReply.text)
+        assertTrue(afterReply.dirty)
+        assertFalse(afterReply.conflict)
+    }
+
+    @Test fun attachmentOnlyRevisionKeepsDirtyTextAndTheNewDesktopAttachments() {
+        val start = session("a", "Shared", "4")
+        val phone = CacheReconciler.mergeDraft(null, start).edited("Rewritten on phone", start)
+        val state = MobileState(sessions = listOf(start), drafts = mapOf("a" to phone))
+        val updated = start.copy(draftRevision = "5", draftAttachmentCount = 1,
+            draftAttachments = listOf(DraftAttachment("id", "notes.txt", "text", "text/plain", 2, "hash")))
+        val merged = CacheReconciler.merge(state, snapshot(updated), "a")
+        val draft = merged.drafts.getValue("a")
+        assertEquals(updated.draftAttachments, merged.sessions.single().draftAttachments)
+        assertTrue(draft.dirty)
+        assertFalse(draft.conflict)
+        assertEquals("5", draft.remoteRevision)
+        assertEquals("Rewritten on phone", draft.text)
+    }
+
+    @Test fun realDesktopEditWithCommonPrefixStillRequiresAChoice() {
+        val start = session("a", "Plan", "4")
+        val written = CacheReconciler.awaitingDraftWrite(
+            CacheReconciler.mergeDraft(null, start).edited("Plan A", start), "Plan A")
+        val typing = written.edited("Plan ABC", start)
+        val conflict = CacheReconciler.mergeDraft(typing, session("a", "Plan AB", "5"))
+        assertTrue(conflict.conflict)
+        assertEquals("Plan AB", conflict.remoteText)
+        assertEquals("Plan ABC", conflict.text)
+        // Even the same pending text cannot identify an echo several revisions later.
+        assertTrue(CacheReconciler.mergeDraft(typing, session("a", "Plan A", "7")).conflict)
+    }
+
+    @Test fun legacyDirtyDraftKeepsItsBaselineThroughAnUnhydratedSummary() {
+        val oldCache = """{"sessionId":"a","text":"phone","baseRevision":"3","dirty":true}"""
+        val legacy = WireCodec.json.decodeFromString<LocalDraft>(oldCache)
+        val previous = session("a", "desktop", "3")
+        val summary = session("a", "", "4").copy(draftIncluded = false)
+        val retained = CacheReconciler.mergeDraft(legacy, summary, previous)
+        val hydrated = CacheReconciler.mergeDraft(retained, session("a", "desktop", "4"), summary)
+        assertEquals("phone", hydrated.text)
+        assertEquals("4", hydrated.remoteRevision)
+        assertFalse(hydrated.conflict)
+        assertTrue(hydrated.dirty)
+    }
+
+    @Test fun delayedDesktopClearAfterSendDoesNotRestoreSentTextOrConflictWithNextMessage() {
+        val before = session("a", "Message one", "6")
+        val cleared = CacheReconciler.afterAcceptedSend(CacheReconciler.mergeDraft(null, before), "Message one", "6")
+        assertEquals("", CacheReconciler.mergeDraft(cleared, before).text)
+        val typing = cleared.edited("Message two", before)
+        val next = CacheReconciler.mergeDraft(typing, session("a", "", "7"))
+        assertEquals("Message two", next.text)
+        assertTrue(next.dirty)
+        assertFalse(next.conflict)
+        assertEquals(next, CacheReconciler.afterAcceptedSend(next, "Message one", "6"))
+        assertTrue(CacheReconciler.mergeDraft(typing, session("a", "Desktop message", "8")).conflict)
+        val typedBeforeReceipt = CacheReconciler.mergeDraft(null, before).edited("Message two", before)
+        val clearBeforeReceipt = CacheReconciler.mergeDraft(typedBeforeReceipt, session("a", "", "7"))
+        assertEquals(next, CacheReconciler.afterAcceptedSend(clearBeforeReceipt, "Message one", "6"))
+    }
+
     @Test fun pagedSummaryKeepsAuthorizedSessionAndNeverOverwritesLocalDraft() {
         val first = session("first", "summary", "9").copy(draft = "", draftIncluded = false)
         val older = session("older", "server", "2")

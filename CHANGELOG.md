@@ -1,10 +1,12 @@
 # Changelog
 
-Notable changes to Cere, the desktop application and its broker, and to Cere Mobile, its Android companion. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The desktop version is set in `package.json` and the phone's in `mobile/android/app/build.gradle.kts`. Phone builds are released under `mobile-vX.Y.Z` tags, whose GitHub release notes come from [docs/mobile/RELEASE-NOTES.md](docs/mobile/RELEASE-NOTES.md); [docs/mobile/RELEASES.md](docs/mobile/RELEASES.md) describes that process.
+Notable changes to Cere, the desktop application and its broker, and to Cere Mobile, its Android companion. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The desktop version is set in `package.json` and the phone's in `mobile/android/app/build.gradle.kts`. Development phone builds use `mobile-dev-vX.Y.Z` tags and stable builds use `mobile-vX.Y.Z` tags, whose GitHub release notes come from [docs/mobile/RELEASE-NOTES.md](docs/mobile/RELEASE-NOTES.md); [docs/mobile/RELEASES.md](docs/mobile/RELEASES.md) describes that process.
 
 ## [Unreleased]
 
-Fixes from the Cere Mobile compatibility audit (`Cere_Mobile_APK_Desktop_Compatibility_Audit_and_Handoff.md`, findings MOB-001–MOB-008) and simpler pairing. The phone side is published as the Cere Mobile 0.1.4 development snapshot (`mobile-dev-v0.1.4`); its validation is recorded in [docs/mobile/TESTING.md](docs/mobile/TESTING.md). Phones need the desktop broker from this source for the new behaviour.
+## [0.1.5] - 2026-11-20
+
+This desktop release includes the Cere Mobile compatibility work first published in the 0.1.4 development snapshot, plus the redesigned 0.1.5 Android interface and cross-device draft reconciliation. The phone side is published through the separate `mobile-dev-v0.1.5` development channel and updates existing `.debug` development installs. Stable mobile signing and publication remain separate and require the permanent release key and the evidence in [docs/mobile/TESTING.md](docs/mobile/TESTING.md).
 
 ### Added
 
@@ -12,6 +14,8 @@ Fixes from the Cere Mobile compatibility audit (`Cere_Mobile_APK_Desktop_Compati
 - **Connection details** on the phone: the connected or last-seen desktop build, protocol, app version and channel, last synchronization, and a copyable summary without keys, addresses, IDs or messages.
 - **Typed API model IDs** on the phone, for new conversations, settings and handoffs; an endpoint without a model list is shown as such.
 - `tools/mobile-upgrade-check.ts` (in-place update from a previous development snapshot) and `tools/mobile-ui-pairing-check.ts` (an R8 build paired through its own screen); `tools/mobile-paired-check.ts --pairing network`; `tools/mobile-release.ts` accepts `mobile-dev-vX.Y.Z` and writes `mobile-development.json`.
+- **Responsive Android navigation and screens.** Phone destinations use a bottom bar or navigation rail as space allows. Chat, sessions, pairing, approvals, Desktop controls, settings and supporting sheets share the desktop palette, grouped surfaces, reachable actions and clearer loading, empty, success and error states. Short landscape windows, the keyboard and large fonts scroll instead of hiding required controls.
+- **Adaptive launcher artwork.** Android uses the reviewed cyan Cere “C” and cream diamond as its adaptive foreground, on a navy background, with themed-icon support on Android 13 and later. The launcher treatment was checked on Android 11 and Android 15.
 
 ### Changed
 
@@ -20,6 +24,8 @@ Fixes from the Cere Mobile compatibility audit (`Cere_Mobile_APK_Desktop_Compati
 - **Files, Images and Analysis under phone control (MOB-005).** Continuing such a conversation from the phone first names what pauses; the desktop keeps the selection and restores it when it detaches the phone. Their results appear on the phone as cards to view on the desktop.
 - The phone's "Desktop confirmed" step for manual pairing now checks with the desktop before saving the pairing.
 - CI retries only plugin resolution before the mobile gates (MOB-007); the paired API 35 job pairs by network return.
+- Draft synchronization now distinguishes this phone's own delayed save or accepted-send clear from a genuine desktop edit. New typing survives an in-flight save, attachment-only desktop revisions rebase without a false text conflict, stale acknowledgements cannot erase newer work, and conflict choices apply only to the revision the person reviewed.
+- Android's transcript and ancillary sheets use consistent responsive widths, touch targets, headings, progress and confirmation treatment, including phone landscape and large-font layouts.
 
 ### Fixed
 

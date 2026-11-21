@@ -5,7 +5,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -17,7 +16,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +55,7 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
     var windows by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
     var sectionErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loading by remember { mutableStateOf(false) }
+    var pendingAction by remember { mutableStateOf<String?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -88,10 +90,14 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
         }
     }
     fun execute(name: String, args: JsonObject, label: String, definitionDigest: String? = null) {
+        if (pendingAction != null) return
         feedback = null; error = null
+        pendingAction = label
         val params = buildJsonObject { put("projectId", projectId); put("action", name); put("args", args); definitionDigest?.let { put("definitionDigest", it) } }
         val cue = project?.path ?: project?.name ?: "approved project"
-        signedReview(activity, repository, "desktop.execute", params, "$label · $cue", { feedback = "$label · done"; refresh() }, { error = it }, projectId, label)
+        signedReview(activity, repository, "desktop.execute", params, "$label · $cue", {
+            pendingAction = null; feedback = "$label · done"; refresh()
+        }, { pendingAction = null; error = it }, projectId, label)
     }
 
     val projectIds = state.projects.map(Project::id)
@@ -115,13 +121,15 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
     val shownWindows = windows.filter { matches(it.text("title"), it.text("app")) }
     val shownApps = apps.filter { matches(it.text("name")) }
     val formatter = remember { DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()) }
+    val canAct = pendingAction == null && !loading
 
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { Text("Desktop", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }); Text("Everyday controls, close at hand.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            OutlinedButton(::refresh, enabled = !loading && state.connection is ConnectionState.Online) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text(if (loading) "Loading" else "Refresh") }
+        item { FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+            PageTitle("Desktop", Modifier.weight(1f))
+            OutlinedButton(::refresh, enabled = !loading && pendingAction == null && state.connection is ConnectionState.Online,
+                modifier = Modifier.heightIn(min = CereLayout.target)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text(if (loading) "Loading" else "Refresh") }
         } }
-        item { FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { state.projects.forEach { option -> FilterChip(projectId == option.id, { projectId = option.id }, { Column { Text(option.name); Text(option.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall) } }) } } }
+        item { FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { state.projects.forEach { option -> FilterChip(projectId == option.id, { projectId = option.id }, { Column { Text(option.name); Text(option.path ?: "Path unavailable", style = MaterialTheme.typography.labelSmall) } }, enabled = canAct) } } }
         project?.let { selected -> item { Panel("Action scope") { Text(state.desktop?.desktopName ?: "Paired desktop", color = MaterialTheme.colorScheme.primary); SelectionContainer { Text(selected.path ?: "Path unavailable", style = MaterialTheme.typography.bodySmall) } } } }
         // F80: whether the desktop is working in this project now, from fresh observations only.
         workspaceCard?.let { card -> item { Panel("Desktop workspace") {
@@ -138,8 +146,14 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
             missing.forEach { Text("${it.text("feature") ?: ""} needs ${it.text("name") ?: "a program"} installed on the desktop.", style = MaterialTheme.typography.bodySmall) }
         } } }
         item { OutlinedTextField(query, { query = it }, leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Search apps, windows or scripts") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
-        feedback?.let { item { Surface(color = MaterialTheme.colorScheme.primaryContainer, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(8.dp)) { Text(it, Modifier.padding(12.dp)) } } }
-        error?.let { item { Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(8.dp)) { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) } } }
+        if (loading || pendingAction != null) item {
+            Column(Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(pendingAction?.let { "Waiting to complete: $it" } ?: "Refreshing desktop controls…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        feedback?.let { item { AncillaryFeedback(it) } }
+        error?.let { item { AncillaryFeedback(it, error = true) } }
         sectionErrors["status"]?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         if (status != null && categories.isEmpty()) item { Text("No desktop control categories are enabled for this project. Enable them on the desktop in Settings.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
@@ -147,67 +161,75 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
             val level = volume ?: (audio.text("percent")?.toFloatOrNull() ?: 0f)
             Text("Volume ${level.toInt()}%${if (audio.flag("muted")) " · Muted" else ""}", color = MaterialTheme.colorScheme.primary)
             // The volume is sent once, when the finger lifts, as one signed action.
-            Slider(level, { volume = it }, valueRange = 0f..100f, steps = 19, enabled = "audio.volume" in actionNames,
+            Slider(level, { volume = it }, valueRange = 0f..100f, steps = 19, enabled = canAct && "audio.volume" in actionNames,
                 onValueChangeFinished = { val percent = (volume ?: level).toInt(); execute("audio.volume", buildJsonObject { put("percent", percent) }, "Set desktop volume to $percent%") })
-            OutlinedButton({ execute("audio.mute", buildJsonObject {}, if (audio.flag("muted")) "Unmute desktop sound" else "Mute desktop sound") }, enabled = "audio.mute" in actionNames) { Text(if (audio.flag("muted")) "Unmute" else "Mute") }
+            OutlinedButton({ execute("audio.mute", buildJsonObject {}, if (audio.flag("muted")) "Unmute desktop sound" else "Mute desktop sound") }, enabled = canAct && "audio.mute" in actionNames) { Text(if (audio.flag("muted")) "Unmute" else "Mute") }
         } }
         if (media?.flag("available") == true) item { Panel("Playback") {
             Text(listOfNotNull(media.text("name"), media.text("status")).joinToString(" · "), color = MaterialTheme.colorScheme.primary)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(Triple("Previous", "Previous", "canPrevious"), Triple("PlayPause", if (media.text("status") == "Playing") "Pause" else "Play", "canPlayPause"), Triple("Next", "Next", "canNext"), Triple("Stop", "Stop", "canStop")).forEach { (command, label, capability) ->
                     OutlinedButton({ execute("media.control", buildJsonObject { put("command", command); media.text("player")?.let { put("player", it) } }, "$label on ${media.text("name") ?: "the desktop player"}") },
-                        enabled = "media.control" in actionNames && media.flag(capability)) { Text(label) }
+                        enabled = canAct && "media.control" in actionNames && media.flag(capability)) { Text(label) }
                 }
             }
         } }
 
-        if (status?.flag("capture") == true && state.supports("captures.start") && project != null) item { CapturePanel(repository, state, activity, project) }
+        if (status?.flag("capture") == true && state.supports("captures.start") && project != null) item { CapturePanel(repository, state, activity, project, canAct) }
         if ("timers" in categories) item { Panel("Timers") {
             if (timers.isEmpty()) Text("No timers set from this phone in this project.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            timers.forEach { timer -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(timer.text("label") ?: "Timer"); Text("Due ${timer.text("due")?.toLongOrNull()?.let { formatter.format(Instant.ofEpochMilli(it)) } ?: "soon"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                TextButton({ signedReview(activity, repository, "timers.cancel", buildJsonObject { put("projectId", projectId); put("timerId", timer.text("id").orEmpty()) }, "Cancel timer ${timer.text("label") ?: ""}", { feedback = "Timer cancelled"; refresh() }, { error = it }, projectId, timer.text("label")) }, enabled = state.supports("timers.cancel")) { Text("Cancel") }
+            timers.forEach { timer -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(timer.text("label") ?: "Timer")
+                Text("Due ${timer.text("due")?.toLongOrNull()?.let { formatter.format(Instant.ofEpochMilli(it)) } ?: "soon"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton({
+                    val label = "Cancel timer ${timer.text("label") ?: ""}"
+                    pendingAction = label; feedback = null; error = null
+                    signedReview(activity, repository, "timers.cancel", buildJsonObject { put("projectId", projectId); put("timerId", timer.text("id").orEmpty()) }, label,
+                        { pendingAction = null; feedback = "Timer cancelled"; refresh() }, { pendingAction = null; error = it }, projectId, timer.text("label"))
+                }, enabled = canAct && state.supports("timers.cancel"), modifier = Modifier.heightIn(min = CereLayout.target)) { Text("Cancel timer") }
             } }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(timerMinutes, { timerMinutes = it.filter(Char::isDigit).take(5) }, label = { Text("Minutes") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.width(110.dp))
-                OutlinedTextField(timerLabel, { timerLabel = it.take(200) }, label = { Text("Label") }, singleLine = true, modifier = Modifier.weight(1f))
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(timerMinutes, { timerMinutes = it.filter(Char::isDigit).take(5) }, label = { Text("Minutes") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = 120.dp, max = 180.dp))
+                OutlinedTextField(timerLabel, { timerLabel = it.take(200) }, label = { Text("Label") }, singleLine = true, modifier = Modifier.widthIn(min = 180.dp).weight(1f))
             }
             val minutes = timerMinutes.toIntOrNull()
-            Button({ execute("timer.start", buildJsonObject { put("minutes", minutes ?: 0); put("label", timerLabel.ifBlank { "Timer" }) }, "Start a $minutes-minute desktop timer") }, enabled = "timer.start" in actionNames && minutes != null && minutes in 1..10080) { Text("Start timer") }
+            Button({ execute("timer.start", buildJsonObject { put("minutes", minutes ?: 0); put("label", timerLabel.ifBlank { "Timer" }) }, "Start a $minutes-minute desktop timer") }, enabled = canAct && "timer.start" in actionNames && minutes != null && minutes in 1..10080) { Text("Start timer") }
         } }
 
         if ("scripts" in categories) item { Panel("Saved scripts") {
             if (scripts.isEmpty()) Text("No saved scripts are granted to this phone.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            scripts.forEach { script -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(script.text("name") ?: script.text("id") ?: "Script", fontWeight = FontWeight.Medium); Text(script.text("executable").orEmpty(), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                OutlinedButton({ reviewingScript = script }, enabled = "script.run" in actionNames) { Text("Review & run") }
+            scripts.forEach { script -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(script.text("name") ?: script.text("id") ?: "Script", fontWeight = FontWeight.Medium)
+                Text(script.text("executable").orEmpty(), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton({ reviewingScript = script }, enabled = canAct && "script.run" in actionNames, modifier = Modifier.heightIn(min = CereLayout.target)) { Text("Review & run") }
             } }
         } }
 
         if ("windows" in categories) {
-            item { Text("Windows", style = MaterialTheme.typography.titleMedium) }
+            item { Text("Windows", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
             sectionErrors["windows"]?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-            item { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(workspace, { workspace = it.filter(Char::isDigit).take(2) }, label = { Text("Workspace") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.width(130.dp))
+            item { FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(workspace, { workspace = it.filter(Char::isDigit).take(2) }, label = { Text("Workspace") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = 140.dp, max = 200.dp))
                 val number = workspace.toIntOrNull()
-                OutlinedButton({ execute("workspace.switch", buildJsonObject { put("workspace", number ?: 0) }, "Switch to workspace $number") }, enabled = "workspace.switch" in actionNames && number != null && number in 1..99) { Text("Switch workspace") }
+                OutlinedButton({ execute("workspace.switch", buildJsonObject { put("workspace", number ?: 0) }, "Switch to workspace $number") }, enabled = pendingAction == null && "workspace.switch" in actionNames && number != null && number in 1..99,
+                    modifier = Modifier.heightIn(min = CereLayout.target)) { Text("Switch workspace") }
             } }
             if (shownWindows.isEmpty() && sectionErrors["windows"] == null) item { Text("No windows to show.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(shownWindows.take(40)) { window -> Panel(window.text("title") ?: "Untitled") {
                 Text("${window.text("app").orEmpty()} · Workspace ${window.text("workspace").orEmpty()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ execute("windows.focus", buildJsonObject { put("address", window.text("address").orEmpty()) }, "Focus ${window.text("title") ?: "window"}") }, enabled = "windows.focus" in actionNames) { Text("Focus") }
-                    OutlinedButton({ moving = window }, enabled = "windows.move" in actionNames) { Text("Move…") }
+                    OutlinedButton({ execute("windows.focus", buildJsonObject { put("address", window.text("address").orEmpty()) }, "Focus ${window.text("title") ?: "window"}") }, enabled = canAct && "windows.focus" in actionNames) { Text("Focus") }
+                    OutlinedButton({ moving = window }, enabled = canAct && "windows.move" in actionNames) { Text("Move…") }
                 }
             } }
         }
 
         if ("apps" in categories) {
-            item { Text("Applications", style = MaterialTheme.typography.titleMedium) }
+            item { Text("Applications", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
             sectionErrors["apps"]?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
             if (shownApps.isEmpty() && sectionErrors["apps"] == null) item { Text("No applications to show.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(shownApps.take(40)) { app -> Panel(app.text("name") ?: "Application") {
-                OutlinedButton({ execute("apps.launch", buildJsonObject { put("desktopId", app.text("id").orEmpty()) }, "Open ${app.text("name").orEmpty()}") }, enabled = "apps.launch" in actionNames) { Text("Open on desktop") }
+                OutlinedButton({ execute("apps.launch", buildJsonObject { put("desktopId", app.text("id").orEmpty()) }, "Open ${app.text("name").orEmpty()}") }, enabled = canAct && "apps.launch" in actionNames) { Text("Open on desktop") }
             } }
         }
 
@@ -215,7 +237,7 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
             Text("Opens on the desktop in its default app. Paths must be inside this project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(filePath, { filePath = it.take(4096) }, label = { Text("Path on the desktop") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             val inside = project?.path?.let { root -> filePath == root || filePath.startsWith("$root/") } == true
-            Button({ execute("files.open", buildJsonObject { put("path", filePath.trim()) }, "Open ${filePath.substringAfterLast('/')}") }, enabled = "files.open" in actionNames && inside) { Text("Open on desktop") }
+            Button({ execute("files.open", buildJsonObject { put("path", filePath.trim()) }, "Open ${filePath.substringAfterLast('/')}") }, enabled = canAct && "files.open" in actionNames && inside) { Text("Open on desktop") }
         } }
     }
 
@@ -226,8 +248,9 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
             Text(window.text("title") ?: "Untitled", fontWeight = FontWeight.Medium)
             Text("Currently on workspace ${window.text("workspace").orEmpty()}. The desktop stays on its current workspace.", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(target, { target = it.filter(Char::isDigit).take(2) }, label = { Text("Destination workspace (1–99)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-        } }, confirmButton = { Button({ moving = null; execute("windows.move", buildJsonObject { put("address", window.text("address").orEmpty()); put("workspace", number ?: 0) }, "Move ${window.text("title") ?: "window"} to workspace $number") }, enabled = number != null && number in 1..99) { Text("Review & move") } },
-            dismissButton = { TextButton({ moving = null }) { Text("Cancel") } })
+        } }, confirmButton = { Button({ moving = null; execute("windows.move", buildJsonObject { put("address", window.text("address").orEmpty()); put("workspace", number ?: 0) }, "Move ${window.text("title") ?: "window"} to workspace $number") },
+            enabled = number != null && number in 1..99, modifier = Modifier.heightIn(min = CereLayout.target)) { Text("Review & move") } },
+            dismissButton = { TextButton({ moving = null }, modifier = Modifier.heightIn(min = CereLayout.target)) { Text("Keep here") } })
     }
     reviewingScript?.let { script ->
         AlertDialog(onDismissRequest = { reviewingScript = null }, title = { Text("Run saved script?") }, text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -236,14 +259,15 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
             Text("Folder · ${script.text("cwd").orEmpty()}", style = MaterialTheme.typography.bodySmall)
             Text("Time limit · ${(script.text("timeout")?.toLongOrNull() ?: 0) / 1000} s", style = MaterialTheme.typography.bodySmall)
             Text("Runs exactly this saved definition on ${state.desktop?.desktopName ?: "the desktop"}. If it changed on the desktop, the run is refused.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } }, confirmButton = { Button({ reviewingScript = null; execute("script.run", buildJsonObject { put("id", script.text("id").orEmpty()) }, "Run ${script.text("name") ?: "script"}", script.text("definitionDigest")) }) { Text("Run") } },
-            dismissButton = { TextButton({ reviewingScript = null }) { Text("Cancel") } })
+        } }, confirmButton = { Button({ reviewingScript = null; execute("script.run", buildJsonObject { put("id", script.text("id").orEmpty()) }, "Run ${script.text("name") ?: "script"}", script.text("definitionDigest")) },
+            modifier = Modifier.heightIn(min = CereLayout.target)) { Text("Run") } },
+            dismissButton = { TextButton({ reviewingScript = null }, modifier = Modifier.heightIn(min = CereLayout.target)) { Text("Don't run") } })
     }
 }
 
 @Composable private fun Panel(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, fontWeight = FontWeight.SemiBold); content() }
+    Surface(color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(CereLayout.gutter), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() }); content() }
     }
 }
 
@@ -261,7 +285,7 @@ internal fun DesktopScreen(repository: CereRepository, state: MobileState, activ
  * a conversation until it is attached here and sent from that conversation.
  */
 @Composable
-private fun CapturePanel(repository: CereRepository, state: MobileState, activity: FragmentActivity, project: Project) {
+private fun CapturePanel(repository: CereRepository, state: MobileState, activity: FragmentActivity, project: Project, enabled: Boolean) {
     val scope = rememberCoroutineScope()
     val captures by repository.captures.collectAsState()
     val latest = captures.values.firstOrNull { it.text("projectId") == project.id }
@@ -283,8 +307,8 @@ private fun CapturePanel(repository: CereRepository, state: MobileState, activit
     Panel("Screen capture") {
         Text("Captures the desktop's focused display. Nothing is shared with a conversation until you attach it and send.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ start(false) }, enabled = !busy && captureState !in setOf("capturing", "editing")) { Text("Capture now") }
-            OutlinedButton({ start(true) }, enabled = !busy && captureState !in setOf("capturing", "editing")) { Text("Capture and edit on the desktop") }
+            Button({ start(false) }, enabled = enabled && !busy && captureState !in setOf("capturing", "editing")) { Text("Capture now") }
+            OutlinedButton({ start(true) }, enabled = enabled && !busy && captureState !in setOf("capturing", "editing")) { Text("Capture and edit on the desktop") }
         }
         latest?.let { capture ->
             Text(when (captureState) {
@@ -300,9 +324,9 @@ private fun CapturePanel(repository: CereRepository, state: MobileState, activit
                 Button({ val chosen = target ?: return@Button; val reviewed = preview ?: return@Button; busy = true; error = null
                     signedReview(activity, repository, "captures.attach", buildJsonObject { put("captureId", captureId!!); put("sessionId", chosen); put("imageDigest", reviewed.imageDigest) }, "Attach this capture",
                         { result -> scope.launch { runCatching { repository.adoptCapture(chosen, result.jsonObject, reviewed) }.onFailure { error = it.message }; captureId?.let { runCatching { repository.captureStatus(it) } }; busy = false } }, { error = it; busy = false }, boundProjectId = project.id)
-                }, enabled = !busy && target != null) { Text("Review & attach") }
+                }, enabled = enabled && !busy && target != null) { Text("Review & attach") }
             }
-            if (captureId != null && captureState in setOf("capturing", "editing", "ready")) TextButton({ scope.launch { busy = true; runCatching { repository.discardCapture(captureId) }.onFailure { error = it.message }; busy = false } }, enabled = !busy) { Text(if (captureState == "ready") "Discard" else "Cancel") }
+            if (captureId != null && captureState in setOf("capturing", "editing", "ready")) TextButton({ scope.launch { busy = true; runCatching { repository.discardCapture(captureId) }.onFailure { error = it.message }; busy = false } }, enabled = enabled && !busy) { Text(if (captureState == "ready") "Discard" else "Cancel") }
         }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

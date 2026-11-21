@@ -1,15 +1,19 @@
-Cere Mobile pairs with a Cere desktop broker that speaks mobile protocol 1 (`/mobile/v1`). The features new in protocol 1.1 need a desktop broker built from the same source as this release (its commit is in `mobile-release.json`); with an older desktop those options are left out. Android 11 or newer is required; the build targets Android 17.
+# Cere Mobile 0.1.5
 
-The native companion includes Cere's face icon and desktop palette, the desktop avatar's still status portrait, scoped conversations, Markdown with sources, drafts, reviewed actions and approvals, image uploads, desktop controls, project memory and settings. New with protocol 1.1:
+[Download the Android APK](https://github.com/otectus/Cere/releases/download/mobile-dev-v0.1.5/cere-mobile-v0.1.5-dev.apk) for Android 11 or later. If you already use the development app, open the APK and choose **Update** to keep your pairing, encrypted conversations, and drafts. Update your PC to Cere desktop 0.1.5 for the matching broker.
 
-- Start a capture of the desktop display, preview it and attach exactly that image to a conversation.
-- Review a desktop draft's attachments, keep or remove each one, and send them exactly as reviewed.
-- Project memory in every provider's conversations, with history, corrections, conflict resolution, identity decisions, episode freezing and a memory health line.
-- Pinned replies, shared with the desktop's bookmarks.
-- A conversation's style, results and schedules; pausing a schedule is the only change offered.
-- A workspace card, the programs missing on the desktop, and **Open on desktop** for linked terminal conversations.
-- Codex and Claude Code history import, and OpenAI, Claude, Google and compatible-endpoint API conversations under per-provider grants. API requests use the desktop's keys and may be billed.
+## What changed
 
-The desktop must remain awake and reachable over your LAN or existing VPN. Monitoring uses a foreground notification, without Google Play services; battery/profile/force-stop restrictions can delay or prevent delivery.
+- Chats, Inbox, Desktop, and Settings share light and dark themes, readable layouts at large font sizes, and navigation that adapts to landscape and tablets.
+- Pairing starts with scanning the desktop QR code. You can also enter the offer manually. The phone shows the six verification words and what to do if camera access or the connection fails.
+- Long conversations keep your reading position when new text arrives. Replies support selectable Markdown, copyable code, and scrollable tables. The composer supports multiline text, an explicit Send action, and image review before upload.
+- The phone recognizes its own delayed autosaves and changes to desktop attachments. It keeps your typing, and asks which version to keep when the text really differs across devices.
+- The launcher icon uses a cyan C and a cream diamond on navy. Android 13 and later can display it in your themed-icon colors.
 
-Before publishing this draft, attach the exact physical-device, signed install/upgrade and compatibility evidence described in `docs/mobile/TESTING.md`, together with the release evidence record that certified the signed APK. Replace this paragraph with release-specific evidence and limitations. Check each claim against `docs/FEATURE-MATRIX.md`; do not describe phone-side capture editing, identity merge or split, other graph administration, AntiGravity turns from the phone or automatic certificate rotation as included.
+## Compatibility and verification
+
+This is the optimized development package `dev.otectus.cere.mobile.debug`, version code `1005`. It uses the same signing certificate as 0.1.4 and speaks mobile protocol 1. Older compatible desktops expose their supported features through negotiation. The desktop must be awake and reachable over your LAN or VPN.
+
+The published 0.1.4 APK upgraded in place on Android 11. The same phone identity signed in, the selected chat and its unsent draft survived, and sending the draft produced exactly one message. The 0.1.5 release APK also paired through its own screen on Android 15. The companion debug build passed 20 standalone instrumentation tests there, with five fixture-dependent cases skipped, and passed all five paired-broker checkpoints in a separate run.
+
+The APK SHA-256 is `72874f29f9aad347a570d3e3e1024f0312773b8296c00227a07670fdb2da8acc`. The release includes the checksum, signing certificate fingerprint, build provenance, and test summary. Validation used emulators. Physical-device camera, biometrics, Doze, and Wi-Fi/cellular roaming remain unverified for these bytes.

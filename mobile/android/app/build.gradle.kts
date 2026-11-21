@@ -12,13 +12,16 @@ android {
         applicationId = "dev.otectus.cere.mobile"
         minSdk = 30
         targetSdk = 37
-        versionCode = 1004
-        versionName = "0.1.4"
+        versionCode = 1005
+        versionName = "0.1.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
-        debug { applicationIdSuffix = ".debug" }
+        debug {
+            applicationIdSuffix = ".debug"
+            isPseudoLocalesEnabled = true
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

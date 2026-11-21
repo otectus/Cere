@@ -1,1 +1,57 @@
-<inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/cere_face_icon" android:inset="18%" />
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1620"
+    android:viewportHeight="1620">
+    <!-- Optical centering leaves room for the launcher's mask and motion. -->
+    <group android:translateX="224" android:translateY="188">
+        <path android:pathData="M651,226 C746,223 825,251 884,312
+                C917,346 936,374 936,405 C936,453 901,485 856,485
+                C828,485 805,471 783,455 C739,423 695,409 641,409
+                C508,406 401,506 401,628 C401,755 517,867 650,868
+                C709,869 747,842 791,809 C820,787 843,782 869,785
+                C902,789 925,815 925,846 C925,885 901,921 863,949
+                C806,993 736,1018 654,1018 C428,1020 242,851 242,627
+                C242,409 426,230 651,226 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear"
+                    android:startX="294" android:startY="832" android:endX="770" android:endY="230">
+                    <item android:offset="0" android:color="#16C9F5" />
+                    <item android:offset="0.38" android:color="#3AD9FB" />
+                    <item android:offset="0.76" android:color="#78D8FC" />
+                    <item android:offset="1" android:color="#ABE9FF" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <!-- The inside turn folds over the lower arm of the C. -->
+        <path android:pathData="M417,548.3 C380,607 349,688 351,764
+                C354,872 405,952 488.4,986.92 C539.18,1007.48 595.24,1018.52 654,1018
+                C736,1018 806,993 863,949 C901,921 925,885 925,846
+                C925,815 902,789 869,785 C843,782 820,787 791,809
+                C747,842 709,869 650,868 C517,867 401,755 401,628
+                C401,599.94 406.66,573.04 417,548.3 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear"
+                    android:startX="354" android:startY="635" android:endX="888" android:endY="838">
+                    <item android:offset="0" android:color="#079DDE" />
+                    <item android:offset="0.32" android:color="#12C5F5" />
+                    <item android:offset="0.68" android:color="#23C5F1" />
+                    <item android:offset="1" android:color="#83E6FA" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:pathData="M634,530 Q646,518 662,518
+                Q678,518 690,530 L760,599
+                Q772,611 772,628 Q772,645 760,657
+                L690,727 Q678,739 662,739
+                Q646,739 634,727 L564,657
+                Q552,645 552,628 Q552,612 564,600 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:startX="615" android:startY="537" android:endX="693" android:endY="729"
+                    android:startColor="#FFFCF5" android:endColor="#FFEFCF" />
+            </aapt:attr>
+        </path>
+    </group>
+</vector>

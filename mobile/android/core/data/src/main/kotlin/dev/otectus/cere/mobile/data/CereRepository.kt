@@ -537,18 +537,20 @@ class CereRepository(context: Context) {
 
     suspend fun selectSession(sessionId: String?) {
         updateState { it.copy(selectedSessionId = sessionId) }
-        if (sessionId != null && _state.value.supports("sessions.get")) runCatching {
-            val fence = fence()
-            val full = WireCodec.json.decodeFromJsonElement(Session.serializer(), request("sessions.get", buildJsonObject { put("sessionId", sessionId) }))
-            updateState(remoteFence = fence) { current ->
-                if (current.sessions.none { it.id == sessionId }) return@updateState current
-                val merged = CacheReconciler.mergeSession(current.sessions.firstOrNull { it.id == sessionId }, full)
-                val draft = CacheReconciler.mergeDraft(current.drafts[sessionId], merged)
-                current.copy(sessions = current.sessions.map { if (it.id == sessionId) merged else it }, drafts = current.drafts + (sessionId to draft))
-            }
-        }
+        if (sessionId != null && _state.value.supports("sessions.get")) runCatching { refreshSession(sessionId) }
         if (sessionId != null) markRead(sessionId)
         if (_state.value.supports("sync.open")) snapshotRequests.trySend(Unit)
+    }
+
+    private suspend fun refreshSession(sessionId: String) {
+        val origin = fence()
+        val full = WireCodec.json.decodeFromJsonElement(Session.serializer(), request("sessions.get", buildJsonObject { put("sessionId", sessionId) }))
+        updateState(remoteFence = origin) { current ->
+            val previous = current.sessions.firstOrNull { it.id == sessionId } ?: return@updateState current
+            val merged = CacheReconciler.mergeSession(previous, full)
+            val draft = CacheReconciler.mergeDraft(current.drafts[sessionId], merged, previous)
+            current.copy(sessions = current.sessions.map { if (it.id == sessionId) merged else it }, drafts = current.drafts + (sessionId to draft))
+        }
     }
 
     /** Opening a conversation clears Unread on every client, as opening it on the desktop does. */
@@ -675,7 +677,9 @@ class CereRepository(context: Context) {
     fun launchSend(action: PreparedAction, sessionId: String, sentText: String, attachmentIds: Set<String>, done: (Result<Unit>) -> Unit) {
         scope.launch {
             val result = try {
-                completeAction(action, signWithoutAuthentication(action)); clearAcceptedDraft(sessionId, sentText, attachmentIds); Result.success(Unit)
+                completeAction(action, signWithoutAuthentication(action))
+                clearAcceptedDraft(sessionId, sentText, attachmentIds, action.params.getValue("expectedDraftRevision").jsonPrimitive.content)
+                Result.success(Unit)
             } catch (cancelled: CancellationException) { throw cancelled } catch (error: Throwable) { Result.failure(error) }
             withContext(Dispatchers.Main) { done(result) }
         }
@@ -696,28 +700,57 @@ class CereRepository(context: Context) {
         val session = current.sessions.firstOrNull { it.id == sessionId } ?: return@updateState current; val old = current.drafts[sessionId] ?: current.draft(session)
         val otherDraftBytes = current.drafts.filterKeys { it != sessionId }.values.sumOf { it.text.toByteArray().size }
         require(otherDraftBytes + text.toByteArray().size + current.attachments.sumOf { it.size } <= 19 * 1024 * 1024) { "Private offline drafts have reached the 20 MiB device limit" }
-        current.copy(drafts = current.drafts + (sessionId to old.copy(text = text, dirty = text != session.draft)))
+        current.copy(drafts = current.drafts + (sessionId to old.edited(text, session)))
+    }
+    /** Once dispatched, an autosave must finish even if typing, rotation or navigation replaces the editor. */
+    fun autosaveDraft(sessionId: String) {
+        scope.launch {
+            try { syncDraft(sessionId) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                // A fresh snapshot reconciles a revision mismatch and exposes only genuine text conflicts.
+                if (failure is RemoteRequestException && failure.code == "REVISION_CONFLICT") snapshotRequests.trySend(Unit)
+                else if (_state.value.connection is ConnectionState.Online) updateState { it.copy(lastError = failure.message) }
+            }
+        }
     }
     suspend fun syncDraft(sessionId: String) = draftMutexes.getOrPut(sessionId) { Mutex() }.withLock { syncDraftLocked(sessionId) }
     private suspend fun syncDraftLocked(sessionId: String) {
-        if (!_state.value.supports("drafts.put")) return; val draft = _state.value.drafts[sessionId] ?: return
-        val session = _state.value.sessions.firstOrNull { it.id == sessionId } ?: return
-        if (!_state.value.draftEditable(session)) return
+        // A disconnected write or accepted send can have reached the PC before its revision reached us.
+        if (_state.value.drafts[sessionId]?.pendingTextHash != null && _state.value.supports("sessions.get"))
+            refreshSession(sessionId)
+        val current = _state.value
+        if (!current.supports("drafts.put")) return
+        val draft = current.drafts[sessionId] ?: return
+        val session = current.sessions.firstOrNull { it.id == sessionId } ?: return
+        if (!session.draftIncluded || !current.draftEditable(session) || draft.remoteRevision != session.draftRevision) return
         if (!draft.dirty || draft.conflict) return
         putDraft(sessionId, draft.text, draft.remoteRevision, session.draftAttachments.map(DraftAttachment::id))
     }
     /** Saves [text] as the desktop draft; [desktopAttachmentIds] are the shown desktop attachments it keeps. */
     private suspend fun putDraft(sessionId: String, text: String, expectedRevision: String, desktopAttachmentIds: List<String>) {
+        val origin = fence()
+        // requestWithCommand persists this marker along with the command ID before sending.
+        check(updateState { current ->
+            if (!authorityFenceCurrent(origin)) throw StaleResultException()
+            val local = current.drafts[sessionId] ?: error("Conversation draft is unavailable")
+            if (local.conflict || local.remoteRevision != expectedRevision)
+                throw RemoteRequestException("REVISION_CONFLICT", "The draft changed before saving")
+            current.copy(drafts = current.drafts + (sessionId to CacheReconciler.awaitingDraftWrite(local, text)))
+        }) { "The desktop connection changed before saving" }
         val result = mutate("drafts.put", buildJsonObject { put("sessionId", sessionId); put("text", text); put("expectedRevision", expectedRevision)
             if (_state.value.sessions.firstOrNull { it.id == sessionId }?.draftAttachmentCount != 0) put("desktopAttachmentIds", JsonArray(desktopAttachmentIds.map(::JsonPrimitive))) }).jsonObject
         val revision = result.getValue("revision").jsonPrimitive.content
         val attachments = result["draftAttachments"]?.let { WireCodec.json.decodeFromJsonElement(ListSerializer(DraftAttachment.serializer()), it) }
         updateState { current ->
+            // A concurrent snapshot can start before this reply. The draft revision orders
+            // the two for this session, while the authority fence still rejects a replaced desktop.
+            if (!authorityFenceCurrent(origin)) return@updateState current
             val latest = current.drafts[sessionId] ?: return@updateState current
             current.copy(drafts = current.drafts + (sessionId to CacheReconciler.acknowledgeDraft(latest, text, revision)),
                 sessions = current.sessions.map { session -> if (session.id == sessionId &&
                     (session.draftRevision.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) <= revision.toBigInteger())
-                    session.copy(draft = text, draftRevision = revision, draftAttachments = attachments ?: session.draftAttachments,
+                    session.copy(draft = text, draftIncluded = true, draftRevision = revision, draftAttachments = attachments ?: session.draftAttachments,
                         draftAttachmentCount = attachments?.size ?: session.draftAttachmentCount) else session })
         }
     }
@@ -808,16 +841,29 @@ class CereRepository(context: Context) {
             if (session.workbenchTakeover == "acknowledge" && workbenchAcknowledged != null) put("workbenchAcknowledged", JsonArray(workbenchAcknowledged.map(::JsonPrimitive)))
         })
     }
-    suspend fun keepLocalDraft(sessionId: String) { updateState { current -> current.drafts[sessionId]?.let { current.copy(drafts = current.drafts + (sessionId to it.copy(baseRevision = it.remoteRevision, conflict = false, remoteText = null, dirty = true))) } ?: current }; syncDraft(sessionId) }
-    suspend fun reloadRemoteDraft(sessionId: String) = updateState { current -> current.drafts[sessionId]?.let { draft -> current.copy(drafts = current.drafts + (sessionId to draft.copy(text = draft.remoteText.orEmpty(), baseRevision = draft.remoteRevision, dirty = false, conflict = false, remoteText = null))) } ?: current }
+    suspend fun keepLocalDraft(sessionId: String, reviewedRevision: String) {
+        updateState { current ->
+            val draft = current.drafts[sessionId] ?: return@updateState current
+            val remote = draft.remoteText ?: return@updateState current
+            if (!draft.conflict || draft.remoteRevision != reviewedRevision) return@updateState current
+            current.copy(drafts = current.drafts + (sessionId to CacheReconciler.acknowledgeDraft(draft, remote, reviewedRevision)))
+        }
+        autosaveDraft(sessionId)
+    }
+    suspend fun reloadRemoteDraft(sessionId: String, reviewedRevision: String) = updateState { current ->
+        val draft = current.drafts[sessionId] ?: return@updateState current
+        val remote = draft.remoteText ?: return@updateState current
+        if (!draft.conflict || draft.remoteRevision != reviewedRevision) return@updateState current
+        current.copy(drafts = current.drafts + (sessionId to LocalDraft(sessionId, remote, draft.remoteRevision, dirty = false)))
+    }
     /**
      * After the desktop accepted a send: its text leaves the draft unless newer typing replaced it, and
      * its images leave the phone. Metadata is saved first and the image files go after, so a crash in
      * between leaves only files no draft refers to, which the next start removes.
      */
-    suspend fun clearAcceptedDraft(sessionId: String, sentText: String, attachmentIds: Set<String>) {
+    suspend fun clearAcceptedDraft(sessionId: String, sentText: String, attachmentIds: Set<String>, submittedRevision: String) {
         val saved = updateState(immediate = true) { current -> val session = current.sessions.firstOrNull { it.id == sessionId } ?: return@updateState current; val draft = current.drafts[sessionId] ?: current.draft(session)
-            current.copy(drafts = if (draft.text == sentText) current.drafts + (sessionId to draft.copy(text = "", dirty = false, conflict = false, remoteText = null)) else current.drafts,
+            current.copy(drafts = current.drafts + (sessionId to CacheReconciler.afterAcceptedSend(draft, sentText, submittedRevision)),
                 attachments = current.attachments.filterNot { it.id in attachmentIds }) }
         if (saved) attachmentIds.forEach { store.deleteBlob(it) }
         snapshotRequests.trySend(Unit)
@@ -1077,7 +1123,8 @@ class CereRepository(context: Context) {
         val sessionId = command.sessionId ?: return
         val text = command.params["text"]?.jsonPrimitive?.contentOrNull ?: return // params are withheld after a grant change
         val remote = command.params["attachments"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty().toSet()
-        clearAcceptedDraft(sessionId, text, _state.value.attachments.filter { it.sessionId == sessionId && it.remoteAttachmentId in remote }.mapTo(HashSet(), LocalAttachment::id))
+        val revision = command.params["expectedDraftRevision"]?.jsonPrimitive?.contentOrNull ?: return
+        clearAcceptedDraft(sessionId, text, _state.value.attachments.filter { it.sessionId == sessionId && it.remoteAttachmentId in remote }.mapTo(HashSet(), LocalAttachment::id), revision)
     }
     private fun rememberCapture(value: JsonObject) {
         val id = value["captureId"]?.jsonPrimitive?.contentOrNull ?: return

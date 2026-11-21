@@ -11,6 +11,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.onAllNodesWithText
@@ -161,6 +163,16 @@ class ConversationContentTest {
         }
         compose.onNodeWithTag("latestMessages").assertIsDisplayed()
         compose.runOnIdle {
+            messages.value = listOf(message("history-0", role = "assistant", kind = "text", text = "Earlier loaded history")) + messages.value
+        }
+        compose.onNodeWithText("Latest messages ↓").assertIsDisplayed()
+        compose.runOnIdle {
+            val tail = messages.value.last().copy(text = "Streaming addition to the same reply", revision = "2")
+            messages.value = messages.value.dropLast(1) + tail
+        }
+        compose.onNodeWithText("Updated reply ↓").assertIsDisplayed()
+        compose.onNodeWithText("Streaming addition to the same reply").assertDoesNotExist()
+        compose.runOnIdle {
             messages.value += message(
                 "history-21",
                 role = "assistant",
@@ -169,8 +181,45 @@ class ConversationContentTest {
             )
         }
         compose.onNodeWithText("Reply while reading older").assertDoesNotExist()
+        compose.onNodeWithText("1 new message ↓").assertIsDisplayed()
         compose.onNodeWithTag("latestMessages").assertIsDisplayed().performClick()
         compose.onNodeWithText("Reply while reading older").assertIsDisplayed()
+    }
+
+    @Test
+    fun composerImeActionSendsWhenReady() {
+        val sends = AtomicInteger()
+        compose.setContent {
+            MaterialTheme {
+                ConversationComposer(
+                    value = "A finished prompt",
+                    sendFromKeyboard = true,
+                    onValueChange = {},
+                    placeholder = "Message Cere",
+                    enabled = true,
+                    canSend = true,
+                    onSend = { sends.incrementAndGet() },
+                )
+            }
+        }
+
+        compose.onNodeWithTag("messageComposer").performImeAction()
+        compose.runOnIdle { check(sends.get() == 1) }
+    }
+
+    @Test
+    fun composerKeepsMultilineInputUntilSent() {
+        val draft = mutableStateOf("")
+        val sent = mutableListOf<String>()
+        compose.setContent {
+            MaterialTheme {
+                ConversationComposer(draft.value, { draft.value = it }, "Message", true, draft.value.isNotBlank(), { sent += draft.value })
+            }
+        }
+        compose.onNodeWithTag("messageComposer").performTextInput("First line\nSecond line")
+        compose.runOnIdle { check(sent.isEmpty() && draft.value == "First line\nSecond line") }
+        compose.onNodeWithContentDescription("Send message").performClick()
+        compose.runOnIdle { check(sent == listOf(draft.value)) }
     }
 
     @Test
@@ -260,12 +309,22 @@ class ConversationContentTest {
             "Long $token end",
             "```\nunterminated fence keeps its text",
             "[broken link](javascript:alert(1)) and [ok](https://example.com)",
+            "![Architecture diagram](https://example.com/diagram.png)",
             "Text with <b>literal html</b> & entities",
         )
         compose.setContent { MaterialTheme { androidx.compose.foundation.layout.Column { samples.forEach { CereMarkdown(it) } } } }
-        for (text in listOf("fox", "🦊", "漢字", "val answer = 42", "deepest", "unterminated fence keeps its text", "literal html", "Copy code"))
+        for (text in listOf("fox", "🦊", "漢字", "val answer = 42", "deepest", "unterminated fence keeps its text", "literal html", "Copy code", "Image: Architecture diagram"))
             compose.onAllNodesWithText(text, substring = true).onFirst().assertExists()
         compose.onNodeWithText("Long ", substring = true).assertExists()
+    }
+
+    @Test
+    fun linksOnlyAllowCredentialFreeWebAddresses() {
+        check(safeLink("HTTPS://example.com/path?q=1") == "HTTPS://example.com/path?q=1")
+        check(safeLink("http://example.com") == "http://example.com")
+        for (address in listOf("javascript:alert(1)", "file:///tmp/private", "https://user:secret@example.com", "https://example.com/\nattack")) {
+            check(safeLink(address) == null) { address }
+        }
     }
 
     private fun message(id: String, role: String, kind: String, text: String, time: Long = 0) = Message(
